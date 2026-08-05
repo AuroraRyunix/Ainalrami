@@ -20,12 +20,38 @@ defmodule OpenPair.CLITest do
   # Built via Trf.serialize/1 rather than hand-typed fixed-width text — a
   # manually counted column offset is exactly the kind of mistake that's
   # bitten this TRF parser before (see the sibling project's own history).
+  # No game history — this is a round-1 roster.
   defp sample_trf do
     Trf.serialize(%{
       tournament: %{name: "CLI Test Open", type: "swiss"},
       players: [
-        %{rank: 1, name: "A", fide_rating: 2000, points: 1.0, games: []},
+        %{rank: 1, name: "A", fide_rating: 2000, points: 0.0, games: []},
         %{rank: 2, name: "B", fide_rating: 1900, points: 0.0, games: []}
+      ]
+    })
+  end
+
+  # Same idea, but WITH a round of history already played — exercises the
+  # "later round, not implemented yet" path instead of round 1's real
+  # pairing.
+  defp sample_trf_with_history do
+    Trf.serialize(%{
+      tournament: %{name: "CLI Test Open R2", type: "swiss"},
+      players: [
+        %{
+          rank: 1,
+          name: "A",
+          fide_rating: 2000,
+          points: 1.0,
+          games: [%{opponent_rank: 2, colour: "w", result: "1"}]
+        },
+        %{
+          rank: 2,
+          name: "B",
+          fide_rating: 1900,
+          points: 0.0,
+          games: [%{opponent_rank: 1, colour: "b", result: "0"}]
+        }
       ]
     })
   end
@@ -92,24 +118,48 @@ defmodule OpenPair.CLITest do
     assert out =~ "missing mode flag"
   end
 
-  test "-p on a real TRF file loads and reports the roster, then exits 2 (not implemented)" do
+  test "-p on a round-1 TRF file loads, reports the roster, and actually pairs it (exit 0)" do
     path = write_trf!(sample_trf())
 
     {out, code} = run_capturing(fn -> CLI.run([path, "-p"]) end)
 
-    assert code == 2
+    assert code == 0
     assert out =~ "Loading #{path}"
     assert out =~ "2 players, 0 teams"
     assert out =~ "#1 A"
     assert out =~ "#2 B"
+    assert out =~ "#1 (white) vs. #2 (black)"
   end
 
-  test "-p reports the intended output file when one is given" do
+  test "-p with no output file prints the JaVaFo-shaped pairing to stdout" do
     path = write_trf!(sample_trf())
 
-    {out, _code} = run_capturing(fn -> CLI.run([path, "-p", "out.trf"]) end)
+    {out, code} = run_capturing(fn -> CLI.run([path, "-p"]) end)
 
-    assert out =~ "would have written to out.trf"
+    assert code == 0
+    # javafo.jar's own output shape: a count line, then "white black" lines,
+    # CRLF throughout — confirmed against a real javafo.jar run.
+    assert out =~ "1\r\n1 2\r\n"
+  end
+
+  test "-p with an output file writes the pairing there instead of stdout" do
+    path = write_trf!(sample_trf())
+    out_path = write_trf!("")
+
+    {out, code} = run_capturing(fn -> CLI.run([path, "-p", out_path]) end)
+
+    assert code == 0
+    assert out =~ "wrote #{out_path}"
+    assert File.read!(out_path) == "1\r\n1 2\r\n"
+  end
+
+  test "-p on a later round (game history already present) reports not-yet-implemented, exit 2" do
+    path = write_trf!(sample_trf_with_history())
+
+    {out, code} = run_capturing(fn -> CLI.run([path, "-p"]) end)
+
+    assert code == 2
+    assert out =~ "round 2 pairing is not implemented yet"
   end
 
   test "-p on a missing file exits 1 with a clear error" do
@@ -143,8 +193,19 @@ defmodule OpenPair.CLITest do
     assert out_c =~ "not implemented yet"
   end
 
-  test "-q suppresses the step/detail trace but not the not-implemented error" do
+  test "-q suppresses the step/detail trace on a successful round-1 pairing, but the pairing output still prints" do
     path = write_trf!(sample_trf())
+
+    {out, code} = run_capturing(fn -> CLI.run([path, "-p", "-q"]) end)
+
+    assert code == 0
+    refute out =~ "Loading"
+    refute out =~ "players,"
+    assert out =~ "1\r\n1 2\r\n"
+  end
+
+  test "-q suppresses the step/detail trace but not the not-implemented error" do
+    path = write_trf!(sample_trf_with_history())
 
     {out, code} = run_capturing(fn -> CLI.run([path, "-p", "-q"]) end)
 

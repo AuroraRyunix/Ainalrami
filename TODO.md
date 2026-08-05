@@ -15,10 +15,12 @@
   default (not opt-in), `-q`/`--quiet` suppresses it. `step/1`/`detail/1`
   to stdout, `warn/1`/`error/1` always to stderr regardless of quiet mode.
 - ~~CLI skeleton~~ — `OpenPair.CLI`, mirroring JaVaFo's real invocation
-  shape (`input.trf -p [output.trf]`, `-g`, `-c`). `-p` currently loads +
-  validates + reports the roster, then clearly states the pairing
-  algorithm isn't implemented yet (exit code 2, distinct from the usage-error
-  exit code 1) rather than emitting fake/empty output.
+  shape (`input.trf -p [output.trf]`, `-g`, `-c`). `-p` on a fresh
+  round-1 roster (no game history) actually pairs it now — writes the
+  same shape JaVaFo's own output file uses (count line, then
+  `white black`/CRLF per pair, `0` for a bye). `-p` on a roster that
+  already has history correctly reports "not implemented yet" (exit 2)
+  instead of guessing — later-round pairing doesn't exist yet.
 
 ## Next: the actual Dutch-system pairing algorithm
 
@@ -32,11 +34,24 @@ specifically from trusting a plausible-sounding but unverified rule
 description; don't repeat that here for something as central as the pairing
 logic itself.
 
-1. **Roster split & round 1.** Rank order, top-half-vs-bottom-half pairing.
-   The most well-established, least ambiguous part of the Dutch system —
-   still worth confirming the exact first-round colour-allocation procedure
-   against the current FIDE Handbook C.04.3 text before coding it, rather
-   than assuming.
+1. ~~**Roster split & round 1.**~~ **Done** — `OpenPair.Pairing.pair_round_one/1`.
+   Rank order, top-half-vs-bottom-half pairing, odd field's lowest rank
+   gets the bye. Colour: Article 5.1's "drawing of lots" has no
+   deterministic rule to replicate — confirmed empirically (not assumed)
+   that JaVaFo's own initial-colour choice isn't a function of roster/round
+   count alone (identical roster + round count under two different
+   tournament *names* produced opposite colours from JaVaFo, strong
+   evidence of a hash-seeded, non-reproducible-by-us choice) — so this uses
+   its own fixed, documented, spec-legal convention instead.
+
+   **Verified against real `javafo.jar`, not just unit-tested against our
+   own expectations**: `test/open_pair/javafo_comparison_test.exs`
+   (`OpenPair.Test.Javafo`, gated `:javafo`, jar not vendored — see that
+   module's doc) generates random rosters (2-60 players) and diffs pairing
+   *composition* (colour-blind) against real JaVaFo output, in parallel.
+   100% match at 2,000 random rosters; a 100,000-roster run's result
+   belongs here once it finishes (was still running when this was last
+   updated — check the test output / re-run to confirm current status).
 2. **Absolute criteria [C1]-[C5]** (per OpenPairings' own C.04.3 audit —
    see its `docs/fide-endorsement.md`): no-repeat pairing, no-second-bye,
    topscorer-colour-clash, bye-assignee-score-minimisation. These are hard

@@ -21,7 +21,7 @@ defmodule OpenPair.CLI do
   place that halts.
   """
 
-  alias OpenPair.{Log, Trf}
+  alias OpenPair.{Log, Pairing, Trf}
 
   @doc false
   def main(argv), do: argv |> run() |> System.halt()
@@ -63,20 +63,56 @@ defmodule OpenPair.CLI do
 
     with {:ok, text} <- read_input(input_path),
          {:ok, parsed} <- parse_input(text) do
-      report_roster(parsed)
+      round_count = report_roster(parsed)
 
       Log.step("Pairing engine")
-      Log.error("the pairing algorithm is not implemented yet — see TODO.md")
 
-      case positional_rest do
-        [output_path | _] -> Log.detail("(would have written to #{output_path})")
-        [] -> Log.detail("(would have printed the pairing to stdout)")
+      if round_count == 0 do
+        pair_round_one(parsed.players, positional_rest)
+      else
+        Log.error(
+          "round #{round_count + 1} pairing is not implemented yet (only round 1 is) — see TODO.md"
+        )
+
+        2
       end
-
-      2
     else
       {:error, :halt} -> 1
     end
+  end
+
+  defp pair_round_one(players, positional_rest) do
+    Log.detail("no game history in the file — pairing round 1")
+    pairs = Pairing.pair_round_one(players)
+
+    for {white, black} <- pairs do
+      Log.detail(board_description(white, black))
+    end
+
+    output_text = format_pairs(pairs)
+
+    case positional_rest do
+      [output_path | _] ->
+        File.write!(output_path, output_text)
+        Log.detail("wrote #{output_path}")
+
+      [] ->
+        IO.write(output_text)
+    end
+
+    0
+  end
+
+  defp board_description(white, nil), do: "##{white} — pairing-allocated bye"
+  defp board_description(white, black), do: "##{white} (white) vs. ##{black} (black)"
+
+  # Same shape as javafo.jar's own output file: a count line, then one
+  # "white black" line per pair (0 for a bye), CRLF throughout — confirmed
+  # against a real javafo.jar run, not assumed.
+  defp format_pairs(pairs) do
+    header = "#{length(pairs)}\r\n"
+    body = Enum.map_join(pairs, "", fn {w, b} -> "#{w} #{b || 0}\r\n" end)
+    header <> body
   end
 
   defp read_input(input_path) do
@@ -107,6 +143,8 @@ defmodule OpenPair.CLI do
     for p <- parsed.players do
       Log.detail("##{p.rank} #{p.name} (#{format_rating(p.fide_rating)}) — #{p.points} pts")
     end
+
+    round_count
   end
 
   defp format_rating(0), do: "unrated"

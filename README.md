@@ -17,10 +17,14 @@ tiebreak orderings), and a third independent data point for cross-checking
 pairing correctness alongside JaVaFo and
 [bbpPairings](https://github.com/BieremaBoyzProgramming/bbpPairings).
 
-**Status: early scaffolding.** TRF16/TRF06 file I/O is complete and tested.
-The actual Dutch-system pairing algorithm does not exist yet — see
-[TODO.md](TODO.md) for the staged plan. Right now, `openpair -p` loads and
-validates a TRF file, reports the roster, and clearly says so.
+**Status: round 1 works and is verified against real JaVaFo output**
+(`OpenPair.Pairing.pair_round_one/1`, cross-checked colour-blind against
+`javafo.jar` on thousands of random rosters — see
+`test/open_pair/javafo_comparison_test.exs`). Later rounds — the actual
+hard part of the Dutch system, bracket formation with floaters and
+backtracking — don't exist yet. See [TODO.md](TODO.md) for the staged
+plan. The CLI's `-p` mode doesn't call the pairing engine yet either (still
+loads/validates/reports the roster and says so); that wiring is next.
 
 ## Command-line interface
 
