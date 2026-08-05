@@ -167,7 +167,7 @@ defmodule OpenPair.Pairing do
     {pairs, leftover} =
       Enum.reduce(brackets, {[], []}, fn residents, {pairs, floaters} ->
         bracket = Enum.sort_by(floaters ++ residents, &{-&1.points, &1.rank})
-        [{new_pairs, unpaired} | _] = bracket_options(bracket)
+        [{new_pairs, unpaired} | _] = bracket_options(bracket, residents == List.last(brackets))
         {pairs ++ new_pairs, Enum.map(unpaired, &Map.put(&1, :already_floated, true))}
       end)
 
@@ -279,7 +279,7 @@ defmodule OpenPair.Pairing do
       bracket = Enum.sort_by(floaters ++ residents, &{-&1.points, &1.rank})
 
       bracket
-      |> bracket_options()
+      |> bracket_options(rest == [])
       |> Enum.take(@alternatives_per_bracket)
       |> Enum.reduce_while(:infeasible, fn {new_pairs, unpaired}, _acc ->
         # Stamped on the way OUT, not the way in: `unpaired` mixes players
@@ -301,7 +301,7 @@ defmodule OpenPair.Pairing do
   # Every matching this bracket admits, best first — one per achievable
   # number of floaters. The cascade takes the head unless the rest of the
   # round can't be completed from it.
-  defp bracket_options(ranked) do
+  defp bracket_options(ranked, bye_bracket?) do
     natural = natural_partner_map(ranked)
 
     indexed =
@@ -316,7 +316,7 @@ defmodule OpenPair.Pairing do
     indexed
     |> Matching.max_weight_matchings(
       &pair_weight(&1, &2, natural, bracket_spans),
-      &float_weight(&1, bracket_spans)
+      &float_weight(&1, bracket_spans, bye_bracket?)
     )
     |> Enum.sort_by(fn {_count, {weight, _pairs, _floaters}} -> -weight end)
     |> Enum.map(fn {_count, {_weight, pairs, floaters}} ->
@@ -544,7 +544,7 @@ defmodule OpenPair.Pairing do
   # `+ player.rank` tie-break was numerically worth more than a whole step
   # of MDP displacement. A float preference must never outvote a pairing
   # criterion; it can only break a tie between them.
-  defp float_weight(player, spans) do
+  defp float_weight(player, spans, bye_bracket?) do
     # No number of floats can ever buy a pair, and a solution with more
     # pairs always wins: `slots` floats together stay below one pair.
     base = -spans.max_pair * spans.slots
@@ -555,12 +555,25 @@ defmodule OpenPair.Pairing do
     # agreement (90.33% -> 83.53%) and most of round 2.
     repeat = if Map.get(player, :already_floated, false), do: -spans.max_pair, else: 0
 
-    # Protecting a player who already holds an unplayed round sits just
-    # above MDP displacement, and the plain "float the worse-ranked
-    # player" convention sits at the very bottom with rank spread — low
-    # enough that it can only ever break a tie, which is what seed 12
-    # showed it must be.
-    base + repeat - unplayed_rounds(player) * spans.unplayed_unit + player.rank
+    # Protecting a player who already holds an unplayed round applies ONLY
+    # in the bracket that actually assigns the bye. bbpPairings guards the
+    # equivalent criterion with `isSingleDownfloaterTheByeAssignee` and
+    # restricts it to players on the bye assignee's score: it is
+    # "minimise the unplayed games of the BYE ASSIGNEE", not a standing
+    # protection against downfloating anyone who once had a bye.
+    #
+    # Applying it everywhere was measurably wrong. Seed 15, round 4: the
+    # 1.5 bracket had to float one of players 6, 12 and 15, and 6-12 is
+    # the natural correspondence — which javafo took, floating 15. This
+    # engine floated 6 instead, purely because 15 held a round-1 bye, and
+    # that protection outweighed the whole pairing difference.
+    unplayed =
+      if bye_bracket?, do: unplayed_rounds(player) * spans.unplayed_unit, else: 0
+
+    # The plain "float the worse-ranked player" convention sits at the
+    # very bottom with rank spread — low enough that it can only ever
+    # break a tie, which is what seed 12 showed it must be.
+    base + repeat - unplayed + player.rank
   end
 
   defp unplayed_rounds(player) do
