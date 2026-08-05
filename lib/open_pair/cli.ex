@@ -67,24 +67,20 @@ defmodule OpenPair.CLI do
 
       Log.step("Pairing engine")
 
-      if round_count == 0 do
-        pair_round_one(parsed.players, positional_rest)
-      else
-        Log.error(
-          "round #{round_count + 1} pairing is not implemented yet (only round 1 is) — see TODO.md"
-        )
+      Log.detail(
+        if round_count == 0, do: "pairing round 1", else: "pairing round #{round_count + 1}"
+      )
 
-        2
-      end
+      pairs = Pairing.pair_next_round(parsed.players)
+      write_pairs(pairs, positional_rest)
+
+      0
     else
       {:error, :halt} -> 1
     end
   end
 
-  defp pair_round_one(players, positional_rest) do
-    Log.detail("no game history in the file — pairing round 1")
-    pairs = Pairing.pair_round_one(players)
-
+  defp write_pairs(pairs, positional_rest) do
     for {white, black} <- pairs do
       Log.detail(board_description(white, black))
     end
@@ -99,8 +95,6 @@ defmodule OpenPair.CLI do
       [] ->
         IO.write(output_text)
     end
-
-    0
   end
 
   defp board_description(white, nil), do: "##{white} — pairing-allocated bye"

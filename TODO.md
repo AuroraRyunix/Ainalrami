@@ -15,12 +15,10 @@
   default (not opt-in), `-q`/`--quiet` suppresses it. `step/1`/`detail/1`
   to stdout, `warn/1`/`error/1` always to stderr regardless of quiet mode.
 - ~~CLI skeleton~~ — `OpenPair.CLI`, mirroring JaVaFo's real invocation
-  shape (`input.trf -p [output.trf]`, `-g`, `-c`). `-p` on a fresh
-  round-1 roster (no game history) actually pairs it now — writes the
-  same shape JaVaFo's own output file uses (count line, then
-  `white black`/CRLF per pair, `0` for a bye). `-p` on a roster that
-  already has history correctly reports "not implemented yet" (exit 2)
-  instead of guessing — later-round pairing doesn't exist yet.
+  shape (`input.trf -p [output.trf]`, `-g`, `-c`). `-p` calls the real
+  pairing engine now (round 1 or the bracket cascade, whichever applies),
+  writing the same shape JaVaFo's own output file uses (count line, then
+  `white black`/CRLF per pair, `0` for a bye).
 
 ## Next: the actual Dutch-system pairing algorithm
 
@@ -49,23 +47,65 @@ logic itself.
    (`OpenPair.Test.Javafo`, gated `:javafo`, jar not vendored — see that
    module's doc) generates random rosters (2-60 players) and diffs pairing
    *composition* (colour-blind) against real JaVaFo output, in parallel.
-   100% match at 2,000 random rosters; a 100,000-roster run's result
+   100% match at 5,000 random rosters; a 100,000-roster run's result
    belongs here once it finishes (was still running when this was last
    updated — check the test output / re-run to confirm current status).
-2. **Absolute criteria [C1]-[C5]** (per OpenPairings' own C.04.3 audit —
-   see its `docs/fide-endorsement.md`): no-repeat pairing, no-second-bye,
-   topscorer-colour-clash, bye-assignee-score-minimisation. These are hard
-   constraints — a legal pairing can never violate them.
-3. **Quality criteria [C6]-[C21] + the bracket-cascade search.** Downfloat
-   minimisation and the rest, applied bracket-by-bracket (Art. 1.9.1,
-   3.3.2) with backtracking when a bracket has no legal completion. This is
-   where the actual combinatorial search lives, and where OpenPairings'
-   fuzz harness already caught JaVaFo and bbpPairings disagreeing on at
-   least one real case — expect this stage to surface genuine ambiguity,
-   not just bugs.
-4. **Colour allocation & floater history** across rounds (not just within
-   one bracket) — Art. 1.9's absolute colour-difference/preference rules.
-5. **RTG (`-g`) and Checker (`-c`) modes** — JaVaFo's own two auxiliary
+2. ~~**Bracket cascade for later rounds.**~~ **Mostly done, with real,
+   documented gaps** — `OpenPair.Pairing.pair_later_round/1`. Forms score
+   brackets (Art. 1.2: score desc, TPN asc), floats an unpairable
+   bracket's own worst-ranked players down into the next one, and finds a
+   maximum legal matching per bracket via a real (not first-fit) search:
+   tries every legal partner for each player and keeps whichever choice —
+   pairing them, or floating them — leaves fewest players unpaired
+   overall, breaking ties toward floating the worst-ranked available
+   player and toward pairings with the widest rank spread (mimicking the
+   natural top-half-vs-bottom-half structure). See that function's own doc
+   for the itemised list of what's simplified versus the full regulation
+   (not a true global maximum-matching search across the whole bracket at
+   once; no MDP-vs-resident distinction when re-forming a heterogeneous
+   bracket; the bye-repeat absolute criterion isn't checked at all yet).
+
+   **Round-2 comparison harness**: `test/open_pair/javafo_comparison_round2_test.exs`
+   — pairs round 1 with real `javafo.jar`, simulates random round-1
+   results, then asks both `javafo.jar` and OpenPair to pair round 2 from
+   that identical real history. **Currently fails consistently (0/10 on
+   the first real run) — a confirmed architectural gap, not a flaky
+   comparison.** Root-caused with a hand-traced example (an 18-player
+   roster, seed 3 — see the debug transcript this finding came from,
+   worth re-deriving if this section ever goes stale rather than trusting
+   the summary alone): a same-score bracket with *zero* rematch conflicts
+   still didn't match javafo.jar's composition. javafo.jar's chosen
+   pairing was the one where every pair had complementary colour
+   preferences (one player wanting white, the other black, from their
+   round-1 colours); this project's "natural ascending S1 vs ascending
+   S2" pairing created two same-preference colour clashes instead in the
+   same bracket. That means **colour preference is not a separate step
+   applied after pairing composition is decided — it's one of the
+   criteria that decides composition itself** (which specific legal
+   transposition of a bracket gets chosen), contradicting the two-phase
+   design `pair_later_round/1` and `assign_colour_with_history/1`
+   currently have. This is a real redesign, not a tweak: bracket pairing
+   needs to search candidate compositions *and* score them by colour-
+   preference satisfaction together, per FIDE's actual quality-criteria
+   order (Article 5.2, not yet read closely enough to implement this
+   correctly — same "read the primary source before coding" discipline
+   as everywhere else in this file). Do not claim round-2+ matches
+   `javafo.jar` at any scale until this is fixed and re-verified.
+3. **Absolute criteria [C1]-[C5] not yet fully covered.** No-repeat
+   pairing is enforced (`legal_pair?/2`); no-second-bye, topscorer-colour
+   clash, and bye-assignee-score-minimisation are not.
+4. **The full canonical transposition/exchange search (Articles 3.3-3.5).**
+   Needed to match FIDE's own *preferred* pairing among multiple equally-
+   legal options exactly, rather than this project's own reasonable
+   substitute tie-breaks (documented in `match_bracket/1`'s doc). This is
+   most of the remaining gap between "legal and reasonable" and "matches
+   javafo.jar exactly" once a bracket search is actually needed (round 1
+   and clean, no-conflict brackets already match exactly).
+5. **Colour allocation & floater history refinement** — Article 5.2's
+   full preference-strength computation (currently a simple
+   alternate-from-last-game rule, see `assign_colour_with_history/1`'s
+   doc) and Art. 1.9's absolute colour-difference rules aren't implemented.
+6. **RTG (`-g`) and Checker (`-c`) modes** — JaVaFo's own two auxiliary
    roles, used for FIDE's FE1 endorsement auto-test (a checker doesn't need
    a search at all, "just" a verifier against every criterion above, so
    this could plausibly land before stage 3 finishes if useful sooner).

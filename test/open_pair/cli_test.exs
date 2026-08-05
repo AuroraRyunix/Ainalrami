@@ -31,9 +31,9 @@ defmodule OpenPair.CLITest do
     })
   end
 
-  # Same idea, but WITH a round of history already played — exercises the
-  # "later round, not implemented yet" path instead of round 1's real
-  # pairing.
+  # Same idea, but WITH a round of history already played (4 players, two
+  # round-1 boards decided) — exercises the round-2 bracket-cascade path
+  # instead of round 1's own split-the-whole-field pairing.
   defp sample_trf_with_history do
     Trf.serialize(%{
       tournament: %{name: "CLI Test Open R2", type: "swiss"},
@@ -43,14 +43,28 @@ defmodule OpenPair.CLITest do
           name: "A",
           fide_rating: 2000,
           points: 1.0,
-          games: [%{opponent_rank: 2, colour: "w", result: "1"}]
+          games: [%{opponent_rank: 3, colour: "w", result: "1"}]
         },
         %{
           rank: 2,
           name: "B",
           fide_rating: 1900,
+          points: 1.0,
+          games: [%{opponent_rank: 4, colour: "w", result: "1"}]
+        },
+        %{
+          rank: 3,
+          name: "C",
+          fide_rating: 1800,
           points: 0.0,
           games: [%{opponent_rank: 1, colour: "b", result: "0"}]
+        },
+        %{
+          rank: 4,
+          name: "D",
+          fide_rating: 1700,
+          points: 0.0,
+          games: [%{opponent_rank: 2, colour: "b", result: "0"}]
         }
       ]
     })
@@ -153,13 +167,16 @@ defmodule OpenPair.CLITest do
     assert File.read!(out_path) == "1\r\n1 2\r\n"
   end
 
-  test "-p on a later round (game history already present) reports not-yet-implemented, exit 2" do
+  test "-p on a later round (game history already present) pairs it via the bracket cascade" do
     path = write_trf!(sample_trf_with_history())
 
     {out, code} = run_capturing(fn -> CLI.run([path, "-p"]) end)
 
-    assert code == 2
-    assert out =~ "round 2 pairing is not implemented yet"
+    assert code == 0
+    assert out =~ "pairing round 2"
+    # Round-1 winners A(1) and B(2) bracket together; round-1 losers C(3)
+    # and D(4) bracket together — see sample_trf_with_history/0's doc.
+    assert out =~ "2\r\n1 2\r\n3 4\r\n"
   end
 
   test "-p on a missing file exits 1 with a clear error" do
@@ -204,15 +221,15 @@ defmodule OpenPair.CLITest do
     assert out =~ "1\r\n1 2\r\n"
   end
 
-  test "-q suppresses the step/detail trace but not the not-implemented error" do
+  test "-q suppresses the step/detail trace on a later-round pairing too, but the output still prints" do
     path = write_trf!(sample_trf_with_history())
 
     {out, code} = run_capturing(fn -> CLI.run([path, "-p", "-q"]) end)
 
-    assert code == 2
+    assert code == 0
     refute out =~ "Loading"
     refute out =~ "players,"
-    assert out =~ "not implemented yet"
+    assert out =~ "2\r\n1 2\r\n3 4\r\n"
   end
 
   # OpenPair.Log writes step/detail to stdout and warn/error to stderr —
