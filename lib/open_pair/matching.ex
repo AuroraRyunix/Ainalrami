@@ -81,7 +81,7 @@ defmodule OpenPair.Matching do
   # multiplying its state by @candidates_per_count is not worth it; large
   # brackets are also the least likely to strand, having far more ways to
   # pair.
-  @max_bracket_for_alternatives 14
+  @max_bracket_for_alternatives 16
 
   @doc """
   The best matching for EACH possible number of floaters, as

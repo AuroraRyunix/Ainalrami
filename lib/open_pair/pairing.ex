@@ -22,9 +22,9 @@ defmodule OpenPair.Pairing do
   # bracket to consider, and how much total work to spend before giving up
   # and returning a best-effort answer.
   @budget_key :openpair_cascade_budget
-  @cascade_budget 400
-  @alternatives_per_bracket 9
-  @alternatives_per_count 3
+  @cascade_budget 2000
+  @alternatives_per_bracket 15
+  @alternatives_per_count 6
 
   @doc """
   Pairs the next round, dispatching to `pair_round_one/1` when no game
