@@ -88,14 +88,14 @@ defmodule OpenPair.PairingLaterRoundTest do
     # Top bracket {1,2,3}: 1(pref b) and 2(pref w) pair — complementary,
     # legal, and the only floater choice that keeps a preference-granting
     # pair intact — so 3 floats down. Merged with {4,5,6} (sorted
-    # 3,4,5,6 — 3 is the only 1.0-scorer left, so it's ranked first):
-    # pairing is bipartite (S1 = {3,4} vs S2 = {5,6}, per Article 3.2 —
-    # never S1-internal or S2-internal, e.g. 3v4 is not a legal *shape*
-    # for this split even though 3 and 4 haven't met), so the only two
-    # candidate pairings are (3v5,4v6) or (3v6,4v5) — and 3 already
-    # played 6 in round 1, so (3v6,4v5) is illegal outright. (3v5,4v6) is
-    # the only option at all, regardless of colour preference.
-    assert as_pair_sets(pairs) == [[1, 2], [3, 5], [4, 6]]
+    # 3,4,5,6 — 3 is the only 1.0-scorer left, so it's ranked first;
+    # prefs 3:b, 4:w, 5:b, 6:w): pairing is NOT restricted to a bipartite
+    # "better half vs worse half" split (confirmed wrong at real-`javafo.jar`
+    # scale — see TODO.md), so 3v4 is a legal candidate pairing even
+    # though both are nominally in the "same half" — and it's the
+    # colour-optimal choice (3v4 and 5v6 both grant each player's
+    # preference; 3v5+4v6 would clash on both).
+    assert as_pair_sets(pairs) == [[1, 2], [3, 4], [5, 6]]
   end
 
   test "the very last bracket's genuinely unpairable odd player gets the bye" do

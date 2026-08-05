@@ -103,38 +103,33 @@ defmodule OpenPair.Pairing do
   not hidden, and not yet cross-checked against `javafo.jar` at the same
   scale round 1 was (see TODO.md):
 
-    * A bracket is split into two equal halves by rank (S1/S2, same
-      top-half-vs-bottom-half structure round 1 uses) and paired via
-      `OpenPair.Matching`'s maximum-weight *bipartite* matching — not
-      FIDE's own specific transposition/exchange search (Articles
-      3.3-3.5), which can in principle consider pairings that don't
-      respect a strict S1/S2 split at all. Confirmed against bbpPairings'
-      own source (`swisssystems/dutch.cpp`) that colour preference is a
-      real scoring criterion for which pairing gets chosen, not merely
-      which side of an already-fixed pair gets which colour — see
-      `pair_weight/2`'s doc for exactly what this project's weight
-      function scores and in what priority order, which is this
-      project's own reasonable substitute for bbpPairings'/JaVaFo's full
-      criteria list (float-history minimisation, among others), not a
-      faithful port of it.
-    * When a bracket has to shed players to become pairable (an odd
-      bracket, or S1/S2 has no fully-legal complete matching at all), the
-      worst-ranked resident(s) float first, same as before — see
-      `try_float_count/2`.
+    * Pairing within a bracket uses `OpenPair.Matching`'s general
+      (non-bipartite) maximum-weight matching, scored by
+      `pair_weight/2`/`float_weight/1` — a curated set of criteria (no
+      rematches, colour-preference satisfaction, rank spread, floating
+      the worst-ranked player when a choice exists) rather than FIDE's
+      own specific transposition/exchange search (Articles 3.3-3.5) or
+      bbpPairings'/JaVaFo's own full bit-packed criteria list
+      (float-history minimisation, among others). See `pair_weight/2`'s
+      doc for exactly what's scored and in what priority order.
     * The "no player receives the pairing-allocated bye twice" absolute
-      criterion (Article 1's C2) isn't enforced — the floating/bye logic
-      here doesn't check bye history at all yet.
+      criterion (Article 1's C2) isn't enforced — floating doesn't check
+      bye history at all yet.
 
-  An earlier version searched the WHOLE bracket exhaustively (every
-  possible pairing, not just S1-vs-S2 ones) via recursive backtracking.
-  Replaced after a real `javafo.jar` comparison run at scale hung: that
-  search had no bound on redundant re-exploration and its complexity was
-  close to double-factorial in the bracket size, confirmed empirically to
-  take 194ms at just 12 players and not finish within 60 seconds at 16.
-  The bipartite reformulation is polynomial in the bracket size (the
-  matching itself is exponential only in HALF the bracket size, which
-  stays tractable for any realistic tournament — see `OpenPair.Matching`'s
-  moduledoc).
+  This went through two earlier, real-comparison-driven revisions before
+  landing here (see TODO.md for the full history, worth reading before
+  changing this again): an unrestricted exhaustive backtracking search
+  with no bound on redundant re-exploration (confirmed to take 194ms at
+  12 players and not finish within 60 seconds at 16), then a *bipartite*
+  reformulation (split each bracket into a better/worse half, pair only
+  across the split) that fixed the hang but was confirmed WRONG at scale
+  (10.7% match against real `javafo.jar` over 2000 random histories,
+  including a regression on a case that matched exactly before) — real
+  FIDE-family pairing engines don't hard-restrict to that split, per
+  bbpPairings' own source. The current version restores general
+  (non-bipartite) matching, keeping it tractable via memoization
+  (`OpenPair.Matching`) instead of via a structural restriction that
+  turned out to be incorrect.
   """
   def pair_later_round(players) do
     brackets =
@@ -153,55 +148,19 @@ defmodule OpenPair.Pairing do
   defp cascade_brackets([residents | rest], floaters, pairs) do
     bracket = (floaters ++ residents) |> Enum.sort_by(&{-&1.points, &1.rank})
     {new_pairs, unpaired} = pair_bracket(bracket)
-    cascade_brackets(rest, unpaired, pairs ++ new_pairs)
+    # Stamped on the way OUT, not the way in: `unpaired` mixes players who
+    # already carried the flag (floated into THIS bracket from above) with
+    # ones floating for the first time (this bracket's own residents) —
+    # both must enter the NEXT bracket already marked, so `float_weight/1`
+    # can tell "floated already" from "floating for the first time" at
+    # every level, not just the first.
+    marked_unpaired = Enum.map(unpaired, &Map.put(&1, :already_floated, true))
+    cascade_brackets(rest, marked_unpaired, pairs ++ new_pairs)
   end
 
   defp pair_bracket(ranked) do
-    {pairs, unpaired} = try_float_count(ranked, rem(length(ranked), 2))
-    {Enum.map(pairs, &assign_colour_with_history/1), unpaired}
-  end
-
-  # Tries the smallest number of floaters first (0 for an even bracket, 1
-  # for odd — matching the bracket's own required parity), escalating by 2
-  # whenever NO choice of that many floaters yields a fully-legal
-  # S1-vs-S2 matching. For a fixed float count, every combination of that
-  # many players is tried (not just the worst-ranked N) — floating the
-  # literal worst N isn't always enough: if the resulting S1/S2 split has
-  # an unavoidable rematch, a DIFFERENT single floater can still legalise
-  # the rest even though the worst-ranked one alone can't (confirmed by a
-  # real test case: a 3-player bracket where the worst-ranked resident
-  # floating leaves the other two stuck on a rematch, but floating the
-  # middle-ranked one instead pairs the top and bottom legally). Candidate
-  # floater sets are tried worst-ranked-first (by total rank) so the
-  # common case (the plain worst-N choice already works) costs nothing
-  # extra. Always terminates: at `float_count == length(ranked)` both
-  # halves are empty, which `OpenPair.Matching` treats as a trivially
-  # satisfied empty matching.
-  defp try_float_count(ranked, float_count) do
-    ranked
-    |> combinations(float_count)
-    |> Enum.sort_by(fn floaters -> -Enum.sum(Enum.map(floaters, & &1.rank)) end)
-    |> Enum.find_value(fn floaters ->
-      remaining = ranked -- floaters
-      half = div(length(remaining), 2)
-      {s1, s2} = Enum.split(remaining, half)
-
-      case Matching.max_weight_perfect_matching(s1, s2, &pair_weight/2) do
-        {:ok, pairs, _total_weight} -> {pairs, floaters}
-        :infeasible -> nil
-      end
-    end)
-    |> case do
-      nil -> try_float_count(ranked, float_count + 2)
-      result -> result
-    end
-  end
-
-  defp combinations(_list, 0), do: [[]]
-  defp combinations([], _k), do: []
-
-  defp combinations([head | tail], k) do
-    Enum.map(combinations(tail, k - 1), &[head | &1]) ++ combinations(tail, k)
+    {pairs, floaters} = Matching.max_weight_matching(ranked, &pair_weight/2, &float_weight/1)
+    {Enum.map(pairs, &assign_colour_with_history/1), floaters}
   end
 
   # `nil` (infeasible) for a rematch — the absolute criterion `Matching`
@@ -217,6 +176,26 @@ defmodule OpenPair.Pairing do
       colour_bonus = if complementary_preference?(a, b), do: 1, else: 0
       colour_bonus * 100_000 + abs(a.rank - b.rank)
     end
+  end
+
+  # Deeply negative so any legal pairing (see `pair_weight/2`, always >= 0)
+  # is preferred over floating anyone — floating only ever happens when a
+  # player has no legal partner left in the bracket at all. `player.rank`
+  # is added (not subtracted) so a WORSE-ranked (higher-numbered) player's
+  # float weight is less negative, i.e. preferred, whenever the matcher
+  # has an actual choice of who floats.
+  #
+  # A player who already floated into this bracket from a higher one
+  # (`:already_floated`, stamped by `cascade_brackets/3`) gets a much more
+  # negative base — confirmed against a real `javafo.jar` disagreement
+  # (two bracket levels down, both engines agreed exactly one player had
+  # to float twice, but picked a different one): javafo strongly prefers
+  # floating a bracket's own fresh resident over floating the same player
+  # down two levels in a row when a choice exists, matching bbpPairings'
+  # own "minimise downfloaters" quality criterion (`dutch.cpp`).
+  defp float_weight(player) do
+    base = if Map.get(player, :already_floated, false), do: -20_000_000, else: -10_000_000
+    base + player.rank
   end
 
   defp complementary_preference?(a, b) do

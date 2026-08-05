@@ -50,94 +50,93 @@ logic itself.
    100% match at 5,000 random rosters; a 100,000-roster run's result
    belongs here once it finishes (was still running when this was last
    updated — check the test output / re-run to confirm current status).
-2. ~~**Bracket cascade for later rounds.**~~ **Mostly done, with real,
-   documented gaps** — `OpenPair.Pairing.pair_later_round/1`. Forms score
-   brackets (Art. 1.2: score desc, TPN asc). Within a bracket, splits into
-   S1 (better half by rank) vs S2 (worse half) — the same structural
-   pairing shape round 1 uses, confirmed against bbpPairings' own source
-   to be the real one (see below), not a guess — and solves it as a
-   maximum-weight *bipartite* perfect matching (`OpenPair.Matching`,
-   bitmask DP), rather than an unrestricted search over the whole bracket.
-   An unpairable bracket floats players down into the next one, trying
-   the worst-ranked combination first but searching other floater choices
-   when that specific one has no legal completion (see
-   `try_float_count/2`'s doc for why a *fixed* worst-N floater set isn't
-   always enough).
+2. ~~**Bracket cascade for later rounds.**~~ **Real progress, real
+   remaining gap, quantified — not "mostly done"** —
+   `OpenPair.Pairing.pair_later_round/1`. Forms score brackets (Art. 1.2:
+   score desc, TPN asc) and pairs each via `OpenPair.Matching`'s general
+   (non-bipartite) maximum-weight matching-with-floats (memoized bitmask
+   DP), scored by `pair_weight/2` (legality, colour-preference
+   satisfaction, rank spread) and `float_weight/1` (deeply negative so
+   pairing always beats floating; strongly penalises re-floating a player
+   who already floated into this bracket from a higher one — see below).
 
-   **This went through two real, evidence-driven revisions before landing
-   here — worth reading in order if this section goes stale, since each
-   fixed a genuine bug the previous version's own test/fuzz run caught:**
+   **Four real, evidence-driven revisions got here — read in order if
+   this section goes stale, since each fixed a genuine bug a real
+   `javafo.jar` comparison run (`test/open_pair/javafo_comparison_round2_test.exs`
+   — pairs round 1 for real, simulates results, asks both engines to pair
+   round 2 from identical history) caught in the PREVIOUS one:**
 
-   - *Revision 1 (exhaustive, unrestricted, no colour scoring)*: a round-2
-     comparison harness (`test/open_pair/javafo_comparison_round2_test.exs`
-     — pairs round 1 for real, simulates results, asks both engines to
-     pair round 2 from identical history) failed consistently (0/10).
-     Root-caused with a hand-traced 18-player case (seed 3): a same-score
-     bracket with *zero* rematch conflicts still didn't match javafo.jar's
-     composition — javafo picked the pairing where every pair had
-     complementary colour preferences (one wants white, one black, from
-     round-1 colours) over an equally rematch-legal one that didn't.
-     Colour preference is a criterion that decides pairing composition,
-     not a separate step applied after composition is fixed.
-   - *Revision 2 (exhaustive + colour scoring, still unrestricted)*: added
-     colour preference as a real scoring criterion and confirmed the
-     seed-3 case now matches exactly. But this revision's search
-     considered ANY two players in a bracket as a valid pair (not
-     respecting an S1-vs-S2 split), and — separately — a real `javafo.jar`
-     comparison run hung: the search re-explored the same subsets
-     repeatedly with no bound, confirmed empirically to take 194ms at 12
-     players and not finish within 60 seconds at 16.
-   - *Revision 3 (current)*: cloned bbpPairings locally (an independent,
-     open, Apache-2.0 FIDE Dutch-system implementation —
-     `AuroraRyunix/bbpPairings-source`) and read `swisssystems/dutch.cpp`
-     rather than keep guessing. It models an entire round as one global
-     maximum-weight matching over all players (Edmonds' Blossom
-     algorithm), every criterion bit-packed into one priority-ordered edge
-     weight, including colour preference (`insertColorBits`) — confirming
-     colour genuinely belongs in the weight function, and that real
-     implementations don't restrict pairing to a literal per-bracket
-     S1-vs-S2 split in general (heterogeneous/MDP handling can cross it).
-     Porting that whole architecture (general graph max-weight matching +
-     the full bit-packed criteria list) is a much bigger undertaking than
-     this project has done so far, so the fix taken is narrower and
-     restricted to the common (homogeneous, non-MDP) case: reformulate
-     each bracket's pairing as *bipartite* S1-vs-S2 matching, which turns
-     the same search into a polynomial problem (`OpenPair.Matching`,
-     O(k · 2^k) in HALF the bracket size, not the whole thing) instead of
-     an unbounded one. Confirmed this didn't just move the bug: a test
-     that legitimately requires floating a *specific* single player
-     (not simply "the worst-ranked N") caught the first version of this
-     fix being too rigid (it only ever tried the literal worst-N floaters)
-     — `try_float_count/2` now searches floater combinations, worst-first,
-     until one yields a legal S1-vs-S2 matching.
+   1. *Unrestricted exhaustive search, no colour scoring* — failed
+      consistently (0/10). Hand-traced 18-player case (seed 3): a
+      same-score bracket with zero rematch conflicts still didn't match
+      javafo.jar — javafo picked the pairing where every pair had
+      complementary colour preferences (one wants white, one black, from
+      round-1 colours), over an equally rematch-legal one that didn't.
+      Colour preference decides pairing composition, not a step applied
+      after composition is fixed.
+   2. *Unrestricted exhaustive + colour scoring* — seed-3 fixed, but the
+      search re-explored the same subsets with no bound (confirmed 194ms
+      at 12 players, didn't finish in 60s at 16 in a real comparison run).
+   3. *Bipartite reformulation* (S1 better-half vs S2 worse-half, solved
+      as bipartite matching — same structure round 1 uses) — fixed the
+      hang, but was **confirmed WRONG at scale**: only 10.7% matched over
+      2000 random histories, including a regression on the seed-3 case
+      that matched exactly in revision 2. Cloning bbpPairings locally
+      (`AuroraRyunix/bbpPairings-source`, independent/open/Apache-2.0) and
+      reading `swisssystems/dutch.cpp` explained why: it computes a
+      weight for ANY two compatible players (Edmonds' Blossom algorithm
+      over the whole field), using bracket/S1-S2 membership as a WEIGHTED
+      BONUS in that computation, never a hard structural exclusion. The
+      bipartite restriction was a real modelling mistake, not a
+      simplification.
+   4. *General (non-bipartite) matching, kept tractable via memoization*
+      (current) — restores correctness (2000-history re-run: 51.7%, up
+      from 10.7%) without reintroducing the unbounded-search hang, at the
+      cost of being exponential in the WHOLE bracket size again (not half,
+      unlike revision 3) — see `OpenPair.Matching`'s moduledoc for the
+      actual complexity trade-off and where this could still be slow. The
+      SAME 2000-history run's remaining disagreements pointed at one more
+      concrete gap: two engines can agree a player must float down two
+      bracket levels in the same round, yet pick a *different* one to do
+      it — javafo strongly prefers floating a bracket's own fresh
+      resident over re-floating a player who already floated once this
+      round (an MDP), matching bbpPairings' own "minimise downfloaters"
+      criterion. `cascade_brackets/3` now stamps `:already_floated` on a
+      bracket's own unpaired players before they enter the next bracket,
+      and `float_weight/1` penalises that flag heavily. Confirmed fixed on
+      the specific case that surfaced it (seed 15); **not yet re-run at
+      scale as of this writing** — do that before trusting a match-rate
+      number for this revision.
 
-   Also fixed a real pre-existing bug the seed-3 investigation surfaced:
-   `colour_preference/1` and `assign_colour_with_history/1` were matching
-   atoms (`:white`/`:black`) against `OpenPair.Trf`'s actual `"w"`/`"b"`
-   string convention — colour history was *silently never applied*
-   before this, every decision quietly falling through to the round-1
-   fixed convention.
+   Also fixed a real pre-existing bug the seed-3 investigation surfaced
+   (revision 1): `colour_preference/1` and `assign_colour_with_history/1`
+   were matching atoms (`:white`/`:black`) against `OpenPair.Trf`'s actual
+   `"w"`/`"b"` string convention — colour history was *silently never
+   applied* before this, every decision quietly falling through to the
+   round-1 fixed convention.
 
-   **Re-verified**: the seed-3 case matches javafo.jar exactly,
-   composition and colour; performance at a fully-tied 40-player single
-   bracket (the worst realistic case) dropped from "doesn't finish in 60s"
-   to ~13.5s, and smaller/more realistic brackets are sub-second. Re-run
-   the harness at real scale (`PAIRING_FUZZ_COUNT=...`) and record the
-   actual match rate here — not done yet as of this writing. This still
-   isn't bbpPairings'/JaVaFo's real algorithm (bipartite per-bracket, not
-   a single global weighted matching over the whole field with the full
-   FIDE criteria list encoded) — expect more gaps to surface at scale,
-   most likely around heterogeneous/MDP brackets (where a real
-   implementation's pairing can cross the S1/S2 split this version
-   assumes) and float-history criteria (not implemented at all). Do not
-   claim round-2+ matches `javafo.jar` at scale until re-run and confirmed.
+   **Known remaining gap, found but not yet fixed**: even after the MDP
+   fix, a same-bracket case with TWO fully colour-preference-satisfying
+   candidate pairings picked the wrong one — javafo chose the option with
+   the SMALLER total rank spread (`|3-8|+|9-12|=8`), this project's
+   widest-spread tie-break chose the larger one (`|3-9|+|8-12|=10`). The
+   "prefer widest spread" rule was extrapolated from round 1's own
+   confirmed behaviour and has never been independently verified for
+   later-round tie-breaking — this one data point suggests it's wrong (or
+   at least not the deciding criterion) once colour preference is already
+   satisfied on both sides. Needs its own investigation, not a guessed
+   flip to "narrowest spread" — that's exactly the kind of assumption that
+   already broke once (the bipartite reformulation, revision 3) from
+   overgeneralising round 1's behaviour to later rounds without checking.
+   Do not claim round-2+ matches `javafo.jar` at scale until re-run and
+   confirmed with real numbers, not this section's prose.
 3. **Absolute criteria [C1]-[C5] not yet fully covered.** No-repeat
    pairing is enforced (`legal_pair?/2`); no-second-bye, topscorer-colour
    clash, and bye-assignee-score-minimisation are not.
-4. **MDP-vs-resident pairing in heterogeneous brackets.** This project's
-   bipartite S1-vs-S2 reformulation doesn't special-case a bracket formed
-   from floaters + a new score group the way bbpPairings'/JaVaFo's global
-   matching can (Articles 3.3.1/3.3.3) — see item 2 above.
+4. **The exact remaining tie-break order for equally-colour-satisfying
+   pairings** — see the "known remaining gap" note under item 2. Likely
+   needs primary-source reading of Article 5.2/the quality-criteria list
+   in full, not another guess extrapolated from a different context.
 5. **Colour allocation & floater history refinement** — Article 5.2's
    full preference-strength computation (currently a simple
    alternate-from-last-game rule, see `assign_colour_with_history/1`'s
@@ -146,10 +145,10 @@ logic itself.
    roles, used for FIDE's FE1 endorsement auto-test (a checker doesn't need
    a search at all, "just" a verifier against every criterion above, so
    this could plausibly land before stage 3 finishes if useful sooner).
-6. **Team pairing.** Depends on OpenPairings' own team-tournament work
+7. **Team pairing.** Depends on OpenPairings' own team-tournament work
    landing first (see that project's `TODO.md`) — team-level Swiss/
    round-robin scheduling, then per-board pairing within a scheduled match.
-7. **Acceleration variants beyond Baku**, alternate tiebreak orderings —
+8. **Acceleration variants beyond Baku**, alternate tiebreak orderings —
    the actual point of building a second engine in the first place, per
    the original "too many gimmicks" / "hard pairing variants" discussion in
    OpenPairings.
