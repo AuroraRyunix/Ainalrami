@@ -22,16 +22,19 @@ against real JaVaFo output, not just our own unit tests.**
 
 - **Round 1**: 100% match against `javafo.jar` on a clean 20,000-random-roster
   run (`OpenPair.Pairing.pair_round_one/1`, colour-blind composition diff —
-  see `test/open_pair/javafo_comparison_test.exs`).
-- **Round 2+**: **99.75%** composition match (1995/2000 random round-1
+  see `test/open_pair/javafo_comparison_test.exs`), re-confirmed at 3,000
+  after the round-2 work landed, to rule out a shared-code regression.
+- **Round 2+**: **99.85%** composition match (5991/6000 random round-1
   outcomes) — `OpenPair.Pairing.pair_later_round/1`, general
   maximum-weight matching over each score bracket via `OpenPair.Matching`,
   checked by `test/open_pair/javafo_comparison_round2_test.exs`. Every
-  scoring term in it was measured on that same comparison set rather than
+  scoring term in it was measured against real `javafo.jar` rather than
   derived from the spec; [TODO.md](TODO.md) has the full table, including
   the two changes that looked obviously correct and measured *worse*
   (a bipartite bracket restriction at 10.7%, and a natural-correspondence
-  tie-break at 64.95%), both reverted.
+  tie-break at 64.95%), both reverted. The 6,000-case rate is measured on
+  3× the 2,000 cases the scoring was tuned against and came out slightly
+  higher (99.75% → 99.85%), so it isn't overfitted to the tuning set.
 
 The CLI's `-p` mode calls the real pairing engine for both cases now,
 writing output in JaVaFo's own text shape.

@@ -60,8 +60,10 @@ logic itself.
    `{:error, code, ""}` tuples, zero real mismatches among them. Lesson
    for next time this needs re-running at even larger scale: run it
    alone, not alongside other `--only javafo` batches.
-2. ~~**Bracket cascade for later rounds.**~~ **99.75% match against real
-   `javafo.jar`** (1995/2000 random round-1 outcomes) —
+2. ~~**Bracket cascade for later rounds.**~~ **99.85% match against real
+   `javafo.jar`** (5991/6000 random round-1 outcomes; 99.75% on the 2,000
+   the scoring was actually tuned against, so the larger set rules out
+   overfitting) —
    `OpenPair.Pairing.pair_later_round/1`. Forms score brackets (Art. 1.2:
    score desc, TPN asc) and pairs each via `OpenPair.Matching`'s general
    (non-bipartite) maximum-weight matching-with-floats (memoized bitmask
@@ -100,7 +102,7 @@ logic itself.
      where Art. 3.3.1 actually applies, the same idea is worth +30
      points. Being "right in principle" decided nothing; scope did.
 
-   The remaining 5/2000 are unexplained. Most likely candidate: the
+   The remaining 9/6000 are unexplained. Most likely candidate: the
    float-history criteria that look two rounds back (bbpPairings has four
    such levels, this engine has none), which can only begin to matter
    from round 3 — so a round-3 harness is the honest next measurement
