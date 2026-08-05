@@ -115,28 +115,35 @@ logic itself.
    applied* before this, every decision quietly falling through to the
    round-1 fixed convention.
 
-   **Known remaining gap, found but not yet fixed**: even after the MDP
-   fix, a same-bracket case with TWO fully colour-preference-satisfying
-   candidate pairings picked the wrong one — javafo chose the option with
-   the SMALLER total rank spread (`|3-8|+|9-12|=8`), this project's
-   widest-spread tie-break chose the larger one (`|3-9|+|8-12|=10`). The
-   "prefer widest spread" rule was extrapolated from round 1's own
-   confirmed behaviour and has never been independently verified for
-   later-round tie-breaking — this one data point suggests it's wrong (or
-   at least not the deciding criterion) once colour preference is already
-   satisfied on both sides. Needs its own investigation, not a guessed
-   flip to "narrowest spread" — that's exactly the kind of assumption that
-   already broke once (the bipartite reformulation, revision 3) from
-   overgeneralising round 1's behaviour to later rounds without checking.
+   **Known remaining gap, found but not fully understood yet**: even
+   after the MDP fix, one seed-15 sub-case with TWO fully
+   colour-preference-satisfying candidate pairings picked the "wrong"
+   one — javafo chose the smaller-total-rank-spread option
+   (`|3-8|+|9-12|=8`) where this project's widest-spread tie-break chose
+   the larger one (`|3-9|+|8-12|=10`). That looked like evidence the
+   "prefer widest spread" rule (extrapolated from round 1's own confirmed
+   top-half-vs-bottom-half behaviour, never independently verified for
+   later-round tie-breaking) was simply wrong — **but a follow-up,
+   deliberately isolated 8-player test (no floaters, no merged bracket,
+   just one clean same-score bracket with the exact same "two fully
+   colour-satisfying options at different spreads" shape) showed javafo
+   choosing the WIDER-spread option, confirming the rule instead of
+   refuting it.** So the seed-15 disagreement isn't explained by the
+   spread rule being wrong — it's something specific to that case (most
+   likely an interaction with the MDP float penalty just added, since
+   seed-15's bracket included a floater and the isolated test
+   deliberately didn't) that hasn't been isolated yet. Needs its own
+   follow-up test (a clean bracket WITH a floater, controlling for
+   spread the same way) before touching `pair_weight/2`/`float_weight/1`
+   again — don't guess a fix for a cause that hasn't been confirmed.
    Do not claim round-2+ matches `javafo.jar` at scale until re-run and
    confirmed with real numbers, not this section's prose.
 3. **Absolute criteria [C1]-[C5] not yet fully covered.** No-repeat
    pairing is enforced (`legal_pair?/2`); no-second-bye, topscorer-colour
    clash, and bye-assignee-score-minimisation are not.
-4. **The exact remaining tie-break order for equally-colour-satisfying
-   pairings** — see the "known remaining gap" note under item 2. Likely
-   needs primary-source reading of Article 5.2/the quality-criteria list
-   in full, not another guess extrapolated from a different context.
+4. **The seed-15-style disagreement above** — see item 2's "known
+   remaining gap" note. Needs isolating whether it's an MDP-float
+   interaction or something else before attempting a fix.
 5. **Colour allocation & floater history refinement** — Article 5.2's
    full preference-strength computation (currently a simple
    alternate-from-last-game rule, see `assign_colour_with_history/1`'s
