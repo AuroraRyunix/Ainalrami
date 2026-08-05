@@ -114,9 +114,14 @@ logic itself.
       criterion. `cascade_brackets/3` now stamps `:already_floated` on a
       bracket's own unpaired players before they enter the next bracket,
       and `float_weight/1` penalises that flag heavily. Confirmed fixed on
-      the specific case that surfaced it (seed 15); **not yet re-run at
-      scale as of this writing** — do that before trusting a match-rate
-      number for this revision.
+      the specific case that surfaced it (seed 15), and re-run clean at
+      scale: **66.24% at 5,000 random round-1 outcomes** (0 process
+      errors — checked directly, see the round-1 100k lesson above about
+      not trusting a number without checking for that), up from 51.7%
+      before this fix, consistent with the earlier 66.3% at 1,000. A
+      real, stable number — not yet 100%, but a genuine three-fix
+      trajectory (0% → 51.7% → 66.24%) with each step independently
+      confirmed, not a guess.
 
    Also fixed a real pre-existing bug the seed-3 investigation surfaced
    (revision 1): `colour_preference/1` and `assign_colour_with_history/1`

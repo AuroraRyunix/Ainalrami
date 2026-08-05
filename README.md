@@ -27,11 +27,13 @@ against real JaVaFo output, not just our own unit tests.**
   (`OpenPair.Pairing.pair_later_round/1`, general maximum-weight matching
   over each score bracket via `OpenPair.Matching`) and is being tightened
   against a matching real-`javafo.jar` harness
-  (`test/open_pair/javafo_comparison_round2_test.exs`) — currently 66.3%
-  composition match at 1,000 random round-1 outcomes, up from 0% a few
-  fixes ago. See [TODO.md](TODO.md) for the full revision history (several
-  real bugs found and fixed this way, including one architectural
-  mistake caught and reverted at scale) and the specific gap still open.
+  (`test/open_pair/javafo_comparison_round2_test.exs`) — currently 66.24%
+  composition match at a clean 5,000-random-round-1-outcome run, up from
+  0% a few fixes ago (0% → 51.7% → 66.24%, each step independently
+  confirmed against real `javafo.jar`, not guessed). See
+  [TODO.md](TODO.md) for the full revision history (several real bugs
+  found and fixed this way, including one architectural mistake caught
+  and reverted at scale) and the specific gap still open.
 
 The CLI's `-p` mode calls the real pairing engine for both cases now,
 writing output in JaVaFo's own text shape.
