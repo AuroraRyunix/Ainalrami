@@ -1,0 +1,10 @@
+# Normalize all text to LF in the repository AND in working copies for the
+# file types the toolchain cares about: `mix format` writes LF and its
+# --check-formatted flag flags CRLF files as unformatted.
+* text=auto
+
+*.ex text eol=lf
+*.exs text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
