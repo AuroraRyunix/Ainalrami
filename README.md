@@ -17,14 +17,24 @@ tiebreak orderings), and a third independent data point for cross-checking
 pairing correctness alongside JaVaFo and
 [bbpPairings](https://github.com/BieremaBoyzProgramming/bbpPairings).
 
-**Status: round 1 works and is verified against real JaVaFo output**
-(`OpenPair.Pairing.pair_round_one/1`, cross-checked colour-blind against
-`javafo.jar` on thousands of random rosters — see
-`test/open_pair/javafo_comparison_test.exs`). Later rounds — the actual
-hard part of the Dutch system, bracket formation with floaters and
-backtracking — don't exist yet. See [TODO.md](TODO.md) for the staged
-plan. The CLI's `-p` mode doesn't call the pairing engine yet either (still
-loads/validates/reports the roster and says so); that wiring is next.
+**Status: round 1 is solid; later rounds work and are improving, verified
+against real JaVaFo output, not just our own unit tests.**
+
+- **Round 1**: 100% match against `javafo.jar` on a clean 20,000-random-roster
+  run (`OpenPair.Pairing.pair_round_one/1`, colour-blind composition diff —
+  see `test/open_pair/javafo_comparison_test.exs`).
+- **Round 2+**: real bracket-cascade pairing exists
+  (`OpenPair.Pairing.pair_later_round/1`, general maximum-weight matching
+  over each score bracket via `OpenPair.Matching`) and is being tightened
+  against a matching real-`javafo.jar` harness
+  (`test/open_pair/javafo_comparison_round2_test.exs`) — currently 66.3%
+  composition match at 1,000 random round-1 outcomes, up from 0% a few
+  fixes ago. See [TODO.md](TODO.md) for the full revision history (several
+  real bugs found and fixed this way, including one architectural
+  mistake caught and reverted at scale) and the specific gap still open.
+
+The CLI's `-p` mode calls the real pairing engine for both cases now,
+writing output in JaVaFo's own text shape.
 
 ## Command-line interface
 

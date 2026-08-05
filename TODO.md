@@ -47,9 +47,19 @@ logic itself.
    (`OpenPair.Test.Javafo`, gated `:javafo`, jar not vendored — see that
    module's doc) generates random rosters (2-60 players) and diffs pairing
    *composition* (colour-blind) against real JaVaFo output, in parallel.
-   100% match at 5,000 random rosters; a 100,000-roster run's result
-   belongs here once it finishes (was still running when this was last
-   updated — check the test output / re-run to confirm current status).
+   **20,000/20,000 (100%) matched in a clean run** (`PAIRING_FUZZ_COUNT=20000`,
+   run alone — no other JVM-spawning background job competing for the
+   machine at the same time). A separate 100,000-roster attempt run
+   *while several other fuzz batches were also active* looked like 6.29%
+   — that number is meaningless, not a real finding: every one of its
+   reported "disagreements" was actually a javafo.jar process failing to
+   even launch (Windows exit code `-1073741502` / `0xC0000142`, a
+   resource-exhaustion signature) under sustained heavy concurrent load,
+   not a genuine pairing mismatch. Confirmed by checking that all 20
+   disagreement examples the failure message printed were
+   `{:error, code, ""}` tuples, zero real mismatches among them. Lesson
+   for next time this needs re-running at even larger scale: run it
+   alone, not alongside other `--only javafo` batches.
 2. ~~**Bracket cascade for later rounds.**~~ **Real progress, real
    remaining gap, quantified — not "mostly done"** —
    `OpenPair.Pairing.pair_later_round/1`. Forms score brackets (Art. 1.2:
