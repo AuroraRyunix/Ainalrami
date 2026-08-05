@@ -19,10 +19,17 @@ defmodule OpenPair.PairingLaterRoundTest do
 
   # Round 2 after round 1's standard 8-player split (1v5, 2v6, 3v7, 4v8) —
   # 1, 3, 6, 8 won (1.0 pts); 2, 4, 5, 7 lost (0.0 pts). Two even brackets,
-  # neither needs a floater or hits a rematch: bracket{1,3,6,8} pairs 1v6,
-  # 3v8; bracket{2,4,5,7} pairs 2v5, 4v7 (top half vs bottom half of each
-  # bracket, ranked by TPN ascending per Article 1.2).
-  test "two clean brackets, no floaters or rematches needed" do
+  # neither hits a rematch, but the plain top-half-vs-bottom-half split
+  # ISN'T what gets chosen: within {1,3,6,8}, round-1 colours were
+  # 1="w",3="b",6="w",8="b", so preferences (opposite) are 1:b, 3:w, 6:b,
+  # 8:w. The natural split (1v6, 3v8) pairs two same-preference players
+  # both times (1&6 both want black, 3&8 both want white) — zero
+  # preferences granted. Swapping to (1v8, 3v6) grants BOTH preferences
+  # (1 gets black vs 8's white, 3 gets white vs 6's black), which
+  # `option_score/1`'s colour-preference criterion prefers. Same story for
+  # {2,4,5,7} (colours 2="b",4="w",5="b",7="w"): natural (2v5,4v7) clashes
+  # twice; (2v7,4v5) grants both.
+  test "colour-preference-optimal pairing is chosen over the plain top/bottom split" do
     winners = [
       p(1, 1.0, [game(5, "w", "1")]),
       p(3, 1.0, [game(7, "b", "1")]),
@@ -39,7 +46,7 @@ defmodule OpenPair.PairingLaterRoundTest do
 
     pairs = Pairing.pair_next_round(winners ++ losers)
 
-    assert as_pair_sets(pairs) == [[1, 6], [2, 5], [3, 8], [4, 7]]
+    assert as_pair_sets(pairs) == [[1, 8], [2, 7], [3, 6], [4, 5]]
   end
 
   # Same winners bracket {1,3,6,8}, but this time the natural split (1v6,
@@ -78,11 +85,14 @@ defmodule OpenPair.PairingLaterRoundTest do
 
     pairs = Pairing.pair_next_round(top_bracket ++ bottom_bracket)
 
-    # Top bracket {1,2,3}: 1 and 2 pair (natural top/bottom split of the
-    # first 2), 3 floats down. Merged with {4,5,6} (already sorted 3,4,5,6
-    # by score desc/TPN asc -- 3 is the only 1.0-scorer left, so it's
-    # ranked first): natural split pairs 3v5, 4v6.
-    assert as_pair_sets(pairs) == [[1, 2], [3, 5], [4, 6]]
+    # Top bracket {1,2,3}: 1(pref b) and 2(pref w) pair — complementary,
+    # legal, and the only floater choice that keeps a preference-granting
+    # pair intact — so 3 floats down. Merged with {4,5,6} (sorted
+    # 3,4,5,6 — 3 is the only 1.0-scorer left, so it's ranked first;
+    # prefs 3:b, 4:w, 5:b, 6:w): the natural split (3v5, 4v6) would clash
+    # both times (3&5 both want black, 4&6 both want white), so (3v4, 5v6)
+    # is chosen instead — grants both preferences.
+    assert as_pair_sets(pairs) == [[1, 2], [3, 4], [5, 6]]
   end
 
   test "the very last bracket's genuinely unpairable odd player gets the bye" do

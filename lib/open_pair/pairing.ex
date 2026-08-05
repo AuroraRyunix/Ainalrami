@@ -140,29 +140,16 @@ defmodule OpenPair.Pairing do
     cascade_brackets(rest, unpaired, pairs ++ new_pairs)
   end
 
-  # The common case first: if the plain top-half-vs-bottom-half split (same
-  # structure round 1 uses) is already fully legal, skip the search
-  # entirely — this is what most brackets hit, and the general search below
-  # is the expensive path only a real rematch conflict or an odd bracket
-  # size should ever reach.
+  # Always runs the general search below — there is no shortcut that's both
+  # cheap and correct: an earlier version skipped straight to the plain
+  # top-half-vs-bottom-half split whenever it was rematch-legal, but that
+  # bypasses colour-preference scoring entirely, which turned out to be
+  # exactly the case (a same-score bracket, zero rematch conflicts, but a
+  # colour-preference-optimal pairing existed elsewhere) that a real
+  # `javafo.jar` comparison run caught — see TODO.md.
   defp pair_bracket(ranked) do
-    {pairs, unpaired} =
-      case natural_split_pairing(ranked) do
-        {:ok, pairs} -> {pairs, []}
-        nil -> match_bracket(ranked)
-      end
-
+    {pairs, unpaired} = match_bracket(ranked)
     {Enum.map(pairs, &assign_colour_with_history/1), unpaired}
-  end
-
-  defp natural_split_pairing(players) when rem(length(players), 2) != 0, do: nil
-
-  defp natural_split_pairing(players) do
-    half = div(length(players), 2)
-    {s1, s2} = Enum.split(players, half)
-    pairs = Enum.zip(s1, s2)
-
-    if Enum.all?(pairs, fn {a, b} -> legal_pair?(a, b) end), do: {:ok, pairs}, else: nil
   end
 
   # General search: the largest legal matching within this bracket, i.e.
@@ -205,33 +192,78 @@ defmodule OpenPair.Pairing do
   # Fewer unpaired first; among equal counts, prefer the option whose
   # unpaired players have the HIGHEST rank numbers (i.e. are the
   # worst-ranked available) — the negated rank sum makes a higher-ranked
-  # (worse) unpaired set sort as "smaller", so `Enum.min_by` picks it. A
-  # third tie-break, only reached when two options leave the exact same
-  # players unpaired (typically both leave nobody unpaired at all —
-  # several different complete matchings can exist): prefer the option
-  # whose formed pairs have the LARGEST total rank distance, matching the
-  # natural top-half-vs-bottom-half structure (which pairs far-apart
-  # ranks) over one that incidentally pairs two closely-ranked players
-  # together when a wider legal option was also available.
+  # (worse) unpaired set sort as "smaller", so `Enum.min_by` picks it.
+  #
+  # Third, colour-preference satisfaction — confirmed against bbpPairings'
+  # own source (an independent, open FIDE Dutch-system implementation,
+  # `swisssystems/dutch.cpp`'s `computeEdgeWeight`/`insertColorBits`) to be
+  # a real criterion that decides WHICH players get paired together, not
+  # merely which side of an already-fixed pair gets which colour: a
+  # same-score bracket with zero rematch conflicts still didn't match real
+  # `javafo.jar` output before this was added — javafo consistently chose
+  # the pairing where every pair had complementary colour preferences
+  # (one wants white, the other black) over an equally rematch-legal one
+  # that didn't, see TODO.md for the traced example this came from.
+  #
+  # Fourth, a tie-break only reached when two options leave the exact same
+  # players unpaired AND achieve the same colour-preference count
+  # (typically both leave nobody unpaired and satisfy every preference —
+  # several different complete, fully-satisfying matchings can still
+  # exist): prefer the option whose formed pairs have the LARGEST total
+  # rank distance, matching the natural top-half-vs-bottom-half structure
+  # (which pairs far-apart ranks) over one that incidentally pairs two
+  # closely-ranked players together when a wider legal option was also
+  # available. This and the rank-spread tie-break are this project's own
+  # substitutes for bbpPairings'/JaVaFo's exact remaining criteria
+  # (float-history minimisation, among others) — not a faithful port of
+  # those, see `pair_later_round/1`'s doc.
   defp option_score({pairs, unpaired}) do
-    {length(unpaired), -Enum.sum(Enum.map(unpaired, & &1.rank)), -pair_spread(pairs)}
+    {
+      length(unpaired),
+      -Enum.sum(Enum.map(unpaired, & &1.rank)),
+      -complementary_colour_count(pairs),
+      -pair_spread(pairs)
+    }
+  end
+
+  defp complementary_colour_count(pairs) do
+    Enum.count(pairs, fn {a, b} ->
+      pref_a = colour_preference(a)
+      pref_b = colour_preference(b)
+      pref_a != nil and pref_b != nil and pref_a != pref_b
+    end)
+  end
+
+  # A player's colour preference is simply the opposite of their own most
+  # recent coloured game — see `assign_colour_with_history/1`'s doc on why
+  # this is a simplified stand-in for FIDE's full preference-strength
+  # computation (absolute/strong/mild preference from accumulated colour
+  # imbalance and repeated colours), not the real thing. Games carry
+  # colour as "w"/"b" (`OpenPair.Trf`'s own convention), not atoms.
+  defp colour_preference(player) do
+    case last_colour(player) do
+      "w" -> "b"
+      "b" -> "w"
+      nil -> nil
+    end
   end
 
   defp pair_spread(pairs), do: Enum.sum(Enum.map(pairs, fn {a, b} -> abs(a.rank - b.rank) end))
 
   defp legal_pair?(p1, p2), do: not Enum.any?(p1.games, &(&1.opponent_rank == p2.rank))
 
-  # Alternates each player from their own most recent coloured game;
-  # falls back to the round-1 fixed convention when there's a genuine
-  # clash (both "want" the same colour) or neither has a colour history
-  # yet (e.g. a late entrant paired for the first time in a later round).
+  # Grants each player's colour preference (opposite of their own most
+  # recent coloured game) when they're complementary; falls back to the
+  # round-1 fixed convention when there's a genuine clash (both "want" the
+  # same colour) or neither has a colour history yet (e.g. a late entrant
+  # paired for the first time in a later round).
   defp assign_colour_with_history({a, b}) do
-    case {last_colour(a), last_colour(b)} do
-      {:white, :black} ->
-        {b.rank, a.rank}
-
-      {:black, :white} ->
+    case {colour_preference(a), colour_preference(b)} do
+      {"w", "b"} ->
         {a.rank, b.rank}
+
+      {"b", "w"} ->
+        {b.rank, a.rank}
 
       _ ->
         # assign_colour_round_one/2 expects {better_ranked, worse_ranked}.

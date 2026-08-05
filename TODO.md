@@ -68,29 +68,59 @@ logic itself.
    **Round-2 comparison harness**: `test/open_pair/javafo_comparison_round2_test.exs`
    — pairs round 1 with real `javafo.jar`, simulates random round-1
    results, then asks both `javafo.jar` and OpenPair to pair round 2 from
-   that identical real history. **Currently fails consistently (0/10 on
-   the first real run) — a confirmed architectural gap, not a flaky
-   comparison.** Root-caused with a hand-traced example (an 18-player
-   roster, seed 3 — see the debug transcript this finding came from,
-   worth re-deriving if this section ever goes stale rather than trusting
-   the summary alone): a same-score bracket with *zero* rematch conflicts
-   still didn't match javafo.jar's composition. javafo.jar's chosen
-   pairing was the one where every pair had complementary colour
-   preferences (one player wanting white, the other black, from their
-   round-1 colours); this project's "natural ascending S1 vs ascending
-   S2" pairing created two same-preference colour clashes instead in the
-   same bracket. That means **colour preference is not a separate step
-   applied after pairing composition is decided — it's one of the
-   criteria that decides composition itself** (which specific legal
-   transposition of a bracket gets chosen), contradicting the two-phase
-   design `pair_later_round/1` and `assign_colour_with_history/1`
-   currently have. This is a real redesign, not a tweak: bracket pairing
-   needs to search candidate compositions *and* score them by colour-
-   preference satisfaction together, per FIDE's actual quality-criteria
-   order (Article 5.2, not yet read closely enough to implement this
-   correctly — same "read the primary source before coding" discipline
-   as everywhere else in this file). Do not claim round-2+ matches
-   `javafo.jar` at any scale until this is fixed and re-verified.
+   that identical real history. **First real run failed consistently
+   (0/10) — a confirmed architectural gap, not a flaky comparison.**
+   Root-caused with a hand-traced example (an 18-player roster, seed 3):
+   a same-score bracket with *zero* rematch conflicts still didn't match
+   javafo.jar's composition. javafo.jar's chosen pairing was the one
+   where every pair had complementary colour preferences (one player
+   wanting white, the other black, from their round-1 colours); this
+   project's "natural ascending S1 vs ascending S2" pairing created two
+   same-preference colour clashes instead in the same bracket. That
+   means colour preference is not a separate step applied after pairing
+   composition is decided — it's one of the criteria that decides
+   composition itself.
+
+   **Confirmed against bbpPairings' own source** (cloned locally,
+   `AuroraRyunix/bbpPairings-source` — an independent, open,
+   Apache-2.0-licensed FIDE Dutch-system implementation, not a guess):
+   `swisssystems/dutch.cpp`'s `computeMatching`/`computeEdgeWeight` model
+   an ENTIRE round as one global maximum-weight matching over all
+   players (Edmonds' Blossom algorithm, `src/matching/`), with every
+   criterion — legality, bracket/score-group placement, colour
+   preference, float-history — bit-packed into a single priority-ordered
+   edge weight per pair, solved once. Colour preference is folded into
+   that same weight (`insertColorBits`), not computed afterward. Porting
+   that whole architecture (a general graph maximum-weight matching
+   engine plus the full bit-packed criteria encoding) is a much larger
+   undertaking than fixing this project's existing per-bracket
+   backtracking search, so **the fix taken here is narrower**: added
+   `complementary_colour_count/1` as a real scoring criterion inside
+   `match_bracket/1`'s search (see `option_score/1`'s doc for the exact
+   priority order relative to the fewer-unpaired / worst-rank-floats
+   criteria already there), and removed the `natural_split_pairing/1`
+   fast-path shortcut entirely — it bypassed the search (and thus colour
+   scoring) whenever the naive top/bottom split happened to be
+   rematch-legal, which is exactly the case that was failing. Also fixed
+   a real pre-existing bug this surfaced: `colour_preference/1` and
+   `assign_colour_with_history/1` were matching against atoms
+   (`:white`/`:black`) when `OpenPair.Trf`'s game shape actually carries
+   colour as the strings `"w"`/`"b"` — meaning colour history was
+   *silently never applied* before this fix (every round-2+ colour
+   decision was quietly falling through to the round-1 fixed convention).
+
+   **Re-verified**: the seed-3 case now matches javafo.jar exactly,
+   composition AND colour. Re-run the harness at real scale
+   (`PAIRING_FUZZ_COUNT=...`) and record the actual match rate here —
+   not done yet as of this writing. This still isn't bbpPairings'/JaVaFo's
+   real algorithm (still bracket-by-bracket backtracking with a curated
+   set of scoring criteria, not a single global weighted matching over
+   the whole field with the full FIDE criteria list encoded) — expect
+   more gaps like this one to surface at scale, most likely around
+   float-history criteria (not implemented at all yet) and the exact
+   quality-criteria order Article 5.2 specifies (this project's ordering
+   is a reasonable approximation, not a verified port). Do not claim
+   round-2+ matches `javafo.jar` at scale until re-run and confirmed.
 3. **Absolute criteria [C1]-[C5] not yet fully covered.** No-repeat
    pairing is enforced (`legal_pair?/2`); no-second-bye, topscorer-colour
    clash, and bye-assignee-score-minimisation are not.
