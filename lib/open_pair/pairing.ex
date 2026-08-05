@@ -128,6 +128,7 @@ defmodule OpenPair.Pairing do
   def pair_later_round(players) do
     brackets =
       players
+      |> with_float_history()
       |> Enum.group_by(& &1.points)
       |> Enum.sort_by(fn {score, _} -> -score end)
       |> Enum.map(fn {_score, members} -> members end)
@@ -135,6 +136,83 @@ defmodule OpenPair.Pairing do
     {pairs, leftover} = cascade_brackets(brackets, [], [])
 
     pairs ++ Enum.map(leftover, &{&1.rank, nil})
+  end
+
+  # Stamp each player's float direction for the last two rounds, once per
+  # round rather than per candidate pair — `float_direction/3` needs every
+  # player (it compares against the OPPONENT's score at the time), which
+  # `pair_weight/4` doesn't have and shouldn't need.
+  defp with_float_history(players) do
+    by_rank = Map.new(players, &{&1.rank, &1})
+
+    Enum.map(players, fn player ->
+      Map.put(player, :floats, %{
+        1 => float_direction(player, 1, by_rank),
+        2 => float_direction(player, 2, by_rank)
+      })
+    end)
+  end
+
+  # Which way a player was floated `rounds_back` rounds ago — a port of
+  # bbpPairings' `getFloat` (`dutch.cpp`). A float isn't recorded anywhere
+  # in a TRF; it's *derived*, by comparing what the two players' scores
+  # were when they were paired. Outscoring your opponent that round means
+  # you were floated DOWN to meet them.
+  #
+  # An unplayed round counts as a downfloat whenever it scored better than
+  # a loss, so a pairing-allocated bye is a downfloat — which is what makes
+  # this criterion bite in odd-sized tournaments.
+  defp float_direction(player, rounds_back, by_rank) do
+    index = length(player.games) - rounds_back
+
+    if index < 0 do
+      :none
+    else
+      game = Enum.at(player.games, index)
+
+      cond do
+        is_nil(game.opponent_rank) ->
+          if result_points(game.result) > 0.0, do: :down, else: :none
+
+        not is_map_key(by_rank, game.opponent_rank) ->
+          :none
+
+        true ->
+          mine = score_before(player, rounds_back)
+          theirs = score_before(Map.fetch!(by_rank, game.opponent_rank), rounds_back)
+
+          cond do
+            mine > theirs -> :down
+            mine < theirs -> :up
+            true -> :none
+          end
+      end
+    end
+  end
+
+  # A player's score as it stood before the last `rounds_back` rounds —
+  # current score minus what those rounds paid out. bbpPairings keeps the
+  # same thing as `scoreWithAcceleration(tournament, roundsBack)`.
+  defp score_before(player, rounds_back) do
+    player.games
+    |> Enum.take(-rounds_back)
+    |> Enum.reduce(player.points, fn game, score -> score - result_points(game.result) end)
+  end
+
+  defp result_points(result) do
+    case result do
+      "1" -> 1.0
+      "+" -> 1.0
+      "F" -> 1.0
+      "U" -> 1.0
+      "=" -> 0.5
+      "H" -> 0.5
+      _ -> 0.0
+    end
+  end
+
+  defp float_of(player, rounds_back) do
+    player |> Map.get(:floats, %{}) |> Map.get(rounds_back, :none)
   end
 
   defp cascade_brackets([], floaters, pairs), do: {pairs, floaters}
@@ -255,6 +333,7 @@ defmodule OpenPair.Pairing do
       # here rather than taking `a`/`b` as the matcher happens to give them.
       {higher, lower} = if a.bracket_pos <= b.bracket_pos, do: {a, b}, else: {b, a}
       {c1, c2, c3, c4} = colour_criteria(higher, lower)
+      {f1, f2, f3, f4} = float_criteria(higher, lower)
       deviation = mdp_deviation(a, b, natural, mdp_count)
 
       ranked([
@@ -262,6 +341,10 @@ defmodule OpenPair.Pairing do
         {bit(c2), 2},
         {bit(c3), 2},
         {bit(c4), 2},
+        {f1, 3},
+        {f2, 2},
+        {f3, 3},
+        {f4, 2},
         {spans.deviation - 1 - deviation, spans.deviation},
         {abs(a.rank - b.rank), spans.spread}
       ])
@@ -434,6 +517,30 @@ defmodule OpenPair.Pairing do
       not clash?,
       (not p.strong? and not p.absolute?) or (not o.strong? and not o.absolute?) or
         (p.absolute? and o.absolute?) or not clash?
+    }
+  end
+
+  # The four float-history criteria of bbpPairings' `computeEdgeWeight`,
+  # ranked immediately below every colour criterion and above the
+  # bracket-ordering ones. These are what TODO.md item 4 predicted would
+  # first bite in round 3: `float_direction/3` looks one and two rounds
+  # back, and two rounds back doesn't exist until round 3.
+  #
+  # All four are phrased so that HIGHER is better, since the matcher
+  # maximises. The two "repeated downfloater" terms reward *pairing* a
+  # player who was floated down recently — pairing them here is precisely
+  # how you avoid floating them again. The two "repeated upfloater" terms
+  # instead withhold their bit from an edge that would upfloat someone who
+  # already upfloated, an edge being an upfloat exactly when it crosses
+  # score groups.
+  defp float_criteria(higher, lower) do
+    crossing? = higher.points > lower.points
+
+    {
+      bit(float_of(lower, 1) == :down) + bit(not crossing? and float_of(higher, 1) == :down),
+      bit(not (crossing? and float_of(lower, 1) == :up)),
+      bit(float_of(lower, 2) == :down) + bit(not crossing? and float_of(higher, 2) == :down),
+      bit(not (crossing? and float_of(lower, 2) == :up))
     }
   end
 
