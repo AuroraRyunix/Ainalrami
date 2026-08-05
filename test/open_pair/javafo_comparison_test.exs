@@ -95,6 +95,7 @@ defmodule OpenPair.JavafoComparisonTest do
     mismatches = Enum.reject(comparisons, & &1.match?)
 
     report(comparisons, errors, exhausted, rounds)
+    dump(mismatches)
 
     assert mismatches == [], """
     #{length(mismatches)} disagreement(s) across #{length(comparisons)} compared round(s) \
@@ -129,6 +130,7 @@ defmodule OpenPair.JavafoComparisonTest do
           match?: false,
           openpair: {:raised, e},
           javafo: nil,
+          trf: "",
           pairs_matched: 0,
           pairs_total: 0
         }
@@ -168,7 +170,10 @@ defmodule OpenPair.JavafoComparisonTest do
   # advance the tournament on JAVAFO's answer (see the moduledoc on why
   # not OpenPair's).
   defp play_round(players, seed, round, total_rounds, player_count) do
+    trf = build_trf(players, total_rounds)
+
     base = %{
+      trf: trf,
       seed: seed,
       round: round,
       player_count: player_count,
@@ -176,7 +181,7 @@ defmodule OpenPair.JavafoComparisonTest do
       exhausted?: false
     }
 
-    case Javafo.pair(build_trf(players, total_rounds)) do
+    case Javafo.pair(trf) do
       # javafo emits a zero-pair file when no legal pairing exists at all —
       # a small field simply runs out of legal opponents (4 players are
       # exhausted after 3 rounds, C1 forbidding rematches). That's the
@@ -342,6 +347,35 @@ defmodule OpenPair.JavafoComparisonTest do
         "\n  WARNING: #{length(errors)} javafo process error(s) — this run was likely " <>
           "resource-starved and the rates above are not trustworthy. Re-run it alone."
       )
+    end
+  end
+
+  # With `PAIRING_FUZZ_DUMP=<dir>`, write each disagreement's exact TRF
+  # alongside both engines' answers. A rate tells you there's a problem; a
+  # replayable input is what lets you find it, and regenerating one from a
+  # seed means reproducing the whole tournament up to that round.
+  defp dump(mismatches) do
+    case System.get_env("PAIRING_FUZZ_DUMP") do
+      nil ->
+        :ok
+
+      dir ->
+        File.mkdir_p!(dir)
+
+        Enum.each(mismatches, fn m ->
+          stem = Path.join(dir, "seed#{m.seed}-r#{m.round}-p#{m.player_count}")
+          File.write!(stem <> ".trf", m.trf)
+
+          File.write!(
+            stem <> ".txt",
+            "seed #{m.seed}, round #{m.round}, #{m.player_count} players\n" <>
+              "pairs matched: #{m.pairs_matched}/#{m.pairs_total}\n\n" <>
+              "OpenPair: #{inspect(m.openpair, limit: :infinity)}\n" <>
+              "javafo:   #{inspect(m.javafo, limit: :infinity)}\n"
+          )
+        end)
+
+        IO.puts("\n  Dumped #{length(mismatches)} disagreement(s) to #{dir}")
     end
   end
 

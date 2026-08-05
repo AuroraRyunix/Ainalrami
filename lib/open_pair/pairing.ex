@@ -240,11 +240,13 @@ defmodule OpenPair.Pairing do
         p |> Map.put(:bracket_pos, i) |> Map.put(:colour_stats, colour_stats(p))
       end)
 
+    bracket_spans = spans(indexed)
+
     {pairs, floaters} =
       Matching.max_weight_matching(
         indexed,
-        &pair_weight(&1, &2, natural, spans(indexed)),
-        &float_weight/1
+        &pair_weight(&1, &2, natural, bracket_spans),
+        &float_weight(&1, bracket_spans)
       )
 
     {Enum.map(pairs, &assign_colour_with_history/1), floaters}
@@ -254,11 +256,44 @@ defmodule OpenPair.Pairing do
   # them without one bleeding into the next. Computed per bracket rather
   # than as global constants because both are bounded by the bracket, and
   # a fixed constant that's too small silently corrupts the ordering.
+  # A criterion's span has to exceed the largest TOTAL every
+  # lower-priority criterion can reach across the whole bracket — every
+  # pair and every float — not merely the largest value a single pair can
+  # contribute. Otherwise a high-priority criterion can lose to the SUM of
+  # low-priority ones spread over several pairs, which is precisely what
+  # an 11-player round-3 disagreement (seed 12) turned out to be: one step
+  # of MDP displacement, correctly the more important term, was outvoted
+  # by a rank tie-break plus a spread difference on two other pairs.
+  #
+  # bbpPairings avoids this by shifting each criterion left by
+  # `playerCountBits` instead of by a single bit. Multiplying every span
+  # by the bracket size is the same guarantee, arithmetic instead of bits.
   defp spans(indexed) do
-    %{
-      deviation: length(indexed) + 1,
-      spread: Enum.max(Enum.map(indexed, & &1.rank)) + 1
+    slots = length(indexed)
+    max_rank = Enum.max(Enum.map(indexed, & &1.rank))
+
+    spans = %{
+      slots: slots,
+      colour: slots + 1,
+      float_pair: 2 * slots + 1,
+      float_single: slots + 1,
+      deviation: slots * slots + 1,
+      spread: slots * max_rank + 1
     }
+
+    # The unit value of each criterion is the product of every span below
+    # it, so `float_weight/2` can place its own terms at the right height
+    # relative to the pair criteria rather than guessing a magnitude.
+    unit_deviation = spans.spread
+    unit_f4 = unit_deviation * spans.deviation
+    unit_f3 = unit_f4 * spans.float_single
+    unit_f2 = unit_f3 * spans.float_pair
+    unit_f1 = unit_f2 * spans.float_single
+    unit_c4 = unit_f1 * spans.float_pair
+
+    spans
+    |> Map.put(:unplayed_unit, unit_f4)
+    |> Map.put(:max_pair, unit_c4 * spans.colour * spans.colour * spans.colour * spans.colour)
   end
 
   # The pairing each bracket would get with no constraints at all, as a
@@ -337,14 +372,14 @@ defmodule OpenPair.Pairing do
       deviation = mdp_deviation(a, b, natural, mdp_count)
 
       ranked([
-        {bit(c1), 2},
-        {bit(c2), 2},
-        {bit(c3), 2},
-        {bit(c4), 2},
-        {f1, 3},
-        {f2, 2},
-        {f3, 3},
-        {f4, 2},
+        {bit(c1), spans.colour},
+        {bit(c2), spans.colour},
+        {bit(c3), spans.colour},
+        {bit(c4), spans.colour},
+        {f1, spans.float_pair},
+        {f2, spans.float_single},
+        {f3, spans.float_pair},
+        {f4, spans.float_single},
         {spans.deviation - 1 - deviation, spans.deviation},
         {abs(a.rank - b.rank), spans.spread}
       ])
@@ -423,9 +458,37 @@ defmodule OpenPair.Pairing do
   # engine did, but javafo paired 1-7 and floated 2 instead. Colour
   # satisfaction was identical either way, so the bye history is the only
   # thing distinguishing the two players.
-  defp float_weight(player) do
-    base = if Map.get(player, :already_floated, false), do: -20_000_000, else: -10_000_000
-    base - unplayed_rounds(player) * 1_000 + player.rank
+  # Every float is worth less than every pair, by an offset larger than any
+  # possible pair weight — the matcher must never buy a float with pairing
+  # quality. Because a bracket of a given parity always floats the same
+  # NUMBER of players, those offsets cancel when two candidate solutions
+  # are compared, leaving the ranked remainder below to decide only WHO
+  # floats, and only once the pairs themselves are equally good.
+  #
+  # That subordination is the point. Hand-tracing an 11-player round-3
+  # disagreement (seed 12) showed both engines producing fully
+  # colour-legal pairings that differed solely in which player took the
+  # bye — and this engine picking the one javafo rejected, because the old
+  # `+ player.rank` tie-break was numerically worth more than a whole step
+  # of MDP displacement. A float preference must never outvote a pairing
+  # criterion; it can only break a tie between them.
+  defp float_weight(player, spans) do
+    # No number of floats can ever buy a pair, and a solution with more
+    # pairs always wins: `slots` floats together stay below one pair.
+    base = -spans.max_pair * spans.slots
+
+    # Re-floating a player who already floated into this bracket outranks
+    # every pairing criterion. Measured, not assumed: demoting this to a
+    # tie-break below the pair criteria cost seven points of pair
+    # agreement (90.33% -> 83.53%) and most of round 2.
+    repeat = if Map.get(player, :already_floated, false), do: -spans.max_pair, else: 0
+
+    # Protecting a player who already holds an unplayed round sits just
+    # above MDP displacement, and the plain "float the worse-ranked
+    # player" convention sits at the very bottom with rank spread — low
+    # enough that it can only ever break a tie, which is what seed 12
+    # showed it must be.
+    base + repeat - unplayed_rounds(player) * spans.unplayed_unit + player.rank
   end
 
   defp unplayed_rounds(player) do
