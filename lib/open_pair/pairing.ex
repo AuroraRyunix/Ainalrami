@@ -156,12 +156,31 @@ defmodule OpenPair.Pairing do
     natural = natural_partner_map(ranked)
 
     indexed =
-      ranked |> Enum.with_index() |> Enum.map(fn {p, i} -> Map.put(p, :bracket_pos, i) end)
+      ranked
+      |> Enum.with_index()
+      |> Enum.map(fn {p, i} ->
+        p |> Map.put(:bracket_pos, i) |> Map.put(:colour_stats, colour_stats(p))
+      end)
 
     {pairs, floaters} =
-      Matching.max_weight_matching(indexed, &pair_weight(&1, &2, natural), &float_weight/1)
+      Matching.max_weight_matching(
+        indexed,
+        &pair_weight(&1, &2, natural, spans(indexed)),
+        &float_weight/1
+      )
 
     {Enum.map(pairs, &assign_colour_with_history/1), floaters}
+  end
+
+  # Upper bounds for the two non-boolean criteria, so `ranked/1` can pack
+  # them without one bleeding into the next. Computed per bracket rather
+  # than as global constants because both are bounded by the bracket, and
+  # a fixed constant that's too small silently corrupts the ordering.
+  defp spans(indexed) do
+    %{
+      deviation: length(indexed) + 1,
+      spread: Enum.max(Enum.map(indexed, & &1.rank)) + 1
+    }
   end
 
   # The pairing each bracket would get with no constraints at all, as a
@@ -228,14 +247,41 @@ defmodule OpenPair.Pairing do
   # originally exposed this (a clean 4-player bracket, and an 8-player
   # heterogeneous one) are explained by this rule and were not explained
   # by the spread rule.
-  defp pair_weight(a, b, %{mdp_count: mdp_count} = natural) do
+  defp pair_weight(a, b, %{mdp_count: mdp_count} = natural, spans) do
     if legal_pair?(a, b) do
-      colour_bonus = if complementary_preference?(a, b), do: 1, else: 0
+      # bbpPairings passes (higherPlayer, lowerPlayer) by bracket order, and
+      # the absolute-preference tie-break in `colour_criteria/2` is not
+      # symmetric in the two, so the roles have to be assigned the same way
+      # here rather than taking `a`/`b` as the matcher happens to give them.
+      {higher, lower} = if a.bracket_pos <= b.bracket_pos, do: {a, b}, else: {b, a}
+      {c1, c2, c3, c4} = colour_criteria(higher, lower)
+      deviation = mdp_deviation(a, b, natural, mdp_count)
 
-      colour_bonus * 1_000_000 - mdp_deviation(a, b, natural, mdp_count) * 1_000 +
-        abs(a.rank - b.rank)
+      ranked([
+        {bit(c1), 2},
+        {bit(c2), 2},
+        {bit(c3), 2},
+        {bit(c4), 2},
+        {spans.deviation - 1 - deviation, spans.deviation},
+        {abs(a.rank - b.rank), spans.spread}
+      ])
     end
   end
+
+  # Pack ranked criteria, highest priority first, the same way bbpPairings'
+  # `computeEdgeWeight` does with successive left-shifts: each criterion is
+  # worth more than every lower-priority criterion combined, so a better
+  # value on an earlier term can never be outvoted by later ones. Passing
+  # explicit spans rather than hard-coded decimal magnitudes is what makes
+  # that guarantee hold — the previous `* 1_000_000` / `* 1_000` scheme was
+  # only safe as long as nobody looked at a bracket big enough to overflow
+  # the gap between two of its terms.
+  defp ranked(components) do
+    Enum.reduce(components, 0, fn {value, span}, acc -> acc * span + value end)
+  end
+
+  defp bit(true), do: 1
+  defp bit(false), do: 0
 
   # Deviation from the natural correspondence, applied ONLY to pairs that
   # involve a moved-down player in a heterogeneous bracket (Article 3.3.1's
@@ -303,57 +349,180 @@ defmodule OpenPair.Pairing do
     Enum.count(player.games, &is_nil(&1.opponent_rank))
   end
 
-  # A player with NO colour preference at all (`nil` — they haven't had a
-  # coloured game yet, e.g. round 1 was a bye or a late entry) constrains
-  # nothing, so any pairing with them satisfies colour. Returning false for
-  # that case — as this did originally — scored every such pairing as a
-  # colour VIOLATION, which is exactly backwards, and corrupted the
-  # dominant term of `pair_weight/3` for every odd-sized tournament (an odd
-  # roster always produces a round-1 bye, hence always at least one
-  # preference-less player in round 2).
-  defp complementary_preference?(a, b) do
-    pref_a = colour_preference(a)
-    pref_b = colour_preference(b)
-    is_nil(pref_a) or is_nil(pref_b) or pref_a != pref_b
+  # A player's full colour state, ported from bbpPairings'
+  # `tournament.cpp` `computePlayerData`. This replaces a one-line
+  # stand-in ("preference is the opposite of your last colour") that was
+  # only ever right for round 2, which is exactly why round 2 measured
+  # 99.85% and round 3 fell off a cliff: after two games a player can be
+  # two colours out of balance, or have had the same colour twice running,
+  # and both produce an ABSOLUTE preference that the old rule couldn't
+  # represent at all.
+  #
+  # Unplayed games (byes, forfeits) are excluded entirely — they carry no
+  # colour and must not break a run of repeated colours either.
+  defp colour_stats(player) do
+    played = Enum.filter(player.games, &(&1.colour in ["w", "b"]))
+    whites = Enum.count(played, &(&1.colour == "w"))
+    blacks = Enum.count(played, &(&1.colour == "b"))
+    imbalance = abs(whites - blacks)
+    consecutive = trailing_run(played)
+
+    last =
+      case List.last(played) do
+        nil -> nil
+        game -> game.colour
+      end
+
+    # Ties go to White, matching bbpPairings' own `gamesAsWhite >
+    # gamesAsBlack ? BLACK : WHITE` — not a coin flip.
+    lower_colour = if whites > blacks, do: "b", else: "w"
+
+    # The ladder's order matters: an imbalance of 2+ outranks a repeated
+    # colour, which outranks an imbalance of 1, which outranks plain
+    # alternation.
+    preference =
+      cond do
+        imbalance > 1 -> lower_colour
+        consecutive > 1 -> invert(last)
+        imbalance > 0 -> lower_colour
+        consecutive > 0 -> invert(last)
+        true -> nil
+      end
+
+    repeated = if consecutive > 1, do: last, else: nil
+    absolute_imbalance? = imbalance > 1
+    absolute? = absolute_imbalance? or not is_nil(repeated)
+
+    %{
+      preference: preference,
+      imbalance: imbalance,
+      repeated: repeated,
+      absolute_imbalance?: absolute_imbalance?,
+      absolute?: absolute?,
+      strong?: not absolute? and imbalance > 0
+    }
   end
 
-  # A player's colour preference is simply the opposite of their own most
-  # recent coloured game — see `assign_colour_with_history/1`'s doc on why
-  # this is a simplified stand-in for FIDE's full preference-strength
-  # computation (absolute/strong/mild preference from accumulated colour
-  # imbalance and repeated colours), not the real thing. Games carry
-  # colour as "w"/"b" (`OpenPair.Trf`'s own convention), not atoms.
-  defp colour_preference(player) do
-    case last_colour(player) do
-      "w" -> "b"
-      "b" -> "w"
-      nil -> nil
+  # How many games at the END of the list share the same colour.
+  defp trailing_run([]), do: 0
+
+  defp trailing_run(played) do
+    [last | earlier] = Enum.reverse(played)
+    1 + Enum.count(Enum.take_while(earlier, &(&1.colour == last.colour)))
+  end
+
+  defp invert("w"), do: "b"
+  defp invert("b"), do: "w"
+  defp invert(nil), do: nil
+
+  # The four separately-ranked colour criteria of bbpPairings'
+  # `insertColorBits`, in its own priority order (highest first). The old
+  # engine had only the third of these — a single "are the preferences
+  # compatible" boolean — which cannot distinguish a clash between two
+  # absolute preferences (near-unpairable) from a clash between two mild
+  # ones (a routine tie-break). All four sit ABOVE every float-history
+  # criterion in bbpPairings' bit layout, so colour errors dominate float
+  # errors whenever the two disagree.
+  defp colour_criteria(higher, lower) do
+    p = lower.colour_stats
+    o = higher.colour_stats
+    clash? = not is_nil(p.preference) and p.preference == o.preference
+
+    {
+      not (p.absolute_imbalance? and o.absolute_imbalance? and clash?),
+      not (p.absolute? and o.absolute? and clash?) or absolute_tiebreak(p, o),
+      not clash?,
+      (not p.strong? and not p.absolute?) or (not o.strong? and not o.absolute?) or
+        (p.absolute? and o.absolute?) or not clash?
+    }
+  end
+
+  # Reached only when both players hold an absolute preference for the SAME
+  # colour, i.e. one of them is definitely going to be denied. It decides
+  # which such clash is the least bad: prefer the one where the player who
+  # is *less* out of balance isn't the one whose repeated colour would be
+  # extended.
+  defp absolute_tiebreak(p, o) do
+    if p.imbalance == o.imbalance do
+      is_nil(p.repeated) or p.repeated != o.repeated
+    else
+      less_imbalanced = if p.imbalance > o.imbalance, do: o, else: p
+      less_imbalanced.repeated != invert(p.preference)
     end
   end
 
   defp legal_pair?(p1, p2), do: not Enum.any?(p1.games, &(&1.opponent_rank == p2.rank))
 
-  # Grants each player's colour preference (opposite of their own most
-  # recent coloured game) when they're complementary; falls back to the
-  # round-1 fixed convention when there's a genuine clash (both "want" the
-  # same colour) or neither has a colour history yet (e.g. a late entrant
-  # paired for the first time in a later round).
   defp assign_colour_with_history({a, b}) do
-    case {colour_preference(a), colour_preference(b)} do
-      {"w", "b"} ->
+    case choose_colour(a, b) do
+      "w" ->
         {a.rank, b.rank}
 
-      {"b", "w"} ->
+      "b" ->
         {b.rank, a.rank}
 
-      _ ->
+      nil ->
         # assign_colour_round_one/2 expects {better_ranked, worse_ranked}.
         {top, bottom} = if a.rank < b.rank, do: {a, b}, else: {b, a}
         assign_colour_round_one(top, bottom)
     end
   end
 
-  defp last_colour(player) do
-    player.games |> Enum.reverse() |> Enum.find_value(& &1.colour)
+  # The colour `player` gets against `opponent` — a port of bbpPairings'
+  # `choosePlayerNeutralColor` (`swisssystems/common.cpp`), which is
+  # Article 5.2 in full: grant the preference outright when they don't
+  # clash, otherwise let the stronger preference win (absolute over strong
+  # over mild, and within absolute, the larger imbalance), and only when
+  # they are genuinely equal fall back to alternating from the most recent
+  # round in which the two players actually had different colours.
+  #
+  # `nil` means "still undecided" and leaves the caller on the fixed
+  # round-1 convention. Note this affects only which of the two players is
+  # printed as White; the comparison harness is colour-blind, so nothing
+  # here moves the match rate. It's correctness, not score.
+  defp choose_colour(player, opponent) do
+    p = player.colour_stats
+    o = opponent.colour_stats
+
+    cond do
+      is_nil(p.preference) or is_nil(o.preference) or p.preference != o.preference ->
+        p.preference || invert(o.preference)
+
+      p.absolute? and (p.imbalance > o.imbalance or not o.absolute?) ->
+        p.preference
+
+      o.absolute? and (o.imbalance > p.imbalance or not p.absolute?) ->
+        invert(o.preference)
+
+      p.strong? and not o.strong? ->
+        p.preference
+
+      o.strong? and not p.strong? ->
+        invert(o.preference)
+
+      true ->
+        case first_colour_difference(player, opponent) do
+          {nil, _} -> nil
+          {_, nil} -> nil
+          {_players_colour, opponents_colour} -> opponents_colour
+        end
+    end
   end
+
+  # The colours the two players had in the most recent round where they
+  # differed, walking both histories back in step and skipping unplayed
+  # games on either side independently.
+  defp first_colour_difference(a, b) do
+    walk_back(played_colours(a), played_colours(b))
+  end
+
+  defp played_colours(player) do
+    player.games |> Enum.map(& &1.colour) |> Enum.filter(&(&1 in ["w", "b"])) |> Enum.reverse()
+  end
+
+  defp walk_back([x | xs], [y | ys]) when x == y, do: walk_back(xs, ys)
+  defp walk_back([x | _], [y | _]), do: {x, y}
+  defp walk_back([], [y | _]), do: {nil, y}
+  defp walk_back([x | _], []), do: {x, nil}
+  defp walk_back([], []), do: {nil, nil}
 end
