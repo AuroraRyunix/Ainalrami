@@ -15,6 +15,8 @@ defmodule OpenPair.Pairing do
   — the shape `OpenPair.Trf.parse/1` returns.
   """
 
+  alias OpenPair.Matching
+
   @doc """
   Pairs the next round, dispatching to `pair_round_one/1` when no game
   history exists yet, or the bracket cascade below otherwise.
@@ -101,24 +103,38 @@ defmodule OpenPair.Pairing do
   not hidden, and not yet cross-checked against `javafo.jar` at the same
   scale round 1 was (see TODO.md):
 
-    * Within a bracket, this finds *a* maximum legal matching (preferring
-      the natural top-half-vs-bottom-half structure first, only deviating
-      to avoid a rematch or an odd bracket size) via a greedy
-      pair-or-float search with one level of lookahead per player, not a
-      true global maximum-matching search — not necessarily FIDE's own
-      canonically-preferred pairing among several equally-legal options.
-      Replicating that exactly means implementing the specific
-      transposition/exchange search order Articles 3.3-3.5 specify, which
-      this doesn't attempt. See `match_bracket/1`'s doc for the exact
-      trade-off.
-    * Colour is a simple "alternate from your own last game" rule, not
-      the full preference-strength computation in Article 5.2.1/5.2.2 —
-      reasonable given colour isn't the thing under test (see
-      `pair_round_one/1`'s doc on why colour-matching JaVaFo exactly isn't
-      a goal even for round 1).
+    * A bracket is split into two equal halves by rank (S1/S2, same
+      top-half-vs-bottom-half structure round 1 uses) and paired via
+      `OpenPair.Matching`'s maximum-weight *bipartite* matching — not
+      FIDE's own specific transposition/exchange search (Articles
+      3.3-3.5), which can in principle consider pairings that don't
+      respect a strict S1/S2 split at all. Confirmed against bbpPairings'
+      own source (`swisssystems/dutch.cpp`) that colour preference is a
+      real scoring criterion for which pairing gets chosen, not merely
+      which side of an already-fixed pair gets which colour — see
+      `pair_weight/2`'s doc for exactly what this project's weight
+      function scores and in what priority order, which is this
+      project's own reasonable substitute for bbpPairings'/JaVaFo's full
+      criteria list (float-history minimisation, among others), not a
+      faithful port of it.
+    * When a bracket has to shed players to become pairable (an odd
+      bracket, or S1/S2 has no fully-legal complete matching at all), the
+      worst-ranked resident(s) float first, same as before — see
+      `try_float_count/2`.
     * The "no player receives the pairing-allocated bye twice" absolute
       criterion (Article 1's C2) isn't enforced — the floating/bye logic
       here doesn't check bye history at all yet.
+
+  An earlier version searched the WHOLE bracket exhaustively (every
+  possible pairing, not just S1-vs-S2 ones) via recursive backtracking.
+  Replaced after a real `javafo.jar` comparison run at scale hung: that
+  search had no bound on redundant re-exploration and its complexity was
+  close to double-factorial in the bracket size, confirmed empirically to
+  take 194ms at just 12 players and not finish within 60 seconds at 16.
+  The bipartite reformulation is polynomial in the bracket size (the
+  matching itself is exponential only in HALF the bracket size, which
+  stays tractable for any realistic tournament — see `OpenPair.Matching`'s
+  moduledoc).
   """
   def pair_later_round(players) do
     brackets =
@@ -140,98 +156,73 @@ defmodule OpenPair.Pairing do
     cascade_brackets(rest, unpaired, pairs ++ new_pairs)
   end
 
-  # Always runs the general search below — there is no shortcut that's both
-  # cheap and correct: an earlier version skipped straight to the plain
-  # top-half-vs-bottom-half split whenever it was rematch-legal, but that
-  # bypasses colour-preference scoring entirely, which turned out to be
-  # exactly the case (a same-score bracket, zero rematch conflicts, but a
-  # colour-preference-optimal pairing existed elsewhere) that a real
-  # `javafo.jar` comparison run caught — see TODO.md.
   defp pair_bracket(ranked) do
-    {pairs, unpaired} = match_bracket(ranked)
+    {pairs, unpaired} = try_float_count(ranked, rem(length(ranked), 2))
     {Enum.map(pairs, &assign_colour_with_history/1), unpaired}
   end
 
-  # General search: the largest legal matching within this bracket, i.e.
-  # the fewest players left unpaired (floating to the next bracket) — and
-  # among equally-sized matchings, the one whose unpaired set is the
-  # worst-ranked available, since floating a stronger player when a
-  # weaker one could have floated instead has no justification and FIDE's
-  # own quality criteria bias toward keeping better-ranked players paired
-  # within their own bracket.
-  #
-  # This tries EVERY legal partner for `p` (not just the first one that
-  # happens to lead somewhere), recursively solving the rest for each, and
-  # keeps whichever choice (pairing p with some partner, or floating p)
-  # scores best by `unpaired_score/1` below — real backtracking, not a
-  # greedy first-fit. It's still not a true global maximum-matching search
-  # (each level commits to its own player's best local choice without
-  # revisiting once a deeper level reveals a better structure elsewhere),
-  # so it isn't guaranteed to find THE maximum matching in every possible
-  # bracket, and even when it does, not necessarily FIDE's own
-  # canonically-preferred one among several equally-sized options — see
-  # `pair_later_round/1`'s doc. Good enough for the bracket sizes a real
-  # tournament produces.
-  defp match_bracket([]), do: {[], []}
+  # Tries the smallest number of floaters first (0 for an even bracket, 1
+  # for odd — matching the bracket's own required parity), escalating by 2
+  # whenever NO choice of that many floaters yields a fully-legal
+  # S1-vs-S2 matching. For a fixed float count, every combination of that
+  # many players is tried (not just the worst-ranked N) — floating the
+  # literal worst N isn't always enough: if the resulting S1/S2 split has
+  # an unavoidable rematch, a DIFFERENT single floater can still legalise
+  # the rest even though the worst-ranked one alone can't (confirmed by a
+  # real test case: a 3-player bracket where the worst-ranked resident
+  # floating leaves the other two stuck on a rematch, but floating the
+  # middle-ranked one instead pairs the top and bottom legally). Candidate
+  # floater sets are tried worst-ranked-first (by total rank) so the
+  # common case (the plain worst-N choice already works) costs nothing
+  # extra. Always terminates: at `float_count == length(ranked)` both
+  # halves are empty, which `OpenPair.Matching` treats as a trivially
+  # satisfied empty matching.
+  defp try_float_count(ranked, float_count) do
+    ranked
+    |> combinations(float_count)
+    |> Enum.sort_by(fn floaters -> -Enum.sum(Enum.map(floaters, & &1.rank)) end)
+    |> Enum.find_value(fn floaters ->
+      remaining = ranked -- floaters
+      half = div(length(remaining), 2)
+      {s1, s2} = Enum.split(remaining, half)
 
-  defp match_bracket([p | rest]) do
-    {pairs_without, unpaired_without} = match_bracket(rest)
-    without = {pairs_without, [p | unpaired_without]}
-
-    candidates =
-      rest
-      |> Enum.filter(&legal_pair?(p, &1))
-      |> Enum.map(fn partner ->
-        {pairs, unpaired} = match_bracket(List.delete(rest, partner))
-        {[{p, partner} | pairs], unpaired}
-      end)
-
-    Enum.min_by([without | candidates], &option_score/1)
-  end
-
-  # Fewer unpaired first; among equal counts, prefer the option whose
-  # unpaired players have the HIGHEST rank numbers (i.e. are the
-  # worst-ranked available) — the negated rank sum makes a higher-ranked
-  # (worse) unpaired set sort as "smaller", so `Enum.min_by` picks it.
-  #
-  # Third, colour-preference satisfaction — confirmed against bbpPairings'
-  # own source (an independent, open FIDE Dutch-system implementation,
-  # `swisssystems/dutch.cpp`'s `computeEdgeWeight`/`insertColorBits`) to be
-  # a real criterion that decides WHICH players get paired together, not
-  # merely which side of an already-fixed pair gets which colour: a
-  # same-score bracket with zero rematch conflicts still didn't match real
-  # `javafo.jar` output before this was added — javafo consistently chose
-  # the pairing where every pair had complementary colour preferences
-  # (one wants white, the other black) over an equally rematch-legal one
-  # that didn't, see TODO.md for the traced example this came from.
-  #
-  # Fourth, a tie-break only reached when two options leave the exact same
-  # players unpaired AND achieve the same colour-preference count
-  # (typically both leave nobody unpaired and satisfy every preference —
-  # several different complete, fully-satisfying matchings can still
-  # exist): prefer the option whose formed pairs have the LARGEST total
-  # rank distance, matching the natural top-half-vs-bottom-half structure
-  # (which pairs far-apart ranks) over one that incidentally pairs two
-  # closely-ranked players together when a wider legal option was also
-  # available. This and the rank-spread tie-break are this project's own
-  # substitutes for bbpPairings'/JaVaFo's exact remaining criteria
-  # (float-history minimisation, among others) — not a faithful port of
-  # those, see `pair_later_round/1`'s doc.
-  defp option_score({pairs, unpaired}) do
-    {
-      length(unpaired),
-      -Enum.sum(Enum.map(unpaired, & &1.rank)),
-      -complementary_colour_count(pairs),
-      -pair_spread(pairs)
-    }
-  end
-
-  defp complementary_colour_count(pairs) do
-    Enum.count(pairs, fn {a, b} ->
-      pref_a = colour_preference(a)
-      pref_b = colour_preference(b)
-      pref_a != nil and pref_b != nil and pref_a != pref_b
+      case Matching.max_weight_perfect_matching(s1, s2, &pair_weight/2) do
+        {:ok, pairs, _total_weight} -> {pairs, floaters}
+        :infeasible -> nil
+      end
     end)
+    |> case do
+      nil -> try_float_count(ranked, float_count + 2)
+      result -> result
+    end
+  end
+
+  defp combinations(_list, 0), do: [[]]
+  defp combinations([], _k), do: []
+
+  defp combinations([head | tail], k) do
+    Enum.map(combinations(tail, k - 1), &[head | &1]) ++ combinations(tail, k)
+  end
+
+  # `nil` (infeasible) for a rematch — the absolute criterion `Matching`
+  # can never violate. Otherwise: colour-preference satisfaction first
+  # (see `pair_later_round/1`'s doc for why, and the TODO.md entry this
+  # came from), then the widest rank spread as a tie-break, mimicking the
+  # natural top-half-vs-bottom-half structure over incidentally pairing
+  # two closely-ranked players when a wider legal option was equally
+  # colour-optimal. The colour term is multiplied well above any possible
+  # rank-spread value so it always dominates regardless of roster size.
+  defp pair_weight(a, b) do
+    if legal_pair?(a, b) do
+      colour_bonus = if complementary_preference?(a, b), do: 1, else: 0
+      colour_bonus * 100_000 + abs(a.rank - b.rank)
+    end
+  end
+
+  defp complementary_preference?(a, b) do
+    pref_a = colour_preference(a)
+    pref_b = colour_preference(b)
+    pref_a != nil and pref_b != nil and pref_a != pref_b
   end
 
   # A player's colour preference is simply the opposite of their own most
@@ -247,8 +238,6 @@ defmodule OpenPair.Pairing do
       nil -> nil
     end
   end
-
-  defp pair_spread(pairs), do: Enum.sum(Enum.map(pairs, fn {a, b} -> abs(a.rank - b.rank) end))
 
   defp legal_pair?(p1, p2), do: not Enum.any?(p1.games, &(&1.opponent_rank == p2.rank))
 
