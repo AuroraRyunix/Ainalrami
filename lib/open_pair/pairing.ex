@@ -17,6 +17,14 @@ defmodule OpenPair.Pairing do
 
   alias OpenPair.Matching
 
+  # Bounds on the bracket cascade's backtracking search (see
+  # `cascade_brackets/4`): how many alternative matchings of a single
+  # bracket to consider, and how much total work to spend before giving up
+  # and returning a best-effort answer.
+  @budget_key :openpair_cascade_budget
+  @cascade_budget 400
+  @alternatives_per_bracket 5
+
   @doc """
   Pairs the next round, dispatching to `pair_round_one/1` when no game
   history exists yet, or the bracket cascade below otherwise.
@@ -133,7 +141,35 @@ defmodule OpenPair.Pairing do
       |> Enum.sort_by(fn {score, _} -> -score end)
       |> Enum.map(fn {_score, members} -> members end)
 
-    {pairs, leftover} = cascade_brackets(brackets, [], [])
+    # Exactly one pairing-allocated bye in an odd field, none in an even
+    # one. Anything else isn't a legal round, so it's a hard requirement on
+    # the cascade rather than something to score.
+    allowed_byes = rem(length(players), 2)
+
+    Process.put(@budget_key, @cascade_budget)
+
+    try do
+      case cascade_brackets(brackets, [], [], allowed_byes) do
+        {:ok, pairs, leftover} -> pairs ++ Enum.map(leftover, &{&1.rank, nil})
+        :infeasible -> greedy_cascade(brackets)
+      end
+    after
+      Process.delete(@budget_key)
+    end
+  end
+
+  # Used only when no legal completion was found within the search budget:
+  # take each bracket's own best matching and accept whatever falls out,
+  # which is what this engine did unconditionally before. It can emit an
+  # illegal number of byes, but returning a wrong pairing beats returning
+  # none, and the harness reports it either way.
+  defp greedy_cascade(brackets) do
+    {pairs, leftover} =
+      Enum.reduce(brackets, {[], []}, fn residents, {pairs, floaters} ->
+        bracket = Enum.sort_by(floaters ++ residents, &{-&1.points, &1.rank})
+        [{new_pairs, unpaired} | _] = bracket_options(bracket)
+        {pairs ++ new_pairs, Enum.map(unpaired, &Map.put(&1, :already_floated, true))}
+      end)
 
     pairs ++ Enum.map(leftover, &{&1.rank, nil})
   end
@@ -215,22 +251,53 @@ defmodule OpenPair.Pairing do
     player |> Map.get(:floats, %{}) |> Map.get(rounds_back, :none)
   end
 
-  defp cascade_brackets([], floaters, pairs), do: {pairs, floaters}
-
-  defp cascade_brackets([residents | rest], floaters, pairs) do
-    bracket = (floaters ++ residents) |> Enum.sort_by(&{-&1.points, &1.rank})
-    {new_pairs, unpaired} = pair_bracket(bracket)
-    # Stamped on the way OUT, not the way in: `unpaired` mixes players who
-    # already carried the flag (floated into THIS bracket from above) with
-    # ones floating for the first time (this bracket's own residents) —
-    # both must enter the NEXT bracket already marked, so `float_weight/1`
-    # can tell "floated already" from "floating for the first time" at
-    # every level, not just the first.
-    marked_unpaired = Enum.map(unpaired, &Map.put(&1, :already_floated, true))
-    cascade_brackets(rest, marked_unpaired, pairs ++ new_pairs)
+  # Depth-first over the brackets, taking each bracket's own best matching
+  # first and only reconsidering it when everything downstream turns out to
+  # have no legal completion. Pairing each bracket greedily is what stranded
+  # a final bracket of two players who had already met (seed 14) — the
+  # bracket above had a slightly worse matching that floated two more
+  # players down, which is exactly what javafo picks.
+  #
+  # @alternatives_per_bracket caps the branching and @cascade_budget the
+  # total work, because this is a search and a pathological history should
+  # degrade to a wrong answer rather than to no answer.
+  defp cascade_brackets([], floaters, pairs, allowed_byes) do
+    if length(floaters) <= allowed_byes, do: {:ok, pairs, floaters}, else: :infeasible
   end
 
-  defp pair_bracket(ranked) do
+  defp cascade_brackets([residents | rest], floaters, pairs, allowed_byes) do
+    budget = Process.get(@budget_key, 0)
+
+    if budget <= 0 do
+      :infeasible
+    else
+      Process.put(@budget_key, budget - 1)
+      bracket = Enum.sort_by(floaters ++ residents, &{-&1.points, &1.rank})
+
+      bracket
+      |> bracket_options()
+      |> Enum.take(@alternatives_per_bracket)
+      |> Enum.reduce_while(:infeasible, fn {new_pairs, unpaired}, _acc ->
+        # Stamped on the way OUT, not the way in: `unpaired` mixes players
+        # who already carried the flag (floated into THIS bracket from
+        # above) with ones floating for the first time — both must enter
+        # the NEXT bracket already marked, so `float_weight/2` can tell
+        # "floated already" from "floating for the first time" at every
+        # level, not just the first.
+        marked = Enum.map(unpaired, &Map.put(&1, :already_floated, true))
+
+        case cascade_brackets(rest, marked, pairs ++ new_pairs, allowed_byes) do
+          {:ok, final_pairs, final_floaters} -> {:halt, {:ok, final_pairs, final_floaters}}
+          :infeasible -> {:cont, :infeasible}
+        end
+      end)
+    end
+  end
+
+  # Every matching this bracket admits, best first — one per achievable
+  # number of floaters. The cascade takes the head unless the rest of the
+  # round can't be completed from it.
+  defp bracket_options(ranked) do
     natural = natural_partner_map(ranked)
 
     indexed =
@@ -242,14 +309,15 @@ defmodule OpenPair.Pairing do
 
     bracket_spans = spans(indexed)
 
-    {pairs, floaters} =
-      Matching.max_weight_matching(
-        indexed,
-        &pair_weight(&1, &2, natural, bracket_spans),
-        &float_weight(&1, bracket_spans)
-      )
-
-    {Enum.map(pairs, &assign_colour_with_history/1), floaters}
+    indexed
+    |> Matching.max_weight_matchings(
+      &pair_weight(&1, &2, natural, bracket_spans),
+      &float_weight(&1, bracket_spans)
+    )
+    |> Enum.sort_by(fn {_count, {weight, _pairs, _floaters}} -> -weight end)
+    |> Enum.map(fn {_count, {_weight, pairs, floaters}} ->
+      {Enum.map(pairs, &assign_colour_with_history/1), floaters}
+    end)
   end
 
   # Upper bounds for the two non-boolean criteria, so `ranked/1` can pack

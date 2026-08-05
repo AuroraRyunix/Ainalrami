@@ -54,6 +54,33 @@ defmodule OpenPair.Matching do
   guarded against here.
   """
   def max_weight_matching(players, pair_weight_fun, float_weight_fun) do
+    {_count, {_weight, pairs, floaters}} =
+      players
+      |> max_weight_matchings(pair_weight_fun, float_weight_fun)
+      |> Enum.max_by(fn {_count, {weight, _pairs, _floaters}} -> weight end)
+
+    {pairs, floaters}
+  end
+
+  @doc """
+  The best matching for EACH possible number of floaters, as
+  `%{float_count => {weight, pairs, floaters}}`.
+
+  Maximising a single bracket in isolation is not the same as maximising
+  the round. A bracket that pairs as many of its own players as possible
+  can strand a later one — two players left holding nothing but a rematch
+  with each other — and the cascade then has no way to produce a legal
+  round at all. Traced on a real 10-player case (seed 14, round 5): this
+  engine emitted TWO pairing-allocated byes in an even field, which is not
+  a legal pairing under any reading, while javafo floated an extra pair of
+  players down so the last bracket could complete.
+
+  Recovering from that needs alternatives, not just the optimum, so the
+  caller can trade a worse bracket for a round that finishes. Same
+  memoised subset DP as before, keeping the best weight per floater count
+  instead of the single best overall.
+  """
+  def max_weight_matchings(players, pair_weight_fun, float_weight_fun) do
     n = length(players)
     arr = List.to_tuple(players)
     full_mask = (1 <<< n) - 1
@@ -61,16 +88,13 @@ defmodule OpenPair.Matching do
     Process.put(memo_key, %{})
 
     try do
-      {_weight, pairs, floaters} =
-        solve(full_mask, arr, n, pair_weight_fun, float_weight_fun, memo_key)
-
-      {pairs, floaters}
+      solve(full_mask, arr, n, pair_weight_fun, float_weight_fun, memo_key)
     after
       Process.delete(memo_key)
     end
   end
 
-  defp solve(0, _arr, _n, _pair_weight_fun, _float_weight_fun, _memo_key), do: {0, [], []}
+  defp solve(0, _arr, _n, _pair_weight_fun, _float_weight_fun, _memo_key), do: %{0 => {0, [], []}}
 
   defp solve(mask, arr, n, pair_weight_fun, float_weight_fun, memo_key) do
     cache = Process.get(memo_key)
@@ -91,31 +115,42 @@ defmodule OpenPair.Matching do
     p = elem(arr, i)
     rest_mask = mask &&& bnot(1 <<< i)
 
-    {w_without, pairs_without, floaters_without} =
-      solve(rest_mask, arr, n, pair_weight_fun, float_weight_fun, memo_key)
+    float_options =
+      rest_mask
+      |> solve(arr, n, pair_weight_fun, float_weight_fun, memo_key)
+      |> Enum.reduce(%{}, fn {count, {weight, pairs, floaters}}, acc ->
+        put_best(acc, count + 1, {weight + float_weight_fun.(p), pairs, [p | floaters]})
+      end)
 
-    float_option = {w_without + float_weight_fun.(p), pairs_without, [p | floaters_without]}
-
-    pair_options =
-      for j <- 0..(n - 1), bit_set?(rest_mask, j) do
+    Enum.reduce(0..(n - 1), float_options, fn j, acc ->
+      if bit_set?(rest_mask, j) do
         q = elem(arr, j)
 
         case pair_weight_fun.(p, q) do
           nil ->
-            nil
+            acc
 
-          w ->
-            new_mask = rest_mask &&& bnot(1 <<< j)
-
-            {w_rest, pairs_rest, floaters_rest} =
-              solve(new_mask, arr, n, pair_weight_fun, float_weight_fun, memo_key)
-
-            {w + w_rest, [{p, q} | pairs_rest], floaters_rest}
+          weight ->
+            rest_mask
+            |> bandnot(j)
+            |> solve(arr, n, pair_weight_fun, float_weight_fun, memo_key)
+            |> Enum.reduce(acc, fn {count, {rest_weight, pairs, floaters}}, inner ->
+              put_best(inner, count, {weight + rest_weight, [{p, q} | pairs], floaters})
+            end)
         end
+      else
+        acc
       end
-      |> Enum.reject(&is_nil/1)
+    end)
+  end
 
-    Enum.max_by([float_option | pair_options], fn {w, _pairs, _floaters} -> w end)
+  defp bandnot(mask, j), do: mask &&& bnot(1 <<< j)
+
+  defp put_best(acc, count, {weight, _pairs, _floaters} = candidate) do
+    case acc do
+      %{^count => {existing, _, _}} when existing >= weight -> acc
+      _ -> Map.put(acc, count, candidate)
+    end
   end
 
   defp lowest_set_bit_index(mask, i) do
