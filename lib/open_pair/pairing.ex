@@ -110,29 +110,38 @@ defmodule OpenPair.Pairing do
 
   Pairing within a bracket is a general (non-bipartite) maximum-weight
   matching over that bracket (`OpenPair.Matching`), scored by
-  `pair_weight/3` and `float_weight/1`. **99.75% composition match against
-  real `javafo.jar`** over 2,000 random round-1 outcomes — see TODO.md for
-  the measured history of how each scoring term got there.
+  `pair_weight/4` and `float_weight/3`. The criteria and their priority
+  order are ported from bbpPairings' `computeEdgeWeight`
+  (`swisssystems/dutch.cpp`): four colour criteria, then four
+  float-history criteria, then MDP displacement and rank spread.
+
+  **96.11% of individual pairs and 85.63% of whole rounds match real
+  `javafo.jar`** over 300 nine-round tournaments of 10-40 players — see
+  TODO.md for the measured history of how each term got there, and the
+  per-round breakdown (round 1 is exact, round 9 is 89.20% of pairs).
 
   **Known simplifications versus the full FIDE procedure**:
 
-    * The scoring terms are a curated set (no rematches, colour-preference
-      satisfaction, MDP displacement, rank spread, float protection)
-      rather than FIDE's own transposition/exchange search (Articles
-      3.3-3.5) or bbpPairings'/JaVaFo's full bit-packed criteria list.
-      Notably absent: the float-history criteria that look two rounds
-      back, which almost certainly accounts for part of the remaining
-      0.25%.
-    * The "no player receives the pairing-allocated bye twice" absolute
-      criterion (Article 1's C2) isn't enforced.
+    * The bracket-ordering terms (MDP displacement, rank spread) stand in
+      for FIDE's own transposition/exchange search (Articles 3.3-3.5) and
+      for the three lowest criteria of bbpPairings' own list.
+    * The four SCORE-WEIGHTED float criteria (bbpPairings weights each
+      float criterion by which score group it affects) aren't implemented,
+      only the four unweighted ones.
+    * The cascade approximates a global matching. bbpPairings runs one
+      over the whole field before pairing anything, to prove a legal round
+      exists; this searches bracket by bracket with backtracking and a
+      bounded budget, falling back to a best-effort answer past it.
 
-  **Do not "simplify" the scoring terms without re-measuring** — three
-  separate plausible-sounding changes here were each measured WORSE and
-  reverted (see TODO.md): a bipartite S1-vs-S2 restriction (10.7%), and
-  replacing the rank-spread tie-break with a whole-bracket
-  natural-correspondence deviation metric, which was retested after every
-  other fix landed and still measured 64.95% against this version's
-  99.75%. The terms below are empirical, not derived.
+  **Do not "simplify" the scoring terms without re-measuring.** Five
+  separate plausible-sounding changes here have each been measured WORSE
+  and reverted (see TODO.md): a bipartite S1-vs-S2 restriction (10.7%), a
+  whole-bracket natural-correspondence deviation metric (64.95%),
+  subordinating the float protections to the pair criteria (-7 points),
+  ordering the cascade's alternatives by weight rather than by floater
+  count (-40 points on round 2), and prepending rather than appending in
+  `OpenPair.Matching`'s candidate list, which silently inverted a
+  tie-break for the same -40. The terms below are empirical, not derived.
   """
   def pair_later_round(players) do
     brackets =

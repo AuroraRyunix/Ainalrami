@@ -108,6 +108,123 @@ logic itself.
    from round 3 — so a round-3 harness is the honest next measurement
    rather than more round-2 tuning.
 
+   **That measurement happened — see "Depth" below. The hypothesis was
+   right, and it was not the only thing wrong.**
+
+## Depth: rounds 3-9
+
+The comparison harnesses were unified into one parameterized file
+(`PAIRING_FUZZ_ROUNDS`), because rounds never needed per-round code:
+bbpPairings' own generator (`src/tournament/generator.cpp`) is a single
+loop over `roundsNumber` calling the identical `computeMatching`. The
+harness plays a tournament forward, advancing on JAVAFO's pairing rather
+than its own, so every round is an independent measurement against a real
+reference history and a disagreement in round 3 can't corrupt round 4.
+
+It also reports **pair-level agreement alongside whole-round agreement**.
+At depth the round-level number is nearly useless on its own: one bad
+pair in a 20-player field scores exactly as badly as ten.
+
+Starting point, and where it stands now (300 tournaments x 9 rounds,
+10-40 players, individual pairs):
+
+| round | start | now |
+|---|---|---|
+| 1 | 100% | 100% |
+| 2 | 99.89% | 99.89% |
+| 3 | 91.36% | 99.39% |
+| 4 | 68.51% | 98.95% |
+| 5 | 74.55% | 97.36% |
+| 6 | 60.90% | 97.29% |
+| 7 | 66.48% | 91.54% |
+| 8 | 56.50% | 91.36% |
+| 9 | 62.95% | 89.20% |
+| **overall** | **75.68%** | **96.11%** |
+
+Whole rounds: 38.15% → 85.63%.
+
+What was actually wrong, in the order it was found. Every step was
+measured, and two were reverted on measurement despite being more
+elegant:
+
+| change | pairs |
+|---|---|
+| starting point (HEAD of round-2 work) | 75.68% |
+| + full colour model (`computePlayerData` + `insertColorBits`) | 80.64% |
+| + float-history criteria (`getFloat`, four levels) | **90.33%** |
+| + sum-safe criterion spans | 90.44% |
+| + backtracking cascade instead of stranding | **92.92%** |
+| + C2 (no second bye) enforced | 92.62% |
+| + unplayed-round protection restricted to the bye bracket | 93.61% |
+| + several matchings per floater count | **96.11%** |
+
+  1. **The colour model was only ever right for round 2.** "Preference is
+     the opposite of your last colour" is exactly correct when every
+     player has played exactly one game, and wrong from round 3 on, where
+     a player can be two colours out of balance or have had the same
+     colour twice. Both produce an ABSOLUTE preference the old rule could
+     not represent. The tell was that the deficit oscillated with round
+     PARITY — only colour balance has a reason to care whether the round
+     number is even — and fixing it moved even rounds 12-15 points and odd
+     rounds 1.5.
+  2. **The float-history criteria were the predicted round-3 cliff**, and
+     they behaved exactly as item 4 below predicted: round 3 went 91.36%
+     → 99.39%. A float is not recorded in a TRF, it is derived by
+     comparing what two players' scores were when they were paired.
+  3. **Greedy per-bracket pairing is not globally optimal, and produced
+     ILLEGAL output** — two pairing-allocated byes in an even field, in 65
+     of 104 sampled disagreements. A bracket that pairs as many of its own
+     players as possible can strand a later one holding nothing but a
+     rematch. This is the largest single defect the depth work found, and
+     it is a correctness bug, not a disagreement.
+  4. **"Don't downfloat a player holding an unplayed round" was
+     over-generalised.** It came from round-2 tuning, where it was worth
+     six points. bbpPairings guards the equivalent criterion with
+     `isSingleDownfloaterTheByeAssignee`: it is "minimise the unplayed
+     games of the BYE ASSIGNEE", not a standing protection for anyone who
+     once had a bye.
+
+Two reverted on measurement, both of which looked cleaner than what they
+replaced:
+
+  - **Subordinating the float protections to the pair criteria.** Cost
+    seven points and most of round 2. Re-floating protection genuinely
+    outranks every pairing criterion, matching bbpPairings placing bye
+    eligibility above colour. Only the plain rank tie-break belongs at the
+    bottom.
+  - **Ordering the cascade's alternatives by weight.** Fewer floats almost
+    always outweighs more, so a global sort fills the list with
+    one-floater variants and the cascade loses the ability to float MORE
+    players when that is the only way to finish the round.
+
+And one bug worth remembering because it was invisible: in
+`OpenPair.Matching`, prepending rather than appending a candidate before a
+**stable** sort lets it overtake an equal-weight incumbent and silently
+inverts a tie-break. Ties are everywhere in this weight scheme. That
+one-character difference cost round 2 forty points while leaving every
+reported weight identical, and was only localised by setting the
+candidate count back to 1 — which should have been behaviourally
+identical to the previous commit, and was.
+
+### Still open at depth
+
+Rounds 7-9 sit at 89-92% of pairs. Known gaps, in the order most likely
+to matter:
+
+  - The four SCORE-WEIGHTED float criteria (`dutch.cpp` lines 385-460):
+    bbpPairings weights each float criterion by which score group it
+    affects. Not implemented.
+  - The cascade approximates a global matching. bbpPairings runs one over
+    the whole field first, to prove a legal round exists at all.
+  - The bracket-ordering terms (MDP displacement, rank spread) still stand
+    in for FIDE's transposition/exchange procedure and bbpPairings' three
+    lowest criteria.
+  - The harness still generates only wins, losses, draws and byes.
+    bbpPairings' generator also produces forfeits, retirements and
+    half-point byes (`generator.h`'s `forfeitRate`, `retiredRate`,
+    `halfPointByeRate`) — a real coverage gap, deliberately left out of
+    the depth work so a rate change could be attributed to depth alone.
+
    **Historical detail on how each fix was found** (each caught by the
    previous revision's own comparison run):
 
@@ -168,19 +285,20 @@ logic itself.
    *(The seed-15 case that this section previously flagged as an
    unexplained spread-tie-break mystery was resolved by the one-sided MDP
    displacement fix — it was never a spread problem.)*
-3. **Absolute criteria [C1]-[C5] not yet fully covered.** No-repeat
-   pairing is enforced (`legal_pair?/2`); no-second-bye, topscorer-colour
-   clash, and bye-assignee-score-minimisation are not.
-4. **Float-history criteria (two rounds back).** bbpPairings scores four
-   separate levels of "downfloater/upfloater repeated from the previous
-   round / from two rounds before" (`dutch.cpp`'s `getFloat`); this
-   engine scores none of them. Can't affect round 2 (there's no
-   two-rounds-back yet), so it needs a round-3 harness to measure — the
-   most likely home of the remaining 0.25%.
-5. **Colour allocation & floater history refinement** — Article 5.2's
-   full preference-strength computation (currently a simple
-   alternate-from-last-game rule, see `assign_colour_with_history/1`'s
-   doc) and Art. 1.9's absolute colour-difference rules aren't implemented.
+3. **Absolute criteria [C1]-[C5] partly covered.** No-repeat pairing
+   (`legal_pair?/2`) and ~~no-second-bye~~ **C2 (`eligible_for_bye?/1`,
+   done)** are enforced; topscorer-colour clash and
+   bye-assignee-score-minimisation are not.
+4. ~~**Float-history criteria (two rounds back).**~~ **Done** — see
+   "Depth" above. The prediction in this item held exactly: the criteria
+   cannot bind before round 3, and round 3 was the measured cliff
+   (91.36% → 99.39% of pairs). Four levels ported from `dutch.cpp`'s
+   `getFloat`; the four SCORE-WEIGHTED variants are still open.
+5. ~~**Colour allocation & floater history refinement**~~ **Done** —
+   Article 5.2's full preference-strength computation is ported
+   (`colour_stats/1` from `computePlayerData`, `choose_colour/2` from
+   `choosePlayerNeutralColor`), including absolute/strong/mild strength
+   and the absolute colour-difference rules.
 6. **RTG (`-g`) and Checker (`-c`) modes** — JaVaFo's own two auxiliary
    roles, used for FIDE's FE1 endorsement auto-test (a checker doesn't need
    a search at all, "just" a verifier against every criterion above, so
