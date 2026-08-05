@@ -99,37 +99,31 @@ defmodule OpenPair.Pairing do
   ahead of the new bracket's own residents per their higher score, which
   falls out of re-sorting the merged group by Article 1.2 directly).
 
-  **Known simplifications versus the full FIDE procedure** — documented,
-  not hidden, and not yet cross-checked against `javafo.jar` at the same
-  scale round 1 was (see TODO.md):
+  Pairing within a bracket is a general (non-bipartite) maximum-weight
+  matching over that bracket (`OpenPair.Matching`), scored by
+  `pair_weight/3` and `float_weight/1`. **99.75% composition match against
+  real `javafo.jar`** over 2,000 random round-1 outcomes — see TODO.md for
+  the measured history of how each scoring term got there.
 
-    * Pairing within a bracket uses `OpenPair.Matching`'s general
-      (non-bipartite) maximum-weight matching, scored by
-      `pair_weight/2`/`float_weight/1` — a curated set of criteria (no
-      rematches, colour-preference satisfaction, rank spread, floating
-      the worst-ranked player when a choice exists) rather than FIDE's
-      own specific transposition/exchange search (Articles 3.3-3.5) or
-      bbpPairings'/JaVaFo's own full bit-packed criteria list
-      (float-history minimisation, among others). See `pair_weight/2`'s
-      doc for exactly what's scored and in what priority order.
+  **Known simplifications versus the full FIDE procedure**:
+
+    * The scoring terms are a curated set (no rematches, colour-preference
+      satisfaction, MDP displacement, rank spread, float protection)
+      rather than FIDE's own transposition/exchange search (Articles
+      3.3-3.5) or bbpPairings'/JaVaFo's full bit-packed criteria list.
+      Notably absent: the float-history criteria that look two rounds
+      back, which almost certainly accounts for part of the remaining
+      0.25%.
     * The "no player receives the pairing-allocated bye twice" absolute
-      criterion (Article 1's C2) isn't enforced — floating doesn't check
-      bye history at all yet.
+      criterion (Article 1's C2) isn't enforced.
 
-  This went through two earlier, real-comparison-driven revisions before
-  landing here (see TODO.md for the full history, worth reading before
-  changing this again): an unrestricted exhaustive backtracking search
-  with no bound on redundant re-exploration (confirmed to take 194ms at
-  12 players and not finish within 60 seconds at 16), then a *bipartite*
-  reformulation (split each bracket into a better/worse half, pair only
-  across the split) that fixed the hang but was confirmed WRONG at scale
-  (10.7% match against real `javafo.jar` over 2000 random histories,
-  including a regression on a case that matched exactly before) — real
-  FIDE-family pairing engines don't hard-restrict to that split, per
-  bbpPairings' own source. The current version restores general
-  (non-bipartite) matching, keeping it tractable via memoization
-  (`OpenPair.Matching`) instead of via a structural restriction that
-  turned out to be incorrect.
+  **Do not "simplify" the scoring terms without re-measuring** — three
+  separate plausible-sounding changes here were each measured WORSE and
+  reverted (see TODO.md): a bipartite S1-vs-S2 restriction (10.7%), and
+  replacing the rank-spread tie-break with a whole-bracket
+  natural-correspondence deviation metric, which was retested after every
+  other fix landed and still measured 64.95% against this version's
+  99.75%. The terms below are empirical, not derived.
   """
   def pair_later_round(players) do
     brackets =

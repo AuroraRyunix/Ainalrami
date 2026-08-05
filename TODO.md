@@ -60,21 +60,54 @@ logic itself.
    `{:error, code, ""}` tuples, zero real mismatches among them. Lesson
    for next time this needs re-running at even larger scale: run it
    alone, not alongside other `--only javafo` batches.
-2. ~~**Bracket cascade for later rounds.**~~ **Real progress, real
-   remaining gap, quantified — not "mostly done"** —
+2. ~~**Bracket cascade for later rounds.**~~ **99.75% match against real
+   `javafo.jar`** (1995/2000 random round-1 outcomes) —
    `OpenPair.Pairing.pair_later_round/1`. Forms score brackets (Art. 1.2:
    score desc, TPN asc) and pairs each via `OpenPair.Matching`'s general
    (non-bipartite) maximum-weight matching-with-floats (memoized bitmask
-   DP), scored by `pair_weight/2` (legality, colour-preference
-   satisfaction, rank spread) and `float_weight/1` (deeply negative so
-   pairing always beats floating; strongly penalises re-floating a player
-   who already floated into this bracket from a higher one — see below).
+   DP), scored by `pair_weight/3` and `float_weight/1`.
 
-   **Four real, evidence-driven revisions got here — read in order if
-   this section goes stale, since each fixed a genuine bug a real
-   `javafo.jar` comparison run (`test/open_pair/javafo_comparison_round2_test.exs`
-   — pairs round 1 for real, simulates results, asks both engines to pair
-   round 2 from identical history) caught in the PREVIOUS one:**
+   **Every scoring term is empirical — measured on the identical
+   2,000-history set, not derived from the spec.** The trajectory, in
+   order:
+
+   | change | result |
+   |---|---|
+   | unrestricted exhaustive search, no colour scoring | 0%, and hung past 12 players |
+   | + colour preference as a composition criterion | traced case fixed, still hung |
+   | bipartite S1-vs-S2 restriction (to fix the hang) | **10.7% — reverted** |
+   | general matching + memoization instead | 51.7% |
+   | + penalise re-floating an already-floated MDP | 66.24% |
+   | + heterogeneous bracket split (Art. 3.3.1, MDPs alone in S1) | 69.1% |
+   | + fix: no-colour-preference players were scored as violating | 82.25% |
+   | + don't downfloat a player holding an unplayed round | 88.4% |
+   | + measure MDP displacement one-sided, not summed | **99.75%** |
+   | whole-bracket natural-correspondence deviation vs. rank spread | **64.95% — reverted** |
+
+   Two of those are worth remembering, because both looked obviously
+   right and were not:
+
+   - **The bipartite restriction.** Round 1 genuinely does pair "top half
+     vs bottom half", so restricting later brackets to the same shape
+     seemed safe. It isn't: bbpPairings (`swisssystems/dutch.cpp`)
+     computes a weight for ANY two compatible players and uses bracket
+     membership as a weighted *bonus*, never a structural exclusion.
+   - **Natural-correspondence deviation.** FIDE's procedure really does
+     work by minimal transposition of the natural order, and this metric
+     explained every hand-traced case — but as a *replacement* for the
+     rank-spread tie-break it measured 33.9%, and still only 64.95% when
+     retested after every other fix had landed. Scoped to MDP pairs only,
+     where Art. 3.3.1 actually applies, the same idea is worth +30
+     points. Being "right in principle" decided nothing; scope did.
+
+   The remaining 5/2000 are unexplained. Most likely candidate: the
+   float-history criteria that look two rounds back (bbpPairings has four
+   such levels, this engine has none), which can only begin to matter
+   from round 3 — so a round-3 harness is the honest next measurement
+   rather than more round-2 tuning.
+
+   **Historical detail on how each fix was found** (each caught by the
+   previous revision's own comparison run):
 
    1. *Unrestricted exhaustive search, no colour scoring* — failed
       consistently (0/10). Hand-traced 18-player case (seed 3): a
@@ -130,35 +163,18 @@ logic itself.
    applied* before this, every decision quietly falling through to the
    round-1 fixed convention.
 
-   **Known remaining gap, found but not fully understood yet**: even
-   after the MDP fix, one seed-15 sub-case with TWO fully
-   colour-preference-satisfying candidate pairings picked the "wrong"
-   one — javafo chose the smaller-total-rank-spread option
-   (`|3-8|+|9-12|=8`) where this project's widest-spread tie-break chose
-   the larger one (`|3-9|+|8-12|=10`). That looked like evidence the
-   "prefer widest spread" rule (extrapolated from round 1's own confirmed
-   top-half-vs-bottom-half behaviour, never independently verified for
-   later-round tie-breaking) was simply wrong — **but a follow-up,
-   deliberately isolated 8-player test (no floaters, no merged bracket,
-   just one clean same-score bracket with the exact same "two fully
-   colour-satisfying options at different spreads" shape) showed javafo
-   choosing the WIDER-spread option, confirming the rule instead of
-   refuting it.** So the seed-15 disagreement isn't explained by the
-   spread rule being wrong — it's something specific to that case (most
-   likely an interaction with the MDP float penalty just added, since
-   seed-15's bracket included a floater and the isolated test
-   deliberately didn't) that hasn't been isolated yet. Needs its own
-   follow-up test (a clean bracket WITH a floater, controlling for
-   spread the same way) before touching `pair_weight/2`/`float_weight/1`
-   again — don't guess a fix for a cause that hasn't been confirmed.
-   Do not claim round-2+ matches `javafo.jar` at scale until re-run and
-   confirmed with real numbers, not this section's prose.
+   *(The seed-15 case that this section previously flagged as an
+   unexplained spread-tie-break mystery was resolved by the one-sided MDP
+   displacement fix — it was never a spread problem.)*
 3. **Absolute criteria [C1]-[C5] not yet fully covered.** No-repeat
    pairing is enforced (`legal_pair?/2`); no-second-bye, topscorer-colour
    clash, and bye-assignee-score-minimisation are not.
-4. **The seed-15-style disagreement above** — see item 2's "known
-   remaining gap" note. Needs isolating whether it's an MDP-float
-   interaction or something else before attempting a fix.
+4. **Float-history criteria (two rounds back).** bbpPairings scores four
+   separate levels of "downfloater/upfloater repeated from the previous
+   round / from two rounds before" (`dutch.cpp`'s `getFloat`); this
+   engine scores none of them. Can't affect round 2 (there's no
+   two-rounds-back yet), so it needs a round-3 harness to measure — the
+   most likely home of the remaining 0.25%.
 5. **Colour allocation & floater history refinement** — Article 5.2's
    full preference-strength computation (currently a simple
    alternate-from-last-game rule, see `assign_colour_with_history/1`'s
