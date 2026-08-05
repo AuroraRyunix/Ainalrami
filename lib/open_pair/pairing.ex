@@ -260,10 +260,19 @@ defmodule OpenPair.Pairing do
     i = a.bracket_pos
     j = b.bracket_pos
 
-    if i < mdp_count or j < mdp_count do
-      abs(j - Map.get(natural, i, j)) + abs(i - Map.get(natural, j, i))
-    else
-      0
+    # Measured from the MDP's side ONLY, not summed symmetrically over
+    # both. Summing both sides made genuinely different options tie: for a
+    # single MDP at position 0 whose natural partner is position 1,
+    # pairing it with position 2 scored |2-1| + |0-natural[2]| and pairing
+    # it with position 5 scored |5-1| + |0-natural[5]| — both 6, because
+    # the resident's own half-split partner distance drowned out the MDP's.
+    # The resident's natural partner is irrelevant here: Article 3.3.1's
+    # rule is about which resident the MDP takes, so only the MDP's own
+    # displacement counts.
+    cond do
+      i < mdp_count -> abs(j - Map.get(natural, i, j))
+      j < mdp_count -> abs(i - Map.get(natural, j, i))
+      true -> 0
     end
   end
 
@@ -282,9 +291,22 @@ defmodule OpenPair.Pairing do
   # floating a bracket's own fresh resident over floating the same player
   # down two levels in a row when a choice exists, matching bbpPairings'
   # own "minimise downfloaters" quality criterion (`dutch.cpp`).
+  #
+  # A player who already has an unplayed round in their history (a bye, or
+  # a forfeit) is also strongly protected from downfloating — traced from a
+  # real `javafo.jar` disagreement on a 3-player top bracket
+  # {1, 2, 7} where 7 had taken round 1's bye: the natural S1/S2 split
+  # pairs 1-2 and floats the worst-ranked player (7), which is what this
+  # engine did, but javafo paired 1-7 and floated 2 instead. Colour
+  # satisfaction was identical either way, so the bye history is the only
+  # thing distinguishing the two players.
   defp float_weight(player) do
     base = if Map.get(player, :already_floated, false), do: -20_000_000, else: -10_000_000
-    base + player.rank
+    base - unplayed_rounds(player) * 1_000 + player.rank
+  end
+
+  defp unplayed_rounds(player) do
+    Enum.count(player.games, &is_nil(&1.opponent_rank))
   end
 
   # A player with NO colour preference at all (`nil` — they haven't had a
