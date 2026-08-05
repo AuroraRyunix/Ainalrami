@@ -262,7 +262,11 @@ defmodule OpenPair.Pairing do
   # total work, because this is a search and a pathological history should
   # degrade to a wrong answer rather than to no answer.
   defp cascade_brackets([], floaters, pairs, allowed_byes) do
-    if length(floaters) <= allowed_byes, do: {:ok, pairs, floaters}, else: :infeasible
+    if length(floaters) <= allowed_byes and Enum.all?(floaters, &eligible_for_bye?/1) do
+      {:ok, pairs, floaters}
+    else
+      :infeasible
+    end
   end
 
   defp cascade_brackets([residents | rest], floaters, pairs, allowed_byes) do
@@ -690,6 +694,17 @@ defmodule OpenPair.Pairing do
   end
 
   defp legal_pair?(p1, p2), do: not Enum.any?(p1.games, &(&1.opponent_rank == p2.rank))
+
+  # Absolute criterion C2: nobody receives a second pairing-allocated bye.
+  # bbpPairings' `eligibleForBye` phrases it as "no unplayed game already
+  # worth at least a win", which also rules out a player who took a forfeit
+  # win — a half-point bye leaves them eligible. Enforced as a hard
+  # requirement on the cascade's final state rather than scored, so the
+  # backtracking search has to find a legal bye assignee or report that
+  # none exists.
+  defp eligible_for_bye?(player) do
+    not Enum.any?(player.games, &(&1.result in ["U", "F", "+"]))
+  end
 
   defp assign_colour_with_history({a, b}) do
     case choose_colour(a, b) do
