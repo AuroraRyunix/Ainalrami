@@ -23,7 +23,8 @@ defmodule OpenPair.Pairing do
   # and returning a best-effort answer.
   @budget_key :openpair_cascade_budget
   @cascade_budget 400
-  @alternatives_per_bracket 5
+  @alternatives_per_bracket 9
+  @alternatives_per_count 3
 
   @doc """
   Pairs the next round, dispatching to `pair_round_one/1` when no game
@@ -318,8 +319,15 @@ defmodule OpenPair.Pairing do
       &pair_weight(&1, &2, natural, bracket_spans),
       &float_weight(&1, bracket_spans, bye_bracket?)
     )
-    |> Enum.sort_by(fn {_count, {weight, _pairs, _floaters}} -> -weight end)
-    |> Enum.map(fn {_count, {_weight, pairs, floaters}} ->
+    |> Enum.sort_by(fn {count, _candidates} -> count end)
+    |> Enum.flat_map(fn {_count, candidates} ->
+      candidates
+      |> Enum.uniq_by(fn {_weight, _pairs, floaters} ->
+        Enum.sort(Enum.map(floaters, & &1.rank))
+      end)
+      |> Enum.take(@alternatives_per_count)
+    end)
+    |> Enum.map(fn {_weight, pairs, floaters} ->
       {Enum.map(pairs, &assign_colour_with_history/1), floaters}
     end)
   end

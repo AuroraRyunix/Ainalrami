@@ -54,13 +54,34 @@ defmodule OpenPair.Matching do
   guarded against here.
   """
   def max_weight_matching(players, pair_weight_fun, float_weight_fun) do
-    {_count, {_weight, pairs, floaters}} =
+    {_weight, pairs, floaters} =
       players
       |> max_weight_matchings(pair_weight_fun, float_weight_fun)
-      |> Enum.max_by(fn {_count, {weight, _pairs, _floaters}} -> weight end)
+      |> Enum.flat_map(fn {_count, candidates} -> candidates end)
+      |> Enum.max_by(fn {weight, _pairs, _floaters} -> weight end)
 
     {pairs, floaters}
   end
+
+  # How many alternative matchings to carry per floater count. One is
+  # enough to find the optimum, but not enough to recover from a bracket
+  # whose optimum strands the rest of the round: what the cascade needs
+  # to vary is WHICH players float, and two arrangements with the same
+  # float count can float completely different people.
+  #
+  # Traced on seed 73, round 4. The 1.0 bracket's best two-pair matching
+  # floats player 12, who has already played the only player below them,
+  # so the round cannot finish. javafo takes a different two-pair matching
+  # that floats player 10 instead. With one candidate per count, the
+  # cascade could only fall back to a strictly worse ONE-pair matching,
+  # and did.
+  @candidates_per_count 6
+
+  # Above this bracket size the DP is already expensive enough that
+  # multiplying its state by @candidates_per_count is not worth it; large
+  # brackets are also the least likely to strand, having far more ways to
+  # pair.
+  @max_bracket_for_alternatives 14
 
   @doc """
   The best matching for EACH possible number of floaters, as
@@ -85,18 +106,20 @@ defmodule OpenPair.Matching do
     arr = List.to_tuple(players)
     full_mask = (1 <<< n) - 1
     memo_key = make_ref()
+    keep = if n > @max_bracket_for_alternatives, do: 1, else: @candidates_per_count
     Process.put(memo_key, %{})
 
     try do
-      solve(full_mask, arr, n, pair_weight_fun, float_weight_fun, memo_key)
+      solve(full_mask, arr, n, pair_weight_fun, float_weight_fun, memo_key, keep)
     after
       Process.delete(memo_key)
     end
   end
 
-  defp solve(0, _arr, _n, _pair_weight_fun, _float_weight_fun, _memo_key), do: %{0 => {0, [], []}}
+  defp solve(0, _arr, _n, _pair_weight_fun, _float_weight_fun, _memo_key, _keep),
+    do: %{0 => [{0, [], []}]}
 
-  defp solve(mask, arr, n, pair_weight_fun, float_weight_fun, memo_key) do
+  defp solve(mask, arr, n, pair_weight_fun, float_weight_fun, memo_key, keep) do
     cache = Process.get(memo_key)
 
     case Map.fetch(cache, mask) do
@@ -104,22 +127,25 @@ defmodule OpenPair.Matching do
         result
 
       :error ->
-        result = compute_solve(mask, arr, n, pair_weight_fun, float_weight_fun, memo_key)
+        result = compute_solve(mask, arr, n, pair_weight_fun, float_weight_fun, memo_key, keep)
         Process.put(memo_key, Map.put(Process.get(memo_key), mask, result))
         result
     end
   end
 
-  defp compute_solve(mask, arr, n, pair_weight_fun, float_weight_fun, memo_key) do
+  defp compute_solve(mask, arr, n, pair_weight_fun, float_weight_fun, memo_key, keep) do
     i = lowest_set_bit_index(mask, 0)
     p = elem(arr, i)
     rest_mask = mask &&& bnot(1 <<< i)
+    float_weight = float_weight_fun.(p)
 
     float_options =
       rest_mask
-      |> solve(arr, n, pair_weight_fun, float_weight_fun, memo_key)
-      |> Enum.reduce(%{}, fn {count, {weight, pairs, floaters}}, acc ->
-        put_best(acc, count + 1, {weight + float_weight_fun.(p), pairs, [p | floaters]})
+      |> solve(arr, n, pair_weight_fun, float_weight_fun, memo_key, keep)
+      |> Enum.reduce(%{}, fn {count, candidates}, acc ->
+        Enum.reduce(candidates, acc, fn {weight, pairs, floaters}, inner ->
+          put_candidate(inner, count + 1, {weight + float_weight, pairs, [p | floaters]}, keep)
+        end)
       end)
 
     Enum.reduce(0..(n - 1), float_options, fn j, acc ->
@@ -133,9 +159,16 @@ defmodule OpenPair.Matching do
           weight ->
             rest_mask
             |> bandnot(j)
-            |> solve(arr, n, pair_weight_fun, float_weight_fun, memo_key)
-            |> Enum.reduce(acc, fn {count, {rest_weight, pairs, floaters}}, inner ->
-              put_best(inner, count, {weight + rest_weight, [{p, q} | pairs], floaters})
+            |> solve(arr, n, pair_weight_fun, float_weight_fun, memo_key, keep)
+            |> Enum.reduce(acc, fn {count, candidates}, inner ->
+              Enum.reduce(candidates, inner, fn {rest_weight, pairs, floaters}, innermost ->
+                put_candidate(
+                  innermost,
+                  count,
+                  {weight + rest_weight, [{p, q} | pairs], floaters},
+                  keep
+                )
+              end)
             end)
         end
       else
@@ -146,10 +179,25 @@ defmodule OpenPair.Matching do
 
   defp bandnot(mask, j), do: mask &&& bnot(1 <<< j)
 
-  defp put_best(acc, count, {weight, _pairs, _floaters} = candidate) do
-    case acc do
-      %{^count => {existing, _, _}} when existing >= weight -> acc
-      _ -> Map.put(acc, count, candidate)
+  # Keep the `keep` best candidates for this floater count, best first.
+  defp put_candidate(acc, count, {weight, _, _} = candidate, keep) do
+    existing = Map.get(acc, count, [])
+
+    if length(existing) >= keep and weight <= elem(List.last(existing), 0) do
+      acc
+    else
+      # Appended, NOT prepended. `Enum.sort_by/2` is stable, so a
+      # prepended candidate would overtake an equal-weight incumbent and
+      # silently invert the tie-break the single-candidate version had —
+      # which is exactly what happened: ties are everywhere in this weight
+      # scheme, and flipping them cost round 2 forty points while leaving
+      # the reported weights identical.
+      merged =
+        (existing ++ [candidate])
+        |> Enum.sort_by(fn {w, _, _} -> -w end)
+        |> Enum.take(keep)
+
+      Map.put(acc, count, merged)
     end
   end
 
