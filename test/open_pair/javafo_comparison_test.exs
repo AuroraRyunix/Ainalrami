@@ -131,6 +131,7 @@ defmodule OpenPair.JavafoComparisonTest do
           openpair: {:raised, e},
           javafo: nil,
           trf: "",
+          illegal: :raised,
           pairs_matched: 0,
           pairs_total: 0
         }
@@ -188,7 +189,14 @@ defmodule OpenPair.JavafoComparisonTest do
       # tournament ending early, not a disagreement: stop this tournament
       # and exclude the round from the rates entirely.
       {:ok, []} ->
-        {:error, Map.merge(base, %{exhausted?: true, match?: true, openpair: nil, javafo: []})}
+        {:error,
+         Map.merge(base, %{
+           exhausted?: true,
+           match?: true,
+           openpair: nil,
+           javafo: [],
+           illegal: nil
+         })}
 
       {:ok, javafo_pairs} ->
         openpair_pairs = safely_pair(players)
@@ -200,6 +208,7 @@ defmodule OpenPair.JavafoComparisonTest do
             javafo: Enum.sort(javafo_pairs)
           })
           |> Map.merge(pair_agreement(openpair_pairs, javafo_pairs))
+          |> Map.put(:illegal, illegality(openpair_pairs, players))
 
         next_players = apply_round(players, javafo_pairs, simulate_results(javafo_pairs))
         {:ok, measurement, next_players}
@@ -209,6 +218,7 @@ defmodule OpenPair.JavafoComparisonTest do
          Map.merge(base, %{
            process_error?: true,
            match?: false,
+           illegal: nil,
            openpair: nil,
            javafo: {:error, code, out}
          })}
@@ -239,6 +249,37 @@ defmodule OpenPair.JavafoComparisonTest do
   # so a round-level 0% can't distinguish "nearly right" from "unrelated".
   # This measures how many individual pairs both engines chose, which turns
   # that flat 0% back into a gradient worth optimising against.
+  # Is OpenPair's own answer a legal round AT ALL, judged without
+  # reference to javafo? Agreement and legality are different questions,
+  # and this one has a right answer: a round must pair every player
+  # exactly once, never repeat a pairing, and hand out exactly one
+  # pairing-allocated bye in an odd field and none in an even one.
+  #
+  # Worth measuring separately because the largest defect the depth work
+  # found was not a disagreement at all — it was this engine emitting two
+  # byes in an even field, which no amount of "javafo would have done it
+  # differently" describes properly.
+  defp illegality({:raised, _}, _players), do: :raised
+
+  defp illegality(pairs, players) do
+    byes = Enum.count(pairs, fn {_white, black} -> is_nil(black) end)
+    seated = Enum.flat_map(pairs, fn {w, b} -> if b, do: [w, b], else: [w] end)
+    by_rank = Map.new(players, &{&1.rank, &1})
+
+    rematch? =
+      Enum.any?(pairs, fn
+        {_w, nil} -> false
+        {w, b} -> Enum.any?(Map.fetch!(by_rank, w).games, &(&1.opponent_rank == b))
+      end)
+
+    cond do
+      byes != rem(length(players), 2) -> :bad_bye_count
+      Enum.sort(seated) != Enum.sort(Enum.map(players, & &1.rank)) -> :not_a_partition
+      rematch? -> :rematch
+      true -> nil
+    end
+  end
+
   defp pair_agreement({:raised, _}, javafo_pairs),
     do: %{pairs_matched: 0, pairs_total: length(javafo_pairs)}
 
@@ -334,6 +375,20 @@ defmodule OpenPair.JavafoComparisonTest do
     end)
 
     IO.puts("\n  overall: " <> row(comparisons))
+
+    illegal = Enum.reject(comparisons, &(&1.illegal == nil))
+
+    if illegal == [] do
+      IO.puts("\n  legality: every OpenPair round was a legal pairing.")
+    else
+      by_kind =
+        illegal |> Enum.group_by(& &1.illegal) |> Enum.map(fn {k, v} -> "#{k}: #{length(v)}" end)
+
+      IO.puts(
+        "\n  LEGALITY: #{length(illegal)}/#{length(comparisons)} OpenPair rounds were not legal " <>
+          "pairings at all (#{Enum.join(by_kind, ", ")}) — independent of whether javafo agreed."
+      )
+    end
 
     if exhausted != [] do
       IO.puts(

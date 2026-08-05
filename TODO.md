@@ -141,7 +141,15 @@ Starting point, and where it stands now (300 tournaments x 9 rounds,
 | 9 | 62.95% | 89.20% |
 | **overall** | **75.68%** | **96.11%** |
 
-Whole rounds: 38.15% → 85.63%.
+Whole rounds: 38.15% → 86.78%.
+
+The harness also checks **legality independently of javafo** — every
+player paired exactly once, no rematch, and exactly one bye in an odd
+field and none in an even one. That is a different question from
+agreement, and it has a right answer. **2699/2700 rounds are legal**; the
+one failure is the bounded search giving up and falling back to
+best-effort. At the start of this work, 65 of 104 sampled disagreements
+were illegal output.
 
 What was actually wrong, in the order it was found. Every step was
 measured, and two were reverted on measurement despite being more
