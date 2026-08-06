@@ -227,7 +227,22 @@ to matter:
   - The bracket-ordering terms (MDP displacement, rank spread) still stand
     in for FIDE's transposition/exchange procedure and bbpPairings' three
     lowest criteria.
-  - The harness still generates only wins, losses, draws and byes.
+  - ~~The harness still generates only wins, losses, draws and byes.~~
+    **Done for forfeits** (`PAIRING_FUZZ_FORFEIT_PCT`, default 0). It
+    found four bugs of one family immediately, all of them code that had
+    never executed: a forfeit carries an opponent AND a colour but is
+    legally unplayed, and four call sites asked "is there an opponent /
+    a colour" instead of "did this game happen". Worst of them was C1:
+    a forfeited pairing does NOT forbid a rematch (`dutch.cpp:664`
+    guards forbiddenPairs with `if (match.gameWasPlayed)`), confirmed
+    against javafo re-pairing two double-forfeiters in preference to two
+    rematch-free alternatives. With 10% of games forfeited, pair
+    agreement went 69.86% -> 88.67% -> **93.76%**. Half-point byes,
+    zero-point byes and retirements are still open, and need a protocol
+    change: they are decided BEFORE pairing, so the harness would have to
+    withhold those players from the TRF rather than record a result.
+  - The old note, for the record: the harness generated only wins,
+    losses, draws and byes.
     bbpPairings' generator also produces forfeits, retirements and
     half-point byes (`generator.h`'s `forfeitRate`, `retiredRate`,
     `halfPointByeRate`) — a real coverage gap, deliberately left out of

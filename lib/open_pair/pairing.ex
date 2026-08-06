@@ -738,7 +738,20 @@ defmodule OpenPair.Pairing do
     end
   end
 
-  defp legal_pair?(p1, p2), do: not Enum.any?(p1.games, &(&1.opponent_rank == p2.rank))
+  # C1, no repeat pairings — but only actually-PLAYED games forbid a
+  # rematch. bbpPairings builds its `forbiddenPairs` set under an explicit
+  # `if (match.gameWasPlayed)` guard (`dutch.cpp:664`), so two players who
+  # were paired and forfeited have not "met" and may be paired again.
+  #
+  # Confirmed against real javafo before changing it: seed 140, an
+  # 11-player round 2 where players 5 and 10 were paired in round 1 and
+  # double-forfeited. javafo paired them with each other AGAIN, in
+  # preference to two rematch-free alternatives it could have taken
+  # instead — so this is javafo's actual behaviour, not an artefact of
+  # having no other option.
+  defp legal_pair?(p1, p2) do
+    not Enum.any?(p1.games, &(played?(&1) and &1.opponent_rank == p2.rank))
+  end
 
   # Absolute criterion C2: nobody receives a second pairing-allocated bye.
   # bbpPairings' `eligibleForBye` phrases it as "no unplayed game already

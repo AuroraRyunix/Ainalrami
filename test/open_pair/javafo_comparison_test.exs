@@ -266,10 +266,21 @@ defmodule OpenPair.JavafoComparisonTest do
     seated = Enum.flat_map(pairs, fn {w, b} -> if b, do: [w, b], else: [w] end)
     by_rank = Map.new(players, &{&1.rank, &1})
 
+    # Only an actually-played game forbids a rematch: bbpPairings builds
+    # its forbiddenPairs set under `if (match.gameWasPlayed)`, and javafo
+    # was observed re-pairing two players whose only previous meeting was
+    # a double forfeit. Judging the engine by the stricter rule would
+    # report 443 false violations in a forfeit-heavy run.
     rematch? =
       Enum.any?(pairs, fn
-        {_w, nil} -> false
-        {w, b} -> Enum.any?(Map.fetch!(by_rank, w).games, &(&1.opponent_rank == b))
+        {_w, nil} ->
+          false
+
+        {w, b} ->
+          Enum.any?(
+            Map.fetch!(by_rank, w).games,
+            &(&1.result in ~w(1 = 0) and &1.opponent_rank == b)
+          )
       end)
 
     cond do
