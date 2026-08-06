@@ -217,7 +217,7 @@ defmodule OpenPair.Pairing do
       game = Enum.at(player.games, index)
 
       cond do
-        is_nil(game.opponent_rank) ->
+        not played?(game) ->
           if result_points(game.result) > 0.0, do: :down, else: :none
 
         not is_map_key(by_rank, game.opponent_rank) ->
@@ -594,8 +594,23 @@ defmodule OpenPair.Pairing do
   end
 
   defp unplayed_rounds(player) do
-    Enum.count(player.games, &is_nil(&1.opponent_rank))
+    Enum.count(player.games, &(not played?(&1)))
   end
+
+  # bbpPairings' `gameWasPlayed`. Only an actually contested game counts:
+  # a forfeit carries both an opponent and a colour in the TRF, which is
+  # exactly what makes it dangerous — it LOOKS like a played game to any
+  # check that tests for the presence of an opponent or a colour, but
+  # FIDE Art. 16 treats it as unplayed. It must not affect colour balance,
+  # must not extend a repeated-colour run, and counts as an unplayed round
+  # for float direction and bye eligibility.
+  #
+  # Every one of those was wrong here until the harness started generating
+  # forfeits: three separate call sites tested for an opponent or a colour
+  # instead of asking whether the game happened.
+  @played_results ~w(1 = 0)
+
+  defp played?(game), do: game.result in @played_results
 
   # A player's full colour state, ported from bbpPairings'
   # `tournament.cpp` `computePlayerData`. This replaces a one-line
@@ -609,7 +624,7 @@ defmodule OpenPair.Pairing do
   # Unplayed games (byes, forfeits) are excluded entirely — they carry no
   # colour and must not break a run of repeated colours either.
   defp colour_stats(player) do
-    played = Enum.filter(player.games, &(&1.colour in ["w", "b"]))
+    played = Enum.filter(player.games, &played?/1)
     whites = Enum.count(played, &(&1.colour == "w"))
     blacks = Enum.count(played, &(&1.colour == "b"))
     imbalance = abs(whites - blacks)
@@ -799,8 +814,10 @@ defmodule OpenPair.Pairing do
     walk_back(played_colours(a), played_colours(b))
   end
 
+  # bbpPairings' `skipUnplayedGames`: a forfeit is skipped here too, so
+  # the two histories stay aligned on rounds that were actually contested.
   defp played_colours(player) do
-    player.games |> Enum.map(& &1.colour) |> Enum.filter(&(&1 in ["w", "b"])) |> Enum.reverse()
+    player.games |> Enum.filter(&played?/1) |> Enum.map(& &1.colour) |> Enum.reverse()
   end
 
   defp walk_back([x | xs], [y | ys]) when x == y, do: walk_back(xs, ys)

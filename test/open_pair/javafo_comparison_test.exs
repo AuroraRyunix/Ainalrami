@@ -300,10 +300,32 @@ defmodule OpenPair.JavafoComparisonTest do
 
   # White win, black win, or draw for a real pairing; a bye (nil opponent)
   # always scores the standard pairing-allocated-bye full point.
+  #
+  # With `PAIRING_FUZZ_FORFEIT_PCT` a share of games are forfeited
+  # instead. A forfeit is the interesting case, not just a rarer one: it
+  # occupies a pairing slot and carries BOTH an opponent and a colour in
+  # the TRF, yet is legally unplayed under FIDE Art. 16. So it must not
+  # count toward colour balance, must not extend a repeated-colour run,
+  # and counts as an unplayed game for float and bye-eligibility purposes
+  # — every one of which is a separate place the engine can get it wrong.
+  #
+  # Defaults to 0 so every earlier measurement stays reproducible.
   defp simulate_results(pairs) do
+    forfeit_pct = env_int("PAIRING_FUZZ_FORFEIT_PCT", 0)
+
     Map.new(pairs, fn
-      {white, nil} -> {{white, nil}, :bye}
-      {white, black} -> {{white, black}, Enum.random([:white_win, :black_win, :draw])}
+      {white, nil} ->
+        {{white, nil}, :bye}
+
+      {white, black} ->
+        outcome =
+          if forfeit_pct > 0 and :rand.uniform(100) <= forfeit_pct do
+            Enum.random([:white_forfeits, :black_forfeits, :double_forfeit])
+          else
+            Enum.random([:white_win, :black_win, :draw])
+          end
+
+        {{white, black}, outcome}
     end)
   end
 
@@ -341,6 +363,29 @@ defmodule OpenPair.JavafoComparisonTest do
     {
       %{opponent_rank: black, colour: "w", result: "0", points: 0.0},
       %{opponent_rank: white, colour: "b", result: "1", points: 1.0}
+    }
+  end
+
+  # Forfeits keep the colour they were paired with — that is what a real
+  # TRF records — even though the game counts as unplayed.
+  defp games_for(white, black, :white_forfeits) do
+    {
+      %{opponent_rank: black, colour: "w", result: "-", points: 0.0},
+      %{opponent_rank: white, colour: "b", result: "+", points: 1.0}
+    }
+  end
+
+  defp games_for(white, black, :black_forfeits) do
+    {
+      %{opponent_rank: black, colour: "w", result: "+", points: 1.0},
+      %{opponent_rank: white, colour: "b", result: "-", points: 0.0}
+    }
+  end
+
+  defp games_for(white, black, :double_forfeit) do
+    {
+      %{opponent_rank: black, colour: "w", result: "-", points: 0.0},
+      %{opponent_rank: white, colour: "b", result: "-", points: 0.0}
     }
   end
 
