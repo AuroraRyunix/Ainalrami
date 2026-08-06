@@ -224,9 +224,26 @@ identical to the previous commit, and was.
 Rounds 7-9 sit at 89-92% of pairs. Known gaps, in the order most likely
 to matter:
 
-  - The four SCORE-WEIGHTED float criteria (`dutch.cpp` lines 385-460):
-    bbpPairings weights each float criterion by which score group it
-    affects. Not implemented.
+  - ~~The four SCORE-WEIGHTED float criteria~~ — **implemented, measured
+    WORSE, reverted.** `dutch.cpp` 385-460 weights each float criterion
+    by which score group it affects, ranked below the four unweighted
+    ones. Ported faithfully (positional weights per score group, lowest
+    group at index 0, sum-safe base) it measured **93.40%** against
+    97.15%. Disabling just the two "scores of the opponents of
+    upfloaters" halves gave 93.27%, so it is the whole family, not one
+    bad member.
+
+    The likely reason it does not port: in bbpPairings these criteria are
+    guarded by `lowerPlayerInCurrentBracket` and the score groups are
+    TOURNAMENT-wide, because its matching spans the current bracket AND
+    the next one. Only a subset of edges get the term, and "which score
+    group" means something relative to the whole field. In a matcher that
+    runs over one bracket at a time, every edge gets it and the group
+    index is bracket-local, so the criterion stops discriminating the way
+    it does there and just adds noise at high priority.
+
+    Worth retrying only if the cascade is ever replaced by a global
+    matching — the two changes are coupled.
   - The cascade approximates a global matching. bbpPairings runs one over
     the whole field first, to prove a legal round exists at all.
   - The bracket-ordering terms (MDP displacement, rank spread) still stand
