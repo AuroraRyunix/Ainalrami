@@ -256,17 +256,44 @@ specifically the cases a blossom-blind search structurally cannot reach,
 where the only augmenting path runs through an odd cycle. Confirmed by
 building `OpenPair.Blossom` (a direct port of the standard O(V^3)
 reference algorithm — see that module's doc) and swapping it in with no
-other change: **65/2997 -> 1/2997**, every round through 29 legal. The
-one remaining case is very likely the search-budget cap rather than a
-matching gap — blossom's own correctness was checked against a brute-force
+other change: **65/2997 -> 1/2997**, every round through 29 legal.
+blossom's own correctness was checked against a brute-force
 maximum-matching oracle on 25 random small graphs plus a hand-verified
 odd-cycle case, all passing, before it was wired in.
 
 Pair agreement moved 62.89% -> 61.09%, the same trade as before: the
 rounds that changed were illegal and are now legal, and a legal round
 that differs from javafo is worth more than an illegal one that happens
-to share boards with it. The nine-round measurement is untouched at
-97.15%, since the repair only ever runs on rounds the cascade failed.
+to share boards with it. The nine-round measurement was 97.15% going into
+this step, since the repair only ever runs on rounds the cascade failed.
+
+**The one remaining illegal round turned out to be a real bug, not a
+search-budget limit** — worth recording since the previous paragraph
+guessed budget with more confidence than the evidence supported. Tracing
+it (seed 39, 32-player field, round 30) found OpenPair leaving two
+players unpaired despite a full pairing existing, confirmed reachable at
+all by temporarily disabling colour compatibility entirely, which found
+one immediately.
+
+The actual cause: `final_round_topscorers?/2`'s threshold used
+`expected_rounds` where bbpPairings' own formula (`dutch.cpp:53-56`,
+`topScoreThreshold = playedRounds * pointsForWin >> 1`) uses
+`playedRounds` — rounds actually played, not the tournament's eventual
+length. Those are genuinely different numbers even in the one round this
+exception can ever fire in (the final round, where `playedRounds` is
+always `expectedRounds - 1`): `floor((expectedRounds-1)/2)` is one lower
+than `floor(expectedRounds/2)` whenever `expectedRounds` is even, so the
+old formula silently admitted top-scorer exceptions for players who were
+one point short of actually qualifying.
+
+One-line fix (`div(played_rounds, 2)` in place of `expected_rounds / 2`).
+Re-measured:
+
+  9 rounds, 10-40 players:    97.15% -> 97.19% of pairs, 2 -> 0 illegal
+  30 rounds, 32-40 players:   1 -> 0 illegal, EVERY round legal
+
+**2997/2997 legal rounds** — every round, across the hardest
+configuration measured in this project so far.
 
 **The failure mode was legality, not disagreement.** The two rise together
 because they are one event: when the bracket cascade cannot find a legal
