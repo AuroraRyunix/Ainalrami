@@ -244,7 +244,20 @@ So for real events: a 9-round Swiss in a 40-player field, or a 15-round
 blitz in a 60+ field, both sit near 97%. A 20-round event in a 30-player
 field does not work at all.
 
-**The failure mode is legality, not disagreement.** The two rise together
+**Mostly fixed by augmenting-path repair.** When the cascade gives up, the
+greedy fallback's result now gets alternating-path augmentation applied to
+it, which pairs up players it left over. Illegal rounds at 30 rounds fell
+**1477/2997 -> 65/2997**, with every round through 22 legal. Pair
+agreement moved 62.89% -> 60.93%, which is the correct trade: the rounds
+that changed were illegal before and are legal now, and a legal round that
+differs from javafo is worth more than an illegal one that happens to
+share some boards with it. The nine-round measurement is untouched at
+97.15%, since the repair only ever runs on rounds the cascade failed.
+
+It is not a maximum matching — no blossom contraction, so an odd cycle can
+hide an augmenting path — which is why 65 remain rather than 0.
+
+**The failure mode was legality, not disagreement.** The two rise together
 because they are one event: when the bracket cascade cannot find a legal
 completion inside its bounded search it falls back to greedy, and greedy
 output is both an illegal bye count and unrelated to javafo's. Raising

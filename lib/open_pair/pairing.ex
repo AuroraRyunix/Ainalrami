@@ -187,12 +187,151 @@ defmodule OpenPair.Pairing do
 
     try do
       case cascade_brackets(brackets, [], [], allowed_byes) do
-        {:ok, pairs, leftover} -> pairs ++ Enum.map(leftover, &{&1.rank, nil})
-        :infeasible -> greedy_cascade(brackets)
+        {:ok, pairs, leftover} ->
+          pairs ++ Enum.map(leftover, &{&1.rank, nil})
+
+        :infeasible ->
+          brackets
+          |> greedy_cascade()
+          |> repair_bye_count(active, allowed_byes)
       end
     after
       Process.delete(@budget_key)
     end
+  end
+
+  # Last resort, and only ever reached after the cascade has already given
+  # up: take whatever pairing greedy produced and try to reduce its bye
+  # count to something legal by finding augmenting paths.
+  #
+  # Standard alternating-path augmentation. Start at an unpaired player,
+  # step along an edge they COULD play to some paired player, step along
+  # that player's existing pair to their partner, and repeat; if the walk
+  # ever reaches another unpaired player, flipping every edge along it
+  # pairs both endpoints and leaves everyone in between still paired. Each
+  # successful augmentation removes exactly two byes.
+  #
+  # No blossom contraction, so on a general graph this is not guaranteed
+  # to reach a maximum matching — an odd cycle can hide an augmenting path
+  # from a plain search. It is still strictly an improvement: it never
+  # unpairs anyone, never runs on a round the cascade already solved, and
+  # a round that ends up legal is worth more than a better-scored round
+  # that is not a legal pairing at all.
+  #
+  # Measured need: at 30 rounds in a 32-40 player field, 1477 of 2997
+  # rounds came out of the greedy fallback with an illegal bye count.
+  defp repair_bye_count(result, active, allowed_byes) do
+    byes = Enum.count(result, fn {_white, black} -> is_nil(black) end)
+
+    if byes <= allowed_byes do
+      result
+    else
+      # Colour stats are normally stamped inside `bracket_options/2`;
+      # this path never went through it.
+      by_rank = Map.new(active, &{&1.rank, Map.put(&1, :colour_stats, colour_stats(&1))})
+      matching = Map.new(result, fn {w, b} -> {w, b} end) |> add_reverse_edges()
+      unpaired = for {white, nil} <- result, do: white
+
+      matching
+      |> augment_all(unpaired, byes - allowed_byes, by_rank)
+      |> to_pairs(active)
+    end
+  end
+
+  defp add_reverse_edges(matching) do
+    Enum.reduce(matching, %{}, fn
+      {_white, nil}, acc -> acc
+      {white, black}, acc -> acc |> Map.put(white, black) |> Map.put(black, white)
+    end)
+  end
+
+  defp augment_all(matching, _unpaired, remaining, _by_rank) when remaining <= 0, do: matching
+
+  defp augment_all(matching, [], _remaining, _by_rank), do: matching
+
+  defp augment_all(matching, [start | rest], remaining, by_rank) do
+    if Map.has_key?(matching, start) do
+      augment_all(matching, rest, remaining, by_rank)
+    else
+      case find_augmenting_path(matching, start, by_rank) do
+        nil ->
+          augment_all(matching, rest, remaining, by_rank)
+
+        path ->
+          augment_all(apply_augmenting_path(matching, path), rest, remaining - 2, by_rank)
+      end
+    end
+  end
+
+  # Breadth-first over alternating paths, returning the vertex sequence
+  # from `start` to another unpaired player, or nil.
+  defp find_augmenting_path(matching, start, by_rank) do
+    search_augmenting([{start, [start]}], MapSet.new([start]), matching, by_rank)
+  end
+
+  defp search_augmenting([], _seen, _matching, _by_rank), do: nil
+
+  defp search_augmenting([{current, path} | queue], seen, matching, by_rank) do
+    player = Map.fetch!(by_rank, current)
+
+    candidates =
+      by_rank
+      |> Map.values()
+      |> Enum.filter(fn other ->
+        other.rank != current and not MapSet.member?(seen, other.rank) and
+          Map.get(matching, current) != other.rank and
+          legal_pair?(player, other) and colour_compatible?(player, other)
+      end)
+
+    case Enum.find(candidates, &(not Map.has_key?(matching, &1.rank))) do
+      nil ->
+        {next_queue, next_seen} =
+          Enum.reduce(candidates, {queue, seen}, fn candidate, {q, s} ->
+            partner = Map.get(matching, candidate.rank)
+
+            if is_nil(partner) or MapSet.member?(s, partner) do
+              {q, s}
+            else
+              {q ++ [{partner, path ++ [candidate.rank, partner]}],
+               s |> MapSet.put(candidate.rank) |> MapSet.put(partner)}
+            end
+          end)
+
+        search_augmenting(next_queue, next_seen, matching, by_rank)
+
+      free ->
+        path ++ [free.rank]
+    end
+  end
+
+  # The path alternates unmatched/matched edges and both ends are free, so
+  # flipping every edge grows the matching by exactly one pair.
+  defp apply_augmenting_path(matching, path) do
+    path
+    |> Enum.chunk_every(2)
+    |> Enum.reduce(matching, fn
+      [a, b], acc -> acc |> Map.put(a, b) |> Map.put(b, a)
+      [_odd], acc -> acc
+    end)
+  end
+
+  defp to_pairs(matching, active) do
+    {pairs, _seen} =
+      Enum.reduce(Enum.sort_by(active, & &1.rank), {[], MapSet.new()}, fn player, {acc, seen} ->
+        cond do
+          MapSet.member?(seen, player.rank) ->
+            {acc, seen}
+
+          partner = Map.get(matching, player.rank) ->
+            {acc ++ [{player.rank, partner}],
+             seen |> MapSet.put(player.rank) |> MapSet.put(partner)}
+
+          true ->
+            {acc ++ [{player.rank, nil}], MapSet.put(seen, player.rank)}
+        end
+      end)
+
+    pairs
   end
 
   # Used only when no legal completion was found within the search budget:
