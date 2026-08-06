@@ -244,18 +244,29 @@ So for real events: a 9-round Swiss in a 40-player field, or a 15-round
 blitz in a 60+ field, both sit near 97%. A 20-round event in a 30-player
 field does not work at all.
 
-**Mostly fixed by augmenting-path repair.** When the cascade gives up, the
-greedy fallback's result now gets alternating-path augmentation applied to
-it, which pairs up players it left over. Illegal rounds at 30 rounds fell
-**1477/2997 -> 65/2997**, with every round through 22 legal. Pair
-agreement moved 62.89% -> 60.93%, which is the correct trade: the rounds
-that changed were illegal before and are legal now, and a legal round that
-differs from javafo is worth more than an illegal one that happens to
-share some boards with it. The nine-round measurement is untouched at
-97.15%, since the repair only ever runs on rounds the cascade failed.
+**Fixed by augmenting-path repair, then closed almost the rest of the
+way by adding blossom contraction to it.** When the cascade gives up, the
+greedy fallback's result now gets a general-graph maximum-matching pass
+applied to it (`OpenPair.Blossom`), which pairs up players it left over.
 
-It is not a maximum matching — no blossom contraction, so an odd cycle can
-hide an augmenting path — which is why 65 remain rather than 0.
+First pass — plain alternating-path BFS, no blossom handling — took
+illegal rounds at 30 rounds from **1477/2997 to 65/2997**, every round
+through 22 legal. The 65 that remained were not random misses: they were
+specifically the cases a blossom-blind search structurally cannot reach,
+where the only augmenting path runs through an odd cycle. Confirmed by
+building `OpenPair.Blossom` (a direct port of the standard O(V^3)
+reference algorithm — see that module's doc) and swapping it in with no
+other change: **65/2997 -> 1/2997**, every round through 29 legal. The
+one remaining case is very likely the search-budget cap rather than a
+matching gap — blossom's own correctness was checked against a brute-force
+maximum-matching oracle on 25 random small graphs plus a hand-verified
+odd-cycle case, all passing, before it was wired in.
+
+Pair agreement moved 62.89% -> 61.09%, the same trade as before: the
+rounds that changed were illegal and are now legal, and a legal round
+that differs from javafo is worth more than an illegal one that happens
+to share boards with it. The nine-round measurement is untouched at
+97.15%, since the repair only ever runs on rounds the cascade failed.
 
 **The failure mode was legality, not disagreement.** The two rise together
 because they are one event: when the bracket cascade cannot find a legal
