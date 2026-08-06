@@ -210,7 +210,7 @@ defmodule OpenPair.JavafoComparisonTest do
          })}
 
       {:ok, javafo_pairs} ->
-        openpair_pairs = safely_pair(players)
+        openpair_pairs = safely_pair(players, total_rounds)
 
         measurement =
           Map.merge(base, %{
@@ -239,8 +239,8 @@ defmodule OpenPair.JavafoComparisonTest do
   # An OpenPair crash is a disagreement, not a reason to lose the rest of
   # the tournament's measurements — `Task.async_stream` would otherwise
   # propagate the raise as an :exit and kill the whole stream.
-  defp safely_pair(players) do
-    Pairing.pair_next_round(players)
+  defp safely_pair(players, total_rounds) do
+    Pairing.pair_next_round(players, expected_rounds: total_rounds)
   rescue
     e -> {:raised, e}
   end

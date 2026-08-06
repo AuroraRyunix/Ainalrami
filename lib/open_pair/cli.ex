@@ -71,7 +71,11 @@ defmodule OpenPair.CLI do
         if round_count == 0, do: "pairing round 1", else: "pairing round #{round_count + 1}"
       )
 
-      pairs = Pairing.pair_next_round(parsed.players)
+      pairs =
+        Pairing.pair_next_round(parsed.players,
+          expected_rounds: parsed.tournament[:number_of_rounds]
+        )
+
       write_pairs(pairs, positional_rest)
 
       0

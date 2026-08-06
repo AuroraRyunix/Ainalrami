@@ -22,6 +22,7 @@ defmodule OpenPair.Pairing do
   # bracket to consider, and how much total work to spend before giving up
   # and returning a best-effort answer.
   @budget_key :openpair_cascade_budget
+  @expected_rounds_key :openpair_expected_rounds
   @cascade_budget 2000
   @alternatives_per_bracket 15
   @alternatives_per_count 6
@@ -30,11 +31,22 @@ defmodule OpenPair.Pairing do
   Pairs the next round, dispatching to `pair_round_one/1` when no game
   history exists yet, or the bracket cascade below otherwise.
   """
-  def pair_next_round(players) do
-    if Enum.all?(players, &(&1.games == [])) do
-      pair_round_one(players)
-    else
-      pair_later_round(players)
+  def pair_next_round(players, opts \\ []) do
+    # The tournament's total round count, when the caller knows it (a
+    # TRF's `XXR`/`142`). Only one rule needs it — the final-round
+    # exception in `colour_compatible?/2` — so it is optional rather than
+    # a required argument, and stashed rather than threaded through the
+    # cascade, matching how the search budget is already carried.
+    Process.put(@expected_rounds_key, opts[:expected_rounds])
+
+    try do
+      if Enum.all?(players, &(&1.games == [])) do
+        pair_round_one(players)
+      else
+        pair_later_round(players)
+      end
+    after
+      Process.delete(@expected_rounds_key)
     end
   end
 
@@ -760,19 +772,44 @@ defmodule OpenPair.Pairing do
   # engine had it only as scored criteria c1/c2, which means a bad enough
   # position elsewhere could buy a pairing that is simply not allowed.
   #
-  # bbpPairings does carry an exception: in the FINAL round, two top
-  # scorers may be paired despite the clash, rather than leave the
-  # tournament's decisive game unplayed. That is not implemented here
-  # because the engine is not told the expected round count — see
-  # `pair_next_round/1`, which takes only players. Until it is, this
-  # engine is stricter than the rules in exactly one place: the last round
-  # of a tournament, between players above half the maximum score.
+  # bbpPairings carries one exception: in the FINAL round, two players
+  # above half the maximum possible score may be paired despite the
+  # clash, rather than leave a tournament's decisive game unplayed. It
+  # needs the expected round count, which reaches here via
+  # `pair_next_round/2`'s `:expected_rounds` option; without it the
+  # exception simply never fires and the engine stays strict.
+  #
+  # Leaving it out was measurable: rounds 4-8 all improved when the hard
+  # exclusion landed, and round 9 — the final round of the nine-round
+  # sweep, and the only round where this exception can apply — was the
+  # one round that got worse.
   defp colour_compatible?(a, b) do
     p = a.colour_stats
     o = b.colour_stats
 
-    not (p.absolute? and o.absolute? and not is_nil(p.preference) and
-           p.preference == o.preference)
+    if p.absolute? and o.absolute? and not is_nil(p.preference) and
+         p.preference == o.preference do
+      final_round_topscorers?(a, b)
+    else
+      true
+    end
+  end
+
+  defp final_round_topscorers?(a, b) do
+    case Process.get(@expected_rounds_key) do
+      nil ->
+        false
+
+      expected_rounds ->
+        # `playedRounds >= expectedRounds - 1`: the round being paired is
+        # the last one. The threshold is half the maximum achievable
+        # score, bbpPairings' `(expectedRounds * pointsForWin) >> 1`.
+        played_rounds = length(a.games)
+        threshold = expected_rounds / 2
+
+        played_rounds >= expected_rounds - 1 and
+          (a.points > threshold or b.points > threshold)
+    end
   end
 
   # Absolute criterion C2: nobody receives a second pairing-allocated bye.
