@@ -35,15 +35,26 @@ defmodule OpenPair.JavafoComparisonTest do
   expected to match JaVaFo's on every run — see that module's doc.
   Pairing *composition* is the thing under test.
 
-  ## Results are still only wins/losses/draws/byes
+  ## Result variety
 
-  `simulate_results/1` does not yet generate forfeits, retirements, or
-  half-point byes, though bbpPairings' generator does (`generator.h`'s
-  `forfeitRate`, `retiredRate`, `halfPointByeRate`). That's a real
-  coverage gap and the obvious next step — but adding it in the same
-  change as multi-round depth would confound the two, and this harness
-  exists precisely to attribute a rate change to one cause. Depth first,
-  measured; then result variety, measured separately.
+  `simulate_results/1` generates wins, losses, draws, pairing-allocated
+  byes, and — with `PAIRING_FUZZ_FORFEIT_PCT` — forfeits, including
+  double forfeits. Forfeits earn their own switch because they found four
+  engine bugs of one family on the first run: a forfeit carries both an
+  opponent and a colour in the TRF yet is legally unplayed (Art. 16), so
+  every check that tested for the presence of one instead of asking
+  whether the game happened was wrong, C1's no-rematch rule included.
+
+  Default 0, so every measurement taken before forfeits existed stays
+  reproducible, and so a rate change can be attributed to one cause at a
+  time.
+
+  Still missing, and needing a protocol change rather than another result
+  code: half-point byes, zero-point byes and retirements
+  (`generator.h`'s `retiredRate`, `halfPointByeRate`). Those are decided
+  BEFORE a round is paired, so the harness would have to withhold the
+  player from the TRF it hands the engine, not record a result after the
+  fact.
 
   ## Running it
 
