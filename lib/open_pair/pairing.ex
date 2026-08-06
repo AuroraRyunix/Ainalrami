@@ -944,10 +944,22 @@ defmodule OpenPair.Pairing do
 
       expected_rounds ->
         # `playedRounds >= expectedRounds - 1`: the round being paired is
-        # the last one. The threshold is half the maximum achievable
-        # score, bbpPairings' `(expectedRounds * pointsForWin) >> 1`.
+        # the last one. The threshold is bbpPairings' own
+        # `(tournament.playedRounds * pointsForWin) >> 1` — half of what a
+        # player could have scored SO FAR (rounds already played), not
+        # half the tournament's eventual maximum. Those are genuinely
+        # different numbers even in the one round this exception can ever
+        # fire in: playedRounds is expectedRounds-1 there, so the correct
+        # threshold is floor((expectedRounds-1)/2), one lower than
+        # floor(expectedRounds/2) whenever expectedRounds is even. This
+        # engine used expectedRounds directly, which was simply the wrong
+        # variable — found by tracing a genuine round-30 disagreement
+        # (seed 39, 32-player field): OpenPair left two players unpaired
+        # despite a full pairing existing, confirmed reachable by
+        # disabling colour compatibility entirely first, and this
+        # one-line fix alone was enough to reach it (see TODO.md).
         played_rounds = length(a.games)
-        threshold = expected_rounds / 2
+        threshold = div(played_rounds, 2)
 
         played_rounds >= expected_rounds - 1 and
           (a.points > threshold or b.points > threshold)
