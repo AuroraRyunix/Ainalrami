@@ -1,3 +1,25 @@
+defmodule OpenPair.Pairing.NoValidPairingError do
+  @moduledoc """
+  Raised when the active players cannot be simultaneously paired while
+  satisfying the absolute criteria (no rematch, no double colour-absolute
+  clash) — not a search failure, a proven structural deadlock.
+
+  Direct analogue of bbpPairings' own `NoValidPairingException`
+  (`swisssystems/dutch.cpp`'s `matchingIsComplete`/`compatible`): it
+  computes ONE matching over the whole field and throws rather than ever
+  emitting more byes than `rem(active_count, 2)`. `OpenPair.Pairing`
+  matches that: `repair_bye_count/3`'s last-resort pass
+  (`OpenPair.Blossom`, verified to find a TRUE maximum matching
+  regardless of starting point) only reaches this if the true maximum
+  itself still leaves too many players unmatched — proof no legal
+  completion exists, not evidence the search didn't try hard enough. A
+  small field deep into a Swiss (colour-absolute exclusions stacking on
+  top of near-exhausted rematch-free opponents) is the realistic way to
+  hit this, not a bug in the matcher.
+  """
+  defexception [:message]
+end
+
 defmodule OpenPair.Pairing do
   @moduledoc """
   The actual Dutch-system pairing algorithm. Implemented incrementally —
@@ -217,6 +239,20 @@ defmodule OpenPair.Pairing do
   # never unpairs anyone, never runs on a round the cascade already
   # solved, and a round that ends up legal is worth more than a
   # better-scored round that is not a legal pairing at all.
+  #
+  # `Blossom.augment/3` is proven to reach a TRUE maximum matching
+  # regardless of starting point (Berge augmenting paths), so if its
+  # result STILL exceeds `allowed_byes`, that is not this pass failing to
+  # try hard enough — it is proof no legal completion exists at all.
+  # Traced two "still illegal after repair" cases to ground this: one
+  # (10 players, round 8) had a player who had already played every
+  # active opponent except one that was colour-absolute-blocked — a
+  # genuine deadlock, confirmed independently by an exhaustive
+  # active-players-only search, not a missed solution. Silently returning
+  # the extra-bye pairing anyway was the actual bug — bbpPairings' own
+  # `compatible`/`matchingIsComplete` never accepts more than
+  # `rem(active_count, 2)` byes either; it throws `NoValidPairingException`
+  # instead (`swisssystems/dutch.cpp`).
   defp repair_bye_count(result, active, allowed_byes) do
     byes = Enum.count(result, fn {_white, black} -> is_nil(black) end)
 
@@ -239,10 +275,23 @@ defmodule OpenPair.Pairing do
         |> Enum.map(& &1.rank)
       end
 
-      by_rank
-      |> Map.keys()
-      |> Blossom.augment(matching, neighbours_fun)
-      |> to_pairs(active)
+      repaired =
+        by_rank
+        |> Map.keys()
+        |> Blossom.augment(matching, neighbours_fun)
+        |> to_pairs(active)
+
+      repaired_byes = Enum.count(repaired, fn {_white, black} -> is_nil(black) end)
+
+      if repaired_byes <= allowed_byes do
+        repaired
+      else
+        raise OpenPair.Pairing.NoValidPairingError,
+          message:
+            "no legal pairing exists for this round: the maximum matching over " <>
+              "#{length(active)} active players still leaves #{repaired_byes} unmatched " <>
+              "(#{allowed_byes} allowed)"
+      end
     end
   end
 

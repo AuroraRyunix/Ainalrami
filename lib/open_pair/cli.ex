@@ -122,17 +122,30 @@ defmodule OpenPair.CLI do
         if round_count == 0, do: "pairing round 1", else: "pairing round #{round_count + 1}"
       )
 
-      pairs =
-        Pairing.pair_next_round(parsed.players,
-          expected_rounds: parsed.tournament[:number_of_rounds]
-        )
+      case pair_next_round(parsed.players, parsed.tournament[:number_of_rounds]) do
+        {:ok, pairs} ->
+          write_pairs(pairs, positional_rest)
+          0
 
-      write_pairs(pairs, positional_rest)
-
-      0
+        {:error, :halt} ->
+          1
+      end
     else
       {:error, :halt} -> 1
     end
+  end
+
+  # No legal pairing can mean the field has genuinely run out of legal
+  # opponents (bbpPairings' own `NoValidPairingException` — see
+  # `OpenPair.Pairing.NoValidPairingError`'s doc) rather than a crash. That
+  # matches how JaVaFo itself reports it: an empty pairing, not a stack
+  # trace.
+  defp pair_next_round(players, expected_rounds) do
+    {:ok, Pairing.pair_next_round(players, expected_rounds: expected_rounds)}
+  rescue
+    e in Pairing.NoValidPairingError ->
+      Log.error("no legal pairing exists for this round: #{Exception.message(e)}")
+      {:error, :halt}
   end
 
   # Pairings Checker (FPC). Replays a completed tournament round by round,
@@ -196,6 +209,13 @@ defmodule OpenPair.CLI do
       Log.warn("  engine: #{inspect(Enum.sort(expected))}")
       :differs
     end
+  rescue
+    e in Pairing.NoValidPairingError ->
+      Log.warn(
+        "round #{round}: this engine finds no legal pairing at all — #{Exception.message(e)}"
+      )
+
+      :differs
   end
 
   # How many rounds actually carry results. Taken over players rather than

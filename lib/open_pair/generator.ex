@@ -66,11 +66,23 @@ defmodule OpenPair.Generator do
     forfeit_pct = Keyword.get(opts, :forfeit_pct, 0)
     bye_pct = Keyword.get(opts, :requested_bye_pct, 0)
 
-    final =
-      Enum.reduce(1..rounds, roster(players), fn _round, current ->
-        current
-        |> grant_requested_byes(bye_pct)
-        |> play_one_round(rounds, forfeit_pct)
+    # A round can have no legal completion at all — not the engine failing
+    # to search hard enough, but a proven deadlock (`OpenPair.Pairing`'s
+    # `repair_bye_count/3` only raises `NoValidPairingError` after its own
+    # maximum-weight-matching repair pass already confirmed no better
+    # pairing exists). Realistic with arbiter-assigned byes stacking
+    # colour-absolute exclusions on top of an already near-exhausted small
+    # field. Same philosophy as the `players - 1` cap above — stop the
+    # tournament at the last round that actually completed rather than
+    # letting one bad round crash the whole generation.
+    {final, played_rounds} =
+      Enum.reduce_while(1..rounds, {roster(players), 0}, fn round_no, {current, _last} ->
+        try do
+          next = current |> grant_requested_byes(bye_pct) |> play_one_round(rounds, forfeit_pct)
+          {:cont, {next, round_no}}
+        rescue
+          Pairing.NoValidPairingError -> {:halt, {current, round_no - 1}}
+        end
       end)
 
     text =
@@ -83,10 +95,10 @@ defmodule OpenPair.Generator do
           # knew just `142` got no round count at all, which silently
           # changed the final-round pairing — see `OpenPair.Trf`'s
           # `parse_xxr/2`.
-          number_of_rounds: rounds
+          number_of_rounds: played_rounds
         },
         players: final
-      }) <> "XXR #{rounds}\r\n"
+      }) <> "XXR #{played_rounds}\r\n"
 
     {text, seed}
   end
