@@ -307,6 +307,42 @@ This is the strongest argument yet for the global-matching item below:
 bbpPairings runs one matching over the whole field FIRST, specifically to
 prove a legal round exists.
 
+### What bbpPairings actually uses, and why the obvious shortcut fails
+
+Settled from its own source rather than inferred. `src/matching/computer.h`
+documents itself as "the basic algorithm presented in *'An O(EV log V)
+Algorithm for Finding a Maximal Weighted Matching in General Graphs,'* by
+Zvi Galil, Silvio Micali, and Harold Gabow, 1986", implemented at O(n^3)
+with an incremental-update modification. The `blossomimpl.h` /
+`parentblossom.cpp` / `rootblossom.cpp` layout is that paper's blossom-tree
+decomposition. So it is genuinely the full primal-dual weighted blossom
+algorithm — there is no simpler variant hiding in bbpPairings either.
+
+**Bracket sizes say we may not need it.** Measured over 40 generated
+tournaments (2504 brackets, 2136 adjacent pairs):
+
+| | median | p90 | p99 | max | over 20 |
+|---|---|---|---|---|---|
+| single bracket | 4 | 11 | 30 | 58 | 1.9% |
+| current+next combined | 9 | 19 | 34 | 43 | 8.6% |
+
+91.4% of combined bracket-pairs fit inside the exact subset DP that is
+already in the tree and already weighted. Weighted blossom is what lets
+bbpPairings do this at ANY size; at our sizes it is mostly unnecessary.
+
+**But naively merging the two brackets measured 97.19% -> 58.48%** (150
+tournaments, 9 rounds) with 7 unit tests failing, so it is not a drop-in.
+The reason is specific: `natural_partner_map/1` and `mdp_deviation/4`
+assume ONE score tier with floaters sitting above it. Merge two score
+groups and the entire lower group becomes "residents" to a doubled MDP
+set, which scrambles the S1/S2 natural correspondence those criteria are
+defined against. Reverted.
+
+So the remaining path is real design work, not a patch: redefine the
+natural-correspondence machinery for a multi-tier bracket before the
+merge can be attempted again. That is the actual blocker — not the
+matching algorithm, which the DP already covers at these sizes.
+
 ### Still open at depth
 
 Rounds 7-9 sit at 89-92% of pairs. Known gaps, in the order most likely
