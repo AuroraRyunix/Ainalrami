@@ -182,6 +182,8 @@ defmodule OpenPair.JavafoComparisonTest do
   # advance the tournament on JAVAFO's answer (see the moduledoc on why
   # not OpenPair's).
   defp play_round(players, seed, round, total_rounds, player_count) do
+    players = assign_requested_byes(players)
+    active = Enum.filter(players, &(length(&1.games) < round))
     trf = build_trf(players, total_rounds)
 
     base = %{
@@ -219,7 +221,7 @@ defmodule OpenPair.JavafoComparisonTest do
             javafo: Enum.sort(javafo_pairs)
           })
           |> Map.merge(pair_agreement(openpair_pairs, javafo_pairs))
-          |> Map.put(:illegal, illegality(openpair_pairs, players))
+          |> Map.put(:illegal, illegality(openpair_pairs, active, players))
 
         next_players = apply_round(players, javafo_pairs, simulate_results(javafo_pairs))
         {:ok, measurement, next_players}
@@ -270,9 +272,9 @@ defmodule OpenPair.JavafoComparisonTest do
   # found was not a disagreement at all — it was this engine emitting two
   # byes in an even field, which no amount of "javafo would have done it
   # differently" describes properly.
-  defp illegality({:raised, _}, _players), do: :raised
+  defp illegality({:raised, _}, _active, _players), do: :raised
 
-  defp illegality(pairs, players) do
+  defp illegality(pairs, active, players) do
     byes = Enum.count(pairs, fn {_white, black} -> is_nil(black) end)
     seated = Enum.flat_map(pairs, fn {w, b} -> if b, do: [w, b], else: [w] end)
     by_rank = Map.new(players, &{&1.rank, &1})
@@ -295,8 +297,8 @@ defmodule OpenPair.JavafoComparisonTest do
       end)
 
     cond do
-      byes != rem(length(players), 2) -> :bad_bye_count
-      Enum.sort(seated) != Enum.sort(Enum.map(players, & &1.rank)) -> :not_a_partition
+      byes != rem(length(active), 2) -> :bad_bye_count
+      Enum.sort(seated) != Enum.sort(Enum.map(active, & &1.rank)) -> :not_a_partition
       rematch? -> :rematch
       true -> nil
     end
@@ -318,6 +320,37 @@ defmodule OpenPair.JavafoComparisonTest do
   defp build_trf(players, total_rounds) do
     OpenPair.Trf.serialize(%{tournament: %{name: "Fuzz", type: "swiss"}, players: players}) <>
       "XXR #{total_rounds}\r\n"
+  end
+
+  # Requested byes: a half-point or zero-point bye that the arbiter grants
+  # BEFORE the round is paired, recorded in the TRF so the engine leaves
+  # that player out. bbpPairings implements exactly this
+  # (`dutch.cpp:658`), and it is the only way a real tournament expresses
+  # "this player is not playing this round" — there is no TRF flag for it.
+  #
+  # This is what caught the engine pairing a player who had asked not to
+  # play. Note these must NOT advance the round number, unlike a
+  # pairing-allocated bye.
+  defp assign_requested_byes(players) do
+    pct = env_int("PAIRING_FUZZ_BYE_PCT", 0)
+
+    if pct == 0 do
+      players
+    else
+      Enum.map(players, fn player ->
+        if :rand.uniform(100) <= pct do
+          {result, points} = Enum.random([{"H", 0.5}, {"Z", 0.0}])
+
+          %{
+            player
+            | points: player.points + points,
+              games: player.games ++ [%{opponent_rank: nil, colour: nil, result: result}]
+          }
+        else
+          player
+        end
+      end)
+    end
   end
 
   # White win, black win, or draw for a real pairing; a bye (nil opponent)
@@ -355,8 +388,15 @@ defmodule OpenPair.JavafoComparisonTest do
     games_by_rank = games_by_rank(pairs, results)
 
     Enum.map(players, fn p ->
-      game = Map.fetch!(games_by_rank, p.rank)
-      %{p | points: p.points + game.points, games: p.games ++ [Map.delete(game, :points)]}
+      case Map.fetch(games_by_rank, p.rank) do
+        {:ok, game} ->
+          %{p | points: p.points + game.points, games: p.games ++ [Map.delete(game, :points)]}
+
+        # Sat this round out on a requested bye — their result for it was
+        # recorded before the round was paired, which is the whole point.
+        :error ->
+          p
+      end
     end)
   end
 

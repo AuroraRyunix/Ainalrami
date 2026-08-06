@@ -244,6 +244,23 @@ to matter:
 
     Worth retrying only if the cascade is ever replaced by a global
     matching — the two changes are coupled.
+  - ~~Half-point byes, zero-point byes and retirements need a protocol
+    change~~ — **done, and they were expressible after all.** There is no
+    TRF flag for "not playing this round"; the mechanism is that the
+    arbiter records the result IN ADVANCE and the engine then leaves that
+    player out (`dutch.cpp:658`, `if (player.matches.size() <=
+    tournament.playedRounds)`). This engine paired them anyway, so a
+    player who had asked for a bye got a game — confirmed against javafo
+    on a six-player case. `PAIRING_FUZZ_BYE_PCT` now generates them;
+    92.86% of pairs at 8%, with 2/1797 illegal rounds.
+
+    The round count needed care: neither the minimum games count (breaks
+    on a late entrant, who has none, and empties the pairing) nor the
+    maximum (breaks on the pre-recorded bye being detected) works.
+    bbpPairings only advances `playedRounds` for games the player
+    PARTICIPATED IN THE PAIRING for — a real game or a pairing-allocated
+    bye, never an arbiter-assigned one (`trf.cpp:339-342`,
+    `opponent != id || resultChar == 'U' || resultChar == '+'`).
   - The cascade approximates a global matching. bbpPairings runs one over
     the whole field first, to prove a legal round exists at all.
   - The bracket-ordering terms (MDP displacement, rank spread) still stand

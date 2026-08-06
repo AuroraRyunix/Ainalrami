@@ -40,9 +40,14 @@ defmodule OpenPair.Pairing do
     Process.put(@expected_rounds_key, opts[:expected_rounds])
 
     try do
-      if Enum.all?(players, &(&1.games == [])) do
-        pair_round_one(players)
+      active = Enum.filter(players, &active_this_round?(&1, rounds_played(players)))
+
+      if Enum.all?(active, &(&1.games == [])) do
+        pair_round_one(active)
       else
+        # The FULL roster, not just the active players — float direction
+        # has to look up opponents' scores, and an opponent may be one of
+        # the players sitting this round out.
         pair_later_round(players)
       end
     after
@@ -157,17 +162,26 @@ defmodule OpenPair.Pairing do
   tie-break for the same -40. The terms below are empirical, not derived.
   """
   def pair_later_round(players) do
+    played = rounds_played(players)
+    active = Enum.filter(players, &active_this_round?(&1, played))
+
     brackets =
       players
+      # Float history first, over the WHOLE roster: `float_direction/3`
+      # compares against the opponent's score at the time, and that
+      # opponent may be sitting this round out.
       |> with_float_history()
+      |> Enum.filter(&active_this_round?(&1, played))
       |> Enum.group_by(& &1.points)
       |> Enum.sort_by(fn {score, _} -> -score end)
       |> Enum.map(fn {_score, members} -> members end)
 
     # Exactly one pairing-allocated bye in an odd field, none in an even
     # one. Anything else isn't a legal round, so it's a hard requirement on
-    # the cascade rather than something to score.
-    allowed_byes = rem(length(players), 2)
+    # the cascade rather than something to score. Counted over the ACTIVE
+    # players — a field of even size with one player sitting out needs a
+    # bye, and one of odd size with one sitting out does not.
+    allowed_byes = rem(length(active), 2)
 
     Process.put(@budget_key, @cascade_budget)
 
@@ -196,6 +210,56 @@ defmodule OpenPair.Pairing do
 
     pairs ++ Enum.map(leftover, &{&1.rank, nil})
   end
+
+  # How many rounds the tournament has actually completed.
+  #
+  # Neither the minimum nor the maximum games count works. The minimum
+  # breaks on a late entrant, who has no games at all and would make
+  # everyone else look like they'd already been paired — measured, it
+  # emptied the pairing entirely. The maximum breaks on a pre-recorded
+  # bye, which is the very thing being detected.
+  #
+  # bbpPairings resolves it by only advancing `playedRounds` for games the
+  # player PARTICIPATED IN THE PAIRING for (`trf.cpp:339-342`): a real
+  # game, or a pairing-allocated bye, but not an arbiter-assigned one. So
+  # the round number is the furthest any player has been genuinely paired
+  # to, and a half-point bye recorded in advance doesn't move it.
+  defp rounds_played(players) do
+    players |> Enum.map(&paired_through/1) |> max_or_zero()
+  end
+
+  defp paired_through(player) do
+    player.games
+    |> Enum.with_index(1)
+    |> Enum.filter(fn {game, _round} -> participated_in_pairing?(game) end)
+    |> Enum.map(fn {_game, round} -> round end)
+    |> max_or_zero()
+  end
+
+  # bbpPairings' `opponent != id || resultChar == 'U' || resultChar == '+'`
+  # — a bye counts as having been paired only when it's the
+  # pairing-allocated one (or a forfeit win, which still occupied a slot).
+  defp participated_in_pairing?(game) do
+    not is_nil(game.opponent_rank) or game.result in ["U", "+"]
+  end
+
+  defp max_or_zero([]), do: 0
+  defp max_or_zero(values), do: Enum.max(values)
+
+  # A player is paired this round only if they don't already have a result
+  # for it. bbpPairings has exactly this test — `if (player.matches.size()
+  # <= tournament.playedRounds)` before pushing onto `sortedPlayers`
+  # (`dutch.cpp:658`) — and it's the mechanism by which requested
+  # half-point byes, zero-point byes and retirements work at all: the
+  # arbiter records the result in advance, and the engine then leaves that
+  # player out of the pairing.
+  #
+  # This engine paired them anyway, which meant a player who had asked for
+  # a bye got a game. Confirmed against javafo on a six-player case where
+  # player 6 held a pre-recorded half-point bye: javafo paired the other
+  # five and gave the odd one out the pairing-allocated bye, while this
+  # engine paired player 6 with player 4.
+  defp active_this_round?(player, rounds_played), do: length(player.games) <= rounds_played
 
   # Stamp each player's float direction for the last two rounds, once per
   # round rather than per candidate pair — `float_direction/3` needs every
