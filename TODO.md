@@ -132,16 +132,17 @@ Starting point, and where it stands now (300 tournaments x 9 rounds,
 |---|---|---|
 | 1 | 100% | 100% |
 | 2 | 99.89% | 99.89% |
-| 3 | 91.36% | 99.39% |
-| 4 | 68.51% | 98.95% |
-| 5 | 74.55% | 97.36% |
-| 6 | 60.90% | 97.29% |
-| 7 | 66.48% | 91.54% |
-| 8 | 56.50% | 91.36% |
-| 9 | 62.95% | 89.20% |
-| **overall** | **75.68%** | **96.11%** |
+| 3 | 91.36% | 99.47% |
+| 4 | 68.51% | 99.31% |
+| 5 | 74.55% | 98.42% |
+| 6 | 60.90% | 97.60% |
+| 7 | 66.48% | 94.62% |
+| 8 | 56.50% | 93.49% |
+| 9 | 62.95% | 91.54% |
+| **overall** | **75.68%** | **97.15%** |
 
-Whole rounds: 38.15% → 86.78%.
+Whole rounds: 38.15% → 88.93%. With 10% of games forfeited (a separate,
+harder configuration): 94.05% of pairs, 76.96% of rounds.
 
 The harness also checks **legality independently of javafo** — every
 player paired exactly once, no rematch, and exactly one bye in an odd
@@ -165,6 +166,10 @@ elegant:
 | + C2 (no second bye) enforced | 92.62% |
 | + unplayed-round protection restricted to the bye bracket | 93.61% |
 | + several matchings per floater count | **96.11%** |
+| + widen the alternative search | 96.47% |
+| + forfeit coverage, and the four played/unplayed bugs it found | 96.48% clean |
+| + same absolute colour preference made incompatible | 96.97% |
+| + final-round exception for top scorers | **97.15%** |
 
   1. **The colour model was only ever right for round 2.** "Preference is
      the opposite of your last colour" is exactly correct when every

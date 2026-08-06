@@ -127,10 +127,11 @@ defmodule OpenPair.Pairing do
   (`swisssystems/dutch.cpp`): four colour criteria, then four
   float-history criteria, then MDP displacement and rank spread.
 
-  **96.11% of individual pairs and 85.63% of whole rounds match real
-  `javafo.jar`** over 300 nine-round tournaments of 10-40 players — see
-  TODO.md for the measured history of how each term got there, and the
-  per-round breakdown (round 1 is exact, round 9 is 89.20% of pairs).
+  **97.15% of individual pairs and 88.93% of whole rounds match real
+  `javafo.jar`** over 300 nine-round tournaments of 10-40 players, and
+  94.05% / 76.96% with a tenth of games forfeited — see TODO.md for the
+  measured history of how each term got there, and the per-round
+  breakdown (round 1 is exact, round 9 is 91.54% of pairs).
 
   **Known simplifications versus the full FIDE procedure**:
 
