@@ -75,7 +75,16 @@ defmodule OpenPair.Generator do
 
     text =
       Trf.serialize(%{
-        tournament: %{name: "OpenPair RTG seed=#{seed}", type: "swiss"},
+        tournament: %{
+          name: "OpenPair RTG seed=#{seed}",
+          type: "swiss",
+          # Written as TRF16's own `142` field AND as JaVaFo's `XXR`
+          # extension below. Emitting only the latter meant a reader that
+          # knew just `142` got no round count at all, which silently
+          # changed the final-round pairing — see `OpenPair.Trf`'s
+          # `parse_xxr/2`.
+          number_of_rounds: rounds
+        },
         players: final
       }) <> "XXR #{rounds}\r\n"
 

@@ -504,12 +504,34 @@ defmodule OpenPair.Trf do
           "001" -> update_in(acc.players, &(&1 ++ [parse_player_line(line)]))
           "013" -> update_in(acc.teams, &(&1 ++ [parse_team_line(line)]))
           "132" -> put_in(acc.tournament[:round_dates], parse_round_dates(line))
+          "XXR" -> parse_xxr(acc, line)
           code -> parse_header_line(acc, code, line)
         end
       end)
 
     validate_games!(result.players, allow_dangling_playing_code: true)
     result
+  end
+
+  # `XXR n` is JaVaFo's own extension for the number of rounds, and it is
+  # what JaVaFo actually consumes — plenty of real files carry it INSTEAD
+  # of TRF16's `142`, not as well as. Read as a fallback so both spellings
+  # land in the same field; an explicit `142` always wins.
+  #
+  # Missing this was a real defect, not a tidiness issue. The round count
+  # feeds the final-round exception in `OpenPair.Pairing`'s
+  # `colour_compatible?/2`, so a file carrying only `XXR` was paired with a
+  # round count and re-checked without one — the two disagreeing on
+  # exactly the last round, and no other. Found by fuzzing `-g` output
+  # through `-c`: 4 failures in 250, every one of them the final round.
+  defp parse_xxr(acc, line) do
+    case line |> String.slice(3..-1//1) |> String.trim() |> Integer.parse() do
+      {rounds, _rest} ->
+        update_in(acc.tournament, fn t -> Map.put_new(t, :number_of_rounds, rounds) end)
+
+      :error ->
+        acc
+    end
   end
 
   defp read(line, {start_col, end_col}) do

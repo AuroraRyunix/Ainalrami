@@ -459,4 +459,43 @@ defmodule OpenPair.TrfTest do
     assert blank == %{opponent_rank: nil, colour: nil, result: nil}
     assert real == %{opponent_rank: 2, colour: "b", result: "1"}
   end
+
+  describe "XXR (JaVaFo's round-count extension)" do
+    # A two-player roster plus whatever extension lines the test wants.
+    defp roster_trf(extra) do
+      OpenPair.Trf.serialize(%{
+        tournament: %{name: "XXR Test", type: "swiss"},
+        players: [
+          %{rank: 1, name: "A", fide_rating: 2000, points: 0.0, games: []},
+          %{rank: 2, name: "B", fide_rating: 1900, points: 0.0, games: []}
+        ]
+      }) <> extra
+    end
+
+    test "supplies the round count when the file carries no 142 line" do
+      parsed = OpenPair.Trf.parse(roster_trf("XXR 9\r\n"))
+
+      assert parsed.tournament[:number_of_rounds] == 9
+    end
+
+    test "an explicit 142 wins over XXR" do
+      text =
+        OpenPair.Trf.serialize(%{
+          tournament: %{name: "XXR Test", type: "swiss", number_of_rounds: 5},
+          players: [
+            %{rank: 1, name: "A", fide_rating: 2000, points: 0.0, games: []},
+            %{rank: 2, name: "B", fide_rating: 1900, points: 0.0, games: []}
+          ]
+        }) <> "XXR 9\r\n"
+
+      assert OpenPair.Trf.parse(text).tournament[:number_of_rounds] == 5
+    end
+
+    test "a malformed XXR is ignored rather than failing the parse" do
+      parsed = OpenPair.Trf.parse(roster_trf("XXR banana\r\n"))
+
+      assert parsed.tournament[:number_of_rounds] == nil
+      assert length(parsed.players) == 2
+    end
+  end
 end
