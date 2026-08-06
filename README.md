@@ -49,7 +49,7 @@ that already knows how to drive JaVaFo only has to swap the executable name:
 ```bash
 openpair input.trf -p output.trf   # pair the next round
 openpair input.trf -p              # same, but the pairing prints to stdout
-openpair input.trf -g              # Random Tournament Generator (not yet implemented)
+openpair -g output.trf             # Random Tournament Generator
 openpair input.trf -c              # Pairings Checker: replay and diff every round
 ```
 
@@ -70,8 +70,23 @@ calls `computeMatching`). A reported difference means "this engine would
 have paired it differently", not "the file is illegal" — the file may
 hold a perfectly legal pairing this engine simply wouldn't choose.
 
-`-g` is still not built; the flag answers "not built yet" rather than an
-unknown-flag error.
+`-g` generates a random tournament and plays it forward, pairing each
+round with this engine. It takes no input file — it creates a tournament
+rather than reading one — and writes to stdout when given no output path:
+
+```
+openpair -g out.trf --seed=42 --players=30 --rounds=9 --forfeit-pct=10 --bye-pct=5
+```
+
+Every run is reproducible from its seed, and the seed is written into the
+generated file's own tournament name, so a file always reproduces itself.
+`--rounds` is capped at `players - 1`, past which a Swiss has no legal
+opponents left.
+
+The two modes are each other's test: `-g` output fed to `-c` checks clean
+by construction, since the generator pairs with the same engine the
+checker replays. That round-trip is covered for plain tournaments and for
+ones carrying forfeits and arbiter-assigned byes.
 
 ### Verbose by default
 

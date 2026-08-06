@@ -9,8 +9,8 @@ defmodule OpenPair.CLI do
   `-c` (Pairings Checker, FPC) is implemented — it replays a completed
   tournament and diffs each round against what this engine would have
   paired, exiting nonzero if any round differs. `-g` (Random Tournament
-  Generator) is not built yet (see TODO.md), and answers with a clear
-  "not built yet" rather than an unknown-flag error.
+  Generator) is implemented too — it takes no input file, since it creates
+  a tournament rather than reading one.
 
   Verbose trace is the default (see `OpenPair.Log`); pass `-q`/`--quiet` to
   suppress it.
@@ -21,7 +21,7 @@ defmodule OpenPair.CLI do
   place that halts.
   """
 
-  alias OpenPair.{Log, Pairing, Trf}
+  alias OpenPair.{Generator, Log, Pairing, Trf}
 
   @doc false
   def main(argv), do: argv |> run() |> System.halt()
@@ -41,22 +41,73 @@ defmodule OpenPair.CLI do
 
   defp split_flags(argv) do
     known_bare_flags = ~w(-p -g -c -q --quiet -h --help --version)
-    Enum.split_with(argv, &(&1 in known_bare_flags))
+    Enum.split_with(argv, &(&1 in known_bare_flags or &1 =~ ~r/^--[a-z-]+=/))
+  end
+
+  # `--key=value` options, used only by `-g`. Anything unrecognised is left
+  # for the mode to reject rather than silently ignored.
+  defp option(flags, key) do
+    prefix = "--#{key}="
+
+    Enum.find_value(flags, fn flag ->
+      if String.starts_with?(flag, prefix) do
+        flag |> String.trim_leading(prefix) |> Integer.parse()
+      end
+    end)
+    |> case do
+      {value, ""} -> value
+      _ -> nil
+    end
   end
 
   # `input.trf -p [output.trf]` — input file is always the first positional
   # argument, exactly like JaVaFo; the mode flag then decides what happens
   # to the rest.
-  defp dispatch([input | rest], flags) do
+  # `-g` is the one mode that takes no input file — it creates a
+  # tournament rather than reading one — so it's dispatched before the
+  # missing-input check.
+  defp dispatch(positional, flags) do
     cond do
-      "-p" in flags -> pair(input, rest)
-      "-g" in flags -> not_implemented("Random Tournament Generator (-g)")
-      "-c" in flags -> check(input)
+      "-g" in flags -> generate(positional, flags)
+      positional == [] -> usage_error("missing input TRF file")
+      "-p" in flags -> pair(hd(positional), tl(positional))
+      "-c" in flags -> check(hd(positional))
       true -> usage_error("missing mode flag: one of -p, -g, -c")
     end
   end
 
-  defp dispatch([], _flags), do: usage_error("missing input TRF file")
+  # Random Tournament Generator (RTG). `openpair -g [output.trf]` with
+  # optional `--seed=`, `--players=`, `--rounds=`, `--forfeit-pct=` and
+  # `--bye-pct=`; writes to stdout when no output path is given.
+  defp generate(positional, flags) do
+    opts =
+      [
+        seed: option(flags, "seed"),
+        players: option(flags, "players"),
+        rounds: option(flags, "rounds"),
+        forfeit_pct: option(flags, "forfeit-pct"),
+        requested_bye_pct: option(flags, "bye-pct")
+      ]
+      |> Enum.reject(fn {_key, value} -> is_nil(value) end)
+
+    Log.step("Generating a random tournament")
+    {text, seed} = Generator.generate(opts)
+
+    # Reported as well as embedded in the file's own tournament name, so a
+    # run is reproducible from the console alone if the file is lost.
+    Log.detail("seed #{seed}")
+
+    case positional do
+      [output_path | _] ->
+        File.write!(output_path, text)
+        Log.detail("wrote #{output_path}")
+
+      [] ->
+        IO.write(text)
+    end
+
+    0
+  end
 
   defp pair(input_path, positional_rest) do
     Log.step("Loading #{input_path}")
@@ -273,11 +324,6 @@ defmodule OpenPair.CLI do
 
   defp format_rating(0), do: "unrated"
   defp format_rating(rating), do: "#{rating}"
-
-  defp not_implemented(mode) do
-    Log.error("#{mode} is not implemented yet — see TODO.md")
-    2
-  end
 
   defp usage_error(message) do
     Log.error(message)

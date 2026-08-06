@@ -375,11 +375,22 @@ to matter:
    independent oracle for the residual disagreement rate. The harness's
    own `illegality/2` remains the only independent legality check here.
 
-   **RTG (`-g`)** is still open — the other half of FE1's auto-test, and
-   the part that would actually need building if OpenPair were ever
-   offered as an engine (FE1 only asks for FPC/RTG when "Internal engine:
-   YES"; OpenPairings answers "thru JaVaFo" precisely because it has
-   none).
+   ~~**RTG (`-g`)**~~ **done** — `OpenPair.Generator`. Random roster,
+   played forward with this engine pairing each round, optional forfeits
+   and arbiter-assigned byes. Seeded and reproducible, with the seed
+   written into the generated file's own tournament name (bbpPairings
+   puts it on line one, which would not be valid TRF).
+
+   The generator pairs with the engine under test on purpose, matching
+   bbpPairings' own RTG: the point of an RTG in FE1's auto-test is to
+   produce tournaments whose pairings a REFERENCE checker then verifies,
+   so they have to be the candidate program's own.
+
+   Both halves of FE1's auto-test apparatus now exist. What does NOT
+   exist is a reason to run it: FE1 only asks for FPC/RTG when "Internal
+   engine: YES", endorsement for OpenPair is explicitly deferred below,
+   and the bar is one difference per 500 tournaments against a current
+   rate near 11% of rounds.
 7. **Team pairing.** Depends on OpenPairings' own team-tournament work
    landing first (see that project's `TODO.md`) — team-level Swiss/
    round-robin scheduling, then per-board pairing within a scheduled match.

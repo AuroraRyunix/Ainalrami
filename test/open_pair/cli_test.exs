@@ -195,14 +195,62 @@ defmodule OpenPair.CLITest do
     assert out =~ "invalid TRF file"
   end
 
-  test "-g is recognized but reports not-yet-implemented, exit 2" do
-    path = write_trf!(sample_trf())
+  describe "-g (Random Tournament Generator)" do
+    test "writes a parseable TRF that records its own seed" do
+      path =
+        Path.join(System.tmp_dir!(), "openpair-rtg-#{System.unique_integer([:positive])}.trf")
 
-    {out_g, code_g} = run_capturing(fn -> CLI.run([path, "-g"]) end)
+      on_exit(fn -> File.rm(path) end)
 
-    assert code_g == 2
-    assert out_g =~ "Random Tournament Generator"
-    assert out_g =~ "not implemented yet"
+      {out, code} =
+        run_capturing(fn ->
+          CLI.run(["-g", path, "--seed=1234", "--players=14", "--rounds=5"])
+        end)
+
+      assert code == 0
+      assert out =~ "seed 1234"
+
+      parsed = Trf.parse(File.read!(path))
+      assert length(parsed.players) == 14
+      assert Enum.all?(parsed.players, &(length(&1.games) == 5))
+      # The seed rides in the tournament name so the file alone reproduces
+      # the run — see OpenPair.Generator's moduledoc on why not line one.
+      assert parsed.tournament[:name] =~ "seed=1234"
+    end
+
+    test "the same seed generates the same tournament" do
+      {first, 7} = OpenPair.Generator.generate(seed: 7, players: 12, rounds: 4)
+      {second, 7} = OpenPair.Generator.generate(seed: 7, players: 12, rounds: 4)
+
+      assert first == second
+    end
+
+    test "generated tournaments check clean against the checker, byes and forfeits included" do
+      for opts <- [
+            [seed: 1, players: 16, rounds: 6],
+            [seed: 2, players: 13, rounds: 7, forfeit_pct: 12],
+            [seed: 3, players: 18, rounds: 6, requested_bye_pct: 10],
+            [seed: 4, players: 15, rounds: 7, forfeit_pct: 10, requested_bye_pct: 8]
+          ] do
+        {text, _seed} = OpenPair.Generator.generate(opts)
+        path = write_trf!(text)
+
+        {_out, code} = run_capturing(fn -> CLI.run([path, "-c", "-q"]) end)
+
+        # The RTG pairs with this very engine, so its output is by
+        # construction what the checker expects. A failure here means the
+        # two modes disagree about the same rules — most likely in how a
+        # round's pre-pairing state is reconstructed.
+        assert code == 0, "generated tournament failed its own checker: #{inspect(opts)}"
+      end
+    end
+
+    test "rounds are capped so the field cannot run out of legal opponents" do
+      {text, _seed} = OpenPair.Generator.generate(seed: 9, players: 6, rounds: 40)
+      parsed = Trf.parse(text)
+
+      assert Enum.all?(parsed.players, &(length(&1.games) <= 5))
+    end
   end
 
   test "-q suppresses the step/detail trace on a successful round-1 pairing, but the pairing output still prints" do
