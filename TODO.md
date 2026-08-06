@@ -343,6 +343,18 @@ natural-correspondence machinery for a multi-tier bracket before the
 merge can be attempted again. That is the actual blocker — not the
 matching algorithm, which the DP already covers at these sizes.
 
+**Update:** the matching algorithm itself is no longer a blocker even for
+sizes past the DP's reach. `OpenPair.WeightedMatching` is a from-source
+port of the actual Galil/Micali/Gabow primal-dual algorithm described
+above (read from bbpPairings' `src/matching/detail/{graph,rootblossom,
+parentblossom}.cpp`, not reconstructed from memory), verified against
+`OpenPair.Matching`'s independent subset-DP oracle across 900+ random
+graphs (`weighted_matching_test.exs`) including cases dense enough to
+require both blossom formation and blossom expansion. It is NOT wired
+into `Pairing` yet — that still waits on the natural-correspondence
+redesign above, since a wider matcher alone doesn't fix the S1/S2
+scrambling a merged bracket causes.
+
 ### Still open at depth
 
 Rounds 7-9 sit at 89-92% of pairs. Known gaps, in the order most likely
