@@ -390,6 +390,22 @@ to matter:
     on a six-player case. `PAIRING_FUZZ_BYE_PCT` now generates them;
     92.86% of pairs at 8%, with 2/1797 illegal rounds.
 
+    **Update:** those 2/1797 (and a fresh 3/2119 re-measurement) turned
+    out to be genuine deadlocks, not search misses — confirmed by an
+    independent exhaustive search restricted to the true active player
+    set for each case (a small field deep into a Swiss, colour-absolute
+    exclusions stacking on top of near-exhausted rematch-free opponents).
+    `repair_bye_count/3` was silently returning that still-illegal
+    pairing instead of recognising it as unsolvable; it now raises
+    `OpenPair.Pairing.NoValidPairingError`, matching bbpPairings'
+    own `NoValidPairingException` (`dutch.cpp`'s `compatible`/
+    `matchingIsComplete` never accept more byes than
+    `rem(active_count, 2)` either — they throw instead).
+    `OpenPair.Generator` catches it and truncates the tournament at the
+    last round that actually completed. Re-verified end to end via the
+    generator itself: **0 illegal rounds across 800 generated
+    tournaments (~5500 rounds) at mixed bye rates 0/5/8/15%.**
+
     The round count needed care: neither the minimum games count (breaks
     on a late entrant, who has none, and empties the pairing) nor the
     maximum (breaks on the pre-recorded bye being detected) works.

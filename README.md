@@ -17,24 +17,42 @@ tiebreak orderings), and a third independent data point for cross-checking
 pairing correctness alongside JaVaFo and
 [bbpPairings](https://github.com/BieremaBoyzProgramming/bbpPairings).
 
-**Status: round 1 is solid; later rounds work and are improving, verified
-against real JaVaFo output, not just our own unit tests.**
+**Status: beta — the Dutch-system engine is functionally complete and
+ready to test, measured against real JaVaFo output at depth, not just our
+own unit tests. Not yet cross-validated against bbpPairings' own pairings
+(only its source, for algorithm fidelity — see below), and not yet wired
+into OpenPairings as a selectable engine.**
 
 - **Round 1**: 100% match against `javafo.jar` on a clean 20,000-random-roster
   run (`OpenPair.Pairing.pair_round_one/1`, colour-blind composition diff —
-  see `test/open_pair/javafo_comparison_test.exs`), re-confirmed at 3,000
-  after the round-2 work landed, to rule out a shared-code regression.
+  see `test/open_pair/javafo_comparison_test.exs`).
 - **Round 2+**: **99.85%** composition match (5991/6000 random round-1
   outcomes) — `OpenPair.Pairing.pair_later_round/1`, general
-  maximum-weight matching over each score bracket via `OpenPair.Matching`,
-  checked by `test/open_pair/javafo_comparison_round2_test.exs`. Every
-  scoring term in it was measured against real `javafo.jar` rather than
-  derived from the spec; [TODO.md](TODO.md) has the full table, including
-  the two changes that looked obviously correct and measured *worse*
-  (a bipartite bracket restriction at 10.7%, and a natural-correspondence
-  tie-break at 64.95%), both reverted. The 6,000-case rate is measured on
-  3× the 2,000 cases the scoring was tuned against and came out slightly
-  higher (99.75% → 99.85%), so it isn't overfitted to the tuning set.
+  maximum-weight matching over each score bracket via `OpenPair.Matching`.
+  Every scoring term in it was measured against real `javafo.jar` rather
+  than derived from the spec; [TODO.md](TODO.md) has the full table,
+  including changes that looked obviously correct and measured *worse*
+  (a bipartite bracket restriction at 10.7%, a natural-correspondence
+  tie-break at 64.95%), all reverted rather than kept for elegance.
+- **Depth (rounds 1-9, 300 tournaments, 10-40 players)**: **97.19%** of
+  individual pairs match javafo, **88.93%** of whole rounds match exactly
+  — round 1 is exact, round 9 (the hardest, most opponent-exhausted round
+  measured) is 91.54%. What actually governs accuracy is not the round
+  number but how much of the field a player has already met — a 60-70
+  player field at 15 rounds is still 97.76%. See TODO.md's "Depth" and
+  "How close to javafo" sections for the full round-by-round table and
+  every fix that got it there.
+- **Legality, independent of javafo**: every player paired exactly once,
+  no rematches, and exactly one pairing-allocated bye in an odd active
+  field (none in an even one) — **0 illegal rounds** across every
+  configuration currently measured, including the hardest stress test
+  (30 rounds, 32-40 players) and arbiter-assigned-bye-heavy tournaments
+  (800 generated tournaments, ~5500 rounds, mixed bye rates). When no
+  legal pairing can exist at all — a genuine structural deadlock, not a
+  search failure — the engine raises
+  `OpenPair.Pairing.NoValidPairingError` rather than emitting a
+  best-effort illegal result, matching bbpPairings' own
+  `NoValidPairingException`.
 
 The CLI's `-p` mode calls the real pairing engine for both cases now,
 writing output in JaVaFo's own text shape.
@@ -81,7 +99,10 @@ openpair -g out.trf --seed=42 --players=30 --rounds=9 --forfeit-pct=10 --bye-pct
 Every run is reproducible from its seed, and the seed is written into the
 generated file's own tournament name, so a file always reproduces itself.
 `--rounds` is capped at `players - 1`, past which a Swiss has no legal
-opponents left.
+opponents left; it can also stop earlier still, if some round along the
+way turns out to have no legal pairing at all (a real, if rare,
+possibility for a small field deep into a Swiss — see
+`OpenPair.Pairing.NoValidPairingError`).
 
 The two modes are each other's test: `-g` output fed to `-c` checks clean
 by construction, since the generator pairs with the same engine the
@@ -94,8 +115,7 @@ Unlike JaVaFo, which prints almost nothing beyond the paired result,
 OpenPair prints a step-by-step trace of what it's doing by default. Pass
 `-q`/`--quiet` to suppress it. See `OpenPair.Log`'s moduledoc for the
 reasoning — the intent is that "why did board 3 downfloat instead of board
-5" should be answerable by reading the run's own output, once the real
-pairing engine lands.
+5" should be answerable by reading the run's own output.
 
 ## Development
 
