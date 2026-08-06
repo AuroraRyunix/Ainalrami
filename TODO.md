@@ -219,6 +219,43 @@ reported weight identical, and was only localised by setting the
 candidate count back to 1 — which should have been behaviourally
 identical to the previous commit, and was.
 
+### How close to javafo, and under what conditions
+
+Measured, not estimated. The variable that decides accuracy is NOT the
+round number — it is **how much of the field a player has already met**,
+i.e. rounds as a fraction of roster size. Opponent exhaustion, not depth.
+
+At 15 rounds, varying only the field (10 tournaments each):
+
+| field | rounds as % of field | pairs | illegal rounds |
+|---|---|---|---|
+| 18-20 | ~83% | 79.45% | 26/150 |
+| 26-28 | ~57% | 86.03% | 17/150 |
+| 34-36 | ~44% | 90.62% | 8/150 |
+| 44-46 | ~34% | 95.80% | 1/150 |
+| 60-70 | ~22% | 97.76% | 1/150 |
+
+A 60-70 player field over 15 rounds is 97.76% — as good as the 9-round
+number. A 32-40 player field over 30 rounds collapses to 62.89% with
+1477/2997 rounds illegal. Same engine, same depth of history; the
+difference is entirely how many legal opponents remain.
+
+So for real events: a 9-round Swiss in a 40-player field, or a 15-round
+blitz in a 60+ field, both sit near 97%. A 20-round event in a 30-player
+field does not work at all.
+
+**The failure mode is legality, not disagreement.** The two rise together
+because they are one event: when the bracket cascade cannot find a legal
+completion inside its bounded search it falls back to greedy, and greedy
+output is both an illegal bye count and unrelated to javafo's. Raising
+`@cascade_budget` 25x does not help — it makes the search intractable
+instead, because a bounded depth-first search over per-bracket
+alternatives is the wrong tool when the constraint is global.
+
+This is the strongest argument yet for the global-matching item below:
+bbpPairings runs one matching over the whole field FIRST, specifically to
+prove a legal round exists.
+
 ### Still open at depth
 
 Rounds 7-9 sit at 89-92% of pairs. Known gaps, in the order most likely
