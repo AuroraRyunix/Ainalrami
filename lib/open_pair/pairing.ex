@@ -450,7 +450,7 @@ defmodule OpenPair.Pairing do
   # heterogeneous one) are explained by this rule and were not explained
   # by the spread rule.
   defp pair_weight(a, b, %{mdp_count: mdp_count} = natural, spans) do
-    if legal_pair?(a, b) do
+    if legal_pair?(a, b) and colour_compatible?(a, b) do
       # bbpPairings passes (higherPlayer, lowerPlayer) by bracket order, and
       # the absolute-preference tie-break in `colour_criteria/2` is not
       # symmetric in the two, so the roles have to be assigned the same way
@@ -751,6 +751,28 @@ defmodule OpenPair.Pairing do
   # having no other option.
   defp legal_pair?(p1, p2) do
     not Enum.any?(p1.games, &(played?(&1) and &1.opponent_rank == p2.rank))
+  end
+
+  # Two players who both hold an ABSOLUTE colour preference for the same
+  # colour cannot be paired at all. bbpPairings puts this in `compatible`
+  # (`dutch.cpp:57-68`) alongside the no-rematch rule — an absolute
+  # criterion, not something weighed against other considerations. This
+  # engine had it only as scored criteria c1/c2, which means a bad enough
+  # position elsewhere could buy a pairing that is simply not allowed.
+  #
+  # bbpPairings does carry an exception: in the FINAL round, two top
+  # scorers may be paired despite the clash, rather than leave the
+  # tournament's decisive game unplayed. That is not implemented here
+  # because the engine is not told the expected round count — see
+  # `pair_next_round/1`, which takes only players. Until it is, this
+  # engine is stricter than the rules in exactly one place: the last round
+  # of a tournament, between players above half the maximum score.
+  defp colour_compatible?(a, b) do
+    p = a.colour_stats
+    o = b.colour_stats
+
+    not (p.absolute? and o.absolute? and not is_nil(p.preference) and
+           p.preference == o.preference)
   end
 
   # Absolute criterion C2: nobody receives a second pairing-allocated bye.
