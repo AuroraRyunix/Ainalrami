@@ -5,12 +5,12 @@ defmodule OpenPair.CLI do
   the sibling project's real `System.cmd` call, not guessed) — as
   `openpair input.trf -p output.trf`, so a caller that already knows how to
   drive JaVaFo only has to swap the executable name, not rewrite its
-  argument-building code. Same idea extends to the other two JaVaFo modes,
-  `-g` (Random Tournament Generator) and `-c` (Pairings Checker), even
-  though neither has a real implementation yet (see TODO.md) — the flag
-  exists and gives a clear "not built yet" answer rather than an
-  unknown-flag error, so the CLI's shape is already stable for whoever
-  starts building those next.
+  argument-building code. The same applies to JaVaFo's other two modes:
+  `-c` (Pairings Checker, FPC) is implemented — it replays a completed
+  tournament and diffs each round against what this engine would have
+  paired, exiting nonzero if any round differs. `-g` (Random Tournament
+  Generator) is not built yet (see TODO.md), and answers with a clear
+  "not built yet" rather than an unknown-flag error.
 
   Verbose trace is the default (see `OpenPair.Log`); pass `-q`/`--quiet` to
   suppress it.
@@ -51,7 +51,7 @@ defmodule OpenPair.CLI do
     cond do
       "-p" in flags -> pair(input, rest)
       "-g" in flags -> not_implemented("Random Tournament Generator (-g)")
-      "-c" in flags -> not_implemented("Pairings Checker (-c)")
+      "-c" in flags -> check(input)
       true -> usage_error("missing mode flag: one of -p, -g, -c")
     end
   end
@@ -82,6 +82,132 @@ defmodule OpenPair.CLI do
     else
       {:error, :halt} -> 1
     end
+  end
+
+  # Pairings Checker (FPC). Replays a completed tournament round by round,
+  # re-pairing each round from the state that preceded it and diffing
+  # against the pairing the file actually records.
+  #
+  # This mirrors what bbpPairings' own `-c` does (`tournament/checker.cpp`)
+  # and it is worth being precise about what that means: a checker is NOT
+  # an independent verifier of the rules. It clears the matches, replays,
+  # and calls the SAME pairing engine to decide what each round should
+  # have been. "Correct" here means "what this engine would have paired",
+  # so a disagreement is a difference, not a proof of illegality — the
+  # file may hold a perfectly legal pairing that this engine wouldn't pick.
+  #
+  # Composition (who plays whom) is reported as an error. Colours are
+  # reported separately and never as an error, because Article 5.1 leaves
+  # the first colour to a drawing of lots and this engine's convention is
+  # its own — see `OpenPair.Pairing.pair_round_one/1`.
+  defp check(input_path) do
+    Log.step("Loading #{input_path}")
+
+    with {:ok, text} <- read_input(input_path),
+         {:ok, parsed} <- parse_input(text) do
+      rounds = completed_rounds(parsed.players)
+
+      if rounds == 0 do
+        Log.warn("no completed rounds to check")
+        0
+      else
+        Log.step("Checking #{rounds} round(s)")
+
+        results = Enum.map(1..rounds, &check_round(parsed, &1))
+        differing = Enum.count(results, &(&1 != :ok))
+
+        Log.step(
+          "#{rounds - differing}/#{rounds} round(s) match this engine's own pairing" <>
+            if(differing == 0, do: "", else: " — #{differing} differ")
+        )
+
+        if differing == 0, do: 0, else: 1
+      end
+    else
+      {:error, :halt} -> 1
+    end
+  end
+
+  defp check_round(parsed, round) do
+    before = state_before_round(parsed.players, round)
+
+    expected =
+      Pairing.pair_next_round(before, expected_rounds: parsed.tournament[:number_of_rounds])
+
+    actual = recorded_pairs(parsed.players, round)
+
+    if composition(expected) == composition(actual) do
+      Log.detail("round #{round}: matches" <> colour_note(expected, actual))
+      :ok
+    else
+      Log.warn("round #{round}: DIFFERS")
+      Log.warn("  file:   #{inspect(Enum.sort(actual))}")
+      Log.warn("  engine: #{inspect(Enum.sort(expected))}")
+      :differs
+    end
+  end
+
+  # How many rounds actually carry results. Taken over players rather than
+  # the header's own round count, which states the tournament's intended
+  # length, not its progress.
+  defp completed_rounds(players) do
+    players |> Enum.map(&length(&1.games)) |> Enum.max(fn -> 0 end)
+  end
+
+  # The tournament as it stood immediately before `round` was paired:
+  # every earlier game, plus this round's own result for anyone who did
+  # NOT participate in the pairing. That last part is not an optimisation
+  # — an arbiter-assigned bye is recorded in advance precisely so the
+  # engine leaves that player out, so replaying without it would ask the
+  # engine to pair somebody who had already been excused.
+  defp state_before_round(players, round) do
+    Enum.map(players, fn player ->
+      earlier = Enum.take(player.games, round - 1)
+
+      games =
+        case Enum.at(player.games, round - 1) do
+          nil -> earlier
+          game -> if Trf.participated_in_pairing?(game), do: earlier, else: earlier ++ [game]
+        end
+
+      %{player | games: games, points: Enum.sum(Enum.map(games, &Trf.points_for(&1.result)))}
+    end)
+  end
+
+  # The pairing the file records for `round`, as {white, black} with `nil`
+  # for a pairing-allocated bye. Each game is claimed by its White so the
+  # pair is emitted once; players who sat the round out contribute nothing.
+  defp recorded_pairs(players, round) do
+    Enum.flat_map(players, fn player ->
+      case Enum.at(player.games, round - 1) do
+        nil ->
+          []
+
+        game ->
+          cond do
+            not Trf.participated_in_pairing?(game) -> []
+            is_nil(game.opponent_rank) -> [{player.rank, nil}]
+            game.colour == "w" -> [{player.rank, game.opponent_rank}]
+            game.colour == "b" -> []
+            # No colour recorded: claim it from the lower rank so the pair
+            # is still emitted exactly once.
+            player.rank < game.opponent_rank -> [{player.rank, game.opponent_rank}]
+            true -> []
+          end
+      end
+    end)
+  end
+
+  defp composition(pairs) do
+    pairs
+    |> Enum.map(fn {a, b} -> Enum.sort_by([a, b], &(&1 || :infinity)) end)
+    |> Enum.sort()
+  end
+
+  defp colour_note(expected, actual) do
+    if Enum.sort(expected) == Enum.sort(actual),
+      do: "",
+      else: " (same pairing, different colours)"
   end
 
   defp write_pairs(pairs, positional_rest) do

@@ -361,10 +361,25 @@ to matter:
    (`colour_stats/1` from `computePlayerData`, `choose_colour/2` from
    `choosePlayerNeutralColor`), including absolute/strong/mild strength
    and the absolute colour-difference rules.
-6. **RTG (`-g`) and Checker (`-c`) modes** — JaVaFo's own two auxiliary
-   roles, used for FIDE's FE1 endorsement auto-test (a checker doesn't need
-   a search at all, "just" a verifier against every criterion above, so
-   this could plausibly land before stage 3 finishes if useful sooner).
+6. **Checker (`-c`)** — ~~JaVaFo's FPC role~~ **done**. Replays a
+   completed tournament, re-pairs each round from the state before it, and
+   diffs. Exits nonzero on any composition difference; colour differences
+   are reported but never errors.
+
+   One belief this corrected: a checker is NOT "a verifier against every
+   criterion", as this item used to claim. bbpPairings' own checker
+   (`tournament/checker.cpp`) clears the matches, replays, and calls
+   `computeMatching` — it re-runs the ENGINE and defines correct as what
+   the engine produces. So a checker cannot tell a legal-but-different
+   pairing from an illegal one, and building one does not give an
+   independent oracle for the residual disagreement rate. The harness's
+   own `illegality/2` remains the only independent legality check here.
+
+   **RTG (`-g`)** is still open — the other half of FE1's auto-test, and
+   the part that would actually need building if OpenPair were ever
+   offered as an engine (FE1 only asks for FPC/RTG when "Internal engine:
+   YES"; OpenPairings answers "thru JaVaFo" precisely because it has
+   none).
 7. **Team pairing.** Depends on OpenPairings' own team-tournament work
    landing first (see that project's `TODO.md`) — team-level Swiss/
    round-robin scheduling, then per-board pairing within a scheduled match.

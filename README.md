@@ -50,14 +50,28 @@ that already knows how to drive JaVaFo only has to swap the executable name:
 openpair input.trf -p output.trf   # pair the next round
 openpair input.trf -p              # same, but the pairing prints to stdout
 openpair input.trf -g              # Random Tournament Generator (not yet implemented)
-openpair input.trf -c              # Pairings Checker (not yet implemented)
+openpair input.trf -c              # Pairings Checker: replay and diff every round
 ```
 
 `-g` and `-c` mirror JaVaFo's own RTG/FPC modes (used for FIDE's FE1
-endorsement auto-test — see OpenPairings' `docs/fide-endorsement.md`) — the
-flags exist and give a clear "not built yet" answer today, rather than an
-unknown-flag error, so the CLI's shape is already stable for whoever
-implements them.
+endorsement auto-test — see OpenPairings' `docs/fide-endorsement.md`).
+
+`-c` replays a completed tournament round by round, re-pairing each round
+from the state that preceded it and diffing against the pairing the file
+records. It exits 0 when every round matches and 1 otherwise. Differences
+in COLOUR are reported but never counted as errors — Article 5.1 leaves
+the first colour to a drawing of lots, so this engine's convention is its
+own and legitimately differs from JaVaFo's.
+
+**A checker is not an independent verifier of the rules.** It re-runs the
+same engine and calls that the correct answer, exactly as bbpPairings'
+own `-c` does (`tournament/checker.cpp` clears the matches, replays, and
+calls `computeMatching`). A reported difference means "this engine would
+have paired it differently", not "the file is illegal" — the file may
+hold a perfectly legal pairing this engine simply wouldn't choose.
+
+`-g` is still not built; the flag answers "not built yet" rather than an
+unknown-flag error.
 
 ### Verbose by default
 

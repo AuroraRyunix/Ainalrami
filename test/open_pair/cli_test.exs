@@ -195,19 +195,14 @@ defmodule OpenPair.CLITest do
     assert out =~ "invalid TRF file"
   end
 
-  test "-g and -c are recognized but report not-yet-implemented, exit 2" do
+  test "-g is recognized but reports not-yet-implemented, exit 2" do
     path = write_trf!(sample_trf())
 
     {out_g, code_g} = run_capturing(fn -> CLI.run([path, "-g"]) end)
-    {out_c, code_c} = run_capturing(fn -> CLI.run([path, "-c"]) end)
 
     assert code_g == 2
     assert out_g =~ "Random Tournament Generator"
     assert out_g =~ "not implemented yet"
-
-    assert code_c == 2
-    assert out_c =~ "Pairings Checker"
-    assert out_c =~ "not implemented yet"
   end
 
   test "-q suppresses the step/detail trace on a successful round-1 pairing, but the pairing output still prints" do
@@ -230,6 +225,110 @@ defmodule OpenPair.CLITest do
     refute out =~ "Loading"
     refute out =~ "players,"
     assert out =~ "2\r\n1 2\r\n3 4\r\n"
+  end
+
+  describe "-c (Pairings Checker)" do
+    test "a tournament this engine paired itself checks clean" do
+      path = write_trf(self_paired_tournament(4))
+      {out, code} = run_capturing(fn -> CLI.run([path, "-c"]) end)
+
+      assert code == 0
+      assert out =~ "4/4 round(s) match"
+      refute out =~ "DIFFERS"
+    end
+
+    test "a tampered pairing is reported, and the exit code is nonzero" do
+      players = self_paired_tournament(4)
+
+      # Swap two players' round-3 opponents so the recorded pairing is one
+      # this engine would not have produced.
+      [a, b | rest] = players
+      ga = Enum.at(a.games, 2)
+      gb = Enum.at(b.games, 2)
+
+      tampered =
+        [
+          %{a | games: List.replace_at(a.games, 2, %{ga | opponent_rank: gb.opponent_rank})},
+          %{b | games: List.replace_at(b.games, 2, %{gb | opponent_rank: ga.opponent_rank})}
+        ] ++ rest
+
+      path = write_trf(tampered)
+      {out, code} = run_capturing(fn -> CLI.run([path, "-c"]) end)
+
+      assert code == 1
+      assert out =~ "round 3: DIFFERS"
+    end
+
+    test "a player holding an arbiter-assigned bye is left out of the replayed pairing" do
+      # Five players, one of whom took a half-point bye in round 1: the
+      # engine must pair the other four and not deal that player a game.
+      players = self_paired_tournament(1, 5)
+
+      [sitting | others] =
+        Enum.map(players, fn p -> %{p | games: [], points: 0.0} end)
+
+      sitting = %{
+        sitting
+        | points: 0.5,
+          games: [%{opponent_rank: nil, colour: nil, result: "H"}]
+      }
+
+      path = write_trf([sitting | others])
+      {out, code} = run_capturing(fn -> CLI.run([path, "-c"]) end)
+
+      # Round 1 as recorded has nobody paired at all, so it differs — what
+      # matters is that the engine never proposes a game for the player who
+      # sat out.
+      assert code == 1
+      refute out =~ "engine: []"
+      assert out =~ "engine:"
+      refute out =~ "{#{sitting.rank},"
+    end
+  end
+
+  # A small tournament paired entirely by this engine, so a checker run
+  # over it should agree with itself on every round.
+  defp self_paired_tournament(rounds, player_count \\ 8) do
+    roster =
+      for i <- 1..player_count do
+        %{rank: i, name: "P#{i}", fide_rating: 2000 - i * 10, points: 0.0, games: []}
+      end
+
+    Enum.reduce(1..rounds, roster, fn _round, players ->
+      pairs = OpenPair.Pairing.pair_next_round(players, expected_rounds: rounds)
+
+      by_rank =
+        Enum.reduce(pairs, %{}, fn
+          {w, nil}, acc ->
+            Map.put(acc, w, {%{opponent_rank: nil, colour: nil, result: "U"}, 1.0})
+
+          {w, b}, acc ->
+            acc
+            |> Map.put(w, {%{opponent_rank: b, colour: "w", result: "1"}, 1.0})
+            |> Map.put(b, {%{opponent_rank: w, colour: "b", result: "0"}, 0.0})
+        end)
+
+      Enum.map(players, fn p ->
+        {game, points} = Map.fetch!(by_rank, p.rank)
+        %{p | points: p.points + points, games: p.games ++ [game]}
+      end)
+    end)
+  end
+
+  defp write_trf(players) do
+    text =
+      OpenPair.Trf.serialize(%{
+        tournament: %{name: "CheckerTest", type: "swiss"},
+        players: players
+      }) <> "XXR 9
+"
+
+    path =
+      Path.join(System.tmp_dir!(), "openpair-check-#{System.unique_integer([:positive])}.trf")
+
+    File.write!(path, text)
+    on_exit(fn -> File.rm(path) end)
+    path
   end
 
   # OpenPair.Log writes step/detail to stdout and warn/error to stderr —

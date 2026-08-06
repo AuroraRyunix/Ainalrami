@@ -95,6 +95,32 @@ defmodule OpenPair.Trf do
 
   def result_codes, do: @result_codes
 
+  @doc """
+  What a single result code is worth under the standard 1 / ½ / 0 system.
+
+  Byes differ: a pairing-allocated bye (`U`), a full-point bye (`F`) and a
+  forfeit win (`+`) all pay a full point, a half-point bye (`H`) pays a
+  half, and a zero-point bye (`Z`) or forfeit loss (`-`) pays nothing.
+  """
+  def points_for(result) when result in ~w(1 + F U), do: 1.0
+  def points_for(result) when result in ~w(= H), do: 0.5
+  def points_for(_result), do: 0.0
+
+  @doc """
+  Whether the player took part in the PAIRING for this game, as opposed to
+  having a result recorded for them without being paired.
+
+  This is what distinguishes an arbiter-assigned bye (half-point,
+  zero-point, full-point — granted before the round is paired, so the
+  player is left out of it) from a pairing-allocated bye, which the
+  pairing itself produced. bbpPairings expresses the same test as
+  `opponent != id || resultChar == 'U' || resultChar == '+'`
+  (`fileformats/trf.cpp:303`).
+  """
+  def participated_in_pairing?(game) do
+    not is_nil(game.opponent_rank) or game.result in ~w(U +)
+  end
+
   # TRF16 result codes for an actually-contested game (win/draw/loss/forfeit)
   # vs. an unpaired round (byes of every kind). A forfeit is legally
   # "unplayed" per FIDE Art. 16, but it still occupies a pairing slot (an
