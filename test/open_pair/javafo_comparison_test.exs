@@ -471,8 +471,8 @@ defmodule OpenPair.JavafoComparisonTest do
   # harness was built to find (criteria that cannot bind until round 3+).
   defp report(comparisons, errors, exhausted, rounds) do
     IO.puts("\nJaVaFo comparison, #{rounds} round(s) per tournament:\n")
-    IO.puts("  round | exact rounds |    rate | individual pairs |    rate")
-    IO.puts("  ------+--------------+---------+------------------+--------")
+    IO.puts("  round | exact rounds |    rate | individual pairs |    rate | illegal")
+    IO.puts("  ------+--------------+---------+------------------+---------+--------")
 
     comparisons
     |> Enum.group_by(& &1.round)
@@ -547,12 +547,16 @@ defmodule OpenPair.JavafoComparisonTest do
     pairs_matched = Enum.sum(Enum.map(measurements, & &1.pairs_matched))
     pairs_total = Enum.sum(Enum.map(measurements, & &1.pairs_total))
 
+    illegal = Enum.count(measurements, &(&1.illegal != nil))
+
     String.pad_leading("#{rounds_matched}/#{rounds_total}", 12) <>
       " | " <>
       String.pad_leading(percent(rounds_matched, rounds_total), 6) <>
       "% | " <>
       String.pad_leading("#{pairs_matched}/#{pairs_total}", 16) <>
-      " | " <> String.pad_leading(percent(pairs_matched, pairs_total), 6) <> "%"
+      " | " <>
+      String.pad_leading(percent(pairs_matched, pairs_total), 6) <>
+      "% | " <> String.pad_leading("#{illegal}", 7)
   end
 
   defp percent(_matched, 0), do: "n/a"
