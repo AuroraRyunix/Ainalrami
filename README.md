@@ -18,10 +18,9 @@ pairing correctness alongside JaVaFo and
 [bbpPairings](https://github.com/BieremaBoyzProgramming/bbpPairings).
 
 **Status: beta — the Dutch-system engine is functionally complete and
-ready to test, measured against real JaVaFo output at depth, not just our
-own unit tests. Not yet cross-validated against bbpPairings' own pairings
-(only its source, for algorithm fidelity — see below), and not yet wired
-into OpenPairings as a selectable engine.**
+ready to test, measured at depth against both real JaVaFo output and real
+bbpPairings output, not just our own unit tests. Not yet wired into
+OpenPairings as a selectable engine.**
 
 - **Round 1**: 100% match against `javafo.jar` on a clean 20,000-random-roster
   run (`OpenPair.Pairing.pair_round_one/1`, colour-blind composition diff —
@@ -53,6 +52,15 @@ into OpenPairings as a selectable engine.**
   `OpenPair.Pairing.NoValidPairingError` rather than emitting a
   best-effort illegal result, matching bbpPairings' own
   `NoValidPairingException`.
+- **bbpPairings depth (rounds 1-9, 200 tournaments, 4-40 players)**:
+  **95.92%** of individual pairs and **86.32%** of whole rounds match
+  Bierema Boyz Programming's independent reference implementation, run
+  directly (not just read as source) — `test/support/bbppairings.ex` +
+  `bbppairings_comparison_test.exs`. **0 illegal rounds** here too, and
+  bbpPairings independently confirmed OpenPair's structural-deadlock
+  cases really are unpairable (its own exit code 1 on byte-identical
+  input). See TODO.md's "Cross-validation against bbpPairings" for the
+  full round-by-round table.
 
 The CLI's `-p` mode calls the real pairing engine for both cases now,
 writing output in JaVaFo's own text shape.

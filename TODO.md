@@ -553,24 +553,64 @@ to matter:
 
 ## Cross-validation against bbpPairings
 
-Explicit ask, not optional polish: **fully parse and fuzz-test against
-bbpPairings** (Bierema Boyz Programming's independent, Apache-2.0-licensed
-Dutch-system implementation, already vendored in OpenPairings at
-`priv/bbppairings/` for its own `cross_program_test.exs` harness). Port that
-same pattern here once stage 1-3 above produce real pairings:
+**Done, and measured** — `OpenPair.Test.Bbppairings` +
+`bbppairings_comparison_test.exs`, the same methodology as the javafo
+harness (play a tournament forward, diff each round, advance on the
+REFERENCE engine's own answer). Uses OpenPairings' already-vendored
+`priv/bbppairings/bbpPairings-windows.exe` (v6.0.0, official release),
+located the same way `javafo.jar` is (`BBPPAIRINGS_EXE` env var,
+defaulting to that sibling path) — not vendored into this repo either.
 
-- Generate synthetic rosters/histories (`StreamData` property-style, same
-  approach as OpenPairings' `trf_property_test.exs`).
-- Pair each one with both OpenPair and bbpPairings on byte-identical TRF16
-  input.
-- Diff every round's actual pairing, not just final legality — a
-  same-score-group-splitting disagreement (the exact class of thing the
-  OpenPairings/JaVaFo/bbpPairings harness already found) is the
-  interesting signal, not a crash.
-- Treat a disagreement as a research question first ("which one, if
-  either, is actually right per the current Handbook text"), not an
-  automatic bug in OpenPair — bbpPairings and JaVaFo don't always agree
-  with each other either.
+Two integration details that only showed up by actually running it, not
+by reading the source:
+
+- Output format is byte-identical to javafo's own (`count\r\n` then
+  `white black\r\n` per pair, `0` for a bye) — no separate parser needed.
+- Unlike javafo, bbpPairings does not choose the first round's colour on
+  its own; it refuses to pair at all without an explicit `152 W`/`B`
+  field whenever no player has a colour recorded yet. And it signals "no
+  legal pairing exists" differently too — exit code 1 with no output
+  file, versus javafo's empty-pairs-file-at-exit-0 — its own documented
+  error code 1, "no valid pairing exists for the current round". Modelled
+  as a distinct `{:no_valid_pairing, message}` return, handled the same
+  way as javafo's exhaustion case (tournament ends early, round excluded
+  from the rates, not counted as a mismatch).
+
+**First real measurement** (200 tournaments × 9 rounds, 4-40 players):
+
+| round | exact rounds | individual pairs |
+|---|---|---|
+| 1 | 100.00% | 100.00% |
+| 2 | 100.00% | 100.00% |
+| 3 | 98.00% | 99.28% |
+| 4 | 95.83% | 98.87% |
+| 5 | 88.54% | 96.80% |
+| 6 | 85.03% | 96.00% |
+| 7 | 78.26% | 93.60% |
+| 8 | 67.66% | 91.50% |
+| 9 | 55.09% | 86.45% |
+| **overall** | **86.32%** | **95.92%** |
+
+**0 illegal rounds** — independent confirmation of the legality fix two
+commits up: bbpPairings agreed OpenPair's structural-deadlock cases really
+were unpairable (its own exit code 1, on byte-identical input, for the
+exact case that motivated that fix).
+
+Slightly lower than the javafo depth number (97.19% pairs / 88.93% rounds,
+albeit a different 300×9 sample) but the same shape — rounds 1-2 exact,
+gradual divergence at depth. One representative disagreement (seed 25,
+round 4, 5 players) was hand-traced against the bracket/downfloat/
+bye-eligibility rules: OpenPair's answer matches a direct reading of
+those rules; bbpPairings' differs in a way consistent with its
+whole-field weighted matching trading bracket locality for some other
+criterion — not an obvious defect, and consistent with the
+already-documented gap that the bracket cascade approximates Art
+3.3-3.5's exact transposition search rather than replicating it. A full
+census of all 231 disagreements from that one run, and which of them
+trace to genuine gaps versus legitimate rule variance, has NOT been done
+— that's the natural next increment here, the same iterative way the
+javafo depth work found float-history, the colour model, and the C1
+forfeit-rematch rule.
 
 Once OpenPair is wired back into OpenPairings as a selectable engine, this
 harness should run as a *third* comparison arm there too, not just
