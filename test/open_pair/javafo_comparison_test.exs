@@ -296,10 +296,21 @@ defmodule OpenPair.JavafoComparisonTest do
           )
       end)
 
+    # C2: nobody receives a SECOND pairing-allocated bye. Was never
+    # actually checked here — a real gap, closed after finding that
+    # OpenPair's own `repair_bye_count/3` could silently violate it too
+    # (see that function's doc in lib/open_pair/pairing.ex).
+    repeat_bye? =
+      Enum.any?(pairs, fn
+        {w, nil} -> Enum.any?(Map.fetch!(by_rank, w).games, &(&1.result in ["U", "F", "+"]))
+        _ -> false
+      end)
+
     cond do
       byes != rem(length(active), 2) -> :bad_bye_count
       Enum.sort(seated) != Enum.sort(Enum.map(active, & &1.rank)) -> :not_a_partition
       rematch? -> :rematch
+      repeat_bye? -> :repeat_bye
       true -> nil
     end
   end

@@ -43,6 +43,18 @@ defmodule OpenPair.Pairing do
   # `cascade_brackets/4`): how many alternative matchings of a single
   # bracket to consider, and how much total work to spend before giving up
   # and returning a best-effort answer.
+  #
+  # A genuinely direct, no-backtracking version of this cascade (single
+  # best `bracket_options/2` result per bracket, committed immediately)
+  # was tried and measured: 97.19% -> 81.99% of pairs against javafo at
+  # depth (300 tournaments x 9 rounds), with 302/2521 rounds newly hitting
+  # `NoValidPairingError`. That confirms backtracking is doing real work
+  # THIS weight formula still needs — bbpPairings' own equivalent step
+  # doesn't need it because its weights are richer (bracket-locality as a
+  # graded bonus rather than a hard partition, an exchange-minimization
+  # refinement pass), not because backtracking is unnecessary in
+  # principle. Revisit removing this once the weight formula itself is
+  # closer to that, not before.
   @budget_key :openpair_cascade_budget
   @expected_rounds_key :openpair_expected_rounds
   @cascade_budget 2000
@@ -199,32 +211,31 @@ defmodule OpenPair.Pairing do
       |> Enum.map(fn {_score, members} -> members end)
 
     # Exactly one pairing-allocated bye in an odd field, none in an even
-    # one. Anything else isn't a legal round, so it's a hard requirement on
-    # the cascade rather than something to score. Counted over the ACTIVE
-    # players — a field of even size with one player sitting out needs a
-    # bye, and one of odd size with one sitting out does not.
+    # one. Counted over the ACTIVE players — a field of even size with one
+    # player sitting out needs a bye, and one of odd size with one sitting
+    # out does not.
     allowed_byes = rem(length(active), 2)
 
     Process.put(@budget_key, @cascade_budget)
 
     try do
       case cascade_brackets(brackets, [], [], allowed_byes) do
-        {:ok, pairs, leftover} ->
-          pairs ++ Enum.map(leftover, &{&1.rank, nil})
-
-        :infeasible ->
-          brackets
-          |> greedy_cascade()
-          |> repair_bye_count(active, allowed_byes)
+        {:ok, pairs, leftover} -> pairs ++ Enum.map(leftover, &{&1.rank, nil})
+        :infeasible -> brackets |> greedy_cascade() |> repair_bye_count(active, allowed_byes)
       end
+      # Runs even on the backtracking search's own success path, not just
+      # the greedy fallback: cheap when everything's already legal
+      # (`bye_legal?/3`'s check is the only work done), and a real safety
+      # net if `cascade_brackets/4`'s own eligibility check ever has a gap
+      # `repair_bye_count/3` doesn't.
+      |> repair_bye_count(active, allowed_byes)
     after
       Process.delete(@budget_key)
     end
   end
 
-  # Last resort, and only ever reached after the cascade has already given
-  # up: take whatever pairing greedy produced and try to reduce its bye
-  # count to something legal via `OpenPair.Blossom`'s general-graph
+  # Last resort: take whatever the deterministic cascade produced and try
+  # to fix it into something legal via `OpenPair.Blossom`'s general-graph
   # maximum-weight-free matching (augmenting paths, with contraction for
   # odd cycles — see that module's doc).
   #
@@ -240,34 +251,50 @@ defmodule OpenPair.Pairing do
   # solved, and a round that ends up legal is worth more than a
   # better-scored round that is not a legal pairing at all.
   #
+  # Checks bye ELIGIBILITY (C2), not just bye COUNT. `eligible_for_bye?/1`
+  # was previously enforced only as the backtracking search's own success
+  # condition (see `cascade_brackets/1`'s history) — a player who already
+  # had a pairing-allocated bye could still end up floated again here
+  # without anything catching it, since `Blossom.augment/3` only
+  # guarantees MAXIMUM CARDINALITY, not WHICH specific vertex is left
+  # unmatched when more than one maximum matching exists. Fixed by
+  # processing ineligible floaters FIRST — `Blossom.augment/3` runs one
+  # augmenting-path search per vertex in the order given, applying each
+  # path it finds before moving to the next, so a vertex searched first
+  # gets first claim on a scarce augmenting path an eligible player would
+  # otherwise "use up" by sheer iteration order.
+  #
   # `Blossom.augment/3` is proven to reach a TRUE maximum matching
   # regardless of starting point (Berge augmenting paths), so if its
-  # result STILL exceeds `allowed_byes`, that is not this pass failing to
-  # try hard enough — it is proof no legal completion exists at all.
-  # Traced two "still illegal after repair" cases to ground this: one
-  # (10 players, round 8) had a player who had already played every
-  # active opponent except one that was colour-absolute-blocked — a
-  # genuine deadlock, confirmed independently by an exhaustive
-  # active-players-only search, not a missed solution. Silently returning
-  # the extra-bye pairing anyway was the actual bug — bbpPairings' own
-  # `compatible`/`matchingIsComplete` never accepts more than
-  # `rem(active_count, 2)` byes either; it throws `NoValidPairingException`
-  # instead (`swisssystems/dutch.cpp`).
+  # result STILL exceeds `allowed_byes` or still leaves an ineligible
+  # player unmatched despite going first, that is not this pass failing
+  # to try hard enough — it is proof no legal completion exists at all.
+  # Traced two "still illegal after repair" cases to ground the
+  # count-only version of this: one (10 players, round 8) had a player
+  # who had already played every active opponent except one that was
+  # colour-absolute-blocked — a genuine deadlock, confirmed independently
+  # by an exhaustive active-players-only search, not a missed solution.
+  # Silently returning the extra-bye pairing anyway was the actual bug —
+  # bbpPairings' own `compatible`/`matchingIsComplete` never accepts more
+  # than `rem(active_count, 2)` byes either; it throws
+  # `NoValidPairingException` instead (`swisssystems/dutch.cpp`).
   defp repair_bye_count(result, active, allowed_byes) do
-    byes = Enum.count(result, fn {_white, black} -> is_nil(black) end)
+    by_rank = Map.new(active, &{&1.rank, &1})
 
-    if byes <= allowed_byes do
+    if bye_legal?(result, by_rank, allowed_byes) do
       result
     else
       # Colour stats are normally stamped inside `bracket_options/2`;
       # this path never went through it.
-      by_rank = Map.new(active, &{&1.rank, Map.put(&1, :colour_stats, colour_stats(&1))})
+      stamped_by_rank =
+        Map.new(by_rank, fn {r, p} -> {r, Map.put(p, :colour_stats, colour_stats(p))} end)
+
       matching = Map.new(result, fn {w, b} -> {w, b} end) |> add_reverse_edges()
 
       neighbours_fun = fn rank ->
-        player = Map.fetch!(by_rank, rank)
+        player = Map.fetch!(stamped_by_rank, rank)
 
-        by_rank
+        stamped_by_rank
         |> Map.values()
         |> Enum.filter(
           &(&1.rank != rank and legal_pair?(player, &1) and colour_compatible?(player, &1))
@@ -275,24 +302,32 @@ defmodule OpenPair.Pairing do
         |> Enum.map(& &1.rank)
       end
 
+      ineligible = bye_ranks(result) |> Enum.reject(&eligible_for_bye?(Map.fetch!(by_rank, &1)))
+      ordered_ranks = Enum.sort_by(Map.keys(stamped_by_rank), &(&1 not in ineligible))
+
       repaired =
-        by_rank
-        |> Map.keys()
+        ordered_ranks
         |> Blossom.augment(matching, neighbours_fun)
         |> to_pairs(active)
 
-      repaired_byes = Enum.count(repaired, fn {_white, black} -> is_nil(black) end)
-
-      if repaired_byes <= allowed_byes do
+      if bye_legal?(repaired, by_rank, allowed_byes) do
         repaired
       else
         raise OpenPair.Pairing.NoValidPairingError,
           message:
             "no legal pairing exists for this round: the maximum matching over " <>
-              "#{length(active)} active players still leaves #{repaired_byes} unmatched " <>
-              "(#{allowed_byes} allowed)"
+              "#{length(active)} active players still leaves " <>
+              "#{length(bye_ranks(repaired))} unmatched (#{allowed_byes} allowed, some " <>
+              "possibly bye-ineligible)"
       end
     end
+  end
+
+  defp bye_ranks(pairs), do: for({white, nil} <- pairs, do: white)
+
+  defp bye_legal?(pairs, by_rank, allowed_byes) do
+    byes = bye_ranks(pairs)
+    length(byes) <= allowed_byes and Enum.all?(byes, &eligible_for_bye?(Map.fetch!(by_rank, &1)))
   end
 
   defp add_reverse_edges(matching) do
@@ -319,22 +354,6 @@ defmodule OpenPair.Pairing do
       end)
 
     pairs
-  end
-
-  # Used only when no legal completion was found within the search budget:
-  # take each bracket's own best matching and accept whatever falls out,
-  # which is what this engine did unconditionally before. It can emit an
-  # illegal number of byes, but returning a wrong pairing beats returning
-  # none, and the harness reports it either way.
-  defp greedy_cascade(brackets) do
-    {pairs, leftover} =
-      Enum.reduce(brackets, {[], []}, fn residents, {pairs, floaters} ->
-        bracket = Enum.sort_by(floaters ++ residents, &{-&1.points, &1.rank})
-        [{new_pairs, unpaired} | _] = bracket_options(bracket, residents == List.last(brackets))
-        {pairs ++ new_pairs, Enum.map(unpaired, &Map.put(&1, :already_floated, true))}
-      end)
-
-    pairs ++ Enum.map(leftover, &{&1.rank, nil})
   end
 
   # How many rounds the tournament has actually completed.
@@ -473,7 +492,13 @@ defmodule OpenPair.Pairing do
   #
   # @alternatives_per_bracket caps the branching and @cascade_budget the
   # total work, because this is a search and a pathological history should
-  # degrade to a wrong answer rather than to no answer.
+  # degrade to a wrong answer rather than to no answer. Confirmed necessary
+  # (not just cautious) by measurement: a direct, no-backtracking version
+  # of this — take each bracket's single best `bracket_options/2` result
+  # and never revisit it — was tried and dropped 97.19% -> 81.99% of pairs
+  # against javafo at depth, with 302/2521 rounds newly reaching
+  # `NoValidPairingError` that this search finds a legal answer for. See
+  # `@budget_key`'s own doc for the full account.
   defp cascade_brackets([], floaters, pairs, allowed_byes) do
     if length(floaters) <= allowed_byes and Enum.all?(floaters, &eligible_for_bye?/1) do
       {:ok, pairs, floaters}
@@ -509,6 +534,22 @@ defmodule OpenPair.Pairing do
         end
       end)
     end
+  end
+
+  # Used only when no legal completion was found within the search budget:
+  # take each bracket's own best matching and accept whatever falls out,
+  # which is what this engine did unconditionally before. It can emit an
+  # illegal number of byes, but returning a wrong pairing beats returning
+  # none, and the harness reports it either way.
+  defp greedy_cascade(brackets) do
+    {pairs, leftover} =
+      Enum.reduce(brackets, {[], []}, fn residents, {pairs, floaters} ->
+        bracket = Enum.sort_by(floaters ++ residents, &{-&1.points, &1.rank})
+        [{new_pairs, unpaired} | _] = bracket_options(bracket, residents == List.last(brackets))
+        {pairs ++ new_pairs, Enum.map(unpaired, &Map.put(&1, :already_floated, true))}
+      end)
+
+    pairs ++ Enum.map(leftover, &{&1.rank, nil})
   end
 
   # Every matching this bracket admits, best first — one per achievable
