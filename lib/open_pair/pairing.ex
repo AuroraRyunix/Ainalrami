@@ -816,6 +816,24 @@ defmodule OpenPair.Pairing do
     # agreement (90.33% -> 83.53%) and most of round 2.
     repeat = if Map.get(player, :already_floated, false), do: -spans.max_pair, else: 0
 
+    # C2 (nobody receives a SECOND pairing-allocated bye) is an ABSOLUTE
+    # criterion — bbpPairings' own `matchingIsComplete` requires
+    # `eligibleForBye` for the designated bye and fails the WHOLE round
+    # rather than accept anything else (`swisssystems/dutch.cpp`). Distinct
+    # from `unplayed` below (a deliberately SOFT, magnitude-scaled
+    # preference for ANY unplayed round, restricted after seed 15 showed a
+    # hard version of THAT specific protection was wrong): this targets
+    # only actual C2 eligibility, which really is meant to be near-absolute,
+    # not a tie-break.
+    #
+    # Was previously enforced only by `repair_bye_count/3`'s last-resort
+    # Blossom pass, never by the cascade that produces the FIRST answer —
+    # found while tracing why that pass ever needed to run at all: the
+    # primary cascade had no reason not to float an ineligible player
+    # whenever nothing else distinguished the choice.
+    ineligible =
+      if bye_bracket? and not eligible_for_bye?(player), do: -spans.max_pair, else: 0
+
     # Protecting a player who already holds an unplayed round applies ONLY
     # in the bracket that actually assigns the bye. bbpPairings guards the
     # equivalent criterion with `isSingleDownfloaterTheByeAssignee` and
@@ -834,7 +852,7 @@ defmodule OpenPair.Pairing do
     # The plain "float the worse-ranked player" convention sits at the
     # very bottom with rank spread — low enough that it can only ever
     # break a tie, which is what seed 12 showed it must be.
-    base + repeat - unplayed + player.rank
+    base + repeat + ineligible - unplayed + player.rank
   end
 
   defp unplayed_rounds(player) do
