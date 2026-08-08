@@ -37,7 +37,7 @@ defmodule OpenPair.Pairing do
   — the shape `OpenPair.Trf.parse/1` returns.
   """
 
-  alias OpenPair.{Blossom, Matching}
+  alias OpenPair.{Blossom, WeightedMatching}
 
   # Bounds on the bracket cascade's backtracking search (see
   # `cascade_brackets/4`): how many alternative matchings of a single
@@ -60,6 +60,13 @@ defmodule OpenPair.Pairing do
   @cascade_budget 2000
   @alternatives_per_bracket 15
   @alternatives_per_count 6
+
+  # How many extra players `bracket_candidates/3` will force to float
+  # beyond the bracket's own optimum, and how many candidates it carries
+  # forward at each step. See `deeper_floats/5`.
+  @max_bracket_for_alternatives 16
+  @forced_float_depth 2
+  @forced_float_beam 8
 
   @doc """
   Pairs the next round, dispatching to `pair_round_one/1` when no game
@@ -566,23 +573,288 @@ defmodule OpenPair.Pairing do
       end)
 
     bracket_spans = spans(indexed)
+    pair_fun = &pair_weight(&1, &2, natural, bracket_spans)
+    float_fun = &float_weight(&1, bracket_spans, bye_bracket?)
 
     indexed
-    |> Matching.max_weight_matchings(
-      &pair_weight(&1, &2, natural, bracket_spans),
-      &float_weight(&1, bracket_spans, bye_bracket?)
-    )
-    |> Enum.sort_by(fn {count, _candidates} -> count end)
-    |> Enum.flat_map(fn {_count, candidates} ->
-      candidates
-      |> Enum.uniq_by(fn {_weight, _pairs, floaters} ->
-        Enum.sort(Enum.map(floaters, & &1.rank))
-      end)
-      |> Enum.take(@alternatives_per_count)
-    end)
+    |> bracket_candidates(pair_fun, float_fun)
     |> Enum.map(fn {_weight, pairs, floaters} ->
       {Enum.map(pairs, &assign_colour_with_history/1), floaters}
     end)
+  end
+
+  # The bracket's own optimum, plus one alternative per player who could
+  # have floated instead — `{weight, pairs, floaters}`, best first.
+  #
+  # The alternatives are the whole reason this isn't a single matcher
+  # call. A bracket's optimum can strand a later one, and what the
+  # cascade needs to vary is WHICH players float, not how many: traced on
+  # seed 73 round 4, where the 1.0 bracket's best two-pair matching floats
+  # player 12, who has already played the only player below them, and the
+  # round cannot finish. javafo takes a different two-pair matching that
+  # floats player 10.
+  #
+  # `OpenPair.Matching`'s subset DP used to produce these for free — it
+  # enumerates every subset anyway, so keeping the best few per floater
+  # count cost nothing. A blossom matcher returns one optimum, so each
+  # alternative has to be asked for explicitly: re-solve with one player
+  # removed, which forces that player to float and lets the matcher find
+  # the best arrangement of everyone else around that. Still polynomial,
+  # where the DP was O(2^n) — see `solve_bracket/3`.
+  #
+  # Players already floating in a candidate are skipped when extending it:
+  # forcing a player to float who is ALREADY floating just reproduces it.
+  #
+  # One forced float is NOT enough, and the reason is the seed 14 case in
+  # `OpenPair.Matching`'s own doc: the cascade sometimes has to float an
+  # extra PAIR of players down so a later bracket can complete. Forcing a
+  # single player only ever reaches the next float count up, so a
+  # depth-one version left 6 rounds per 421 with no legal completion at
+  # all, against the DP's 0 — the DP got every float count for free,
+  # because enumerating subsets is what it does. Extending the best few
+  # candidates by one more forced float, `@forced_float_depth` times over,
+  # buys those deeper counts back at `@forced_float_beam * n` solves
+  # instead of `2^n` states.
+  defp bracket_candidates(indexed, pair_fun, float_fun) do
+    # Two independent axes, and the cascade needs both. `spine` is the
+    # best matching at every achievable float COUNT, exactly (see
+    # `solve_bracket_all/3`). `deeper_floats/5` then varies WHO floats
+    # within a count, which no single solve can express.
+    spine = solve_bracket_all(indexed, pair_fun, float_fun)
+    optimum = Enum.max_by(spine, &elem(&1, 0))
+
+    (spine ++ deeper_floats(indexed, [{[], optimum}], pair_fun, float_fun, @forced_float_depth))
+    |> Enum.sort_by(fn {weight, _pairs, floaters} ->
+      {length(floaters), -weight, floater_order(floaters)}
+    end)
+    |> Enum.uniq_by(fn {_weight, _pairs, floaters} ->
+      Enum.sort(Enum.map(floaters, & &1.rank))
+    end)
+    |> Enum.chunk_by(fn {_weight, _pairs, floaters} -> length(floaters) end)
+    |> Enum.flat_map(&Enum.take(&1, per_count_limit(length(indexed))))
+    |> Enum.take(@alternatives_per_bracket)
+  end
+
+  # Deterministic ordering for candidates that tie on BOTH float count and
+  # weight but float different players. Ties are common here and the
+  # choice is not free: leaving it to list order leaves it to whatever
+  # sequence `deeper_floats/5` happened to generate, which is exactly the
+  # kind of accidental tie-break that cost this engine 40 points when the
+  # matcher changed underneath it.
+  defp floater_order(floaters) do
+    floaters |> Enum.map(&(-&1.bracket_pos)) |> Enum.sort()
+  end
+
+  # Extend the best candidates so far by one more forced float, `depth`
+  # times over, collecting every level. Breadth is capped because the
+  # point is to REACH the deeper float counts, not to enumerate them: the
+  # cascade only ever looks past the first candidate when a later bracket
+  # has already failed, and it sorts by float count first regardless.
+  # Big brackets get ONE candidate per float count, not `n`.
+  #
+  # This mirrors `OpenPair.Matching`'s own `@max_bracket_for_alternatives`
+  # and adopts its reasoning: a large bracket has far more ways to pair,
+  # so it is the least likely to strand a later one and the least in need
+  # of alternatives. Carrying the full set there is not merely wasteful,
+  # it is worse — measured against javafo at 200x9, offering every
+  # alternative on big brackets let the cascade satisfy itself with a
+  # legal completion from deep in ONE bracket's list where javafo instead
+  # backtracks and re-pairs an earlier bracket. Keeping the cap costs
+  # nothing on the small brackets that actually strand.
+  defp per_count_limit(bracket_size) do
+    if bracket_size > @max_bracket_for_alternatives, do: 1, else: @alternatives_per_count
+  end
+
+  # A seed carries its FORCED set alongside the candidate it produced, and
+  # extending it forces only that set plus one more player. Carrying the
+  # candidate's whole floater list instead is wrong, and quietly so: an
+  # odd bracket's optimum already floats somebody, so re-forcing them
+  # jumped straight from one floater to three and never generated a
+  # single-floater alternative at all — which is precisely the case seed
+  # 73 needs (same float COUNT, different player floating). Measured
+  # against the DP's own candidate list, that omission left 52.6% of
+  # brackets with a shorter list, the misses concentrated at the shallow
+  # float counts the cascade actually reaches.
+  defp deeper_floats(_indexed, _seeds, _pair_fun, _float_fun, 0), do: []
+
+  defp deeper_floats(indexed, seeds, pair_fun, float_fun, depth) do
+    level =
+      seeds
+      |> Enum.take(@forced_float_beam)
+      |> Enum.flat_map(fn {forced, {_weight, _pairs, floaters}} ->
+        # Forcing a player who is already unpaired in this candidate just
+        # reproduces it.
+        floating = MapSet.new(floaters, & &1.bracket_pos)
+
+        indexed
+        |> Enum.reject(&MapSet.member?(floating, &1.bracket_pos))
+        |> Enum.map(fn player ->
+          next = [player | forced]
+          {next, force_floats(indexed, next, pair_fun, float_fun)}
+        end)
+      end)
+      |> Enum.uniq_by(fn {_forced, {_weight, _pairs, floaters}} ->
+        Enum.sort(Enum.map(floaters, & &1.bracket_pos))
+      end)
+      |> Enum.sort_by(fn {_forced, {weight, _pairs, _floaters}} -> -weight end)
+
+    Enum.map(level, fn {_forced, candidate} -> candidate end) ++
+      deeper_floats(indexed, level, pair_fun, float_fun, depth - 1)
+  end
+
+  # The best matching of the bracket with every player in `forced` left
+  # unpaired. Their float cost is added back explicitly, because
+  # `solve_bracket/3` never sees them and so never charges for them.
+  defp force_floats(indexed, forced, pair_fun, float_fun) do
+    forced_positions = MapSet.new(forced, & &1.bracket_pos)
+
+    {weight, pairs, floaters} =
+      indexed
+      |> Enum.reject(&MapSet.member?(forced_positions, &1.bracket_pos))
+      |> solve_bracket(pair_fun, float_fun)
+
+    charged = Enum.reduce(forced, 0, fn player, acc -> acc + float_fun.(player) end)
+    {weight + charged, pairs, forced ++ floaters}
+  end
+
+  # One maximum-weight matching over `players`, as
+  # `{total_weight, pairs, floaters}`.
+  #
+  # Floating is folded into the EDGE weights rather than modelled as a
+  # per-vertex cost, because `WeightedMatching` has no notion of a vertex
+  # weight — it simply leaves a vertex unmatched for free. The objective
+  #
+  #     sum(pair_weight over matched) + sum(float_weight over unmatched)
+  #
+  # is rewritten by adding the constant `sum(float_weight)` over EVERY
+  # player and subtracting it back per edge:
+  #
+  #     sum(pair_weight(a,b) - float_weight(a) - float_weight(b)) + C
+  #
+  # `C` is fixed for a given player set, so the two have the same argmax.
+  # Every transformed weight is comfortably positive — `float_weight/3`'s
+  # base alone is `-max_pair * slots` — which matters because
+  # `WeightedMatching.solve/2` treats a non-positive weight as "no edge".
+  #
+  # `players` may be a strict subset of the bracket (see
+  # `bracket_candidates/3`), so the graph's vertex indices are positions
+  # in THIS list and are deliberately not the same thing as
+  # `:bracket_pos`. The criterion functions keep reading `:bracket_pos`,
+  # which stays fixed to the player's place in the full bracket — that is
+  # what makes an alternative's weights comparable with the optimum's.
+  defp solve_bracket(players, pair_fun, float_fun) do
+    players |> solve_bracket_all(pair_fun, float_fun) |> Enum.max_by(&elem(&1, 0))
+  end
+
+  # The best matching at EVERY achievable float count, best-weight first —
+  # the same guarantee `OpenPair.Matching`'s subset DP gave the cascade,
+  # and for the same reason it is needed: a bracket's own optimum can
+  # strand a later one, and recovering means floating a DIFFERENT number
+  # of players down (seed 14, where javafo floats an extra pair so the
+  # last bracket can complete).
+  #
+  # This costs one solve, not one per count. A primal-dual matcher reaches
+  # its optimum by augmenting a single pair at a time, and the matching
+  # after k augmentations is already maximum-weight among all k-pair
+  # matchings, so `solve_by_cardinality/2` just observes the run that was
+  # happening anyway. Verified against the DP as an independent oracle
+  # over 360 random graphs: every snapshot valid, and optimal for its own
+  # cardinality.
+  #
+  # Approximating this by re-solving with players forcibly removed was
+  # measurably worse and is now only used for the other axis — several
+  # candidates at the SAME count, differing in WHO floats.
+  defp solve_bracket_all([], _pair_fun, _float_fun), do: [{0, [], []}]
+
+  defp solve_bracket_all([only], _pair_fun, float_fun), do: [{float_fun.(only), [], [only]}]
+
+  defp solve_bracket_all(players, pair_fun, float_fun) do
+    n = length(players)
+    arr = List.to_tuple(players)
+    {lex_span, lex_pow} = lex_scale(n)
+
+    edges =
+      Enum.flat_map(0..(n - 2), fn i ->
+        a = elem(arr, i)
+
+        Enum.flat_map((i + 1)..(n - 1), fn j ->
+          b = elem(arr, j)
+
+          case pair_fun.(a, b) do
+            nil ->
+              []
+
+            weight ->
+              real = weight - float_fun.(a) - float_fun.(b)
+              lex = elem(lex_pow, n - i) * (n - j) + elem(lex_pow, n - j) * (n - i)
+              [{i, j, real * lex_span + lex}]
+          end
+        end)
+      end)
+
+    n
+    |> WeightedMatching.solve_by_cardinality(edges)
+    |> Enum.map(fn {_pair_count, matching} ->
+      pairs = for {i, j} <- matching, i < j, do: {elem(arr, i), elem(arr, j)}
+      floaters = for i <- 0..(n - 1), not is_map_key(matching, i), do: elem(arr, i)
+
+      weight =
+        Enum.reduce(pairs, 0, fn {a, b}, acc -> acc + pair_fun.(a, b) end) +
+          Enum.reduce(floaters, 0, fn player, acc -> acc + float_fun.(player) end)
+
+      {weight, pairs, floaters}
+    end)
+  end
+
+  # The scale factor and power table that force the matcher to a single,
+  # CANONICAL choice among equally-optimal matchings.
+  #
+  # A maximum-weight matcher may return any optimum, and this weight
+  # function leaves a great many: measured over a 20x9 javafo run,
+  # `WeightedMatching` and `OpenPair.Matching`'s subset DP reach an
+  # identical optimal weight in every one of 28,614 brackets, but return a
+  # DIFFERENT matching in 4.9% of them. A round holds ~15 brackets, so
+  # about half of all rounds caught at least one, which is exactly the
+  # 85% -> 45% of exact rounds the move to `WeightedMatching` cost before
+  # this existed.
+  #
+  # The DP's choice was worth ~40 points of round agreement, because its
+  # enumeration order — lowest-indexed player first, lowest-indexed
+  # partner wins a tie — approximates FIDE's real rule: the SMALLEST
+  # transposition of the natural order (Articles 3.3-3.5). That rule is
+  # LEXICOGRAPHIC. Two cheaper things were tried first and both failed on
+  # exactly that point: a "minimise total distance from the natural
+  # partner" weight term measured 87.89% -> 49.41%, because minimising a
+  # SUM genuinely disagrees with minimising position-by-position; and an
+  # equal-weight two-pair local search got 95.1% -> 99.6% of brackets
+  # agreeing but stalled on large ones, where the tied optima differ by
+  # alternating cycles longer than a two-pair swap can cross.
+  #
+  # So the rule is encoded exactly, in the weights, where the matcher
+  # cannot get stuck. Writing `c(p)` for the position p is matched to (or
+  # `n` when unmatched), lexicographic comparison of the whole sequence
+  # `c(0), c(1), ...` is what `lex_key` used to compare. Maximising
+  #
+  #     S = sum over p of B^(n-p) * (n - c(p))
+  #
+  # minimises that sequence, and S splits over edges: an edge `{i, j}`
+  # contributes `B^(n-i) * (n-j) + B^(n-j) * (n-i)`, with the unmatched
+  # positions folding into a constant. `B = n + 2` is the smallest base
+  # that works, and it is exactly sufficient rather than merely large: two
+  # matchings first differing at position p0 differ there by at least
+  # `B^(n-p0)`, while every later position together can differ by at most
+  # `n * B^(n-p0) / (B-1)`, so the leading term wins as soon as
+  # `B - 1 > n`.
+  #
+  # `lex_span` then lifts the real criteria above the whole tie-break, the
+  # same discipline `spans/1` uses internally: `S < B^(n+1)`, so
+  # multiplying the real weight by `B^(n+1)` leaves the tie-break strictly
+  # below every documented criterion, unable to buy a single one.
+  defp lex_scale(n) do
+    base = n + 2
+    powers = for k <- 0..(n + 1), do: Integer.pow(base, k)
+    table = List.to_tuple(powers)
+    {elem(table, n + 1), table}
   end
 
   # Upper bounds for the two non-boolean criteria, so `ranked/1` can pack
@@ -607,6 +879,16 @@ defmodule OpenPair.Pairing do
 
     spans = %{
       slots: slots,
+      # A single boolean: is this pair fully within the CURRENT bracket
+      # (both `:current`), or does it reach into the peeked-ahead next
+      # bracket (`:lookahead`)? Placed ABOVE colour, matching
+      # `computeEdgeWeight`'s own order (`lowerPlayerInCurrentBracket` is
+      # scored before any colour bit) — bbpPairings maximizes pairs
+      # WITHIN a bracket first, and only lets a cross-bracket pair win on
+      # colour/float/spread when the bracket itself can't do better
+      # alone. See `pair_weight/4`'s doc for why the deviation term is
+      # simply absent (not merely low-priority) for a cross-bracket pair.
+      locality: 2,
       colour: slots + 1,
       float_pair: 2 * slots + 1,
       float_single: slots + 1,
@@ -623,10 +905,11 @@ defmodule OpenPair.Pairing do
     unit_f2 = unit_f3 * spans.float_pair
     unit_f1 = unit_f2 * spans.float_single
     unit_c4 = unit_f1 * spans.float_pair
+    unit_locality = unit_c4 * spans.colour * spans.colour * spans.colour * spans.colour
 
     spans
     |> Map.put(:unplayed_unit, unit_f4)
-    |> Map.put(:max_pair, unit_c4 * spans.colour * spans.colour * spans.colour * spans.colour)
+    |> Map.put(:max_pair, unit_locality * spans.locality)
   end
 
   # The pairing each bracket would get with no constraints at all, as a
@@ -745,8 +1028,6 @@ defmodule OpenPair.Pairing do
   # general case keeps spread. Restricting the deviation term to MDP pairs
   # is what actually fixed the traced heterogeneous-bracket cases (seeds 1
   # and 5) without giving that back.
-  defp mdp_deviation(_a, _b, _natural, 0), do: 0
-
   defp mdp_deviation(a, b, natural, mdp_count) do
     i = a.bracket_pos
     j = b.bracket_pos

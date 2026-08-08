@@ -80,6 +80,53 @@ defmodule OpenPair.WeightedMatching do
   def solve(n, _edges) when n <= 1, do: %{}
 
   def solve(n, edges) do
+    n
+    |> build_state(edges)
+    |> augment_until_done()
+    |> resolve_all_matching()
+    |> to_matching()
+  end
+
+  @doc """
+  The best matching for EACH achievable number of PAIRS, as
+  `%{pair_count => %{vertex => partner}}`.
+
+  This is not extra work — it is the same single solve, observed at every
+  step. The primal-dual method reaches a maximum-weight matching by
+  augmenting one pair at a time, and its defining property is that the
+  matching after `k` augmentations is already a maximum-weight matching
+  among all matchings of `k` pairs. So snapshotting each stage yields the
+  optimum at every cardinality for the price of the one run that was
+  happening anyway.
+
+  `OpenPair.Pairing` needs exactly this: with float costs folded into the
+  edge weights, "best matching with k pairs" IS "best candidate leaving
+  n - 2k players floating", which is what its bracket cascade backtracks
+  over. `OpenPair.Matching`'s subset DP gave it away for free by
+  enumerating every subset; approximating it by re-solving with players
+  forcibly removed was measurably worse.
+
+  Each snapshot is resolved on a COPY, so the augmentation continues from
+  the unresolved state and is unaffected.
+  """
+  def solve_by_cardinality(n, _edges) when n <= 1, do: %{0 => %{}}
+
+  def solve_by_cardinality(n, edges) do
+    n |> build_state(edges) |> collect_cardinalities(%{0 => %{}})
+  end
+
+  defp collect_cardinalities(state, acc) do
+    case augment_once(state) do
+      {:ok, next} ->
+        matching = next |> resolve_all_matching() |> to_matching()
+        collect_cardinalities(next, Map.put(acc, div(map_size(matching), 2), matching))
+
+      :done ->
+        acc
+    end
+  end
+
+  defp build_state(n, edges) do
     weights =
       Enum.reduce(edges, %{}, fn {i, j, w}, acc ->
         if w > 0 do
@@ -138,9 +185,6 @@ defmodule OpenPair.WeightedMatching do
     }
 
     state
-    |> augment_until_done()
-    |> resolve_all_matching()
-    |> to_matching()
   end
 
   # A stage bound of `2n` is generous — the reference algorithm needs at
