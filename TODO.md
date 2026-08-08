@@ -171,6 +171,49 @@ elegant:
 | + same absolute colour preference made incompatible | 96.97% |
 | + final-round exception for top scorers | **97.15%** |
 
+Two bye-eligibility fixes later moved that baseline to 96.36-96.41% pairs
+/ 87.50-87.66% rounds on the same 300x9 configuration, which is what the
+rows below are measured against:
+
+| change | pairs | rounds |
+|---|---|---|
+| baseline after the bye-eligibility fixes | 96.36-96.41% | 87.50-87.66% |
+| + polynomial matcher, lexicographic tie-break encoded in the weights | 95.92% | 86.40% |
+| + next-bracket lookahead as a placeability signal | **96.79%** | **88.97%** |
+
+Also improved on the other two configurations: 8% arbiter-assigned byes
+went 92.85% -> 93.50% of pairs and 75.67% -> 77.73% of rounds, and
+bbpPairings at 200x9 went 95.92% -> 96.26% and 86.32% -> 87.15%. Zero
+illegal rounds throughout.
+
+### Two things not to redo
+
+**Do not build a k-best matcher for the cascade's alternatives.** Before
+the lookahead, substituting `OpenPair.Matching`'s exhaustive candidate
+list for `bracket_candidates/3`'s was worth ~2.9 points of exact rounds,
+and the plan was to close that with Chegireddy-Hamacher / Murty
+partitioning. It is now worth 0.59 points at 200x9 — 10 rounds in 1684,
+about 0.8 sigma — because the placeability signal stops the cascade
+stranding a bracket, so it backtracks far less and which alternatives it
+holds matters far less. Every knob on that axis is flat: the forced-float
+beam at 8, 64 and unbounded all score identically, and so do depths 2, 4
+and 6. An unbounded beam at depth 2 already enumerates every floater
+pair, so the exact same-count coverage Murty would buy is present and
+changes nothing.
+
+**Do not read the next-bracket lookahead as a licence to pair across
+brackets.** bbpPairings never finalizes a cross-bracket pair — after its
+combined current+next matching it rebuilds the score group's "remainder"
+and re-pairs those players within the bracket, and `finalizePair` is only
+ever reached for a match inside the group. Emitting cross edges as real
+pairings measured 86.40% -> 43.82% of rounds, and porting the rest of
+`computeEdgeWeight`'s ladder on top moved it to 42.28%, because the
+weights were never the problem. Cross edges also quietly void
+`solve_by_cardinality/2`'s guarantee, which is per PAIR COUNT: a cross
+edge counts as a pair while meaning a float. The lookahead belongs in
+`float_weight/4` as one bit per player — can this player be placed below
+if they float — and nowhere else.
+
   1. **The colour model was only ever right for round 2.** "Preference is
      the opposite of your last colour" is exactly correct when every
      player has played exactly one game, and wrong from round 3 on, where
