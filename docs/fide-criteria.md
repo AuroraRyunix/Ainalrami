@@ -84,12 +84,38 @@ bbpPairings' `computeEdgeWeight` does the same inversion.
 
 ## Known divergences from the handbook
 
-1. **C8 is only approximated.** The handbook requires the chosen downfloater
-   set to leave the *following* bracket able to satisfy C1-C7. This engine
-   only asks whether each candidate downfloater has at least one legal,
-   colour-compatible opponent waiting below (`placeable_below/1`). That is
-   strictly weaker: it is C1/C3 feasibility for one player, not C1-C7
-   compliance for the bracket.
+1. **C8 is only approximated, and the obvious strengthening does not
+   work.** The handbook requires the chosen downfloater set to leave the
+   *following* bracket able to satisfy C1-C7. This engine only asks whether
+   each candidate downfloater has at least one legal, colour-compatible
+   opponent waiting below (`placeable_below/1`) — strictly weaker: C1/C3
+   feasibility for one player, not C1-C7 compliance for a bracket.
+
+   The natural fix was tried and reverted. Scoring each candidate by the
+   largest number of pairs the following bracket could form with those
+   downfloaters added — C6 evaluated one bracket ahead, and genuinely
+   stronger than `placeable_below/1`, which cannot tell two players sharing
+   a single possible opponent from two who each have their own — measured:
+
+   * ranked above the packed criterion weight: 89.93% -> 89.46% of rounds
+   * ranked below it: 89.93% -> 89.93%, i.e. inert
+   * either way it fixed none of the eight rule-delta fixtures, and cost
+     3x the runtime on a 90-player field
+
+   Reverted: a costly no-op is worse than an acknowledged gap. The position
+   problem is real but not the whole story — C8 belongs between C7 and C9,
+   and this engine bundles C6, C7 and C9-C21 into one packed integer per
+   PAIR while C8 is a property of the whole downfloater SET, so there is no
+   position in the sort that is faithful.
+
+   The deeper reason it cannot work in the current shape is visible in
+   fixture 6 (seed 22, round 9, 21 players). JaVaFo drops player 19 from
+   the 3.5 group TWO brackets to meet player 1 in the 2.5 group; the 2026
+   answer instead drops 11 one bracket and 2 one bracket, two single steps
+   rather than one double. Choosing between those requires seeing three
+   brackets at once, and `bracket_options/3` peeks exactly one ahead. C8 is
+   therefore blocked on the lookahead depth, not on the scoring — worth
+   knowing before anyone attempts it again from the weight side.
 
 2. ~~**C10/C11 are not restricted to topscorers.**~~ **Investigated and
    withdrawn — this is not a divergence.** The reasoning looked sound:
