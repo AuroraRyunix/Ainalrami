@@ -56,7 +56,7 @@ Verbatim from §2.4, with this engine's implementation beside each.
 | | text | this engine |
 |---|---|---|
 | C6 | Minimise the number of downfloaters *(equivalent to: maximise the number of pairs)*. | `spans.locality` |
-| C7 | Minimise the scores (taken in descending order) of the downfloaters. | `spans.score_paired` / `spans.score_place` |
+| C7 | Minimise the scores (taken in descending order) of the downfloaters. | `downfloater_scores/1` at candidate level, plus `spans.score_paired` per pair |
 | C8 | Choose the set of downfloaters so that in the following bracket every criterion from C1 to C7 is complied with. | `placeable_below/1` — a weak approximation, see gaps |
 | C9 | Minimise the number of unplayed games of the assignee of the pairing-allocated-bye. *(Applies to brackets downfloating exactly one player receiving the bye.)* | the `unplayed` term in `float_weight/4`, gated on `bye_bracket?` |
 | C10 | Minimise the number of topscorers or topscorers' opponents who get a colour difference higher than +2 or lower than -2. | `colour_criteria/2` bit 1 — **not restricted to topscorers** |
@@ -84,38 +84,44 @@ bbpPairings' `computeEdgeWeight` does the same inversion.
 
 ## Known divergences from the handbook
 
-1. **C8 is only approximated, and the obvious strengthening does not
-   work.** The handbook requires the chosen downfloater set to leave the
+1. **C8 is only approximated, and two strengthenings have now failed.**
+   The handbook requires the chosen downfloater set to leave the
    *following* bracket able to satisfy C1-C7. This engine only asks whether
    each candidate downfloater has at least one legal, colour-compatible
    opponent waiting below (`placeable_below/1`) — strictly weaker: C1/C3
    feasibility for one player, not C1-C7 compliance for a bracket.
 
-   The natural fix was tried and reverted. Scoring each candidate by the
-   largest number of pairs the following bracket could form with those
-   downfloaters added — C6 evaluated one bracket ahead, and genuinely
-   stronger than `placeable_below/1`, which cannot tell two players sharing
-   a single possible opponent from two who each have their own — measured:
+   Attempt one scored each candidate by the pair COUNT the following
+   bracket could reach. Inert ranked low, a regression ranked high, no
+   fixture moved. Fixture 6 explains it: JaVaFo drops one 3.5 player two
+   brackets while the 2026 answer drops two players one bracket each, and
+   both leave the same NUMBER of pairs available, so a count cannot
+   separate them.
 
-   * ranked above the packed criterion weight: 89.93% -> 89.46% of rounds
-   * ranked below it: 89.93% -> 89.93%, i.e. inert
-   * either way it fixed none of the eight rule-delta fixtures, and cost
-     3x the runtime on a 90-player field
+   Attempt two therefore scored `{count, scores descending}` — C6 *and* C7
+   one bracket ahead, which does separate fixture 6's two options. It still
+   loses, and by more the higher it is ranked:
 
-   Reverted: a costly no-op is worse than an acknowledged gap. The position
-   problem is real but not the whole story — C8 belongs between C7 and C9,
-   and this engine bundles C6, C7 and C9-C21 into one packed integer per
-   PAIR while C8 is a property of the whole downfloater SET, so there is no
-   position in the sort that is faithful.
+   | candidate ordering | rounds | pairs |
+   |---|---|---|
+   | baseline (no C8 term) | 89.93% | 97.08% |
+   | C8 below the packed weight | 89.88% | 97.07% |
+   | C8 above the packed weight | 88.28% | 96.64% |
 
-   The deeper reason it cannot work in the current shape is visible in
-   fixture 6 (seed 22, round 9, 21 players). JaVaFo drops player 19 from
-   the 3.5 group TWO brackets to meet player 1 in the 2.5 group; the 2026
-   answer instead drops 11 one bracket and 2 one bracket, two single steps
-   rather than one double. Choosing between those requires seeing three
-   brackets at once, and `bracket_options/3` peeks exactly one ahead. C8 is
-   therefore blocked on the lookahead depth, not on the scoring — worth
-   knowing before anyone attempts it again from the weight side.
+   So the measure is not the problem either. What the same experiment DID
+   find is that C7 stated explicitly at candidate level is worth **+0.36
+   exact rounds** on its own (89.93% -> 90.29%) — see the C7 row above.
+   Running both together scored 89.34%, C7's gain cancelled by C8's loss,
+   which is what sent this apart into separate measurements.
+
+   Reverted, twice. The remaining hypothesis is structural rather than
+   about scoring: choosing between one double-float and two single-floats
+   needs three brackets in view at once, and `bracket_options/3` peeks
+   exactly one ahead by construction. Widening that lookahead is not a
+   one-line change either, because the peeked bracket deliberately
+   contributes no edges — it survives only as `placeable_below/1`'s
+   per-player bit (see `pair_weight/4`), so a second peeked bracket would
+   merely make that bit MORE permissive, which is the wrong direction.
 
 2. ~~**C10/C11 are not restricted to topscorers.**~~ **Investigated and
    withdrawn — this is not a divergence.** The reasoning looked sound:

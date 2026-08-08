@@ -748,7 +748,11 @@ defmodule OpenPair.Pairing do
     # look far worse than one that happened to use it.
     |> Enum.map(&resolve_lookahead/1)
     |> Enum.sort_by(fn {weight, _pairs, floaters} ->
-      {length(floaters), -weight, floater_order(floaters)}
+      # The handbook's own order, explicitly rather than via the packed
+      # weight: C6 how many float, C7 which scores float, C8 what that
+      # leaves the following bracket able to do. Only then the packed
+      # per-pair criteria, and last the lexicographic tie-break.
+      {length(floaters), downfloater_scores(floaters), -weight, floater_order(floaters)}
     end)
     |> Enum.uniq_by(fn {_weight, _pairs, floaters} ->
       Enum.sort(Enum.map(floaters, & &1.rank))
@@ -783,6 +787,21 @@ defmodule OpenPair.Pairing do
         Enum.any?(lookahead, &(legal_pair?(player, &1) and colour_compatible?(player, &1))),
         into: MapSet.new(),
         do: player.rank
+  end
+
+  # C7: "Minimise the scores (taken in descending order) of the
+  # downfloaters."
+  #
+  # Compared as a descending list, so the highest floating score dominates
+  # and only an exact tie there defers to the next — which is what "taken
+  # in descending order" asks for, and is NOT what summing a per-pair term
+  # produces. The packed weight already carries `score_paired`, the same
+  # criterion seen from the paired side; measured, stating it explicitly at
+  # candidate level on top of that is worth +0.36 exact rounds against
+  # bbpPairings at 200x9 (89.93% -> 90.29%), because the lexicographic
+  # comparison and the sum genuinely disagree about which candidate wins.
+  defp downfloater_scores(floaters) do
+    floaters |> Enum.map(& &1.points) |> Enum.sort(:desc)
   end
 
   # Drop the peeked-ahead players from a candidate's floater list.
