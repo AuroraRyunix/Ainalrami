@@ -228,9 +228,15 @@ defmodule OpenPair.Pairing do
     Process.put(@bye_score_key, bye_assignee_score(brackets, allowed_byes))
 
     try do
-      case cascade_brackets(brackets, [], [], allowed_byes) do
-        {:ok, pairs, leftover} -> pairs ++ Enum.map(leftover, &{&1.rank, nil})
-        :infeasible -> brackets |> greedy_cascade() |> repair_bye_count(active, allowed_byes)
+      case maybe_global_cascade(brackets, allowed_byes) do
+        {:ok, pairs, leftover} ->
+          pairs ++ Enum.map(leftover, &{&1.rank, nil})
+
+        :infeasible ->
+          case cascade_brackets(brackets, [], [], allowed_byes) do
+            {:ok, pairs, leftover} -> pairs ++ Enum.map(leftover, &{&1.rank, nil})
+            :infeasible -> brackets |> greedy_cascade() |> repair_bye_count(active, allowed_byes)
+          end
       end
       # Runs even on the backtracking search's own success path, not just
       # the greedy fallback: cheap when everything's already legal
@@ -492,6 +498,259 @@ defmodule OpenPair.Pairing do
   defp float_of(player, rounds_back) do
     player |> Map.get(:floats, %{}) |> Map.get(rounds_back, :none)
   end
+
+  # bbpPairings' and Gacrux's architecture, not this engine's original one:
+  # ONE graph over the whole remaining field, reweighted per score level,
+  # with players removed as they are finalised.
+  #
+  # Adopted because C8 cannot be expressed any other way. "Choose the set
+  # of downfloaters so that in the following bracket every criterion from
+  # C1 to C7 is complied with" is a statement about a matching of everyone
+  # still unpaired, and `cascade_brackets/4` only ever sees one bracket
+  # plus a peek at the next. Two separate attempts to approximate it inside
+  # that window both measured worse (see `docs/fide-criteria.md`), and
+  # reading the two reference implementations settled why — both build the
+  # graph once over every competitor and hand the WHOLE remainder to each
+  # bracket step:
+  #
+  #   Gacrux `pairing.py`  nodes = list_nodes(competitors), then
+  #                        `while len(nodes) > 0: pair_bracket(scorelevel,
+  #                        nodes, edges)` returning the reduced graph
+  #   bbp    `dutch.cpp`   one matching_computer over all sortedPlayers,
+  #                        setEdgeWeight per bracket, never re-scoped
+  #
+  # Only pairs INTERNAL to the current bracket are finalised, exactly as
+  # bbpPairings does it: everyone else — unmatched current-bracket players
+  # and the entire next group alike — carries forward, the unmatched ones
+  # becoming the next bracket's MDPs.
+  #
+  # ## Why this is off by default
+  #
+  # It measures 60.51% of exact rounds against bbpPairings at 200x9, where
+  # the per-bracket cascade it would replace measures 90.29%. The
+  # architecture is not the problem — it is the one both references use —
+  # the naivety of THIS implementation is.
+  #
+  # What is missing is that a bbpPairings bracket step is not one matching.
+  # It calls `computeMatching()` SEVEN times per bracket (dutch.cpp lines
+  # 1087, 1176, 1243, 1317, 1375, 1447, 1583, plus the whole-field pre-pass
+  # at 825), as an iterative refinement: an initial match, then a re-match
+  # after forcing each MDP's edges, another after finalising each MDP pair,
+  # another after reweighting the remainder for exchange minimisation, and
+  # two more inside the exchange loops. This calls it once per level and
+  # takes whatever comes back.
+  #
+  # Ruled out along the way, each by measurement rather than reasoning:
+  #
+  #   * the C8 rungs themselves — on 62.34%, off 62.46%, no difference
+  #   * a missing bye-eligibility top rung (bbpPairings' `isByeCandidate`
+  #     term) and an overflowing `natural_gap` — both real bugs, both
+  #     fixed, and together they moved it 62.34% -> 60.51%
+  #
+  # So the remaining gap is the refinement machinery, not a weight. That is
+  # a large, well-scoped piece of work with the reference open beside it,
+  # and it is the only route to C8 — which cannot be expressed in a
+  # one-bracket window at all (two attempts, both in
+  # `docs/fide-criteria.md`).
+  # OFF by default. The architecture is right and the implementation is
+  # not yet: see `global_cascade/2`'s own doc for what is missing and what
+  # it currently measures. Set OPENPAIR_GLOBAL=1 to work on it.
+  defp maybe_global_cascade(brackets, allowed_byes) do
+    if System.get_env("OPENPAIR_GLOBAL"),
+      do: global_cascade(brackets, allowed_byes),
+      else: :infeasible
+  end
+
+  defp global_cascade(brackets, allowed_byes) do
+    field =
+      brackets
+      |> List.flatten()
+      |> Enum.sort_by(&{-&1.points, &1.rank})
+      |> Enum.map(&Map.put(&1, :colour_stats, colour_stats(&1)))
+
+    levels = field |> Enum.map(& &1.points) |> Enum.uniq() |> Enum.sort(:desc)
+
+    {pairs, leftover} = run_levels(levels, field, [])
+
+    # The global matching is not told how many byes are legal, so the
+    # result is checked rather than assumed. Falling back to the older
+    # backtracking cascade beats emitting an illegal round, and also keeps
+    # a second opinion available while this architecture is new.
+    if length(leftover) <= allowed_byes and Enum.all?(leftover, &eligible_for_bye?/1) and
+         Enum.all?(leftover, &bye_score_ok?/1) do
+      {:ok, pairs, leftover}
+    else
+      :infeasible
+    end
+  end
+
+  defp run_levels([], remaining, pairs), do: {pairs, remaining}
+
+  defp run_levels([level | rest], remaining, pairs) do
+    {new_pairs, carried} = pair_level(level, List.first(rest), remaining)
+    run_levels(rest, carried, pairs ++ new_pairs)
+  end
+
+  defp pair_level(level, next_level, remaining) do
+    indexed =
+      remaining
+      |> Enum.sort_by(&{-&1.points, &1.rank})
+      |> Enum.with_index()
+      |> Enum.map(fn {p, i} -> Map.put(p, :bracket_pos, i) end)
+
+    n = length(indexed)
+    current_end = Enum.count(indexed, &(&1.points >= level))
+
+    next_end =
+      if next_level, do: Enum.count(indexed, &(&1.points >= next_level)), else: current_end
+
+    cond do
+      n < 2 -> {[], indexed}
+      current_end == 0 -> {[], indexed}
+      true -> solve_level(indexed, n, current_end, next_end)
+    end
+  end
+
+  defp solve_level(indexed, n, current_end, next_end) do
+    arr = List.to_tuple(indexed)
+    spans = level_spans(indexed)
+    natural = indexed |> Enum.take(current_end) |> natural_partner_map()
+    {lex_span, lex_pow} = lex_scale(n)
+
+    edges =
+      Enum.flat_map(0..(n - 2), fn i ->
+        a = elem(arr, i)
+
+        Enum.flat_map((i + 1)..(n - 1), fn j ->
+          b = elem(arr, j)
+
+          case level_weight(a, b, j, current_end, next_end, natural, spans) do
+            nil ->
+              []
+
+            w ->
+              lex = elem(lex_pow, n - i) * (n - j) + elem(lex_pow, n - j) * (n - i)
+              [{i, j, w * lex_span + lex}]
+          end
+        end)
+      end)
+
+    matching = WeightedMatching.solve(n, edges)
+
+    internal = for {i, j} <- matching, i < j, j < current_end, do: {i, j}
+
+    finalised =
+      Enum.map(internal, fn {i, j} -> assign_colour_with_history({elem(arr, i), elem(arr, j)}) end)
+
+    done = internal |> Enum.flat_map(fn {i, j} -> [i, j] end) |> MapSet.new()
+
+    carried =
+      for i <- 0..(n - 1),
+          not MapSet.member?(done, i),
+          do: mark_float(elem(arr, i), i < current_end)
+
+    {finalised, carried}
+  end
+
+  # A current-bracket player who was not paired here IS a downfloater, and
+  # the next level must know it: `float_weight/4`'s repeat-float penalty
+  # and C14-C17 both read this flag.
+  defp mark_float(player, true), do: Map.put(player, :already_floated, true)
+  defp mark_float(player, false), do: player
+
+  defp level_spans(indexed) do
+    n = length(indexed)
+    max_rank = Enum.max(Enum.map(indexed, & &1.rank))
+    {places, place_span} = score_places(indexed)
+
+    %{
+      slots: n,
+      colour: n + 1,
+      float_pair: 2 * n + 1,
+      float_single: n + 1,
+      spread: n * max_rank + 1,
+      # Wide enough to hold a COUNT, not a single bit: these rungs are
+      # summed over every pair in the matching, and bbpPairings sizes the
+      # equivalent fields with `scoreGroupSizeBits` for exactly that
+      # reason. A span of 2 here silently carries into C6/C7 above.
+      pair_count: n + 1,
+      max_deviation: n,
+      deviation: n * n + 1,
+      score_place: places,
+      score_paired: place_span
+    }
+  end
+
+  # `computeEdgeWeight`'s ladder, in the handbook's order, over the whole
+  # remaining field rather than one bracket.
+  #
+  # `lower_in_current`/`lower_in_next` are bbpPairings' own two flags
+  # (`largerPlayerIndex < nextScoreGroupBegin` and `>= nextScoreGroupBegin`)
+  # and they are what carries C6-C8: a pair inside the current bracket
+  # scores on C6/C7, a pair reaching into the next scores on C8's two
+  # rungs, and everything below colour is gated on the pair being internal
+  # exactly as bbpPairings gates it on `lowerPlayerInCurrentBracket`.
+  defp level_weight(a, b, lower_index, current_end, next_end, natural, spans) do
+    if legal_pair?(a, b) and colour_compatible?(a, b) do
+      lower_in_current = lower_index < current_end
+      lower_in_next = lower_index >= current_end and lower_index < next_end
+      place = Map.fetch!(spans.score_place, a.points)
+
+      {c1, c2, c3, c4} = colour_criteria(a, b)
+      {f1, f2, f3, f4} = float_criteria(a, b)
+      {s18, s19, s20, s21} = float_score_criteria(a, b, spans)
+
+      gate = fn value, on? -> if on?, do: value, else: 0 end
+
+      ranked([
+        # bbpPairings' own first rung: `1 + !isByeCandidate(higher) +
+        # !isByeCandidate(lower)`. Pairing a player who may NOT take the
+        # bye is preferred, so whoever is left over at the end is someone
+        # C2 allows. Without it the global path had no C2 at all — the
+        # per-bracket cascade carried that in `float_weight/4`, which this
+        # architecture never calls.
+        {1 + bit(not eligible_for_bye?(a)) + bit(not eligible_for_bye?(b)), 4},
+        {bit(lower_in_current), spans.pair_count},
+        {gate.(place, lower_in_current), spans.score_paired},
+        {bit(lower_in_next), spans.pair_count},
+        {gate.(place, lower_in_next), spans.score_paired},
+        {gate.(bit(c1), lower_in_current), spans.colour},
+        {gate.(bit(c2), lower_in_current), spans.colour},
+        {gate.(bit(c3), lower_in_current), spans.colour},
+        {gate.(bit(c4), lower_in_current), spans.colour},
+        {gate.(f1, lower_in_current), spans.float_pair},
+        {gate.(f2, lower_in_current), spans.float_single},
+        {gate.(f3, lower_in_current), spans.float_pair},
+        {gate.(f4, lower_in_current), spans.float_single},
+        {gate.(s18, lower_in_current), spans.score_paired},
+        {gate.(s19, lower_in_current), spans.score_paired},
+        {gate.(s20, lower_in_current), spans.score_paired},
+        {gate.(s21, lower_in_current), spans.score_paired},
+        {natural_gap(a, b, natural, lower_in_current, spans), spans.deviation},
+        # Gated like everything else below the C8 rungs. `spread` is not a
+        # FIDE criterion — it is a within-bracket stand-in for the
+        # transposition order — so letting it score cross-bracket edges
+        # makes the matcher pick downfloaters by rank distance. Measured:
+        # it floated the top seed of a 3-player bracket because pairing
+        # them across scored 4 spread against the correct floater's 1.
+        {gate.(abs(a.rank - b.rank), lower_in_current), spans.spread}
+      ])
+    end
+  end
+
+  # Bounded so the SUM over a matching stays inside `spans.deviation`.
+  # Using `spans.deviation - 1 - dev` (the per-bracket cascade's form)
+  # is safe only when every candidate has the same pair count, so the
+  # constant cancels. Here internal and cross pairs coexist and the count
+  # varies, so the constant does not cancel and the rung overflows into
+  # the float criteria above it.
+  defp natural_gap(a, b, natural, true, spans) do
+    mdp_count = Map.get(natural, :mdp_count, 0)
+    dev = min(mdp_deviation(a, b, natural, mdp_count), spans.max_deviation)
+    spans.max_deviation - dev
+  end
+
+  defp natural_gap(_a, _b, _natural, false, _spans), do: 0
 
   # Depth-first over the brackets, taking each bracket's own best matching
   # first and only reconsidering it when everything downstream turns out to
