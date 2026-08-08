@@ -829,6 +829,15 @@ defmodule OpenPair.Pairing do
   # `OpenPair.Matching`'s `@max_bracket_for_alternatives` before it: a large
   # bracket has far more ways to pair, so it is the least likely to strand a
   # later one and the least in need of alternatives at all.
+  #
+  # Confirmed to cost nothing where it actually engages, which the ordinary
+  # 4-40 fuzz range never reaches -- that range almost never builds a
+  # bracket past 16, so the runs showing "byte-identical accuracy" never
+  # exercised this at all. Measured on rosters of 60-80 against javafo:
+  # capped scores 81.48% of rounds and 98.05% of pairs, uncapped 79.63% and
+  # 97.84%. Free, and marginally better, since a longer candidate list
+  # mostly gives the cascade more chances to settle somewhere javafo did
+  # not.
   defp depth_for(bracket_size) do
     cond do
       bracket_size <= @max_bracket_for_alternatives -> @forced_float_depth
