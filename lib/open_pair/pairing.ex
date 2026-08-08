@@ -997,7 +997,16 @@ defmodule OpenPair.Pairing do
     # it, so `float_weight/2` can place its own terms at the right height
     # relative to the pair criteria rather than guessing a magnitude.
     unit_deviation = spans.spread
-    unit_f4 = unit_deviation * spans.deviation
+    # C18-C21 sit directly below C14-C17: same four float-history questions,
+    # asked about the score DIFFERENCE rather than the count. Each is
+    # bounded by `score_paired` for the same reason C7 is — a player belongs
+    # to one pair, so the total over a bracket cannot exceed the sum of
+    # every player's own place value.
+    unit_s21 = unit_deviation * spans.deviation
+    unit_s20 = unit_s21 * spans.score_paired
+    unit_s19 = unit_s20 * spans.score_paired
+    unit_s18 = unit_s19 * spans.score_paired
+    unit_f4 = unit_s18 * spans.score_paired
     unit_f3 = unit_f4 * spans.float_single
     unit_f2 = unit_f3 * spans.float_pair
     unit_f1 = unit_f2 * spans.float_single
@@ -1110,6 +1119,8 @@ defmodule OpenPair.Pairing do
     {higher, lower} = if a.bracket_pos <= b.bracket_pos, do: {a, b}, else: {b, a}
     {c1, c2, c3, c4} = colour_criteria(higher, lower)
     {f1, f2, f3, f4} = float_criteria(higher, lower)
+    {s18, s19, s20, s21} = float_score_criteria(higher, lower, spans)
+
     deviation = mdp_deviation(a, b, natural, mdp_count)
 
     ranked([
@@ -1123,9 +1134,63 @@ defmodule OpenPair.Pairing do
       {f2, spans.float_single},
       {f3, spans.float_pair},
       {f4, spans.float_single},
+      {s18, spans.score_paired},
+      {s19, spans.score_paired},
+      {s20, spans.score_paired},
+      {s21, spans.score_paired},
       {spans.deviation - 1 - deviation, spans.deviation},
       {abs(a.rank - b.rank), spans.spread}
     ])
+  end
+
+  # C18-C21: the same four float-history questions `float_criteria/2` asks,
+  # weighted by the SCORE DIFFERENCE rather than counted.
+  #
+  #   [C18] Minimise the score differences (taken in descending order) of
+  #         MDPs who received a downfloat the previous round.
+  #
+  # and C19/C20/C21 likewise for upfloats, and for two rounds before. Each
+  # is graded by `spans.score_place`, one digit per score group with the
+  # higher group more significant, which is exactly what "taken in
+  # descending order" asks for: the largest score difference dominates, and
+  # only a tie there defers to the next.
+  #
+  # Same inversion as `float_criteria/2` and for the same reason (see
+  # `docs/fide-criteria.md`): the handbook minimises over the players left
+  # floating, `ranked/1` maximises over the pairs formed, and PAIRING a
+  # player is precisely how you keep them out of the minimised set. So a
+  # player whose float history triggers the criterion contributes their own
+  # place value when this pair rescues them.
+  defp float_score_criteria(higher, lower, spans) do
+    crossing? = higher.points > lower.points
+
+    # Only a pair that spans two score groups HAS a score difference, and
+    # the difference belongs to the MDP — the higher-scored player, who
+    # moved down into this bracket. `score_place` already encodes exactly
+    # that: one digit per score group, the higher group more significant,
+    # so a bigger drop is a bigger number and "taken in descending order"
+    # falls out of the positional comparison.
+    #
+    # Weighting by the LOWER player instead was tried first and is inert:
+    # `lower` is decided by bracket position, so in an MDP bracket it is
+    # always a resident, every resident shares one score, and the term is
+    # then the same constant for every candidate pairing.
+    if crossing? do
+      psd = Map.fetch!(spans.score_place, higher.points)
+
+      {
+        # C18/C20 — the MDP itself downfloated recently. Pairing it here is
+        # what stops it floating on, so the reward grows with the drop.
+        if(float_of(higher, 1) == :down, do: psd, else: 0),
+        # C19/C21 — inverted like `float_criteria/2`'s f2/f4: the reward is
+        # for an opponent who did NOT just upfloat.
+        if(float_of(lower, 1) == :up, do: 0, else: psd),
+        if(float_of(higher, 2) == :down, do: psd, else: 0),
+        if(float_of(lower, 2) == :up, do: 0, else: psd)
+      }
+    else
+      {0, 0, 0, 0}
+    end
   end
 
   # Pack ranked criteria, highest priority first, the same way bbpPairings'
