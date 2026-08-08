@@ -186,6 +186,45 @@ went 92.85% -> 93.50% of pairs and 75.67% -> 77.73% of rounds, and
 bbpPairings at 200x9 went 95.92% -> 96.26% and 86.32% -> 87.15%. Zero
 illegal rounds throughout.
 
+### A third reference, and which rulebook this engine is actually chasing
+
+`OpenPair.Test.Gacrux` wraps Otto Milvang's `pairingchecker.py` (the
+pairing half of the FIDE Tie Break Server, gacrux.no) — a third
+independent Dutch implementation, actively maintained, and the tool
+FIDE/TEC itself uses to check pairing programs.
+
+Adding it settled something the other two could not. Over 324 comparable
+rounds, four engines on identical positions:
+
+| | agreement |
+|---|---|
+| bbpPairings 6.0.0 vs Gacrux | **100.00%** |
+| JaVaFo 2.2 vs bbpPairings | 97.53% |
+| JaVaFo 2.2 vs Gacrux | 97.53% |
+| OpenPair vs JaVaFo | 89.51% |
+| OpenPair vs bbpPairings | 87.96% |
+| OpenPair vs Gacrux | 87.96% |
+
+**There are two Dutch rulebooks in play, and this engine is chasing the
+older one.** Gacrux states them outright:
+
+    DUTCH_RULES = { 0: "2022-01-01",
+                    1: "2026-02-01" }  # Approved by FIDE Council on 01/02/2026
+
+and selects the 2026 one; bbpPairings 6.0.0 likewise implements the
+revised rules. They agree with each other PERFECTLY — two independent
+implementations, 324 rounds, zero disagreements — while JaVaFo 2.2
+differs from both on the same 2.47%. That 2.47% is not engine variance,
+it is the 2022 -> 2026 rule change, and every comparison in this file
+above was measured against JaVaFo, i.e. against the superseded rules.
+
+The number to steer by from here is the last one: **when all three
+references agree, OpenPair matches 89.87%** (284/316). Where they are
+unanimous there is no tie to break and no rulebook ambiguity, so that
+~10% is genuinely this engine's own gap, and it is the honest measure of
+what is left to fix. Everything outside it is a choice about which
+rulebook to target, not a bug.
+
 ### Two things not to redo
 
 **Do not build a k-best matcher for the cascade's alternatives.** Before
