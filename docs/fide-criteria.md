@@ -91,11 +91,28 @@ bbpPairings' `computeEdgeWeight` does the same inversion.
    strictly weaker: it is C1/C3 feasibility for one player, not C1-C7
    compliance for the bracket.
 
-2. **C10/C11 are not restricted to topscorers.** Both criteria are about
-   "topscorers or topscorers' opponents", and by Art. 1.8 topscorers exist
-   only when pairing the FINAL round — so in every earlier round these two
-   criteria should not fire at all. This engine applies its equivalents in
-   every round. Gacrux guards them with `if (a["top"] or b["top"])`.
+2. ~~**C10/C11 are not restricted to topscorers.**~~ **Investigated and
+   withdrawn — this is not a divergence.** The reasoning looked sound:
+   both criteria are about "topscorers or topscorers' opponents", Art. 1.8
+   makes topscorers exist only when pairing the FINAL round, and Gacrux
+   guards them explicitly with `if (a["top"] or b["top"])` while this
+   engine does not.
+
+   But bbpPairings does not guard them either — `insertColorBits` gates on
+   `inCurrentScoreGroup`, never on topscorer status — and bbpPairings
+   agrees with Gacrux 100%. The two are reconciled by C3: two
+   non-topscorers with the same absolute colour preference may never meet
+   at all, so the C10/C11 bits can only ever fire where C3 already permits
+   the pairing, which is exactly the topscorer cases. Gacrux gates
+   explicitly; bbpPairings lets the absolute criterion do it; the outcome
+   is identical.
+
+   This engine takes bbpPairings' route (`colour_compatible?/2` enforces
+   C3, with `final_round_topscorers?/2` as its carve-out) and
+   `colour_criteria/2` is a faithful port of `insertColorBits`, condition
+   for condition. Adding a topscorer gate would be redundant, and would
+   risk diverging if the two C3 implementations ever disagreed at the
+   edges. Left alone deliberately.
 
 3. **`deviation` and `spread` are not FIDE criteria.** They sit mid-ladder
    in `within_bracket_weight/4` and do the work the handbook assigns to a
