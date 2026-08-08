@@ -56,6 +56,7 @@ defmodule OpenPair.Pairing do
   # principle. Revisit removing this once the weight formula itself is
   # closer to that, not before.
   @budget_key :openpair_cascade_budget
+  @bye_score_key :openpair_bye_score
   @expected_rounds_key :openpair_expected_rounds
   @cascade_budget 2000
   @alternatives_per_bracket 15
@@ -224,6 +225,7 @@ defmodule OpenPair.Pairing do
     allowed_byes = rem(length(active), 2)
 
     Process.put(@budget_key, @cascade_budget)
+    Process.put(@bye_score_key, bye_assignee_score(brackets, allowed_byes))
 
     try do
       case cascade_brackets(brackets, [], [], allowed_byes) do
@@ -238,6 +240,7 @@ defmodule OpenPair.Pairing do
       |> repair_bye_count(active, allowed_byes)
     after
       Process.delete(@budget_key)
+      Process.delete(@bye_score_key)
     end
   end
 
@@ -507,7 +510,8 @@ defmodule OpenPair.Pairing do
   # `NoValidPairingError` that this search finds a legal answer for. See
   # `@budget_key`'s own doc for the full account.
   defp cascade_brackets([], floaters, pairs, allowed_byes) do
-    if length(floaters) <= allowed_byes and Enum.all?(floaters, &eligible_for_bye?/1) do
+    if length(floaters) <= allowed_byes and Enum.all?(floaters, &eligible_for_bye?/1) and
+         Enum.all?(floaters, &bye_score_ok?/1) do
       {:ok, pairs, floaters}
     else
       :infeasible
@@ -552,6 +556,90 @@ defmodule OpenPair.Pairing do
           :infeasible -> {:cont, :infeasible}
         end
       end)
+    end
+  end
+
+  # The score the pairing-allocated bye MUST land on, or `nil` when the
+  # field is even and there is no bye.
+  #
+  # C5 is an absolute criterion in the 2026 handbook, and this engine used
+  # to satisfy it only by accident: the bye fell out of whichever player
+  # was left over by the lowest bracket, which is usually the lowest score
+  # but need not be. A 5-player round-2 case found by diffing JaVaFo
+  # against bbpPairings/Gacrux shows the difference exactly — the 0.5
+  # bracket held two players who had already met, so somebody had to move,
+  # and keeping the top bracket whole (C6, a QUALITY criterion) left the
+  # bye on a 0.5 player when a 0.0 player was reachable. The 2026 answer
+  # breaks the top bracket up instead, because C5 outranks C6 absolutely.
+  #
+  # Answered the way bbpPairings answers it: ONE matching over the entire
+  # remaining field, before any bracket is looked at, whose weights
+  # (`dutch.cpp`, the block guarded by `sortedPlayers.size() & 1u`)
+  # maximise pair count first, then prefer pairing bye-INELIGIBLE players
+  # so the leftover is someone C2 allows, then maximise the score groups
+  # actually paired — which leaves the lowest-scoring eligible player
+  # unmatched. That player's score is the answer.
+  #
+  # This is affordable only because the bracket matcher is polynomial now;
+  # a whole-field match was out of reach for the subset DP this replaced.
+  defp bye_assignee_score(_brackets, 0), do: nil
+
+  defp bye_assignee_score(brackets, _allowed_byes) do
+    field =
+      brackets
+      |> List.flatten()
+      |> Enum.sort_by(&{-&1.points, &1.rank})
+      |> Enum.with_index()
+      |> Enum.map(fn {p, i} ->
+        p |> Map.put(:bracket_pos, i) |> Map.put(:colour_stats, colour_stats(p))
+      end)
+
+    n = length(field)
+    arr = List.to_tuple(field)
+    {places, place_span} = score_places(field)
+    max_place = places |> Map.values() |> Enum.max(fn -> 1 end)
+
+    # Room for the eligibility term above the score term, and for a
+    # cardinality term above both, so more pairs always wins.
+    eligibility_unit = place_span
+    edge_ceiling = 3 * eligibility_unit + 2 * max_place
+    cardinality_unit = div(n, 2) * edge_ceiling + 1
+
+    edges =
+      Enum.flat_map(0..(n - 2), fn i ->
+        a = elem(arr, i)
+
+        Enum.flat_map((i + 1)..(n - 1), fn j ->
+          b = elem(arr, j)
+
+          if legal_pair?(a, b) and colour_compatible?(a, b) do
+            eligibility = 1 + bit(not eligible_for_bye?(a)) + bit(not eligible_for_bye?(b))
+            score = Map.fetch!(places, a.points) + Map.fetch!(places, b.points)
+            [{i, j, cardinality_unit + eligibility * eligibility_unit + score}]
+          else
+            []
+          end
+        end)
+      end)
+
+    matching = WeightedMatching.solve(n, edges)
+
+    case Enum.reject(0..(n - 1), &is_map_key(matching, &1)) do
+      # No legal complete round exists; leave C5 unconstrained and let the
+      # cascade and `repair_bye_count/3` produce the best answer they can
+      # rather than refusing every candidate here.
+      [] -> nil
+      leftovers -> leftovers |> Enum.map(&elem(arr, &1).points) |> Enum.min()
+    end
+  end
+
+  # C5, the PAB Criterion: "Minimise the score of the assignee of the
+  # pairing-allocated-bye". ABSOLUTE, so it is checked here alongside C2
+  # rather than weighted anywhere.
+  defp bye_score_ok?(player) do
+    case Process.get(@bye_score_key) do
+      nil -> true
+      score -> player.points <= score
     end
   end
 
@@ -649,7 +737,8 @@ defmodule OpenPair.Pairing do
     spine = solve_bracket_all(indexed, pair_fun, float_fun)
     optimum = Enum.max_by(spine, &elem(&1, 0))
 
-    (spine ++ deeper_floats(indexed, [{[], optimum}], pair_fun, float_fun, @forced_float_depth))
+    (spine ++
+       deeper_floats(indexed, [{[], optimum}], pair_fun, float_fun, depth_for(length(indexed))))
     # An unused peeked-ahead player is NOT a floater — they never left
     # their own bracket. Dropping them here rather than at the call site
     # matters, because every ordering and de-duplication decision below
@@ -705,6 +794,28 @@ defmodule OpenPair.Pairing do
   # declined to disturb the next bracket would look like the worst one.
   defp resolve_lookahead({weight, pairs, floaters}) do
     {weight, pairs, Enum.reject(floaters, &(zone(&1) == :lookahead))}
+  end
+
+  # How many extra players to force down, scaled to the bracket.
+  #
+  # `deeper_floats/5` costs `beam * depth * n` matcher calls on a bracket
+  # of `n`, and the matcher is superlinear in `n`, so the product runs away
+  # fast. Measured on a 90-player field, one round: depth 0 takes 40ms,
+  # depth 1 takes 818ms, depth 2 takes 7371ms -- 183x for the last step. At
+  # 200x9 against javafo that same step is worth +0.30 exact rounds
+  # (88.06% -> 88.36%): a fine trade on a club field, a terrible one on an
+  # open, and 90 players is an ordinary open.
+  #
+  # Scaled by the reasoning `per_count_limit/1` already uses, and
+  # `OpenPair.Matching`'s `@max_bracket_for_alternatives` before it: a large
+  # bracket has far more ways to pair, so it is the least likely to strand a
+  # later one and the least in need of alternatives at all.
+  defp depth_for(bracket_size) do
+    cond do
+      bracket_size <= @max_bracket_for_alternatives -> @forced_float_depth
+      bracket_size <= 2 * @max_bracket_for_alternatives -> 1
+      true -> 0
+    end
   end
 
   # Big brackets get ONE candidate per float count, not `n`.
@@ -832,6 +943,7 @@ defmodule OpenPair.Pairing do
   defp solve_bracket_all(players, pair_fun, float_fun) do
     n = length(players)
     arr = List.to_tuple(players)
+
     {lex_span, lex_pow} = lex_scale(n)
 
     edges =
@@ -866,6 +978,26 @@ defmodule OpenPair.Pairing do
           Enum.reduce(floaters, 0, fn player, acc -> acc + float_fun.(player) end)
 
       {weight, pairs, floaters}
+    end)
+  end
+
+  # One positional digit per score group present, lowest group least
+  # significant, each digit wide enough to count its own members. Returns
+  # `{score -> place value, total span}`.
+  #
+  # Shared by `spans/1` (C7/C18-C21, grading which scores got paired) and
+  # `bye_assignee_score/2` (C5, leaving the lowest score unpaired). Both
+  # need the same "a higher score group outranks any number of lower ones"
+  # ordering, and both rely on the span bounding the total across a whole
+  # bracket — a player belongs to one pair, so the sum of every player's
+  # place value stays below the product.
+  defp score_places(players) do
+    players
+    |> Enum.group_by(& &1.points)
+    |> Enum.map(fn {score, members} -> {score, length(members)} end)
+    |> Enum.sort_by(&elem(&1, 0))
+    |> Enum.reduce({%{}, 1}, fn {score, size}, {places, place} ->
+      {Map.put(places, score, place), place * (size + 1)}
     end)
   end
 
@@ -953,14 +1085,7 @@ defmodule OpenPair.Pairing do
     # group's digit is more significant. Maximising the resulting number
     # therefore means "pair the highest score group as fully as possible,
     # then the next", which is exactly what the bit layout buys.
-    {score_place, score_paired} =
-      indexed
-      |> Enum.group_by(& &1.points)
-      |> Enum.map(fn {score, members} -> {score, length(members)} end)
-      |> Enum.sort_by(&elem(&1, 0))
-      |> Enum.reduce({%{}, 1}, fn {score, size}, {places, place} ->
-        {Map.put(places, score, place), place * (size + 1)}
-      end)
+    {score_place, score_paired} = score_places(indexed)
 
     spans = %{
       slots: slots,

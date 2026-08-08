@@ -47,7 +47,7 @@ with the two 2026 implementations.
 | C2 | A participant who has already received a pairing-allocated bye, or has already scored in one single round without playing as many points as rewarded for a win, shall not receive the pairing-allocated bye. | `eligible_for_bye?/1`, plus a near-absolute penalty in `float_weight/4` |
 | C3 | Non-topscorers with the same absolute colour preference shall not meet. | `colour_compatible?/2` with `final_round_topscorers?/2` as the carve-out |
 | C4 | *(Completion Criterion)* A pairing complying with all the absolute criteria shall always exist for all players not yet paired. | the `cascade_brackets/4` backtracking search; `NoValidPairingError` when genuinely impossible |
-| C5 | *(PAB Criterion)* Minimise the score of the assignee of the pairing-allocated-bye. | implicit — the bye falls out of the lowest bracket. NOT enforced explicitly; see the gaps below |
+| C5 | *(PAB Criterion)* Minimise the score of the assignee of the pairing-allocated-bye. | `bye_assignee_score/2` — a whole-field pre-pass fixing the bye's score, enforced in `cascade_brackets/4`'s base case |
 
 ## Quality criteria — in descending priority
 
@@ -123,7 +123,13 @@ bbpPairings' `computeEdgeWeight` does the same inversion.
    and the one this project's TODO has long described as "approximate
    bracket-ordering vs FIDE's exact transposition search".
 
-4. **C5 is not enforced explicitly.** The bye emerges from the lowest
-   bracket rather than from a rule that minimises the assignee's score.
-   These coincide in ordinary cases; whether they can diverge has not been
-   tested.
+4. ~~**C5 is not enforced explicitly.**~~ **Closed.** The prediction that
+   "these coincide in ordinary cases; whether they can diverge has not been
+   tested" turned out to be testable and false. Diffing JaVaFo against
+   bbpPairings/Gacrux surfaced a 5-player round-2 case where the 0.5
+   bracket held two players who had already met: keeping the top bracket
+   whole left the bye on a 0.5 player when a 0.0 player was reachable, and
+   the 2026 answer breaks the top bracket up because C5 is ABSOLUTE and C6
+   is only quality. Now implemented as `bye_assignee_score/2`, a single
+   whole-field matching run before any bracket is paired -- affordable only
+   because the bracket matcher is polynomial now.
