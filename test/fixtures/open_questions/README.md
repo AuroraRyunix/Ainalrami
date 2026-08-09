@@ -59,3 +59,49 @@ bbpPairings uses a tournament-wide `playedRounds` and pairs them anyway.
 A cleaner fixture would build the same scores from real games — note that
 an odd number of half-integer scores is unreachable that way, since every
 draw creates two of them, so the score groups need re-choosing to suit.
+
+### The same signature, a second time: `seed104-r8-p14`
+
+Not a fixture here, but the same shape of anomaly on a real case, and
+worth recording next to it because the two constrain each other.
+
+Bracket at 3.5, MDPs `[13, 7, 11]`, residents `[3, 8]`, next group
+`{2, 6}`. Both engines keep exactly one pair and float three.
+
+  * ours: `13-8`. Player 13 holds an ABSOLUTE preference for black
+    (white in each of the last two rounds); 8 wants white. Compatible,
+    so C12 and C13 are both satisfied.
+  * bbpPairings: `13-3`. Player 3 wants black too, so this clashes and
+    both C12 and C13 go unsatisfied.
+
+Everything above colour is equal, checked rung by rung with
+`tools/adjudicate.exs`: same pair count, same scores paired, same C8
+reach (both float sets can make exactly two pairs into `{2, 6}`, at the
+same score places), and C9 is off because the field is even. So the
+criteria prefer OUR answer and bbpPairings took the worse one.
+
+What it shares with the fixtures above: the bracket's own graph does not
+explain the choice. FIDE's transposition order does prefer bbpPairings
+here (`lex [0,2,2]` against our `[1,2,2]`) — but that order is only
+supposed to be consulted among pairings already equal on C1-C21, and
+these are not equal.
+
+### What this rules out
+
+**Not the refinement stages.** `OPENPAIR_TRACE=1` shows the initial solve
+already producing the answer the round ends with; the kept-pair count
+never falls across the eight stages.
+
+**Not solver path-dependence.** bbpPairings' matching computer is
+incremental and persists across brackets, so it was reasonable to suspect
+its choice among equally-weighted optima is a function of call history
+rather than of the current weights — which would also explain the same
+bracket graph answering differently in the two fixtures above. But
+Gacrux, an independent implementation that shares none of that internal
+state, agrees with bbpPairings on 324 of 324 rounds. Two independent
+engines cannot agree that consistently on an artefact of one's solver, so
+the answer is determined by the rules and is reachable by a stateless
+implementation.
+
+That leaves the weight function itself, and something in it that reaches
+past the current+next bracket.
