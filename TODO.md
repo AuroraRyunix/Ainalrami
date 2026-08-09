@@ -459,7 +459,29 @@ That is the next thing to resolve, and it is a question about what the
 completion rung actually maximises, not about the stages: either it is
 not summed over cross-bracket edges the way this port assumes, or
 something constrains the bracket graph that this port does not model.
-The case above is minimal and fully specified — start there.
+
+**Reduced to a minimal reproducer, and the answer is now measured rather
+than inferred** — see `test/fixtures/open_questions/`. Two files with the
+identical bracket graph (`{1} 5.0`, `{2,3,4} 4.5`, `{5,6} 4.0` with 5-6
+already played), differing only in whether a `{7,8} 3.5` group exists
+below it:
+
+| | bbpPairings 6.0.0 | edges | internal (C6) |
+|---|---|---|---|
+| nothing below | `1-2, 3-5, 6-4` | 3 | 1 |
+| a 3.5 group below | `1-2, 3-4, 7-5, 6-8` | 2 | 2 |
+
+The cross edges exist and bbpPairings uses them when the 2-internal
+answer would strand 5 and 6. Given anywhere for 5 and 6 to go, it takes
+2 internal pairs over 3 edges — **C6 beats edge count**, the opposite of
+what `computeEdgeWeight`'s shift order says, and the same bracket graph
+yields different answers depending on what lies beyond it.
+
+So the completion rung is not "maximise edges in this graph". Whatever it
+is, it is not a property of the bracket graph alone, and that is the
+thing to work out next. Everything needed is in the fixture directory's
+README, including why OpenPair itself returns nothing for those two files
+(an artefact of building scores from arbiter byes, not a second finding).
 
   1. **The colour model was only ever right for round 2.** "Preference is
      the opposite of your last colour" is exactly correct when every
