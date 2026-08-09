@@ -547,11 +547,32 @@ defmodule OpenPair.Pairing do
   #     term) and an overflowing `natural_gap` — both real bugs, both
   #     fixed, and together they moved it 62.34% -> 60.51%
   #
-  # So the remaining gap is the refinement machinery, not a weight. That is
-  # a large, well-scoped piece of work with the reference open beside it,
-  # and it is the only route to C8 — which cannot be expressed in a
-  # one-bracket window at all (two attempts, both in
-  # `docs/fide-criteria.md`).
+  # So the remaining gap is the refinement machinery, not a weight.
+  #
+  # ## Why no single fix moves it
+  #
+  # Five were tried after the three bugs above, and every one left the
+  # number within 2 points of 60.51%: the C8 rungs on/off, the missing
+  # `isByeCandidate` rung, the `natural_gap` overflow, stage one of the
+  # refinement (the MDP-selection loop, `force_mdps/8`), and confining the
+  # lexicographic tie-break to the pairs a level actually keeps. All five
+  # are correct changes. None is the cause.
+  #
+  # The arithmetic explains why. This engine has already measured what the
+  # per-bracket cascade's two search mechanisms are worth: removing its
+  # backtracking cost 97.19% -> 81.99% of pairs (see `@budget_key`), and
+  # its alternatives are worth ~3 points. THIS cascade has neither — one
+  # matching per level, no alternatives, no backtracking. bbpPairings can
+  # do without both precisely because its seven-stage refinement does the
+  # exploring instead. Porting one stage buys neither mechanism, so
+  # 90.29% - 15 - 3 - (the unported stages) lands almost exactly here.
+  #
+  # The lesson for whoever continues: this cannot be landed incrementally.
+  # A half-ported refinement is strictly worse than the backtracking search
+  # it replaces, and will stay worse until the remainder and
+  # exchange-minimisation stages (`dutch.cpp` 1257-1600) are in too. Do it
+  # in one piece behind this flag, measure at the end, and keep the
+  # per-bracket cascade as the default until it actually wins.
   # OFF by default. The architecture is right and the implementation is
   # not yet: see `global_cascade/2`'s own doc for what is missing and what
   # it currently measures. Set OPENPAIR_GLOBAL=1 to work on it.
@@ -607,11 +628,11 @@ defmodule OpenPair.Pairing do
     cond do
       n < 2 -> {[], indexed}
       current_end == 0 -> {[], indexed}
-      true -> solve_level(indexed, n, current_end, next_end)
+      true -> solve_level(indexed, n, current_end, next_end, level)
     end
   end
 
-  defp solve_level(indexed, n, current_end, next_end) do
+  defp solve_level(indexed, n, current_end, next_end, level) do
     arr = List.to_tuple(indexed)
     spans = level_spans(indexed)
     natural = indexed |> Enum.take(current_end) |> natural_partner_map()
@@ -629,13 +650,27 @@ defmodule OpenPair.Pairing do
               []
 
             w ->
-              lex = elem(lex_pow, n - i) * (n - j) + elem(lex_pow, n - j) * (n - i)
+              # Only pairs this level will actually KEEP carry the
+              # lexicographic tie-break. Cross-bracket and next-bracket
+              # pairs are discarded by `solve_level/5`, so letting them
+              # carry it lets the arrangement of throwaway pairs decide
+              # which internal arrangement wins.
+              lex =
+                if j < current_end,
+                  do: elem(lex_pow, n - i) * (n - j) + elem(lex_pow, n - j) * (n - i),
+                  else: 0
+
               [{i, j, w * lex_span + lex}]
           end
         end)
       end)
 
-    matching = WeightedMatching.solve(n, edges)
+    mdp_count = Enum.count(indexed, &(&1.points > level))
+
+    matching =
+      n
+      |> WeightedMatching.solve(edges)
+      |> force_mdps(indexed, arr, n, mdp_count, current_end, edges, lex_span)
 
     internal = for {i, j} <- matching, i < j, j < current_end, do: {i, j}
 
@@ -650,6 +685,68 @@ defmodule OpenPair.Pairing do
           do: mark_float(elem(arr, i), i < current_end)
 
     {finalised, carried}
+  end
+
+  # Stage one of bbpPairings' per-bracket refinement: the MDP-selection
+  # loop (`dutch.cpp` 1091-1255).
+  #
+  # A single matching decides for itself which moved-down players to pair
+  # inside the bracket. bbpPairings does not allow that — it walks the MDPs
+  # in rank order, and for each one that the current matching has NOT
+  # placed inside the bracket, nudges every edge from that MDP to a
+  # resident (`edgeWeight |= 1u`) and RE-SOLVES, keeping the result only if
+  # the MDP is now paired internally. That is why it calls
+  # `computeMatching()` once per MDP rather than once per bracket.
+  #
+  # The effect is an ordering guarantee a lone matching cannot give: among
+  # equally-optimal matchings, the better-ranked MDPs are the ones that get
+  # paired, and the ones left to float on are the worst-ranked. It is C7
+  # ("minimise the scores, taken in descending order, of the downfloaters")
+  # enforced constructively rather than hoped for from a weight.
+  #
+  # `nudge` is the same trick: a bonus small enough that it cannot outrank
+  # any real criterion, but enough to break a tie in favour of using this
+  # edge. bbpPairings sets the low bit for exactly that reason.
+  defp force_mdps(matching, indexed, arr, n, mdp_count, current_end, edges, lex_span) do
+    Enum.reduce(0..(mdp_count - 1)//1, matching, fn mdp, acc ->
+      if internally_matched?(acc, mdp, current_end) do
+        acc
+      else
+        nudged = nudge_edges(edges, mdp, mdp_count, current_end, lex_span)
+        candidate = WeightedMatching.solve(n, nudged)
+
+        # Keep it only if the nudge actually placed the MDP inside the
+        # bracket; otherwise this MDP genuinely cannot be paired here and
+        # the unnudged answer stands.
+        if internally_matched?(candidate, mdp, current_end) do
+          candidate
+        else
+          acc
+        end
+      end
+    end)
+    |> then(fn final -> {final, indexed, arr} end)
+    |> elem(0)
+  end
+
+  defp internally_matched?(matching, index, current_end) do
+    case Map.get(matching, index) do
+      nil -> false
+      partner -> partner < current_end
+    end
+  end
+
+  # Every edge from this MDP to a RESIDENT of the current bracket gets the
+  # smallest possible bump. Residents are the current-bracket players that
+  # are not themselves MDPs.
+  defp nudge_edges(edges, mdp, mdp_count, current_end, lex_span) do
+    Enum.map(edges, fn {i, j, w} ->
+      cond do
+        i == mdp and j >= mdp_count and j < current_end -> {i, j, w + lex_span}
+        j == mdp and i >= mdp_count and i < current_end -> {i, j, w + lex_span}
+        true -> {i, j, w}
+      end
+    end)
   end
 
   # A current-bracket player who was not paired here IS a downfloater, and
