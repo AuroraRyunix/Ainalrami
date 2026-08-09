@@ -253,6 +253,69 @@ edge counts as a pair while meaning a float. The lookahead belongs in
 `float_weight/4` as one bit per player — can this player be placed below
 if they float — and nowhere else.
 
+**Both of the above still stand, and both are about the DEFAULT
+(per-bracket) path. A third entry that used to live here — "the global
+cascade cannot be landed incrementally, do it in one piece or not at
+all" — has now been acted on and is resolved; see below.**
+
+### The global cascade: done, and it landed on a tie
+
+`global_cascade/2` is now bbpPairings' bracket algorithm ported stage for
+stage (`dutch.cpp` 1011-1649) rather than one matching per score level.
+Three things were wrong with the earlier attempt, in descending order of
+how much they cost:
+
+  * the graph spanned the **whole remaining field**, so pairs three
+    brackets down carried weight and distorted the optimum before being
+    discarded. bbpPairings' graph is the current bracket plus the next
+    score group and nothing else, and it never gives two moved-down
+    players an edge at all (`dutch.cpp:607`).
+  * **six of the eight refinement stages were missing** — everything from
+    the remainder split through exchange minimisation, which is FIDE §3's
+    transposition-and-exchange procedure in executable form.
+  * a **non-terminating bracket loop**: bbpPairings can loop
+    unconditionally because it has already proved a complete legal
+    matching exists, and this engine deliberately carries on when its own
+    pre-pass finds none. A final bracket that cannot pair internally span
+    forever. Two tests were timing out on this, not on slowness.
+
+| 200x9 vs bbpPairings | rounds | pairs |
+|---|---|---|
+| global cascade, before | 60.51% | 93.6% |
+| global cascade, after | **90.11%** | 96.82% |
+| per-bracket cascade (default) | **90.29%** | 97.21% |
+
++29.6 points, and a dead heat — three rounds in 1689, still behind on
+pairs. It stays behind `OPENPAIR_GLOBAL=1` because "level with" is not a
+reason to swap out the path every other measurement in this file was
+taken against.
+
+**Where to look next, if this is picked up again.** The global cascade
+wins mid-event (r3 97.00 vs 93.50, r4 97.40 vs 95.83, r5 94.79 vs 92.19)
+and loses late (r7 83.15 vs 84.24, r8 80.24 vs 82.04, r9 66.47 vs 69.46).
+Late rounds are where legal pairings get scarce and the per-bracket
+cascade's backtracking earns its 15 points of pairs. The global path has
+no backtracking by design, because bbpPairings has none — it does not
+need any, having proved feasibility up front (`dutch.cpp:825-837`). That
+pre-pass is the last structural difference between the two designs and
+the obvious next thing to port.
+
+**One finding worth keeping regardless of which path wins.** The
+canonical lexicographic tie-break (`lex_scale/1`), worth ~40 points on
+the per-bracket path, is completely **inert** under the staged
+refinement: removing it and even inverting it both reproduce 1522/1689
+and the identical disagreement set. The switch was confirmed live before
+this was believed — a bad value raises from inside the run. A tie-break
+exists to choose among equally-optimal matchings; after eight staged
+solves there is nothing left to choose, which is exactly what
+bbpPairings' design claims for itself. It is deleted from that path (and
+deleting it is what keeps the bignums small enough to solve a bracket
+eight times without paying for it).
+
+C9's rung measures inert too, but it is a real handbook criterion whose
+absence was a documented gap, so it stays; it simply never fires in this
+fixture set.
+
   1. **The colour model was only ever right for round 2.** "Preference is
      the opposite of your last colour" is exactly correct when every
      player has played exactly one game, and wrong from round 3 on, where

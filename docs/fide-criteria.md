@@ -57,7 +57,7 @@ Verbatim from §2.4, with this engine's implementation beside each.
 |---|---|---|
 | C6 | Minimise the number of downfloaters *(equivalent to: maximise the number of pairs)*. | `spans.locality` |
 | C7 | Minimise the scores (taken in descending order) of the downfloaters. | `downfloater_scores/1` at candidate level, plus `spans.score_paired` per pair |
-| C8 | Choose the set of downfloaters so that in the following bracket every criterion from C1 to C7 is complied with. | `placeable_below/1` — a weak approximation, see gaps |
+| C8 | Choose the set of downfloaters so that in the following bracket every criterion from C1 to C7 is complied with. | default path: `placeable_below/1`, a weak approximation, see gaps. `OPENPAIR_GLOBAL=1`: real C8 rungs over real next-bracket edges |
 | C9 | Minimise the number of unplayed games of the assignee of the pairing-allocated-bye. *(Applies to brackets downfloating exactly one player receiving the bye.)* | the `unplayed` term in `float_weight/4`, gated on `bye_bracket?` |
 | C10 | Minimise the number of topscorers or topscorers' opponents who get a colour difference higher than +2 or lower than -2. | `colour_criteria/2` bit 1 — **not restricted to topscorers** |
 | C11 | Minimise the number of topscorers or topscorers' opponents who get the same colour three times in a row. | `colour_criteria/2` bit 2 — **not restricted to topscorers** |
@@ -84,7 +84,8 @@ bbpPairings' `computeEdgeWeight` does the same inversion.
 
 ## Known divergences from the handbook
 
-1. **C8 is only approximated, and two strengthenings have now failed.**
+1. **C8 is only approximated on the DEFAULT path. The global cascade
+   implements it properly, and now measures level with the default.**
    The handbook requires the chosen downfloater set to leave the
    *following* bracket able to satisfy C1-C7. This engine only asks whether
    each candidate downfloater has at least one legal, colour-compatible
@@ -122,6 +123,43 @@ bbpPairings' `computeEdgeWeight` does the same inversion.
    contributes no edges — it survives only as `placeable_below/1`'s
    per-player bit (see `pair_weight/4`), so a second peeked bracket would
    merely make that bit MORE permissive, which is the wrong direction.
+
+   **The structural hypothesis was then tested directly, and it holds.**
+   `global_cascade/2` (behind `OPENPAIR_GLOBAL=1`) is bbpPairings'
+   architecture ported stage for stage: the graph is the current bracket
+   plus the whole next score group, and each bracket is solved up to eight
+   times, every solve answering one question and freezing the answer
+   before the next is asked. C8 stops being a lookahead in that design —
+   it falls out of the C8 rungs being on real edges to real next-bracket
+   players, rather than a per-player feasibility bit.
+
+   | 200x9 vs bbpPairings | rounds | pairs |
+   |---|---|---|
+   | global cascade, single solve per level | 60.51% | 93.6% |
+   | global cascade, all stages ported | **90.11%** | 96.82% |
+   | per-bracket cascade (still the default) | **90.29%** | 97.21% |
+
+   So the missing 30 points really were the refinement, as predicted — and
+   the result is a dead heat, three rounds in 1689, still behind on pairs.
+   The split by round says why: the global cascade is *better* mid-event
+   (r3 97.00 vs 93.50, r4 97.40 vs 95.83, r5 94.79 vs 92.19) and worse
+   late (r7 83.15 vs 84.24, r8 80.24 vs 82.04, r9 66.47 vs 69.46), which
+   is where legal pairings run short and the per-bracket cascade's
+   backtracking — measured at 15 points of pairs by itself — pays for
+   itself. bbpPairings needs no backtracking because it proves a complete
+   legal matching exists before it starts (`dutch.cpp:825-837`, throwing
+   `NoValidPairingException` otherwise); that pre-pass is the obvious next
+   thing to port, and the last real difference between the two designs.
+
+   One finding from the port is worth recording on its own: **the
+   canonical lexicographic tie-break is inert under the staged
+   refinement.** Removing it, and even inverting it, reproduce 1522/1689
+   and the same disagreement set exactly — verified against a live switch,
+   since a bad value raises from inside the run. In the per-bracket
+   cascade the same tie-break is worth ~40 points, because a
+   maximum-weight matcher may return any optimum and something has to
+   choose. After eight staged solves there is nothing left to choose,
+   which is precisely the claim bbpPairings' design makes for itself.
 
 2. ~~**C10/C11 are not restricted to topscorers.**~~ **Investigated and
    withdrawn — this is not a divergence.** The reasoning looked sound:

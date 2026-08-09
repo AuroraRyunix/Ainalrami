@@ -499,83 +499,115 @@ defmodule OpenPair.Pairing do
     player |> Map.get(:floats, %{}) |> Map.get(rounds_back, :none)
   end
 
-  # bbpPairings' and Gacrux's architecture, not this engine's original one:
-  # ONE graph over the whole remaining field, reweighted per score level,
-  # with players removed as they are finalised.
+  # bbpPairings' bracket algorithm, ported stage for stage from
+  # `dutch.cpp` 1011-1649. This replaces an earlier port that solved each
+  # score level once; see "Why one matching is not enough" below.
   #
-  # Adopted because C8 cannot be expressed any other way. "Choose the set
-  # of downfloaters so that in the following bracket every criterion from
-  # C1 to C7 is complied with" is a statement about a matching of everyone
-  # still unpaired, and `cascade_brackets/4` only ever sees one bracket
-  # plus a peek at the next. Two separate attempts to approximate it inside
-  # that window both measured worse (see `docs/fide-criteria.md`), and
-  # reading the two reference implementations settled why — both build the
-  # graph once over every competitor and hand the WHOLE remainder to each
-  # bracket step:
+  # ## The graph is the current bracket plus the next score group
   #
-  #   Gacrux `pairing.py`  nodes = list_nodes(competitors), then
-  #                        `while len(nodes) > 0: pair_bracket(scorelevel,
-  #                        nodes, edges)` returning the reduced graph
-  #   bbp    `dutch.cpp`   one matching_computer over all sortedPlayers,
-  #                        setEdgeWeight per bracket, never re-scoped
+  # `playersByIndex` holds the current bracket followed by the whole of
+  # the NEXT score group, and nothing else — every other player has no
+  # edge at all. Local indices, in the field's own `(-points, rank)`
+  # order:
   #
-  # Only pairs INTERNAL to the current bracket are finalised, exactly as
-  # bbpPairings does it: everyone else — unmatched current-bracket players
-  # and the entire next group alike — carries forward, the unmatched ones
-  # becoming the next bracket's MDPs.
+  #     [0, sgb)      MDPs — moved down from a bracket above
+  #     [sgb, nsgb)   residents — this bracket's own score group
+  #     [nsgb, m)     the next score group, present only to be pairable
   #
-  # ## Why this is off by default
+  # `computeBaseEdgeWeights` (dutch.cpp:607) only builds an edge when the
+  # LARGER index is at least `sgb`, so two MDPs never have an edge: a
+  # moved-down player is paired against a resident or not at all.
   #
-  # It measures 60.51% of exact rounds against bbpPairings at 200x9, where
-  # the per-bracket cascade it would replace measures 90.29%. The
-  # architecture is not the problem — it is the one both references use —
-  # the naivety of THIS implementation is.
+  # The first port put the ENTIRE remaining field in one graph and threw
+  # the far pairs away afterwards. By then the matcher had already traded
+  # a good internal pair for two of them — the discard happens after the
+  # optimum is chosen, not before.
   #
-  # What is missing is that a bbpPairings bracket step is not one matching.
-  # It calls `computeMatching()` SEVEN times per bracket (dutch.cpp lines
-  # 1087, 1176, 1243, 1317, 1375, 1447, 1583, plus the whole-field pre-pass
-  # at 825), as an iterative refinement: an initial match, then a re-match
-  # after forcing each MDP's edges, another after finalising each MDP pair,
-  # another after reweighting the remainder for exchange minimisation, and
-  # two more inside the exchange loops. This calls it once per level and
-  # takes whatever comes back.
+  # ## Why one matching is not enough
   #
-  # Ruled out along the way, each by measurement rather than reasoning:
+  # A maximum-weight matching decides everything at once and may return
+  # any optimum. bbpPairings does not let it: it calls `computeMatching()`
+  # seven times per bracket, each call re-solving the SAME graph after a
+  # targeted nudge that forces exactly one decision, which is then frozen
+  # with `finalizePair` before the next question is asked. The stages, in
+  # order, are `stage_select_mdps/1` (which moved-down players get paired
+  # at all), `stage_mdp_opponents/1` (who each one plays),
+  # `stage_build_remainder/1` and `stage_exchange_weights/1` (what is left
+  # and how it splits), the two exchange-selection loops, the reset pass,
+  # and `stage_first_group_partners/1`.
   #
-  #   * the C8 rungs themselves — on 62.34%, off 62.46%, no difference
-  #   * a missing bye-eligibility top rung (bbpPairings' `isByeCandidate`
-  #     term) and an overflowing `natural_gap` — both real bugs, both
-  #     fixed, and together they moved it 62.34% -> 60.51%
+  # Those last five are FIDE C.04.3 §3's transposition and exchange
+  # procedure, done properly. The per-bracket cascade approximates it with
+  # two invented terms, `deviation` and `spread`, which is the divergence
+  # docs/fide-criteria.md calls "the largest remaining gap". They are
+  # deliberately absent from this ladder: the exchange stages ARE the
+  # mechanism they stand in for, and keeping both would let a stand-in
+  # outvote the real thing.
   #
-  # So the remaining gap is the refinement machinery, not a weight.
+  # ## Arithmetic
   #
-  # ## Why no single fix moves it
+  # `computeEdgeWeight` leaves `3 * scoreGroupSizeBits + 1` bits of
+  # RESERVED low space (dutch.cpp:462-469) that the stages write into, so
+  # a nudge can break a tie without ever outranking a real criterion.
+  # `bands.reserve` is that space, and every stage addend lives inside it.
   #
-  # Five were tried after the three bugs above, and every one left the
-  # number within 2 points of 60.51%: the C8 rungs on/off, the missing
-  # `isByeCandidate` rung, the `natural_gap` overflow, stage one of the
-  # refinement (the MDP-selection loop, `force_mdps/8`), and confining the
-  # lexicographic tie-break to the pairs a level actually keeps. All five
-  # are correct changes. None is the cause.
+  # `edgeWeightComputer`'s addend goes NEGATIVE (dutch.cpp:1076 subtracts
+  # from a value that is zero whenever its guard bit is clear). In C++
+  # that is unsigned wraparound; here it is just subtraction, which is
+  # what the wraparound computes. It borrows into the criterion above,
+  # but can never invert an ordering: the borrow is under `2 * s`, and one
+  # unit of the lowest criterion is `reserve = 2 * s^3`.
   #
-  # The arithmetic explains why. This engine has already measured what the
-  # per-bracket cascade's two search mechanisms are worth: removing its
-  # backtracking cost 97.19% -> 81.99% of pairs (see `@budget_key`), and
-  # its alternatives are worth ~3 points. THIS cascade has neither — one
-  # matching per level, no alternatives, no backtracking. bbpPairings can
-  # do without both precisely because its seven-stage refinement does the
-  # exploring instead. Porting one stage buys neither mechanism, so
-  # 90.29% - 15 - 3 - (the unported stages) lands almost exactly here.
+  # ## What it measures, and why it is still not the default
   #
-  # The lesson for whoever continues: this cannot be landed incrementally.
-  # A half-ported refinement is strictly worse than the backtracking search
-  # it replaces, and will stay worse until the remainder and
-  # exchange-minimisation stages (`dutch.cpp` 1257-1600) are in too. Do it
-  # in one piece behind this flag, measure at the end, and keep the
-  # per-bracket cascade as the default until it actually wins.
-  # OFF by default. The architecture is right and the implementation is
-  # not yet: see `global_cascade/2`'s own doc for what is missing and what
-  # it currently measures. Set OPENPAIR_GLOBAL=1 to work on it.
+  # 200 tournaments x 9 rounds against bbpPairings, same harness the other
+  # figures in TODO.md come from:
+  #
+  #     this cascade, before the stages     60.51% rounds / 93.6% pairs
+  #     this cascade, stages ported         90.11% rounds / 96.82% pairs
+  #     the per-bracket cascade (default)   90.29% rounds / 97.21% pairs
+  #
+  # So the architecture is vindicated — the missing 30 points really were
+  # the refinement, exactly as predicted — but it lands on PARITY, three
+  # rounds in 1689 behind the thing it was meant to beat, and it is still
+  # behind on pairs. It stays off until it actually wins.
+  #
+  # Where the two differ is informative. This cascade is BETTER in the
+  # middle rounds (3: 97.00 vs 93.50, 4: 97.40 vs 95.83, 5: 94.79 vs
+  # 92.19) and worse in the late ones (7: 83.15 vs 84.24, 8: 80.24 vs
+  # 82.04, 9: 66.47 vs 69.46). Late rounds are where legal pairings get
+  # scarce, which is where the per-bracket cascade's backtracking earns
+  # its keep — measured at 15 points of pairs on its own. This cascade has
+  # no backtracking at all, by design, because bbpPairings has none.
+  # Closing the remaining gap most likely means the whole-field
+  # feasibility pre-pass bbpPairings runs first (dutch.cpp:825-837), which
+  # is what lets it commit to a bracket decision without ever needing to
+  # revisit one.
+  #
+  # ## Two things measured as INERT, and one of them removed
+  #
+  # The canonical lexicographic tie-break this engine relies on everywhere
+  # else (`lex_scale/1`) was carried here too at first, below the reserved
+  # space. It makes no difference whatever: removing it, and even
+  # INVERTING it, both reproduce 1522/1689 and the same disagreement set,
+  # byte for byte. The switch was verified to be live before believing
+  # that — a bad value raises `CaseClauseError` from inside the run. So it
+  # is gone from this path, which is also what makes the bignums small
+  # enough to solve a bracket eight times over without cost.
+  #
+  # That is a real result, not a null one: a tie-break exists to choose
+  # among equally-optimal matchings, and having nothing left to choose is
+  # the claim bbpPairings' design makes for its own staged refinement.
+  #
+  # C9's rung measures inert too (identical numbers with it forced off),
+  # but it is a genuine handbook criterion and its ABSENCE was a
+  # documented gap, so it stays. It simply never fires in this fixture
+  # set — see `single_downfloater_is_bye_assignee?/4` for the gate, which
+  # is deliberately over-inclusive rather than under.
+
+  # OFF by default. Set OPENPAIR_GLOBAL=1 to select it over the
+  # per-bracket cascade; `global_cascade/2` still falls back on
+  # `:infeasible` rather than emitting an illegal round.
   defp maybe_global_cascade(brackets, allowed_byes) do
     if System.get_env("OPENPAIR_GLOBAL"),
       do: global_cascade(brackets, allowed_byes),
@@ -589,14 +621,12 @@ defmodule OpenPair.Pairing do
       |> Enum.sort_by(&{-&1.points, &1.rank})
       |> Enum.map(&Map.put(&1, :colour_stats, colour_stats(&1)))
 
-    levels = field |> Enum.map(& &1.points) |> Enum.uniq() |> Enum.sort(:desc)
+    ctx = global_context(field)
+    {pairs, leftover} = run_brackets(field, ctx)
 
-    {pairs, leftover} = run_levels(levels, field, [])
-
-    # The global matching is not told how many byes are legal, so the
-    # result is checked rather than assumed. Falling back to the older
-    # backtracking cascade beats emitting an illegal round, and also keeps
-    # a second opinion available while this architecture is new.
+    # The staged refinement is not told how many byes are legal, so the
+    # result is checked rather than assumed. Falling back to the
+    # backtracking cascade beats emitting an illegal round.
     if length(leftover) <= allowed_byes and Enum.all?(leftover, &eligible_for_bye?/1) and
          Enum.all?(leftover, &bye_score_ok?/1) do
       {:ok, pairs, leftover}
@@ -605,249 +635,708 @@ defmodule OpenPair.Pairing do
     end
   end
 
-  defp run_levels([], remaining, pairs), do: {pairs, remaining}
-
-  defp run_levels([level | rest], remaining, pairs) do
-    {new_pairs, carried} = pair_level(level, List.first(rest), remaining)
-    run_levels(rest, carried, pairs ++ new_pairs)
-  end
-
-  defp pair_level(level, next_level, remaining) do
-    indexed =
-      remaining
-      |> Enum.sort_by(&{-&1.points, &1.rank})
-      |> Enum.with_index()
-      |> Enum.map(fn {p, i} -> Map.put(p, :bracket_pos, i) end)
-
-    n = length(indexed)
-    current_end = Enum.count(indexed, &(&1.points >= level))
-
-    next_end =
-      if next_level, do: Enum.count(indexed, &(&1.points >= next_level)), else: current_end
-
-    cond do
-      n < 2 -> {[], indexed}
-      current_end == 0 -> {[], indexed}
-      true -> solve_level(indexed, n, current_end, next_end, level)
-    end
-  end
-
-  defp solve_level(indexed, n, current_end, next_end, level) do
-    arr = List.to_tuple(indexed)
-    spans = level_spans(indexed)
-    natural = indexed |> Enum.take(current_end) |> natural_partner_map()
-    {lex_span, lex_pow} = lex_scale(n)
-
-    edges =
-      Enum.flat_map(0..(n - 2), fn i ->
-        a = elem(arr, i)
-
-        Enum.flat_map((i + 1)..(n - 1), fn j ->
-          b = elem(arr, j)
-
-          case level_weight(a, b, j, current_end, next_end, natural, spans) do
-            nil ->
-              []
-
-            w ->
-              # Only pairs this level will actually KEEP carry the
-              # lexicographic tie-break. Cross-bracket and next-bracket
-              # pairs are discarded by `solve_level/5`, so letting them
-              # carry it lets the arrangement of throwaway pairs decide
-              # which internal arrangement wins.
-              lex =
-                if j < current_end,
-                  do: elem(lex_pow, n - i) * (n - j) + elem(lex_pow, n - j) * (n - i),
-                  else: 0
-
-              [{i, j, w * lex_span + lex}]
-          end
-        end)
-      end)
-
-    mdp_count = Enum.count(indexed, &(&1.points > level))
-
-    matching =
-      n
-      |> WeightedMatching.solve(edges)
-      |> force_mdps(indexed, arr, n, mdp_count, current_end, edges, lex_span)
-
-    internal = for {i, j} <- matching, i < j, j < current_end, do: {i, j}
-
-    finalised =
-      Enum.map(internal, fn {i, j} -> assign_colour_with_history({elem(arr, i), elem(arr, j)}) end)
-
-    done = internal |> Enum.flat_map(fn {i, j} -> [i, j] end) |> MapSet.new()
-
-    carried =
-      for i <- 0..(n - 1),
-          not MapSet.member?(done, i),
-          do: mark_float(elem(arr, i), i < current_end)
-
-    {finalised, carried}
-  end
-
-  # Stage one of bbpPairings' per-bracket refinement: the MDP-selection
-  # loop (`dutch.cpp` 1091-1255).
-  #
-  # A single matching decides for itself which moved-down players to pair
-  # inside the bracket. bbpPairings does not allow that — it walks the MDPs
-  # in rank order, and for each one that the current matching has NOT
-  # placed inside the bracket, nudges every edge from that MDP to a
-  # resident (`edgeWeight |= 1u`) and RE-SOLVES, keeping the result only if
-  # the MDP is now paired internally. That is why it calls
-  # `computeMatching()` once per MDP rather than once per bracket.
-  #
-  # The effect is an ordering guarantee a lone matching cannot give: among
-  # equally-optimal matchings, the better-ranked MDPs are the ones that get
-  # paired, and the ones left to float on are the worst-ranked. It is C7
-  # ("minimise the scores, taken in descending order, of the downfloaters")
-  # enforced constructively rather than hoped for from a weight.
-  #
-  # `nudge` is the same trick: a bonus small enough that it cannot outrank
-  # any real criterion, but enough to break a tie in favour of using this
-  # edge. bbpPairings sets the low bit for exactly that reason.
-  defp force_mdps(matching, indexed, arr, n, mdp_count, current_end, edges, lex_span) do
-    Enum.reduce(0..(mdp_count - 1)//1, matching, fn mdp, acc ->
-      if internally_matched?(acc, mdp, current_end) do
-        acc
-      else
-        nudged = nudge_edges(edges, mdp, mdp_count, current_end, lex_span)
-        candidate = WeightedMatching.solve(n, nudged)
-
-        # Keep it only if the nudge actually placed the MDP inside the
-        # bracket; otherwise this MDP genuinely cannot be paired here and
-        # the unnudged answer stands.
-        if internally_matched?(candidate, mdp, current_end) do
-          candidate
-        else
-          acc
-        end
-      end
-    end)
-    |> then(fn final -> {final, indexed, arr} end)
-    |> elem(0)
-  end
-
-  defp internally_matched?(matching, index, current_end) do
-    case Map.get(matching, index) do
-      nil -> false
-      partner -> partner < current_end
-    end
-  end
-
-  # Every edge from this MDP to a RESIDENT of the current bracket gets the
-  # smallest possible bump. Residents are the current-bracket players that
-  # are not themselves MDPs.
-  defp nudge_edges(edges, mdp, mdp_count, current_end, lex_span) do
-    Enum.map(edges, fn {i, j, w} ->
-      cond do
-        i == mdp and j >= mdp_count and j < current_end -> {i, j, w + lex_span}
-        j == mdp and i >= mdp_count and i < current_end -> {i, j, w + lex_span}
-        true -> {i, j, w}
-      end
-    end)
-  end
-
-  # A current-bracket player who was not paired here IS a downfloater, and
-  # the next level must know it: `float_weight/4`'s repeat-float penalty
-  # and C14-C17 both read this flag.
-  defp mark_float(player, true), do: Map.put(player, :already_floated, true)
-  defp mark_float(player, false), do: player
-
-  defp level_spans(indexed) do
-    n = length(indexed)
-    max_rank = Enum.max(Enum.map(indexed, & &1.rank))
-    {places, place_span} = score_places(indexed)
+  # Everything the ladder needs that is genuinely round-wide. The spans
+  # themselves are per bracket — see `pair_bracket/4`.
+  defp global_context(field) do
+    bye_score = Process.get(@bye_score_key)
 
     %{
-      slots: n,
-      colour: n + 1,
-      float_pair: 2 * n + 1,
-      float_single: n + 1,
-      spread: n * max_rank + 1,
-      # Wide enough to hold a COUNT, not a single bit: these rungs are
-      # summed over every pair in the matching, and bbpPairings sizes the
-      # equivalent fields with `scoreGroupSizeBits` for exactly that
-      # reason. A span of 2 here silently carries into C6/C7 above.
-      pair_count: n + 1,
-      max_deviation: n,
-      deviation: n * n + 1,
-      score_place: places,
-      score_paired: place_span
+      bye_score: bye_score,
+      unplayed_ranks: unplayed_ranks(field, bye_score),
+      odd_field?: rem(length(field), 2) == 1
     }
   end
 
-  # `computeEdgeWeight`'s ladder, in the handbook's order, over the whole
-  # remaining field rather than one bracket.
-  #
-  # `lower_in_current`/`lower_in_next` are bbpPairings' own two flags
-  # (`largerPlayerIndex < nextScoreGroupBegin` and `>= nextScoreGroupBegin`)
-  # and they are what carries C6-C8: a pair inside the current bracket
-  # scores on C6/C7, a pair reaching into the next scores on C8's two
-  # rungs, and everything below colour is gated on the pair being internal
-  # exactly as bbpPairings gates it on `lowerPlayerInCurrentBracket`.
-  defp level_weight(a, b, lower_index, current_end, next_end, natural, spans) do
-    if legal_pair?(a, b) and colour_compatible?(a, b) do
-      lower_in_current = lower_index < current_end
-      lower_in_next = lower_index >= current_end and lower_index < next_end
-      place = Map.fetch!(spans.score_place, a.points)
+  # dutch.cpp:879-892. Rank the played-game counts of everyone who could
+  # take the bye, most games played first, so a rung that MAXIMISES weight
+  # prefers PAIRING the player with the most unplayed games — which is how
+  # you leave the bye to someone with the fewest. Equal counts collapse
+  # onto the last rank written, exactly as the C++ map assignment does.
+  defp unplayed_ranks(_field, nil), do: %{}
+
+  defp unplayed_ranks(field, bye_score) do
+    field
+    |> Enum.filter(&(&1.points == bye_score))
+    |> Enum.map(&played_games/1)
+    |> Enum.sort(:desc)
+    |> Enum.with_index()
+    |> Enum.reduce(%{}, fn {played, rank}, acc -> Map.put(acc, played, rank) end)
+  end
+
+  defp played_games(player), do: Enum.count(player.games, &played?/1)
+
+  # dutch.cpp:981 — keep going while a bracket still has two players to
+  # pair OR there is another score group to bring in.
+  defp run_brackets(field, ctx) do
+    case Enum.chunk_by(field, & &1.points) do
+      [] -> {[], []}
+      [first | rest] -> bracket_loop(first, 0, rest, ctx, [])
+    end
+  end
+
+  defp bracket_loop(by_index, _sgb, [], _ctx, pairs) when length(by_index) <= 1 do
+    {pairs, by_index}
+  end
+
+  defp bracket_loop(by_index, sgb, rest_groups, ctx, pairs) do
+    nsgb = length(by_index)
+
+    {next_group, rest} =
+      case rest_groups do
+        [] -> {[], []}
+        [group | tail] -> {group, tail}
+      end
+
+    {new_pairs, carried, new_sgb} = pair_bracket(by_index ++ next_group, sgb, nsgb, ctx)
+
+    # bbpPairings loops unconditionally because by this point it has
+    # already PROVED a complete legal matching exists — its whole-field
+    # pre-pass throws `NoValidPairingException` otherwise (dutch.cpp:828).
+    # This engine deliberately carries on when that pre-pass finds nothing
+    # (`bye_assignee_score/2` returns nil rather than aborting), so a last
+    # bracket whose players simply cannot play each other would spin here
+    # forever: no pairs made, nothing consumed, same arguments next time.
+    # Give up instead and let `global_cascade/2` report `:infeasible`.
+    if rest == [] and new_pairs == [] do
+      {pairs, carried}
+    else
+      bracket_loop(carried, new_sgb, rest, ctx, pairs ++ new_pairs)
+    end
+  end
+
+  defp pair_bracket(combined, sgb, nsgb, ctx) do
+    m = length(combined)
+    arr = List.to_tuple(combined)
+
+    # Sized to THIS bracket, not the field. Every sum the ladder takes is
+    # over one bracket's matching, so a field-wide span only inflates the
+    # bignums the matcher then compares — and it re-solves the same graph
+    # up to eight times per bracket, so that cost lands eight times over.
+    #
+    # `places` stays a positional radix over score groups, just restricted
+    # to the groups this bracket actually holds. The ORDER is what "taken
+    # in descending order" compares, and restricting preserves it exactly;
+    # weights are never compared between brackets.
+    {places, place_span} = score_places(combined)
+    count_span = m + 1
+
+    bands = %{
+      places: places,
+      place_span: place_span,
+      count_span: count_span,
+      # dutch.cpp:462-469's reserved low space, as a multiplier.
+      reserve: 2 * count_span * count_span * count_span
+    }
+
+    base = base_edge_weights(arr, m, sgb, nsgb, ctx, bands)
+
+    %{
+      arr: arr,
+      m: m,
+      sgb: sgb,
+      nsgb: nsgb,
+      ctx: ctx,
+      bands: bands,
+      base: base,
+      live: base,
+      # Any value above every real weight will do: `finalize_pair/3`
+      # leaves the two vertices exactly one usable edge each, so the pair
+      # is forced regardless of magnitude.
+      max_w: 1 + (base |> Map.values() |> Enum.max(fn -> 0 end)),
+      matched: MapSet.new(),
+      matching: %{},
+      remainder: [],
+      remainder_pairs: 0,
+      exchange_count: 0
+    }
+    |> solve()
+    |> stage_select_mdps()
+    |> stage_mdp_opponents()
+    |> stage_build_remainder()
+    |> stage_exchange_weights()
+    |> stage_exchange_lower_from_higher()
+    |> stage_exchange_higher_from_lower()
+    |> stage_reset_exchange_bits()
+    |> stage_first_group_partners()
+    |> collect_bracket()
+  end
+
+  ## ---------- the graph ----------
+
+  defp put_w(weights, i, j, w) when i < j, do: Map.put(weights, {i, j}, w)
+  defp put_w(weights, i, j, w), do: Map.put(weights, {j, i}, w)
+
+  defp get_w(weights, i, j) when i < j, do: Map.get(weights, {i, j}, 0)
+  defp get_w(weights, i, j), do: Map.get(weights, {j, i}, 0)
+
+  defp solve(st) do
+    edges =
+      Enum.reduce(st.live, [], fn {{i, j}, w}, acc ->
+        if w > 0, do: [{i, j, w} | acc], else: acc
+      end)
+
+    %{st | matching: WeightedMatching.solve(st.m, edges)}
+  end
+
+  # bbpPairings reads an unmatched vertex as matched to ITSELF, and three
+  # of the stage tests below (`< playerVertex`, `<= playerVertex`) depend
+  # on that convention rather than on a nil check.
+  defp partner(st, i), do: Map.get(st.matching, i, i)
+
+  # Matched to a resident of this bracket's own score group.
+  defp internal?(st, i) do
+    p = partner(st, i)
+    p >= st.sgb and p < st.nsgb
+  end
+
+  # Paired with someone LATER in the bracket — the "higher group" role in
+  # an exchange.
+  defp paired_down?(st, i) do
+    p = partner(st, i)
+    p > i and p < st.nsgb
+  end
+
+  defp exchange_needed?(st, i) do
+    p = partner(st, i)
+    p <= i or p >= st.nsgb
+  end
+
+  # `common.h:164`. Lock the pair by leaving each vertex exactly one
+  # usable edge — the one to the other.
+  defp finalize_pair(st, i, j) do
+    live =
+      Enum.reduce(0..(st.m - 1)//1, st.live, fn k, acc ->
+        acc = if k == i, do: acc, else: put_w(acc, i, k, if(k == j, do: st.max_w, else: 0))
+        if k == j, do: acc, else: put_w(acc, j, k, if(k == i, do: st.max_w, else: 0))
+      end)
+
+    %{st | live: live}
+  end
+
+  ## ---------- the ladder ----------
+
+  defp base_edge_weights(_arr, m, _sgb, _nsgb, _ctx, _bands) when m < 2, do: %{}
+
+  defp base_edge_weights(arr, m, sgb, nsgb, ctx, bands) do
+    single_bye? = single_downfloater_is_bye_assignee?(arr, m, nsgb, ctx)
+
+    Enum.reduce(0..(m - 2), %{}, fn i, acc ->
+      a = elem(arr, i)
+
+      Enum.reduce((i + 1)..(m - 1), acc, fn j, inner ->
+        case bracket_edge_weight(a, elem(arr, j), j, sgb, nsgb, ctx, bands, single_bye?) do
+          nil -> inner
+          w -> Map.put(inner, {i, j}, w)
+        end
+      end)
+    end)
+  end
+
+  # C9 applies only to "brackets downfloating exactly one player, who
+  # receives the bye" (dutch.cpp:1607). The gate here is bbpPairings' own
+  # first two conditions — an odd field, and a bye whose score is at or
+  # above the next group's. NOT ported is the refinement at 1636-1643,
+  # which additionally clears the flag once a downfloater turns out to be
+  # matched below; this is therefore over-inclusive, and C9 can fire in a
+  # bracket bbpPairings would have excluded. The previous port had no C9
+  # rung at all.
+  defp single_downfloater_is_bye_assignee?(arr, m, nsgb, ctx) do
+    ctx.odd_field? and not is_nil(ctx.bye_score) and nsgb < m and
+      ctx.bye_score >= elem(arr, nsgb).points
+  end
+
+  defp bracket_edge_weight(a, b, j, sgb, nsgb, ctx, bands, single_bye?) do
+    # dutch.cpp:607 — no edge unless the LARGER index is a resident or
+    # lower, which is what stops two MDPs being paired with each other.
+    if j >= sgb and legal_pair?(a, b) and colour_compatible?(a, b) do
+      in_current = j < nsgb
+      in_next = not in_current
+      s = bands.count_span
+      place = Map.fetch!(bands.places, a.points)
 
       {c1, c2, c3, c4} = colour_criteria(a, b)
       {f1, f2, f3, f4} = float_criteria(a, b)
-      {s18, s19, s20, s21} = float_score_criteria(a, b, spans)
+      {s18, s19, s20, s21} = float_score_criteria(a, b, %{score_place: bands.places})
 
       gate = fn value, on? -> if on?, do: value, else: 0 end
 
       ranked([
-        # bbpPairings' own first rung: `1 + !isByeCandidate(higher) +
-        # !isByeCandidate(lower)`. Pairing a player who may NOT take the
-        # bye is preferred, so whoever is left over at the end is someone
-        # C2 allows. Without it the global path had no C2 at all — the
-        # per-bracket cascade carried that in `float_weight/4`, which this
-        # architecture never calls.
-        {1 + bit(not eligible_for_bye?(a)) + bit(not eligible_for_bye?(b)), 4},
-        {bit(lower_in_current), spans.pair_count},
-        {gate.(place, lower_in_current), spans.score_paired},
-        {bit(lower_in_next), spans.pair_count},
-        {gate.(place, lower_in_next), spans.score_paired},
-        {gate.(bit(c1), lower_in_current), spans.colour},
-        {gate.(bit(c2), lower_in_current), spans.colour},
-        {gate.(bit(c3), lower_in_current), spans.colour},
-        {gate.(bit(c4), lower_in_current), spans.colour},
-        {gate.(f1, lower_in_current), spans.float_pair},
-        {gate.(f2, lower_in_current), spans.float_single},
-        {gate.(f3, lower_in_current), spans.float_pair},
-        {gate.(f4, lower_in_current), spans.float_single},
-        {gate.(s18, lower_in_current), spans.score_paired},
-        {gate.(s19, lower_in_current), spans.score_paired},
-        {gate.(s20, lower_in_current), spans.score_paired},
-        {gate.(s21, lower_in_current), spans.score_paired},
-        {natural_gap(a, b, natural, lower_in_current, spans), spans.deviation},
-        # Gated like everything else below the C8 rungs. `spread` is not a
-        # FIDE criterion — it is a within-bracket stand-in for the
-        # transposition order — so letting it score cross-bracket edges
-        # makes the matcher pick downfloaters by rank distance. Measured:
-        # it floated the top seed of a 3-player bracket because pairing
-        # them across scored 4 spread against the correct floater's 1.
-        {gate.(abs(a.rank - b.rank), lower_in_current), spans.spread}
-      ])
+        # C4 completion + C2/C5 bye eligibility. `isByeCandidate` is
+        # `eligibleForBye AND score <= byeAssigneeScore` — pairing someone
+        # who may NOT take the bye is preferred, so whoever is left over
+        # is someone the absolute criteria allow.
+        {1 + bit(not bye_candidate?(a, ctx.bye_score)) +
+           bit(not bye_candidate?(b, ctx.bye_score)), 3 * s},
+        # C6, then C7 graded by which score group got paired.
+        {bit(in_current), s},
+        {gate.(place, in_current), bands.place_span},
+        # C8, the same two rungs one bracket down.
+        {bit(in_next), s},
+        {gate.(place, in_next), bands.place_span},
+        # C9.
+        {gate.(c9_rank(a, b, ctx), single_bye?), s * s},
+        # C10-C13, `insertColorBits`.
+        {gate.(bit(c1), in_current), s},
+        {gate.(bit(c2), in_current), s},
+        {gate.(bit(c3), in_current), s},
+        {gate.(bit(c4), in_current), s},
+        # C14-C17.
+        {gate.(f1, in_current), 2 * s},
+        {gate.(f2, in_current), s},
+        {gate.(f3, in_current), 2 * s},
+        {gate.(f4, in_current), s},
+        # C18-C21.
+        {gate.(s18, in_current), bands.place_span},
+        {gate.(s19, in_current), bands.place_span},
+        {gate.(s20, in_current), bands.place_span},
+        {gate.(s21, in_current), bands.place_span}
+      ]) * bands.reserve
     end
   end
 
-  # Bounded so the SUM over a matching stays inside `spans.deviation`.
-  # Using `spans.deviation - 1 - dev` (the per-bracket cascade's form)
-  # is safe only when every candidate has the same pair count, so the
-  # constant cancels. Here internal and cross pairs coexist and the count
-  # varies, so the constant does not cancel and the rung overflows into
-  # the float criteria above it.
-  defp natural_gap(a, b, natural, true, spans) do
-    mdp_count = Map.get(natural, :mdp_count, 0)
-    dev = min(mdp_deviation(a, b, natural, mdp_count), spans.max_deviation)
-    spans.max_deviation - dev
+  defp bye_candidate?(player, nil), do: eligible_for_bye?(player)
+
+  defp bye_candidate?(player, bye_score) do
+    eligible_for_bye?(player) and player.points <= bye_score
   end
 
-  defp natural_gap(_a, _b, _natural, false, _spans), do: 0
+  defp c9_rank(a, b, ctx) do
+    unplayed_rank(a, ctx) + unplayed_rank(b, ctx)
+  end
+
+  defp unplayed_rank(player, ctx) do
+    if player.points == ctx.bye_score,
+      do: Map.get(ctx.unplayed_ranks, played_games(player), 0),
+      else: 0
+  end
+
+  ## ---------- stage 1: which MDPs get paired (dutch.cpp 1091-1205) ----------
+
+  # Walks the moved-down players in rank order and, for each one the
+  # current matching has NOT placed inside the bracket, nudges its edges
+  # to residents and RE-SOLVES, keeping the result only if the MDP is now
+  # paired. That is the ordering guarantee a lone matching cannot give:
+  # among equally-optimal matchings, the better-ranked MDPs are the ones
+  # that get paired.
+  #
+  # The two early exits are what the previous port was missing. Counting
+  # how many of a score group CAN be matched (`matched_left`) lets the
+  # loop skip the expensive re-solve entirely when the answer is already
+  # forced — either none of them can be paired, or all of the ones left
+  # will be.
+  defp stage_select_mdps(%{sgb: 0} = st), do: st
+
+  defp stage_select_mdps(st) do
+    {st, _, _, _} =
+      Enum.reduce(0..(st.sgb - 1), {st, nil, 0, 0}, fn i, {st, group, remaining, matched_left} ->
+        {group, remaining, matched_left} =
+          if is_nil(group) or elem(st.arr, i).points < group,
+            do: count_mdp_group(st, i),
+            else: {group, remaining, matched_left}
+
+        cond do
+          matched_left == 0 ->
+            {st, group, remaining, matched_left}
+
+          remaining <= matched_left ->
+            {%{st | matched: MapSet.put(st.matched, i)}, group, remaining, matched_left}
+
+          true ->
+            st = if internal?(st, i), do: st, else: nudge_mdp_edges(st, i)
+
+            if internal?(st, i) do
+              {st |> Map.update!(:matched, &MapSet.put(&1, i)) |> freeze_mdp_edges(i), group,
+               remaining - 1, matched_left - 1}
+            else
+              {st, group, remaining - 1, matched_left}
+            end
+        end
+      end)
+
+    st
+  end
+
+  # How many MDPs share this one's score, and how many of them the current
+  # matching already places inside the bracket. The scan stops at the
+  # first lower score, which is the first resident — moved-down players
+  # are by definition higher-scored than the group they landed in.
+  defp count_mdp_group(st, from) do
+    score = elem(st.arr, from).points
+
+    Enum.reduce_while(from..(st.m - 1)//1, {score, 0, 0}, fn k, {s, remaining, matched_left} ->
+      if elem(st.arr, k).points >= s do
+        {:cont, {s, remaining + 1, matched_left + bit(internal?(st, k))}}
+      else
+        {:halt, {s, remaining, matched_left}}
+      end
+    end)
+  end
+
+  # dutch.cpp:1168 `edgeWeight |= 1u` — the smallest bump there is, enough
+  # to break a tie in favour of using this edge and far too small to
+  # outrank any criterion.
+  defp nudge_mdp_edges(st, mdp) do
+    live =
+      Enum.reduce(st.sgb..(st.nsgb - 1)//1, st.live, fn opp, acc ->
+        case get_w(st.base, mdp, opp) do
+          0 -> acc
+          w -> put_w(acc, mdp, opp, w + 1)
+        end
+      end)
+
+    solve(%{st | live: live})
+  end
+
+  # dutch.cpp:1196. Once an MDP is committed to being paired here, its
+  # resident edges are lifted clear of the plain nudge so a later MDP's
+  # re-solve cannot quietly drop it again.
+  defp freeze_mdp_edges(st, mdp) do
+    bump = st.nsgb - st.sgb + 1
+
+    live =
+      Enum.reduce(st.sgb..(st.nsgb - 1)//1, st.live, fn opp, acc ->
+        case get_w(st.base, mdp, opp) do
+          0 -> acc
+          w -> put_w(acc, mdp, opp, w + bump)
+        end
+      end)
+
+    %{st | live: live}
+  end
+
+  ## ---------- stage 2: who each MDP plays (dutch.cpp 1207-1255) ----------
+
+  # Stage 1 settled WHETHER each moved-down player is paired; this settles
+  # WITH WHOM, one player at a time, highest-ranked opponent first. The
+  # ascending addend runs over the candidate opponents from the bottom up,
+  # so the best-ranked available resident carries the largest bump.
+  defp stage_mdp_opponents(%{sgb: 0} = st), do: st
+
+  defp stage_mdp_opponents(st) do
+    Enum.reduce(0..(st.sgb - 1), st, fn mdp, st ->
+      if MapSet.member?(st.matched, mdp) do
+        st |> prefer_high_opponents(mdp) |> solve() |> finalize_matched(mdp)
+      else
+        st
+      end
+    end)
+  end
+
+  defp prefer_high_opponents(st, mdp) do
+    {live, _} =
+      Enum.reduce((st.nsgb - 1)..st.sgb//-1, {st.live, st.m}, fn opp, {acc, addend} ->
+        if MapSet.member?(st.matched, opp) do
+          {acc, addend}
+        else
+          case get_w(st.base, mdp, opp) do
+            0 -> {acc, addend}
+            w -> {put_w(acc, mdp, opp, w + addend), addend + 1}
+          end
+        end
+      end)
+
+    %{st | live: live}
+  end
+
+  defp finalize_matched(st, i) do
+    case partner(st, i) do
+      ^i -> st
+      p -> st |> Map.update!(:matched, &MapSet.put(&1, p)) |> finalize_pair(i, p)
+    end
+  end
+
+  ## ---------- stages 3-4: the remainder (dutch.cpp 1257-1318) ----------
+
+  # What is left of the score group once the moved-down players and their
+  # opponents are settled. `remainder_pairs` splits it into FIDE's S1 and
+  # S2: the first `remainder_pairs` entries are the higher half, the rest
+  # the lower half, and pairing them is the homogeneous-bracket problem.
+  defp stage_build_remainder(st) do
+    remainder = Enum.filter(st.sgb..(st.nsgb - 1)//1, &(partner(st, &1) >= st.sgb))
+
+    %{
+      st
+      | remainder: remainder,
+        remainder_pairs: Enum.count(remainder, &(partner(st, &1) < &1))
+    }
+  end
+
+  defp stage_exchange_weights(%{remainder: []} = st), do: st
+
+  defp stage_exchange_weights(st) do
+    live =
+      Enum.reduce(st.remainder, st.live, fn opp, acc ->
+        st.remainder
+        |> Enum.take_while(&(&1 < opp))
+        |> Enum.with_index()
+        |> Enum.reduce(acc, fn {p, idx}, inner ->
+          put_w(inner, p, opp, exchange_weight(st, p, opp, idx))
+        end)
+      end)
+
+    solve(%{st | live: live})
+  end
+
+  # dutch.cpp:1055-1085. Two objectives, lexicographically: first keep the
+  # pair inside its own half of the remainder (minimise the number of
+  # exchanges), then prefer the smaller position (minimise the difference
+  # of the exchanged branch scoring numbers).
+  #
+  # The `- remainder_index` runs off the end of the guard bit when that
+  # bit is clear, which is where the negative addend discussed at the top
+  # of this section comes from.
+  defp exchange_weight(st, smaller, larger, remainder_index) do
+    case get_w(st.base, smaller, larger) do
+      0 ->
+        0
+
+      w ->
+        s = st.bands.count_span
+        w + (bit(remainder_index < st.remainder_pairs) * s * s - remainder_index) * 2
+    end
+  end
+
+  ## ---------- stages 5-7: exchange selection (dutch.cpp 1320-1543) ----------
+
+  defp stage_exchange_lower_from_higher(%{remainder: []} = st), do: st
+
+  defp stage_exchange_lower_from_higher(st) do
+    st = %{st | exchange_count: count_exchanges(st)}
+
+    {st, _} =
+      Enum.reduce_while(
+        (st.remainder_pairs - 1)..0//-1,
+        {st, st.exchange_count},
+        fn pos, {st, left} ->
+          if left == 0 do
+            {:halt, {st, left}}
+          else
+            player = Enum.at(st.remainder, pos)
+            opponents = Enum.drop(st.remainder, pos + 1)
+
+            # Make this player's downward edges fractionally worse and ask
+            # again: if the matcher now declines to pair them downward,
+            # they are the one to exchange.
+            st =
+              if paired_down?(st, player) do
+                live =
+                  Enum.reduce(opponents, st.live, fn opp, acc ->
+                    case exchange_weight(st, player, opp, pos) do
+                      0 -> acc
+                      w -> put_w(acc, player, opp, w - 1)
+                    end
+                  end)
+
+                solve(%{st | live: live})
+              else
+                st
+              end
+
+            exchange = exchange_needed?(st, player)
+            {:cont, {settle_exchange(st, player, pos, opponents, exchange), left - bit(exchange)}}
+          end
+        end
+      )
+
+    st
+  end
+
+  # How many of the higher half are not currently paired downward — the
+  # number of exchanges the bracket has to make.
+  defp count_exchanges(st) do
+    case Enum.at(st.remainder, st.remainder_pairs) do
+      nil ->
+        0
+
+      bound ->
+        st.remainder
+        |> Enum.take_while(&(&1 < bound))
+        |> Enum.count(&exchange_needed?(st, &1))
+    end
+  end
+
+  # Either commit the exchange by cutting the player's edges to everyone
+  # after them, or put the untouched weights back.
+  defp settle_exchange(st, player, pos, opponents, exchange) do
+    {base, live} =
+      Enum.reduce(opponents, {st.base, st.live}, fn opp, {b, l} ->
+        b = if exchange, do: put_w(b, player, opp, 0), else: b
+        {b, put_w(l, player, opp, exchange_weight(%{st | base: b}, player, opp, pos))}
+      end)
+
+    %{st | base: base, live: live}
+  end
+
+  defp stage_exchange_higher_from_lower(%{remainder: []} = st), do: st
+
+  defp stage_exchange_higher_from_lower(st) do
+    {st, _} =
+      Enum.reduce_while(
+        st.remainder_pairs..(length(st.remainder) - 1)//1,
+        {st, st.exchange_count},
+        fn pos, {st, left} ->
+          # dutch.cpp:1414 stops at one, not zero: the last exchange has
+          # no partner left to swap with.
+          if left <= 1 do
+            {:halt, {st, left}}
+          else
+            player = Enum.at(st.remainder, pos)
+            opponents = Enum.drop(st.remainder, pos + 1)
+            already? = paired_down?(st, player)
+
+            st = if already?, do: st, else: probe_upward(st, player, pos, opponents)
+            exchange = paired_down?(st, player)
+            st = if exchange, do: cut_exchanged(st, player, pos), else: st
+            st = if already?, do: st, else: restore_probe(st, player, pos, opponents)
+
+            {:cont, {st, left - bit(exchange)}}
+          end
+        end
+      )
+
+    st
+  end
+
+  # The mirror of stage 5's probe: sweeten rather than sour, and ask
+  # whether the matcher will now pair this lower-half player downward.
+  defp probe_upward(st, player, pos, opponents) do
+    live =
+      Enum.reduce(opponents, st.live, fn opp, acc ->
+        case exchange_weight(st, player, opp, pos) do
+          0 -> acc
+          w -> put_w(acc, player, opp, w + 1)
+        end
+      end)
+
+    solve(%{st | live: live})
+  end
+
+  defp restore_probe(st, player, pos, opponents) do
+    live =
+      Enum.reduce(opponents, st.live, fn opp, acc ->
+        put_w(acc, player, opp, exchange_weight(st, player, opp, pos))
+      end)
+
+    %{st | live: live}
+  end
+
+  # A player promoted out of the lower half can no longer play anyone
+  # ABOVE them in the remainder, nor anyone in the next score group —
+  # dutch.cpp cuts both sets of edges from the base weights, permanently.
+  defp cut_exchanged(st, player, pos) do
+    cuts = Enum.take(st.remainder, pos) ++ Enum.to_list(st.nsgb..(st.m - 1)//1)
+
+    {base, live} =
+      Enum.reduce(cuts, {st.base, st.live}, fn opp, {b, l} ->
+        {put_w(b, player, opp, 0), put_w(l, player, opp, 0)}
+      end)
+
+    %{st | base: base, live: live}
+  end
+
+  # dutch.cpp:1509. Drop every edge inconsistent with the exchange pattern
+  # just chosen, and put the live weights back to their (now edited) base
+  # so the reserved bits the probes used are clear again.
+  defp stage_reset_exchange_bits(%{remainder: []} = st), do: st
+
+  defp stage_reset_exchange_bits(st) do
+    {base, live} =
+      st.remainder
+      |> Enum.with_index()
+      |> Enum.reduce({st.base, st.live}, fn {player, pos}, acc ->
+        st.remainder
+        |> Enum.drop(pos + 1)
+        |> Enum.reduce(acc, fn opp, {b, l} ->
+          b =
+            if exchange_needed?(st, player) or paired_down?(st, opp),
+              do: put_w(b, player, opp, 0),
+              else: b
+
+          {b, put_w(l, player, opp, get_w(b, player, opp))}
+        end)
+      end)
+
+    %{st | base: base, live: live}
+  end
+
+  ## ---------- stage 8: partners for the higher half (dutch.cpp 1545-1599) ----------
+
+  defp stage_first_group_partners(st) do
+    Enum.reduce(st.remainder, st, fn player, st ->
+      if paired_down?(st, player) do
+        st |> prefer_high_remainder(player) |> solve() |> finalize_both(player)
+      else
+        st
+      end
+    end)
+  end
+
+  defp prefer_high_remainder(st, player) do
+    {live, _} =
+      st.remainder
+      |> Enum.reverse()
+      |> Enum.reduce({st.live, 0}, fn opp, {acc, addend} ->
+        if opp <= player or MapSet.member?(st.matched, opp) do
+          {acc, addend}
+        else
+          acc =
+            case get_w(st.base, player, opp) do
+              0 -> acc
+              w -> put_w(acc, player, opp, w + addend)
+            end
+
+          # Incremented even when the edge was unusable, so the ordering
+          # reflects rank rather than availability (dutch.cpp:1580).
+          {acc, addend + 1}
+        end
+      end)
+
+    %{st | live: live}
+  end
+
+  defp finalize_both(st, i) do
+    case partner(st, i) do
+      ^i ->
+        st
+
+      p ->
+        st
+        |> Map.update!(:matched, &(&1 |> MapSet.put(i) |> MapSet.put(p)))
+        |> finalize_pair(i, p)
+    end
+  end
+
+  ## ---------- carry forward (dutch.cpp 1601-1649) ----------
+
+  defp collect_bracket(st) do
+    {pairs, carried, sgb} =
+      Enum.reduce(0..(st.m - 1)//1, {[], [], 0}, fn i, {pairs, carried, sgb} ->
+        p = partner(st, i)
+
+        # `p < st.nsgb` is this port's own guard, not bbpPairings'. Their
+        # recording condition tests only the near end of the pair, which
+        # would let an MDP that was flagged matched but ended up paired
+        # into the NEXT score group be written out as a finalised pair
+        # while its partner also carried forward. bbpPairings never
+        # finalises a cross-bracket pair (see TODO.md); this makes that
+        # invariant explicit rather than relying on it.
+        if i < st.nsgb and p != i and p < st.nsgb and MapSet.member?(st.matched, i) do
+          if i < p,
+            do:
+              {[assign_colour_with_history({elem(st.arr, i), elem(st.arr, p)}) | pairs], carried,
+               sgb},
+            else: {pairs, carried, sgb}
+        else
+          {pairs, [mark_float(elem(st.arr, i), i < st.nsgb) | carried], sgb + bit(i < st.nsgb)}
+        end
+      end)
+
+    {Enum.reverse(pairs), Enum.reverse(carried), sgb}
+  end
+
+  # A current-bracket player who was not paired here IS a downfloater.
+  defp mark_float(player, true), do: Map.put(player, :already_floated, true)
+  defp mark_float(player, false), do: player
 
   # Depth-first over the brackets, taking each bracket's own best matching
   # first and only reconsidering it when everything downstream turns out to
