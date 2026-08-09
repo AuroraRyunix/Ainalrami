@@ -30,4 +30,10 @@ exclude_tags =
     [:bbppairings | exclude_tags]
   end
 
+# The failure taxonomy is a diagnostic, not a regression test: it asserts
+# nothing unless told what to expect, and its job is to print a breakdown
+# of wherever the engine currently disagrees with bbpPairings. Run it on
+# demand with `mix test --only taxonomy`.
+exclude_tags = [:taxonomy | exclude_tags]
+
 ExUnit.start(exclude: exclude_tags)

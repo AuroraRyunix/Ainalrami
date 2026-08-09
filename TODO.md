@@ -316,6 +316,57 @@ C9's rung measures inert too, but it is a real handbook criterion whose
 absence was a documented gap, so it stays; it simply never fires in this
 fixture set.
 
+### What the 164 remaining failures actually are
+
+`failure_taxonomy_test.exs` classifies every disagreement the comparison
+harness counts, by walking the score groups top-down and reporting the
+FIRST one where the two engines part company. It replays the harness's
+own tournaments and asserts its count against them
+(`EXPECTED_DISAGREEMENTS`), so the buckets provably describe the same
+population the rates are measured over.
+
+    PAIRING_FUZZ_COUNT=200 PAIRING_FUZZ_ROUNDS=9 \
+      EXPECTED_DISAGREEMENTS=164 mix test --only taxonomy
+
+Default path, 200x9, 164 disagreements:
+
+| cause | count | share |
+|---|---|---|
+| `float_partner` — same players float, different opponent receives them | 70 | 42.7% |
+| `float_set` — a different SET of players floats out (C6/C7/C8) | 62 | 37.8% |
+| `bye_assignee` — a different player is left unpaired (C5/C2) | 25 | 15.2% |
+| `internal_pairing` — same floats, bracket pairs its own members differently | 7 | 4.3% |
+
+**This overturns what this file and docs/fide-criteria.md have both been
+calling the largest remaining gap.** That gap is FIDE section 3's
+transposition/exchange procedure, which `deviation` and `spread` stand in
+for — and pure "same floats, different internal pairing" is
+`internal_pairing`, **4.3% of failures**. The global-cascade rewrite was
+substantially motivated by implementing that procedure properly. It did,
+and it tied, which is exactly what a correct fix to a 4% cause looks
+like. The effort was aimed at the wrong target, and only measuring the
+aggregate hid that.
+
+**80.5% of failures are float decisions** — who leaves a bracket (62) and
+who receives them below (70). `float_partner` being the single largest is
+the surprise: the two engines agree on which players downfloat and then
+hand them to different opponents. That is MDP-opponent selection, which
+on the global path is stage 2 (`stage_mdp_opponents/1`, dutch.cpp
+1207-1255) and on the default path is however `float_weight/4` and the
+bracket matcher settle an MDP against residents.
+
+**Start with the top bracket.** 24 of the 164 diverge in the FIRST score
+group, which inherits no floats and no earlier decision — a divergence
+there is an isolated wrong answer, not the downstream consequence of one,
+so it should reproduce standalone. **20 of those 24 (83%) are
+`float_partner`**, so the largest cause is also the one with the cleanest
+available reproductions. First eight: seeds 3/22/32/32/32/53/74/93 at
+rounds 8/8/7/8/9/7/9/7.
+
+Ranked by size, the work is: MDP-opponent selection (70), downfloater
+choice (62), bye assignment among equal-lowest-score candidates (25),
+and transposition/exchange LAST (7).
+
   1. **The colour model was only ever right for round 2.** "Preference is
      the opposite of your last colour" is exactly correct when every
      player has played exactly one game, and wrong from round 3 on, where
