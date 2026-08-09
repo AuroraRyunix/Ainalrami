@@ -483,6 +483,32 @@ thing to work out next. Everything needed is in the fixture directory's
 README, including why OpenPair itself returns nothing for those two files
 (an artefact of building scores from arbiter byes, not a second finding).
 
+**Acted on, and it is worth a small win.** `completion_rung/4` now drops
+the leading `1` from that term, so it expresses only the bye preference
+and stops counting edges, leaving C6 — which it outranks — to decide how
+many pairs a bracket keeps. Global cascade, 200x9:
+
+| | rounds | pairs | illegal |
+|---|---|---|---|
+| `OPENPAIR_COMPLETION=edges` (the literal C++) | 90.11% | 96.82% | 0 |
+| eligibility only (now the default) | **90.29%** | 96.89% | 0 |
+
+Zero illegal rounds either way, so removing the explicit edge-count
+pressure does not cost completion in practice — the cascade still checks
+its own result and falls back rather than emitting an illegal round. That
+puts the global cascade level with the per-bracket cascade on exact
+rounds (90.29% both) and still 0.3 behind on pairs.
+
+This is the first deliberate divergence from a literal reading of
+`dutch.cpp` in this port, taken because bbpPairings' observed behaviour
+contradicts the literal reading and the measurement agrees with the
+behaviour. The verbatim form stays one env var away.
+
+45 of the global path's disagreements are still flagged on this rung by
+the adjudicator, but the term now varies only where bye ELIGIBILITY
+genuinely differs rather than wherever the edge count does, so those are
+a real C2/C5 signal and the next thing to pull on.
+
   1. **The colour model was only ever right for round 2.** "Preference is
      the opposite of your last colour" is exactly correct when every
      player has played exactly one game, and wrong from round 3 on, where

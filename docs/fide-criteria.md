@@ -136,14 +136,19 @@ bbpPairings' `computeEdgeWeight` does the same inversion.
    | 200x9 vs bbpPairings | rounds | pairs |
    |---|---|---|
    | global cascade, single solve per level | 60.51% | 93.6% |
-   | global cascade, all stages ported | **90.11%** | 96.82% |
+   | global cascade, all stages ported | 90.11% | 96.82% |
+   | global cascade, completion rung corrected | **90.29%** | 96.89% |
    | per-bracket cascade (still the default) | **90.29%** | 97.21% |
 
-   So the missing 30 points really were the refinement, as predicted — and
-   the result is a dead heat, three rounds in 1689, still behind on pairs.
-   The split by round says why: the global cascade is *better* mid-event
-   (r3 97.00 vs 93.50, r4 97.40 vs 95.83, r5 94.79 vs 92.19) and worse
-   late (r7 83.15 vs 84.24, r8 80.24 vs 82.04, r9 66.47 vs 69.46), which
+   So the missing 30 points really were the refinement, as predicted, and
+   a further correction to the completion rung (see TODO.md, and
+   `test/fixtures/open_questions/`) brings it level with the default on
+   exact rounds. It remains 0.3 behind on pairs.
+
+   The split by round says where the rest is: the global cascade is
+   *better* mid-event (r3 97.00 vs 93.50, r4 97.40 vs 95.83, r5 94.79 vs
+   92.19) and worse late (r7 83.15 vs 84.24, r8 81.44 vs 82.04, r9 67.07
+   vs 69.46), which
    is where legal pairings run short and the per-bracket cascade's
    backtracking — measured at 15 points of pairs by itself — pays for
    itself. bbpPairings needs no backtracking because it proves a complete

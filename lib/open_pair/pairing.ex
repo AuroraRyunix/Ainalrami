@@ -1133,9 +1133,14 @@ defmodule OpenPair.Pairing do
       # `eligibleForBye AND score <= byeAssigneeScore` — pairing someone
       # who may NOT take the bye is preferred, so whoever is left over
       # is someone the absolute criteria allow.
-      {"C2/C4/C5 bye-eligibility",
-       1 + bit(not bye_candidate?(a, ctx.bye_score)) + bit(not bye_candidate?(b, ctx.bye_score)),
-       3 * s},
+      #
+      # The leading `1` is what makes this rung count EDGES, and on an
+      # even field (where the rest is constant) that is all it does. Since
+      # it outranks C6, it makes the matcher trade an internal pair for
+      # two cross-bracket ones whenever that yields more edges — and
+      # `test/fixtures/open_questions/` shows bbpPairings does NOT do
+      # that. `completion_rung/3` is where that is measured.
+      completion_rung(a, b, ctx, s),
       # C6, then C7 graded by which score group got paired.
       {"C6 pairs in bracket", bit(in_current), s},
       {"C7 scores paired", gate.(place, in_current), bands.place_span},
@@ -1159,6 +1164,40 @@ defmodule OpenPair.Pairing do
       {"C20 downfloat scores r-2", gate.(s20, in_current), bands.place_span},
       {"C21 upfloat scores r-2", gate.(s21, in_current), bands.place_span}
     ]
+  end
+
+  # dutch.cpp:276 reads `1u + !isByeCandidate(higher) + !isByeCandidate(lower)`.
+  #
+  #   default     drop the leading 1, so the rung expresses ONLY the bye
+  #               preference and stops counting edges, leaving C6 (which
+  #               it outranks) to decide how many pairs a bracket keeps
+  #   "edges"     the C++ verbatim — the leading 1 makes it count edges
+  #
+  # The default here is deliberately NOT what dutch.cpp literally says,
+  # because bbpPairings' own behaviour contradicts the literal reading.
+  # On an even field the rest of the rung is constant, so the leading 1
+  # makes it purely an edge count — and since it outranks C6, it trades an
+  # internal pair for two cross-bracket ones whenever that gains an edge.
+  # `test/fixtures/open_questions/` pins bbpPairings doing the opposite on
+  # two files with an identical bracket graph, taking 2 internal pairs
+  # over 3 edges whenever the 2-internal answer does not strand anyone.
+  #
+  # Measured over 200x9 against bbpPairings, global cascade:
+  #
+  #     "edges" (the literal reading)   90.11% rounds / 96.82% pairs
+  #     eligibility only (default)      90.29% rounds / 96.89% pairs
+  #
+  # Both emit zero illegal rounds, so dropping the explicit edge-count
+  # pressure does not cost completion — `global_cascade/2` still checks
+  # the result and falls back rather than emitting an illegal round.
+  defp completion_rung(a, b, ctx, s) do
+    eligibility =
+      bit(not bye_candidate?(a, ctx.bye_score)) + bit(not bye_candidate?(b, ctx.bye_score))
+
+    case System.get_env("OPENPAIR_COMPLETION") do
+      "edges" -> {"C2/C4/C5 bye-eligibility", 1 + eligibility, 3 * s}
+      _ -> {"C2/C5 bye-eligibility", eligibility, 3 * s}
+    end
   end
 
   # `isByeCandidate` (dutch.cpp:213) is `eligibleForBye AND score <=
