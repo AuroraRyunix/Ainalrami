@@ -98,6 +98,168 @@ defmodule OpenPair.Pairing do
   end
 
   @doc """
+  Scores an ALREADY-CHOSEN pairing against this engine's own C1-C21
+  ladder, bracket by bracket. A diagnostic, not part of pairing.
+
+  `pairs` is `[{white_rank, black_rank | nil}]` — any complete pairing of
+  `players`, including one produced by a different engine. The brackets a
+  pairing implies are reconstructed from it: score groups top-down, with
+  each bracket's unpaired members carried into the next as its MDPs.
+
+  Returns one map per bracket, `%{group:, mdps:, residents:, floats:,
+  rungs: [{label, total}]}`, where each total is that criterion summed
+  over the pairs the bracket keeps.
+
+  The point is to adjudicate a disagreement rather than guess at it.
+  Score both engines' answers and compare the first bracket where they
+  differ:
+
+    * the reference scores BETTER — this engine's search or tie-break
+      failed to reach a pairing its own ladder prefers.
+    * this engine scores better — then the ladder itself is wrong, since
+      the reference would not violate a criterion it implements.
+    * identical — the difference is below the criteria entirely, i.e.
+      transposition/exchange ordering.
+  """
+  def explain_round(players, pairs, opts \\ []) do
+    Process.put(@expected_rounds_key, opts[:expected_rounds])
+
+    try do
+      field =
+        players
+        |> Enum.filter(&active_this_round?(&1, rounds_played(players)))
+        |> Enum.sort_by(&{-&1.points, &1.rank})
+        |> Enum.map(&Map.put(&1, :colour_stats, colour_stats(&1)))
+
+      brackets = field |> Enum.group_by(& &1.points) |> Enum.map(fn {_s, m} -> m end)
+      Process.put(@bye_score_key, bye_assignee_score(brackets, rem(length(field), 2)))
+
+      partner = partner_map(pairs)
+      ctx = global_context(field)
+
+      field
+      |> Enum.chunk_by(& &1.points)
+      |> Enum.reduce({[], []}, fn group, {acc, mdps} ->
+        {report, floated} = explain_bracket(mdps ++ group, group, partner, ctx)
+        {[report | acc], floated}
+      end)
+      |> elem(0)
+      |> Enum.reverse()
+    after
+      Process.delete(@expected_rounds_key)
+      Process.delete(@bye_score_key)
+    end
+  end
+
+  defp partner_map(pairs) do
+    Enum.reduce(pairs, %{}, fn
+      {w, nil}, acc -> Map.put(acc, w, nil)
+      {w, b}, acc -> acc |> Map.put(w, b) |> Map.put(b, w)
+    end)
+  end
+
+  defp explain_bracket(bracket, group, partner, ctx) do
+    ranks = MapSet.new(bracket, & &1.rank)
+    score = hd(group).points
+
+    # A bracket member is kept here when their partner is also in it;
+    # everyone else floats on and becomes the next bracket's MDP.
+    {kept, floated} =
+      Enum.split_with(bracket, fn p ->
+        case Map.get(partner, p.rank) do
+          nil -> false
+          other -> MapSet.member?(ranks, other)
+        end
+      end)
+
+    by_rank = Map.new(bracket, &{&1.rank, &1})
+
+    edges =
+      kept
+      |> Enum.map(fn p -> Enum.min_max([p.rank, Map.fetch!(partner, p.rank)]) end)
+      |> Enum.uniq()
+
+    {places, place_span} = score_places(bracket)
+    count_span = length(bracket) + 1
+
+    bands = %{
+      places: places,
+      place_span: place_span,
+      count_span: count_span,
+      reserve: 2 * count_span * count_span * count_span
+    }
+
+    rungs =
+      edges
+      |> Enum.map(fn {x, y} ->
+        {a, b} = order_by_placement(Map.fetch!(by_rank, x), Map.fetch!(by_rank, y))
+        edge_rungs(a, b, true, ctx, bands, false)
+      end)
+      |> sum_rungs()
+
+    {%{
+       group: score,
+       mdps: bracket |> Enum.filter(&(&1.points > score)) |> Enum.map(& &1.rank),
+       residents: Enum.map(group, & &1.rank),
+       pairs: edges,
+       floats: Enum.map(floated, & &1.rank),
+       rungs: rungs,
+       order: Enum.map(bracket, & &1.rank),
+       lex: transposition_key(bracket, group, partner)
+     }, floated}
+  end
+
+  # FIDE section 3's transposition order, as a comparable key.
+  #
+  # Articles 3.3-3.5 pick the SMALLEST transposition of the natural order,
+  # and "smallest" is lexicographic over S2 — which member of S2 faces
+  # S1[0], then S1[1], and so on, with the identity permutation smallest.
+  # So the key is the S2 INDEX of each S1 member's opponent, in S1 order,
+  # and a smaller key wins.
+  #
+  # Getting this wrong is easy and was: a first attempt keyed on absolute
+  # bracket position, which makes the natural pairing (0 vs k, 1 vs k+1)
+  # look large and the adjacent pairing (0 vs 1) look smallest — the
+  # opposite of the Dutch structure. It is also why `spread` in
+  # `within_bracket_weight/4` is load-bearing rather than decorative:
+  # maximising rank distance is what produces the S1-vs-S2 halving in the
+  # first place, and removing it measured 90.29% -> 42.21% of rounds.
+  defp transposition_key(bracket, group, partner) do
+    score = hd(group).points
+    {mdps, residents} = Enum.split_with(bracket, &(&1.points > score))
+
+    {s1, s2} =
+      if mdps == [] do
+        Enum.split(bracket, div(length(bracket), 2))
+      else
+        {mdps, residents}
+      end
+
+    s2_index = s2 |> Enum.map(& &1.rank) |> Enum.with_index() |> Map.new()
+    unpaired = length(s2)
+
+    Enum.map(s1, fn p ->
+      case Map.get(partner, p.rank) do
+        nil -> unpaired
+        other -> Map.get(s2_index, other, unpaired)
+      end
+    end)
+  end
+
+  defp order_by_placement(x, y) do
+    if {-x.points, x.rank} <= {-y.points, y.rank}, do: {x, y}, else: {y, x}
+  end
+
+  defp sum_rungs([]), do: []
+
+  defp sum_rungs([first | _] = per_edge) do
+    Enum.with_index(first)
+    |> Enum.map(fn {{label, _v, _span}, i} ->
+      {label, Enum.sum(Enum.map(per_edge, fn rungs -> elem(Enum.at(rungs, i), 1) end))}
+    end)
+  end
+
+  @doc """
   Pairs the very first round.
 
   Per FIDE C.04.3 Article 1: split the full field into two equal halves by
@@ -739,6 +901,7 @@ defmodule OpenPair.Pairing do
       bands: bands,
       base: base,
       live: base,
+      transposition: transposition_terms(m, sgb, nsgb),
       # Any value above every real weight will do: `finalize_pair/3`
       # leaves the two vertices exactly one usable edge each, so the pair
       # is forced regardless of magnitude.
@@ -750,15 +913,53 @@ defmodule OpenPair.Pairing do
       exchange_count: 0
     }
     |> solve()
+    |> trace_stage("initial solve")
     |> stage_select_mdps()
+    |> trace_stage("1 select MDPs")
     |> stage_mdp_opponents()
+    |> trace_stage("2 MDP opponents")
     |> stage_build_remainder()
+    |> trace_stage("3 remainder")
     |> stage_exchange_weights()
+    |> trace_stage("4 exchange weights")
     |> stage_exchange_lower_from_higher()
+    |> trace_stage("5 lower-from-higher")
     |> stage_exchange_higher_from_lower()
+    |> trace_stage("6 higher-from-lower")
     |> stage_reset_exchange_bits()
+    |> trace_stage("7 reset bits")
     |> stage_first_group_partners()
+    |> trace_stage("8 first-group partners")
     |> collect_bracket()
+  end
+
+  # How many pairs the bracket would KEEP if it stopped here. Set
+  # OPENPAIR_TRACE=1 to watch it across the eight stages: the count should
+  # never fall, and a stage where it does is dropping a pair the criteria
+  # say it should have kept.
+  defp trace_stage(st, label) do
+    if System.get_env("OPENPAIR_TRACE") do
+      kept =
+        Enum.count(0..(st.m - 1)//1, fn i ->
+          p = partner(st, i)
+          i < st.nsgb and p != i and p < st.nsgb and i < p
+        end)
+
+      ranks = st.arr |> Tuple.to_list() |> Enum.map(& &1.rank)
+
+      matched =
+        for i <- 0..(st.m - 1)//1,
+            p = partner(st, i),
+            p != i and i < p,
+            do: {Enum.at(ranks, i), Enum.at(ranks, p)}
+
+      IO.puts(
+        "    [trace] m=#{st.m} sgb=#{st.sgb} nsgb=#{st.nsgb} #{label}: #{kept} internal" <>
+          " | #{inspect(ranks, charlists: :as_lists)} -> #{inspect(matched, charlists: :as_lists)}"
+      )
+    end
+
+    st
   end
 
   ## ---------- the graph ----------
@@ -770,12 +971,63 @@ defmodule OpenPair.Pairing do
   defp get_w(weights, i, j), do: Map.get(weights, {j, i}, 0)
 
   defp solve(st) do
+    scale = st.transposition.scale
+
     edges =
       Enum.reduce(st.live, [], fn {{i, j}, w}, acc ->
-        if w > 0, do: [{i, j, w} | acc], else: acc
+        if w > 0,
+          do: [{i, j, w * scale + Map.get(st.transposition.terms, {i, j}, 0)} | acc],
+          else: acc
       end)
 
     %{st | matching: WeightedMatching.solve(st.m, edges)}
+  end
+
+  # FIDE section 3's transposition order as an edge-additive tie-break,
+  # strictly below every criterion AND below the reserved space the
+  # refinement stages write into, so it can only settle what they leave
+  # open.
+  #
+  # Articles 3.3-3.5 take the SMALLEST transposition of the natural order,
+  # and "smallest" is lexicographic over S2: which S2 member faces S1[0],
+  # then S1[1], and so on. Maximising `B^(k-p) * (|S2| - q)` for an edge
+  # from S1[p] to S2[q] minimises exactly that sequence, and it splits
+  # over edges because each pair contributes one (p, q).
+  #
+  # An earlier version of this carried the engine's general-purpose
+  # canonical tie-break instead (`lex_scale/1`), which keys on ABSOLUTE
+  # bracket position rather than S2 index. That is a different order — it
+  # makes the natural pairing (S1[0] vs S2[0], i.e. positions 0 and k)
+  # look large and an adjacent pairing (0 vs 1) look smallest — and it
+  # measured completely inert here, removal and inversion alike. This is
+  # the handbook's actual rule.
+  defp transposition_terms(_m, sgb, nsgb) do
+    {s1, s2} =
+      cond do
+        # A heterogeneous bracket pairs its moved-down players against the
+        # residents: MDPs are S1 (Article 3.3.1).
+        sgb > 0 and sgb < nsgb -> {0..(sgb - 1)//1, sgb..(nsgb - 1)//1}
+        nsgb >= 2 -> {0..(div(nsgb, 2) - 1)//1, div(nsgb, 2)..(nsgb - 1)//1}
+        true -> {1..0//1, 1..0//1}
+      end
+
+    s1 = Enum.to_list(s1)
+    s2 = Enum.to_list(s2)
+    k = length(s1)
+    n2 = length(s2)
+    base = n2 + 2
+    pow = for e <- 0..(k + 1), into: %{}, do: {e, Integer.pow(base, e)}
+
+    terms =
+      for {p, pi} <- Enum.with_index(s1),
+          {q, qi} <- Enum.with_index(s2),
+          into: %{} do
+        {Enum.min_max([p, q]), Map.fetch!(pow, k - pi) * (n2 - qi)}
+      end
+
+    # One unit above anything the terms can reach, so the whole tie-break
+    # sits under the criteria rather than beside them.
+    %{terms: terms, scale: Map.fetch!(pow, k + 1)}
   end
 
   # bbpPairings reads an unmatched vertex as matched to ITSELF, and three
@@ -849,52 +1101,79 @@ defmodule OpenPair.Pairing do
     # dutch.cpp:607 — no edge unless the LARGER index is a resident or
     # lower, which is what stops two MDPs being paired with each other.
     if j >= sgb and legal_pair?(a, b) and colour_compatible?(a, b) do
-      in_current = j < nsgb
-      in_next = not in_current
-      s = bands.count_span
-      place = Map.fetch!(bands.places, a.points)
-
-      {c1, c2, c3, c4} = colour_criteria(a, b)
-      {f1, f2, f3, f4} = float_criteria(a, b)
-      {s18, s19, s20, s21} = float_score_criteria(a, b, %{score_place: bands.places})
-
-      gate = fn value, on? -> if on?, do: value, else: 0 end
-
-      ranked([
-        # C4 completion + C2/C5 bye eligibility. `isByeCandidate` is
-        # `eligibleForBye AND score <= byeAssigneeScore` — pairing someone
-        # who may NOT take the bye is preferred, so whoever is left over
-        # is someone the absolute criteria allow.
-        {1 + bit(not bye_candidate?(a, ctx.bye_score)) +
-           bit(not bye_candidate?(b, ctx.bye_score)), 3 * s},
-        # C6, then C7 graded by which score group got paired.
-        {bit(in_current), s},
-        {gate.(place, in_current), bands.place_span},
-        # C8, the same two rungs one bracket down.
-        {bit(in_next), s},
-        {gate.(place, in_next), bands.place_span},
-        # C9.
-        {gate.(c9_rank(a, b, ctx), single_bye?), s * s},
-        # C10-C13, `insertColorBits`.
-        {gate.(bit(c1), in_current), s},
-        {gate.(bit(c2), in_current), s},
-        {gate.(bit(c3), in_current), s},
-        {gate.(bit(c4), in_current), s},
-        # C14-C17.
-        {gate.(f1, in_current), 2 * s},
-        {gate.(f2, in_current), s},
-        {gate.(f3, in_current), 2 * s},
-        {gate.(f4, in_current), s},
-        # C18-C21.
-        {gate.(s18, in_current), bands.place_span},
-        {gate.(s19, in_current), bands.place_span},
-        {gate.(s20, in_current), bands.place_span},
-        {gate.(s21, in_current), bands.place_span}
-      ]) * bands.reserve
+      a
+      |> edge_rungs(b, j < nsgb, ctx, bands, single_bye?)
+      |> Enum.map(fn {_label, value, span} -> {value, span} end)
+      |> ranked()
+      |> Kernel.*(bands.reserve)
     end
   end
 
-  defp bye_candidate?(player, nil), do: eligible_for_bye?(player)
+  # The ladder itself, as LABELLED rungs highest-priority first, so the
+  # same definition serves both the matcher (packed by `ranked/1`) and
+  # `explain_round/3`, which needs to say WHICH criterion two pairings
+  # part company on. Keeping one definition is the point: a diagnostic
+  # that scored a reimplementation of the criteria would only ever tell
+  # you whether the two implementations agreed.
+  #
+  # `a` is the higher-placed player of the pair, `b` the lower.
+  defp edge_rungs(a, b, in_current, ctx, bands, single_bye?) do
+    in_next = not in_current
+    s = bands.count_span
+    place = Map.fetch!(bands.places, a.points)
+
+    {c1, c2, c3, c4} = colour_criteria(a, b)
+    {f1, f2, f3, f4} = float_criteria(a, b)
+    {s18, s19, s20, s21} = float_score_criteria(a, b, %{score_place: bands.places})
+
+    gate = fn value, on? -> if on?, do: value, else: 0 end
+
+    [
+      # C4 completion + C2/C5 bye eligibility. `isByeCandidate` is
+      # `eligibleForBye AND score <= byeAssigneeScore` — pairing someone
+      # who may NOT take the bye is preferred, so whoever is left over
+      # is someone the absolute criteria allow.
+      {"C2/C4/C5 bye-eligibility",
+       1 + bit(not bye_candidate?(a, ctx.bye_score)) + bit(not bye_candidate?(b, ctx.bye_score)),
+       3 * s},
+      # C6, then C7 graded by which score group got paired.
+      {"C6 pairs in bracket", bit(in_current), s},
+      {"C7 scores paired", gate.(place, in_current), bands.place_span},
+      # C8, the same two rungs one bracket down.
+      {"C8 pairs next bracket", bit(in_next), s},
+      {"C8 scores next bracket", gate.(place, in_next), bands.place_span},
+      {"C9 bye unplayed games", gate.(c9_rank(a, b, ctx), single_bye?), s * s},
+      # C10-C13, `insertColorBits`.
+      {"C10 topscorer colour diff", gate.(bit(c1), in_current), s},
+      {"C11 topscorer same colour x3", gate.(bit(c2), in_current), s},
+      {"C12 colour preference", gate.(bit(c3), in_current), s},
+      {"C13 strong colour preference", gate.(bit(c4), in_current), s},
+      # C14-C17.
+      {"C14 downfloat repeat r-1", gate.(f1, in_current), 2 * s},
+      {"C15 upfloat repeat r-1", gate.(f2, in_current), s},
+      {"C16 downfloat repeat r-2", gate.(f3, in_current), 2 * s},
+      {"C17 upfloat repeat r-2", gate.(f4, in_current), s},
+      # C18-C21.
+      {"C18 downfloat scores r-1", gate.(s18, in_current), bands.place_span},
+      {"C19 upfloat scores r-1", gate.(s19, in_current), bands.place_span},
+      {"C20 downfloat scores r-2", gate.(s20, in_current), bands.place_span},
+      {"C21 upfloat scores r-2", gate.(s21, in_current), bands.place_span}
+    ]
+  end
+
+  # `isByeCandidate` (dutch.cpp:213) is `eligibleForBye AND score <=
+  # byeAssigneeScore`, and bbpPairings only ever computes a real
+  # `byeAssigneeScore` for an ODD field — for an even one it stays at its
+  # zero initialiser (dutch.cpp:822). So on an even field the test is
+  # `score <= 0`, false for anyone who has scored at all, and the rung
+  # collapses to a constant 3 per edge: pure "maximise the number of
+  # pairs", which is what the completion criterion wants.
+  #
+  # Treating a nil bye score as "no score test" instead made the rung VARY
+  # on even fields — an edge touching someone who had already taken a bye
+  # outscored one that did not — so the top rung of the whole ladder was
+  # quietly expressing a preference bbpPairings does not have, above C6.
+  defp bye_candidate?(player, nil), do: eligible_for_bye?(player) and player.points <= 0
 
   defp bye_candidate?(player, bye_score) do
     eligible_for_bye?(player) and player.points <= bye_score
@@ -1809,6 +2088,29 @@ defmodule OpenPair.Pairing do
   # Approximating this by re-solving with players forcibly removed was
   # measurably worse and is now only used for the other axis — several
   # candidates at the SAME count, differing in WHO floats.
+  # FIDE section 3 orders transpositions lexicographically over S2 — which
+  # member of S2 faces S1[0], then S1[1], and so on. Only the S1 side
+  # indexes the sequence.
+  #
+  # The original form here summed BOTH endpoints, minimising the partner
+  # position of every player rather than of the S1 members alone. That is
+  # a different (and stricter) order: it lets an S2 member's own partner
+  # position outvote an earlier S1 member's, which the handbook's rule
+  # never does. Adjudicating the 164 disagreements against this engine's
+  # own ladder found 119 that tie on every criterion C1-C21, and among
+  # those the handbook's order prefers bbpPairings' answer 73 times to
+  # ours 17 — so the tie-break, not the criteria, is what is deciding
+  # them.
+  #
+  # `i < j` always, and `spread` has already forced the S1-vs-S2 halving
+  # by the time this is consulted, so `i` is the S1 endpoint.
+  defp lex_term(i, j, n, lex_pow) do
+    case System.get_env("OPENPAIR_LEX") do
+      "both" -> elem(lex_pow, n - i) * (n - j) + elem(lex_pow, n - j) * (n - i)
+      _ -> elem(lex_pow, n - i) * (n - j)
+    end
+  end
+
   defp solve_bracket_all([], _pair_fun, _float_fun), do: [{0, [], []}]
 
   defp solve_bracket_all([only], _pair_fun, float_fun), do: [{float_fun.(only), [], [only]}]
@@ -1832,8 +2134,7 @@ defmodule OpenPair.Pairing do
 
             weight ->
               real = weight - float_fun.(a) - float_fun.(b)
-              lex = elem(lex_pow, n - i) * (n - j) + elem(lex_pow, n - j) * (n - i)
-              [{i, j, real * lex_span + lex}]
+              [{i, j, real * lex_span + lex_term(i, j, n, lex_pow)}]
           end
         end)
       end)
@@ -2121,24 +2422,50 @@ defmodule OpenPair.Pairing do
 
     deviation = mdp_deviation(a, b, natural, mdp_count)
 
-    ranked([
-      {1, spans.locality},
-      {Map.fetch!(spans.score_place, higher.points), spans.score_paired},
-      {bit(c1), spans.colour},
-      {bit(c2), spans.colour},
-      {bit(c3), spans.colour},
-      {bit(c4), spans.colour},
-      {f1, spans.float_pair},
-      {f2, spans.float_single},
-      {f3, spans.float_pair},
-      {f4, spans.float_single},
-      {s18, spans.score_paired},
-      {s19, spans.score_paired},
-      {s20, spans.score_paired},
-      {s21, spans.score_paired},
-      {spans.deviation - 1 - deviation, spans.deviation},
-      {abs(a.rank - b.rank), spans.spread}
-    ])
+    ranked(
+      [
+        {1, spans.locality},
+        {Map.fetch!(spans.score_place, higher.points), spans.score_paired},
+        {bit(c1), spans.colour},
+        {bit(c2), spans.colour},
+        {bit(c3), spans.colour},
+        {bit(c4), spans.colour},
+        {f1, spans.float_pair},
+        {f2, spans.float_single},
+        {f3, spans.float_pair},
+        {f4, spans.float_single},
+        {s18, spans.score_paired},
+        {s19, spans.score_paired},
+        {s20, spans.score_paired},
+        {s21, spans.score_paired}
+      ] ++ ordering_rungs(a, b, deviation, spans)
+    )
+  end
+
+  # `deviation` and `spread` are NOT FIDE criteria. They stand in for
+  # section 3's transposition-and-exchange procedure, and they sit above
+  # the lexicographic tie-break in `bracket_options/3` — which is an
+  # actual encoding of that procedure ("the smallest transposition of the
+  # natural order"). So the stand-in currently outranks the real thing.
+  #
+  # Adjudicating all 164 disagreements against this engine's own ladder
+  # (`explain_round/3`) says that is where the failures are: 119 of them
+  # tie on every criterion C1-C21, and in 90 of those the lexicographic
+  # order picks bbpPairings' answer over ours. Something below the
+  # criteria is overriding the tie-break, and these two are what is there.
+  #
+  # Kept switchable while that is measured rather than deleted outright.
+  defp ordering_rungs(a, b, deviation, spans) do
+    case System.get_env("OPENPAIR_ORDERING") do
+      "lex" ->
+        []
+
+      "no_spread" ->
+        [{spans.deviation - 1 - deviation, spans.deviation}]
+
+      _ ->
+        [{spans.deviation - 1 - deviation, spans.deviation}, {abs(a.rank - b.rank), spans.spread}]
+    end
   end
 
   # C18-C21: the same four float-history questions `float_criteria/2` asks,

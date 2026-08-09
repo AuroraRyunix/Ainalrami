@@ -367,6 +367,100 @@ Ranked by size, the work is: MDP-opponent selection (70), downfloater
 choice (62), bye assignment among equal-lowest-score candidates (25),
 and transposition/exchange LAST (7).
 
+### Adjudicating those failures against our own ladder
+
+Classifying says WHAT differs; it does not say who is right. So
+`Pairing.explain_round/3` reconstructs the brackets any complete pairing
+implies and scores it with this engine's own C1-C21 ladder, rung by
+labelled rung. Scoring BOTH engines' answers and comparing the first
+bracket where they differ splits every disagreement three ways: the
+reference scores better (our search failed to reach a pairing our own
+ladder prefers), we score better (then the LADDER is wrong, since the
+reference would not violate a criterion it implements), or they tie (the
+criteria cannot separate them at all and something below decides).
+
+It self-tests: the reconstruction must account for every pair exactly
+once, checked on all 167 cases for both engines' answers, so the buckets
+cannot be describing a decomposition the engine never used.
+
+|  | default path (164) | global path (167) |
+|---|---|---|
+| tie on every rung | 119 (72.6%) | 83 (49.7%) |
+| reference scores better | 35 (21.3%) | 75 (44.9%) |
+| we score better | 10 (6.1%) | 9 (5.4%) |
+
+`OPENPAIR_GLOBAL=1 mix run adjudicate.exs <dump-dir>` (script in the
+scratchpad; dumps come from `PAIRING_FUZZ_DUMP`).
+
+### Four things this settled, three of them negative
+
+**1. `deviation` and `spread` are NOT replaceable stand-ins.** This file
+and docs/fide-criteria.md both describe them as non-FIDE terms doing the
+work of section 3's transposition/exchange procedure, and call replacing
+them the largest remaining gap. Removing them measured **90.29% ->
+42.21%** of rounds (dropping `spread` alone accounts for essentially all
+of it). `spread` maximises rank distance, which is what produces the
+S1-vs-S2 halving in the first place — it is load-bearing, not
+decorative. Kept, and `ordering_rungs/4` leaves the switch in place.
+
+**2. The canonical tie-break was keyed on the wrong thing, and fixing it
+changes nothing.** `lex_scale/1` keys on ABSOLUTE bracket position, which
+makes the natural pairing (S1[0] vs S2[0], positions 0 and k) look large
+and an adjacent pairing (0 vs 1) look smallest — the opposite of the
+Dutch structure. FIDE's rule is lexicographic over S2: which S2 member
+faces S1[0], then S1[1]. Both are now implemented
+(`transposition_terms/3`, `transposition_key/3`). Measured: **inert on
+both paths**, in every variant tried — removed, inverted, and replaced
+with the handbook key. On the default path the two forms are provably
+equivalent once `spread` has fixed S1/S2 (the tail of the sequence is
+determined by its head); on the global path the eight refinement stages
+leave no ties for any tie-break to settle.
+
+**3. `isByeCandidate` was wrong on even fields.** bbpPairings only
+computes a real `byeAssigneeScore` for an ODD field; for an even one it
+stays at its zero initialiser, so `score <= byeAssigneeScore` is false
+for anyone who has scored and the top rung collapses to a constant 3 per
+edge — pure "maximise pairs". This engine treated a nil bye score as "no
+score test", so the rung VARIED on even fields: an edge touching a player
+who had already taken a bye outscored one that did not, at the very top
+of the ladder, above C6. Fixed. Inert at the harness's default 0% bye
+rate, which is why nothing caught it; it should matter with
+`PAIRING_FUZZ_BYE_PCT` set.
+
+**4. The remaining failures are NOT the stages dropping pairs.**
+`OPENPAIR_TRACE=1` prints the kept-pair count after each of the eight
+stages. On the traced cases the count never falls — the initial solve
+already produces the answer the round ends with, so the ladder is
+choosing it, not a refinement stage losing it.
+
+### The one fully-isolated open case
+
+`seed102-r7-p28`, bracket at score 4.5. Graph is MDP [7] + residents
+[5, 9, 27] + next group [1, 14].
+
+  * ours: `{7,5}` internal, `{9,1}` and `{27,14}` crossing — **3 edges**,
+    C6 = 1, and 9/27 are finalised one bracket lower instead.
+  * bbpPairings: `{7,5}` and `{9,27}` internal — **2 edges**, C6 = 2.
+
+Every legality question is settled: `{1,14}` is a rematch (round 3), so
+the 2-internal option genuinely cannot reach 3 edges; `{9,1}` and
+`{27,14}` are both legal and colour-compatible for either engine (all
+four players are colour-neutral, imbalance 0).
+
+So bbpPairings took strictly FEWER pairs in the bracket graph than it
+could have. Our top rung — the completion criterion, `1 + !isByeCandidate
++ !isByeCandidate`, constant per edge on an even field — is maximised by
+the 3-edge answer, and it sits above C6 in `computeEdgeWeight` exactly as
+it does here. On the reading of dutch.cpp used for this port, bbpPairings
+should have chosen ours. It did not, and 47 of the global path's 167
+failures are flagged on precisely this rung.
+
+That is the next thing to resolve, and it is a question about what the
+completion rung actually maximises, not about the stages: either it is
+not summed over cross-bracket edges the way this port assumes, or
+something constrains the bracket graph that this port does not model.
+The case above is minimal and fully specified — start there.
+
   1. **The colour model was only ever right for round 2.** "Preference is
      the opposite of your last colour" is exactly correct when every
      player has played exactly one game, and wrong from round 3 on, where
