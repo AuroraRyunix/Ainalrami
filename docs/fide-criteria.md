@@ -75,7 +75,7 @@ Verbatim from §2.4, with this engine's implementation beside each.
 | C6 | Minimise the number of downfloaters *(equivalent to: maximise the number of pairs)*. | `spans.locality` |
 | C7 | Minimise the scores (taken in descending order) of the downfloaters. | `downfloater_scores/1` at candidate level, plus `spans.score_paired` per pair |
 | C8 | Choose the set of downfloaters so that in the following bracket every criterion from C1 to C7 is complied with. | real C8 rungs over real next-bracket edges, with `@peek_budget` deciding how far down the bracket can actually see. `OPENPAIR_GLOBAL=0` falls back to `placeable_below/1`, a weak approximation — see gaps |
-| C9 | Minimise the number of unplayed games of the assignee of the pairing-allocated-bye. *(Applies to brackets downfloating exactly one player receiving the bye.)* | the `unplayed` term in `float_weight/4`, gated on `bye_bracket?` |
+| C9 | Minimise the number of unplayed games of the assignee of the pairing-allocated-bye. *(Applies to brackets downfloating exactly one player receiving the bye.)* | `unplayed_ranks/2`, gated on `single_bye?`. Both halves of the parenthetical are enforced: the previous bracket's tentative matching supplies "the float does not run deeper than one group", and `rest == []` supplies "the bracket is the last group", i.e. its leftover takes the bye instead of pairing into something below. Missing the second half cost 0.18 points of exact rounds at a 15% bye rate |
 | C10 | Minimise the number of topscorers or topscorers' opponents who get a colour difference higher than +2 or lower than -2. | `colour_criteria/2` bit 1 — **not restricted to topscorers** |
 | C11 | Minimise the number of topscorers or topscorers' opponents who get the same colour three times in a row. | `colour_criteria/2` bit 2 — **not restricted to topscorers** |
 | C12 | Minimise the number of players who do not get their colour preference. | `colour_criteria/2` bit 3 |
@@ -216,7 +216,25 @@ bbpPairings' `computeEdgeWeight` does the same inversion.
    risk diverging if the two C3 implementations ever disagreed at the
    edges. Left alone deliberately.
 
-3. **`deviation` and `spread` are not FIDE criteria.** They sit mid-ladder
+3. ~~**C12 may count colour preferences bbpPairings ignores.**~~
+   **Tested and refuted — do not retry.** After the C9 gate fix (see
+   `bracket_loop/6`) the last handful of bye-profile disagreements
+   inverted: the adjudicator started reporting *ours* scoring better on
+   C12, which is the shape that says our LADDER is over-crediting, since
+   a reference that implements a criterion will not casually violate it.
+   The hypothesis was that bbpPairings' colour-preference bit ignores a
+   MILD preference — a player at colour difference 0, who by E.5 prefers
+   the opposite of their last colour but has no imbalance behind it. On
+   seed242-r6-p10 that would have made `{6,7}` and `{6,8}` tie and let
+   transposition order pick bbpPairings' answer.
+
+   Requiring both sides of a clash to hold a strong-or-absolute
+   preference collapsed the engine: 99.91% -> 57.88% of exact rounds at
+   a 15% bye rate, and 100% -> 63.66% on plain tournaments. bbpPairings
+   counts mild preferences, emphatically. `colour_criteria/2`'s
+   `not clash?` is correct as written.
+
+4. **`deviation` and `spread` are not FIDE criteria.** They sit mid-ladder
    in `within_bracket_weight/4` and do the work the handbook assigns to a
    different mechanism entirely — §3's transposition and exchange
    procedure, which picks among pairings that are already equal on every
@@ -225,7 +243,7 @@ bbpPairings' `computeEdgeWeight` does the same inversion.
    and the one this project's TODO has long described as "approximate
    bracket-ordering vs FIDE's exact transposition search".
 
-4. ~~**C5 is not enforced explicitly.**~~ **Closed.** The prediction that
+5. ~~**C5 is not enforced explicitly.**~~ **Closed.** The prediction that
    "these coincide in ordinary cases; whether they can diverge has not been
    tested" turned out to be testable and false. Diffing JaVaFo against
    bbpPairings/Gacrux surfaced a 5-player round-2 case where the 0.5
