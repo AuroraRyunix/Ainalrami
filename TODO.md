@@ -272,6 +272,13 @@ rounds everywhere:
 | 4-40, 200x9 | **95.97% / 98.64%** | 90.29% / 97.21% |
 | 60-80, 20x9 | **99.44% / 99.97%** | 82.22% / 97.99% |
 | 90-120, 8x9 | **98.61% / 99.87%** | 86.11% / 99.03% |
+| 4-40 + 10% forfeits | **95.72% / 98.66%** | 88.70% / 96.90% |
+| 4-40 + 8% byes | **86.70% / 96.48%** | 81.95% / 95.08% |
+
+Byes remain the weakest axis by a wide margin — 86.70% against 95.97%
+without them — and the classifier says why: with byes, `bye_assignee` is
+30.3% of the remaining failures against 2.9% without. That is the next
+thing to work on.
 
 Against javafo at 4-40 the same swap is 89.31% -> 94.18%, and javafo is
 on the superseded 2022 rules, so full agreement there is not the goal.
@@ -324,6 +331,35 @@ bracket graph that bbpPairings answers differently depending on what lies
 below. "The bracket's own graph does not determine the answer" is a
 statement about visibility, and C8 is the criterion that is supposed to
 provide it.
+
+**C9's gate then turned out to be actively harmful, and porting the rest
+of it is worth another 3.6 points with byes.** The rung was gated on
+bbpPairings' first two conditions only (odd field, bye score at or above
+the next group's), leaving out the refinement at dutch.cpp:1636-1643 that
+CLEARS the flag when a carried player is already tentatively matched
+below that group — because then the downfloat runs deeper than one
+bracket and C9 does not apply. Measured at an 8% bye rate:
+
+| C9 | rounds | pairs |
+|---|---|---|
+| over-inclusive gate | 83.14% | 95.55% |
+| rung switched off entirely | 83.73% | 95.76% |
+| **gate ported in full** | **86.70%** | **96.48%** |
+
+So the half-ported criterion was worse than no criterion — a useful
+reminder that a gate is part of a rule, not a detail of it. Carrying the
+flag between brackets needs `collect_bracket/1` to report the score each
+carried player was tentatively matched with, which it now does. Zero
+illegal rounds throughout, and the no-bye figures are untouched.
+
+Forfeits benefit too: 10% forfeit rate went 93.10% -> 95.72%.
+
+**One earlier divergence has been withdrawn.** Dropping the leading `1`
+from the completion rung was worth +0.18 exact rounds before the peek fix
+and is worth exactly nothing after it — both forms now measure identical
+to the digit, with and without byes. The literal `dutch.cpp` reading is
+back as the default. The anomaly that motivated the divergence was never
+about that rung; it was about what the bracket could see.
 
 **Remaining: 68 failures at 4-40** (was 164). By cause: float_partner 37,
 float_set 28, bye_assignee 2 (was 25), internal_pairing 1 (was 7).

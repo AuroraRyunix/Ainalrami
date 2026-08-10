@@ -776,11 +776,11 @@ defmodule OpenPair.Pairing do
   # among equally-optimal matchings, and having nothing left to choose is
   # the claim bbpPairings' design makes for its own staged refinement.
   #
-  # C9's rung measures inert too (identical numbers with it forced off),
-  # but it is a genuine handbook criterion and its ABSENCE was a
-  # documented gap, so it stays. It simply never fires in this fixture
-  # set — see `single_downfloater_is_bye_assignee?/4` for the gate, which
-  # is deliberately over-inclusive rather than under.
+  # C9's rung measured inert on THIS fixture set, which runs at a 0% bye
+  # rate and so barely exercises it. With byes it matters a great deal,
+  # and its gate has to be ported in full to help rather than hurt: see
+  # `bracket_loop/6`, where the dutch.cpp:1636-1643 clearing step lives.
+  # Half-ported it measured WORSE than having no C9 rung at all.
 
   # THE DEFAULT PATH, as of the peek-budget correction. It beats the
   # per-bracket cascade on every field size measured, by a lot on the ones
@@ -878,6 +878,14 @@ defmodule OpenPair.Pairing do
   end
 
   defp bracket_loop(by_index, sgb, rest_groups, ctx, pairs) do
+    bracket_loop(by_index, sgb, rest_groups, ctx, pairs, true)
+  end
+
+  defp bracket_loop(by_index, _sgb, [], _ctx, pairs, _single_bye?) when length(by_index) <= 1 do
+    {pairs, by_index}
+  end
+
+  defp bracket_loop(by_index, sgb, rest_groups, ctx, pairs, single_bye?) do
     nsgb = length(by_index)
 
     {next_group, rest} =
@@ -900,11 +908,28 @@ defmodule OpenPair.Pairing do
     # ends are below `nsgb`). It goes back to `rest` untouched.
     peek = peek_groups(rest, peek_budget(), [])
 
-    {new_pairs, carried_all, new_sgb} =
-      pair_bracket(by_index ++ next_group ++ peek, sgb, nsgb, ctx)
+    {new_pairs, carried_all, new_sgb, carried_partner_scores} =
+      pair_bracket(by_index ++ next_group ++ peek, sgb, nsgb, ctx, single_bye?)
 
     peeked = MapSet.new(peek, & &1.rank)
     carried = Enum.reject(carried_all, &MapSet.member?(peeked, &1.rank))
+
+    # dutch.cpp:1607-1643, computed at the END of a bracket for the NEXT
+    # one. C9 applies only where a bracket downfloats exactly one player
+    # and that player takes the bye, so the preliminary test (odd field, a
+    # next group exists, and the bye's score is at or above it) is then
+    # CLEARED if any carried player is already tentatively matched below
+    # that group — because then the float runs deeper than one bracket and
+    # the criterion does not apply.
+    #
+    # Leaving that clearing step out is not harmless. With it missing the
+    # rung fired in brackets bbpPairings excludes, and measured WORSE than
+    # having no C9 rung at all: 83.14% against 83.73% of exact rounds at
+    # an 8% bye rate.
+    next_single_bye? =
+      ctx.odd_field? and not is_nil(ctx.bye_score) and next_group != [] and
+        ctx.bye_score >= hd(next_group).points and
+        Enum.all?(carried_partner_scores, &(&1 >= hd(next_group).points))
 
     # bbpPairings loops unconditionally because by this point it has
     # already PROVED a complete legal matching exists — its whole-field
@@ -917,7 +942,7 @@ defmodule OpenPair.Pairing do
     if rest == [] and new_pairs == [] do
       {pairs, carried}
     else
-      bracket_loop(carried, new_sgb, rest, ctx, pairs ++ new_pairs)
+      bracket_loop(carried, new_sgb, rest, ctx, pairs ++ new_pairs, next_single_bye?)
     end
   end
 
@@ -986,7 +1011,7 @@ defmodule OpenPair.Pairing do
     peek_groups(rest, budget - length(group), [group | acc])
   end
 
-  defp pair_bracket(combined, sgb, nsgb, ctx) do
+  defp pair_bracket(combined, sgb, nsgb, ctx, single_bye?) do
     m = length(combined)
     arr = List.to_tuple(combined)
 
@@ -1010,7 +1035,7 @@ defmodule OpenPair.Pairing do
       reserve: 2 * count_span * count_span * count_span
     }
 
-    base = base_edge_weights(arr, m, sgb, nsgb, ctx, bands)
+    base = base_edge_weights(arr, m, sgb, nsgb, ctx, bands, single_bye?)
 
     %{
       arr: arr,
@@ -1187,11 +1212,9 @@ defmodule OpenPair.Pairing do
 
   ## ---------- the ladder ----------
 
-  defp base_edge_weights(_arr, m, _sgb, _nsgb, _ctx, _bands) when m < 2, do: %{}
+  defp base_edge_weights(_arr, m, _sgb, _nsgb, _ctx, _bands, _single_bye?) when m < 2, do: %{}
 
-  defp base_edge_weights(arr, m, sgb, nsgb, ctx, bands) do
-    single_bye? = single_downfloater_is_bye_assignee?(arr, m, nsgb, ctx)
-
+  defp base_edge_weights(arr, m, sgb, nsgb, ctx, bands, single_bye?) do
     Enum.reduce(0..(m - 2), %{}, fn i, acc ->
       a = elem(arr, i)
 
@@ -1202,19 +1225,6 @@ defmodule OpenPair.Pairing do
         end
       end)
     end)
-  end
-
-  # C9 applies only to "brackets downfloating exactly one player, who
-  # receives the bye" (dutch.cpp:1607). The gate here is bbpPairings' own
-  # first two conditions — an odd field, and a bye whose score is at or
-  # above the next group's. NOT ported is the refinement at 1636-1643,
-  # which additionally clears the flag once a downfloater turns out to be
-  # matched below; this is therefore over-inclusive, and C9 can fire in a
-  # bracket bbpPairings would have excluded. The previous port had no C9
-  # rung at all.
-  defp single_downfloater_is_bye_assignee?(arr, m, nsgb, ctx) do
-    ctx.odd_field? and not is_nil(ctx.bye_score) and nsgb < m and
-      ctx.bye_score >= elem(arr, nsgb).points
   end
 
   defp bracket_edge_weight(a, b, j, sgb, nsgb, ctx, bands, single_bye?) do
@@ -1288,35 +1298,30 @@ defmodule OpenPair.Pairing do
 
   # dutch.cpp:276 reads `1u + !isByeCandidate(higher) + !isByeCandidate(lower)`.
   #
-  #   default     drop the leading 1, so the rung expresses ONLY the bye
-  #               preference and stops counting edges, leaving C6 (which
-  #               it outranks) to decide how many pairs a bracket keeps
-  #   "edges"     the C++ verbatim — the leading 1 makes it count edges
+  #   default        the C++ verbatim — the leading 1 makes it count edges
+  #   "eligibility"  drop the leading 1, so the rung expresses only the
+  #                  bye preference and leaves C6 to decide pair counts
   #
-  # The default here is deliberately NOT what dutch.cpp literally says,
-  # because bbpPairings' own behaviour contradicts the literal reading.
-  # On an even field the rest of the rung is constant, so the leading 1
-  # makes it purely an edge count — and since it outranks C6, it trades an
-  # internal pair for two cross-bracket ones whenever that gains an edge.
-  # `test/fixtures/open_questions/` pins bbpPairings doing the opposite on
-  # two files with an identical bracket graph, taking 2 internal pairs
-  # over 3 edges whenever the 2-internal answer does not strand anyone.
+  # This briefly diverged from the literal text. On an even field the
+  # bye-eligibility part is constant, so the leading 1 makes the rung
+  # purely an edge count — and since it outranks C6 it will trade an
+  # internal pair for two cross-bracket ones to gain an edge, which
+  # `test/fixtures/open_questions/` catches bbpPairings NOT doing.
+  # Dropping the 1 was worth +0.18 exact rounds at the time.
   #
-  # Measured over 200x9 against bbpPairings, global cascade:
-  #
-  #     "edges" (the literal reading)   90.11% rounds / 96.82% pairs
-  #     eligibility only (default)      90.29% rounds / 96.89% pairs
-  #
-  # Both emit zero illegal rounds, so dropping the explicit edge-count
-  # pressure does not cost completion — `global_cascade/2` still checks
-  # the result and falls back rather than emitting an illegal round.
+  # The peek-budget fix then superseded it. Once brackets can see far
+  # enough to evaluate C8 (see `peek_budget/0`), the two forms measure
+  # IDENTICALLY — 95.97% / 98.64% without byes and 86.70% / 96.48% at an
+  # 8% bye rate, byte for byte — so the divergence bought nothing and the
+  # verbatim reading is back. The anomaly was never about this rung; it
+  # was about what the bracket could see.
   defp completion_rung(a, b, ctx, s) do
     eligibility =
       bit(not bye_candidate?(a, ctx.bye_score)) + bit(not bye_candidate?(b, ctx.bye_score))
 
     case System.get_env("OPENPAIR_COMPLETION") do
-      "edges" -> {"C2/C4/C5 bye-eligibility", 1 + eligibility, 3 * s}
-      _ -> {"C2/C5 bye-eligibility", eligibility, 3 * s}
+      "eligibility" -> {"C2/C5 bye-eligibility", eligibility, 3 * s}
+      _ -> {"C2/C4/C5 bye-eligibility", 1 + eligibility, 3 * s}
     end
   end
 
@@ -1769,7 +1774,19 @@ defmodule OpenPair.Pairing do
         end
       end)
 
-    {Enum.reverse(pairs), Enum.reverse(carried), sgb}
+    # dutch.cpp:1636-1643 needs, for each player carrying forward, the
+    # score of whoever the tentative matching had them with — that is what
+    # tells the NEXT bracket whether its downfloat runs deeper than one
+    # group, and so whether C9 applies there at all. An unmatched carried
+    # player constrains nothing, so they report their own score.
+    partner_scores =
+      for i <- 0..(st.m - 1)//1,
+          i < st.nsgb,
+          p = partner(st, i),
+          not (p != i and p < st.nsgb and MapSet.member?(st.matched, i)),
+          do: elem(st.arr, if(p == i, do: i, else: p)).points
+
+    {Enum.reverse(pairs), Enum.reverse(carried), sgb, partner_scores}
   end
 
   # A current-bracket player who was not paired here IS a downfloater.

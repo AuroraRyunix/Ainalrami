@@ -233,6 +233,7 @@ defmodule OpenPair.FailureTaxonomyTest do
   end
 
   defp play_round(players, seed, round, total_rounds) do
+    players = assign_requested_byes(players)
     trf = build_trf(players, total_rounds)
 
     case Bbppairings.pair(trf) do
@@ -286,11 +287,63 @@ defmodule OpenPair.FailureTaxonomyTest do
       "152 W\r\nXXR #{total_rounds}\r\n"
   end
 
+  # Both of these must stay identical to the comparison harness's, or the
+  # replayed tournaments diverge and the buckets describe a different
+  # population — which is what `EXPECTED_DISAGREEMENTS` exists to catch.
+  defp assign_requested_byes(players) do
+    pct = env_int("PAIRING_FUZZ_BYE_PCT", 0)
+
+    if pct == 0 do
+      players
+    else
+      Enum.map(players, fn player ->
+        if :rand.uniform(100) <= pct do
+          {result, points} = Enum.random([{"H", 0.5}, {"Z", 0.0}])
+
+          %{
+            player
+            | points: player.points + points,
+              games: player.games ++ [%{opponent_rank: nil, colour: nil, result: result}]
+          }
+        else
+          player
+        end
+      end)
+    end
+  end
+
   defp simulate_results(pairs) do
+    forfeit_pct = env_int("PAIRING_FUZZ_FORFEIT_PCT", 0)
+
     Map.new(pairs, fn
-      {white, nil} -> {{white, nil}, :bye}
-      {white, black} -> {{white, black}, Enum.random([:white_win, :black_win, :draw])}
+      {white, nil} ->
+        {{white, nil}, :bye}
+
+      {white, black} ->
+        outcome =
+          if forfeit_pct > 0 and :rand.uniform(100) <= forfeit_pct do
+            Enum.random([:white_forfeits, :black_forfeits, :double_forfeit])
+          else
+            Enum.random([:white_win, :black_win, :draw])
+          end
+
+        {{white, black}, outcome}
     end)
+  end
+
+  defp games_for(white, black, :white_forfeits) do
+    {%{opponent_rank: black, colour: "w", result: "-", points: 0.0},
+     %{opponent_rank: white, colour: "b", result: "+", points: 1.0}}
+  end
+
+  defp games_for(white, black, :black_forfeits) do
+    {%{opponent_rank: black, colour: "w", result: "+", points: 1.0},
+     %{opponent_rank: white, colour: "b", result: "-", points: 0.0}}
+  end
+
+  defp games_for(white, black, :double_forfeit) do
+    {%{opponent_rank: black, colour: "w", result: "-", points: 0.0},
+     %{opponent_rank: white, colour: "b", result: "-", points: 0.0}}
   end
 
   defp apply_round(players, pairs, results) do
