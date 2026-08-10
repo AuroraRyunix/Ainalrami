@@ -1117,12 +1117,30 @@ defmodule OpenPair.Pairing do
 
   defp solve(st) do
     scale = st.transposition.scale
+    terms = st.transposition.terms
+    reserve = st.bands.reserve
+    above? = System.get_env("OPENPAIR_TRANS_ABOVE") != nil
 
     edges =
       Enum.reduce(st.live, [], fn {{i, j}, w}, acc ->
-        if w > 0,
-          do: [{i, j, w * scale + Map.get(st.transposition.terms, {i, j}, 0)} | acc],
-          else: acc
+        if w > 0 do
+          term = Map.get(terms, {i, j}, 0)
+
+          weight =
+            if above? do
+              # Split `w` back into its criteria part and the refinement
+              # stages' reserved addend, and slot the transposition order
+              # BETWEEN them: criteria still win, but FIDE's order now
+              # outranks a stage nudge instead of the other way round.
+              div(w, reserve) * scale * reserve + term * reserve + rem(w, reserve)
+            else
+              w * scale + term
+            end
+
+          [{i, j, weight} | acc]
+        else
+          acc
+        end
       end)
 
     %{st | matching: WeightedMatching.solve(st.m, edges)}
@@ -1143,9 +1161,27 @@ defmodule OpenPair.Pairing do
   # canonical tie-break instead (`lex_scale/1`), which keys on ABSOLUTE
   # bracket position rather than S2 index. That is a different order — it
   # makes the natural pairing (S1[0] vs S2[0], i.e. positions 0 and k)
-  # look large and an adjacent pairing (0 vs 1) look smallest — and it
-  # measured completely inert here, removal and inversion alike. This is
-  # the handbook's actual rule.
+  # look large and an adjacent pairing (0 vs 1) look smallest.
+  #
+  # ## It is inert, and promoting it is actively worse
+  #
+  # Every variant measures identically: removed, inverted, and replaced
+  # with this handbook key, with byes and without. The eight refinement
+  # stages settle every tie before it is consulted.
+  #
+  # `OPENPAIR_TRANS_ABOVE=1` slots it between the criteria and the stages'
+  # reserved addends, so FIDE's order outranks a stage nudge rather than
+  # the reverse. That is much worse — 95.97% -> 87.57% without byes and
+  # 86.70% -> 79.93% with them.
+  #
+  # Which says the key is the wrong model, not the priority. Stages 5-7
+  # EXCHANGE players between the two halves, so by the time partners are
+  # chosen "S1" and "S2" are no longer the naive first-half/second-half
+  # split this function assumes; it is measuring transpositions against a
+  # reference the bracket has already moved away from. The stages are the
+  # transposition procedure, and they are right. Kept, off the critical
+  # path, because a correct key would be worth having if anyone works out
+  # what the post-exchange split actually is.
   defp transposition_terms(_m, sgb, nsgb) do
     {s1, s2} =
       cond do
@@ -1172,7 +1208,9 @@ defmodule OpenPair.Pairing do
 
     # One unit above anything the terms can reach, so the whole tie-break
     # sits under the criteria rather than beside them.
-    %{terms: terms, scale: Map.fetch!(pow, k + 1)}
+    if System.get_env("OPENPAIR_NO_TRANS"),
+      do: %{terms: %{}, scale: 1},
+      else: %{terms: terms, scale: Map.fetch!(pow, k + 1)}
   end
 
   # bbpPairings reads an unmatched vertex as matched to ITSELF, and three

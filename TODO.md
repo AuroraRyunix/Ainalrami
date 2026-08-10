@@ -280,6 +280,21 @@ without them — and the classifier says why: with byes, `bye_assignee` is
 30.3% of the remaining failures against 2.9% without. That is the next
 thing to work on.
 
+**One dead end already ruled out there.** Adjudicating the 112 remaining
+bye-rate failures puts 100 of them (89.3%) in "ties on every rung", and
+among those FIDE's transposition order prefers bbpPairings' answer 71
+times to ours 18. That looks like a tie-break problem and is not one:
+the tie-break is inert (removing it changes nothing, with byes or
+without), and PROMOTING it above the refinement stages' nudges is much
+worse — 86.70% -> 79.93% with byes, 95.97% -> 87.57% without.
+
+The reason is worth keeping: stages 5-7 EXCHANGE players between the two
+halves, so by the time partners are chosen, "S1" and "S2" are no longer
+the naive first-half/second-half split `transposition_key/3` assumes.
+It is scoring transpositions against a reference the bracket has already
+moved away from — which is why it reads as disagreeing with the stages
+when the stages are right. Do not chase the 71 as a tie-break bug.
+
 Against javafo at 4-40 the same swap is 89.31% -> 94.18%, and javafo is
 on the superseded 2022 rules, so full agreement there is not the goal.
 
