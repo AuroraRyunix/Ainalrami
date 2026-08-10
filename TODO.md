@@ -293,7 +293,48 @@ if they float — and nowhere else.
 cascade cannot be landed incrementally, do it in one piece or not at
 all" — has now been acted on and is resolved; see below.**
 
-### The global cascade is now the ONLY engine, at 98.69%
+### Exact agreement with bbpPairings on plain tournaments
+
+| field | now | before today |
+|---|---|---|
+| 4-40, 500x9 | **100.00% / 100.00%** (4197/4197 rounds, 49802/49802 pairs) | 90.29% / 97.21% |
+| 60-80, 20x9 | **100.00% / 100.00%** | 82.22% / 97.99% |
+| 90-120, 8x9 | **100.00% / 100.00%** | 86.11% / 99.03% |
+| 4-40 + 8% byes | 99.76% / 99.94% | 81.95% / 95.08% |
+| 4-40 + 15% byes | 99.64% / 99.92% | — |
+| 4-40 + 10% forfeits | 99.52% / 99.91% | 88.70% / 96.90% |
+
+Verified on a second, independent code path: the three-way harness has
+OpenPair matching **both** references on 1261/1261 rounds. And javafo
+stays at 96.26%, which is the control — it implements the 2022 rules, so
+an engine that agreed with all three at once would mean the harness was
+measuring nothing.
+
+**The last fix was C8 counting the wrong pairs.** `lowerPlayerInNextBracket`
+in `dutch.cpp` can only ever mean the one score group bbpPairings appends,
+including for pairs formed wholly inside it — those genuinely are "pairs
+in the next bracket". The peek budget broke that equivalence: with several
+groups visible, pairs formed three groups down were still scoring on C8,
+and there are far more of those than there are real downfloat placements,
+so they swamped the rung until it stopped discriminating at all. Grading
+by distance had softened this without fixing it.
+
+Traced on `seed127-r5-p13`: a 3.0 bracket of three residents, where this
+engine floated the player who then had to fall two groups while
+bbpPairings floated the one who landed in the very next.
+
+The deeper groups stay VISIBLE — that is what the peek is for, and
+removing it costs 5.7 points — but only the immediate next group counts
+toward C8. Anything further gets re-decided in a later bracket anyway,
+and C8 has nothing to say about it. Worth **98.40% -> 100.00%**.
+
+**What is left.** Arbiter byes and forfeits, both inside half a percent,
+and both now the entire remaining error. The adjudicator is the tool for
+them; note that its verdicts have to be read with `explain_round/3`'s
+own C8 accounting in mind, which counts crosses into the immediate next
+group only — the same distinction the fix above turned on.
+
+### How it got there: the global cascade replacing the per-bracket one
 
 **Latest numbers first.** Against bbpPairings 6.0.0, exact rounds /
 individual pairs, zero illegal rounds everywhere:

@@ -40,20 +40,27 @@ OpenPairings as a selectable engine.**
 
   | field | exact rounds | individual pairs | illegal |
   |---|---|---|---|
-  | 4-40, 500x9 | **98.69%** | **99.59%** | 0 |
+  | 4-40, 500x9 | **100.00%** (4197/4197) | **100.00%** (49802/49802) | 0 |
   | 60-80, 20x9 | **100.00%** | **100.00%** | 0 |
-  | 90-120, 8x9 | **98.61%** | **99.87%** | 0 |
-  | 4-40 + 10% forfeits | 98.57% | 99.55% | 0 |
-  | 4-40 + 8% arbiter byes | 98.99% | 99.65% | 0 |
-  | 4-40 + 15% arbiter byes | 98.45% | 99.45% | 0 |
+  | 90-120, 8x9 | **100.00%** | **100.00%** | 0 |
+  | 4-40 + 8% arbiter byes | 99.76% | 99.94% | 0 |
+  | 4-40 + 15% arbiter byes | 99.64% | 99.92% | 0 |
+  | 4-40 + 10% forfeits | 99.52% | 99.91% | 0 |
 
-  Against JaVaFo at 4-40 the engine measures 96.26% of exact rounds, and
-  full agreement there is not the goal — it is on the superseded
-  rulebook.
+  On plain tournaments the engine reproduces bbpPairings **exactly** —
+  every board of every round, at every field size tested. Confirmed on a
+  second code path: the three-way harness matches both references on
+  1261/1261 rounds. Arbiter byes and forfeits are the only axes still
+  short of exact, and both are inside half a percent.
 
-  A 60-80 player open — the ordinary case — now matches the reference on
-  every board of every round tested. TODO.md has the whole account of how
-  it got here, including the measurements that failed.
+  Against JaVaFo the engine measures 96.26%, and it SHOULD not be 100% —
+  JaVaFo implements the superseded 2022 rules and differs from both 2026
+  references by about the same margin. That gap is the useful control: an
+  engine agreeing with all three at once would mean the harness was
+  measuring nothing.
+
+  TODO.md has the whole account of how it got here, including the
+  measurements that failed.
 - **Legality, independent of javafo**: every player paired exactly once,
   no rematches, and exactly one pairing-allocated bye in an odd active
   field (none in an even one) — **0 illegal rounds** across every

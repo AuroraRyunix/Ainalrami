@@ -1480,14 +1480,30 @@ defmodule OpenPair.Pairing do
   # `a` is the higher-placed player of the pair, `b` the lower.
   defp edge_rungs(a, b, reach, ctx, bands, single_bye?) do
     in_current = reach == 0
-    in_next = not in_current
     s = bands.count_span
-    max_reach = Map.get(bands, :max_reach, 1)
+
     place = Map.fetch!(bands.places, a.points)
 
-    # Nearer is better: a float landing in the very next score group
-    # scores above one that falls further. See `reach_table/3`.
-    nearness = if in_next, do: max(max_reach + 1 - reach, 1), else: 0
+    # C8 is about the FOLLOWING bracket, singular. bbpPairings' graph
+    # stops at the next score group, so its `lowerPlayerInNextBracket`
+    # can only ever mean that one group — including for pairs formed
+    # wholly inside it, which genuinely are "pairs in the next bracket".
+    #
+    # The peek budget broke that equivalence in a way grading by distance
+    # did not fix. With several groups visible, pairs formed THREE groups
+    # down were still scoring on C8, and there are many more of those than
+    # there are real downfloat placements, so they swamped the signal:
+    # nearly every candidate matching carried the same large C8 total and
+    # the rung stopped discriminating. Traced on seed127-r5-p13, where the
+    # engine floated a player who then had to fall two groups while
+    # bbpPairings floated one who landed in the next.
+    #
+    # So the deeper groups stay VISIBLE — the matcher still needs to know
+    # those players exist, which is what the peek was for — but only the
+    # immediate next group counts toward C8. Anything further is re-decided
+    # in a later bracket anyway, and C8 has nothing to say about it.
+    scores_c8? = reach == 1
+    nearness = bit(scores_c8?)
 
     {c1, c2, c3, c4} = colour_criteria(a, b)
     {f1, f2, f3, f4} = float_criteria(a, b)
@@ -1513,8 +1529,8 @@ defmodule OpenPair.Pairing do
       {"C7 scores paired", gate.(place, in_current), bands.place_span},
       # C8, the same two rungs one bracket down — but graded by how far
       # down, since the peek budget makes several groups visible at once.
-      {"C8 pairs next bracket", nearness, s * (max_reach + 1)},
-      {"C8 scores next bracket", gate.(place, in_next), bands.place_span},
+      {"C8 pairs next bracket", nearness, s},
+      {"C8 scores next bracket", gate.(place, scores_c8?), bands.place_span},
       {"C9 bye unplayed games", gate.(c9_rank(a, b, ctx), single_bye?), s * s},
       # C10-C13, `insertColorBits`.
       {"C10 topscorer colour diff", gate.(bit(c1), in_current), s},
