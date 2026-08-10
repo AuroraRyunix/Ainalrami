@@ -4,12 +4,19 @@ defmodule OpenPair.FailureTaxonomyTest do
   instead of only counting them.
 
   That harness answers "how often". At ~90% of exact rounds this project
-  has stopped being able to act on that number: every remaining
-  architecture-level idea is a blind bet, and the last three of those
+  had stopped being able to act on that number: every remaining
+  architecture-level idea was a blind bet, and the last three of those
   (cross-bracket pairing, both C8 scorings, the global-graph rewrite)
-  either failed or tied. Every measurable win it HAS had came from
+  had all failed or tied. Every measurable win it had came from
   identifying one concrete wrong decision and fixing it. So this asks
   "wrong how", and buckets the answers.
+
+  It earned its keep immediately. Ranking the 164 failures by cause, and
+  then adjudicating them with `tools/adjudicate.exs`, is what isolated
+  the peek-budget defect — brackets could not see far enough to evaluate
+  C8, the criterion whose whole job is to protect the bracket below. That
+  one fix took the engine from 90.29% to 95.97% of exact rounds, and from
+  82.22% to 99.44% on the 60-80 player fields an open actually has.
 
   ## What it classifies
 
@@ -40,7 +47,7 @@ defmodule OpenPair.FailureTaxonomyTest do
   classifying a different population.
 
       PAIRING_FUZZ_COUNT=200 PAIRING_FUZZ_ROUNDS=9 \\
-        EXPECTED_DISAGREEMENTS=167 mix test --only taxonomy
+        EXPECTED_DISAGREEMENTS=68 mix test --only taxonomy
   """
 
   use ExUnit.Case

@@ -258,7 +258,84 @@ if they float — and nowhere else.
 cascade cannot be landed incrementally, do it in one piece or not at
 all" — has now been acted on and is resolved; see below.**
 
-### The global cascade: done, and it landed on a tie
+### The global cascade is now the default, at 95.97%
+
+**Read this first — much of what follows was written while it was still
+losing, and is kept because the negative results are worth keeping.**
+
+`global_cascade/2` replaced the per-bracket cascade as the default path.
+Against bbpPairings 6.0.0, exact rounds / individual pairs, zero illegal
+rounds everywhere:
+
+| field | global (now default) | per-bracket (now fallback) |
+|---|---|---|
+| 4-40, 200x9 | **95.97% / 98.64%** | 90.29% / 97.21% |
+| 60-80, 20x9 | **99.44% / 99.97%** | 82.22% / 97.99% |
+| 90-120, 8x9 | **98.61% / 99.87%** | 86.11% / 99.03% |
+
+Against javafo at 4-40 the same swap is 89.31% -> 94.18%, and javafo is
+on the superseded 2022 rules, so full agreement there is not the goal.
+
+The gain is largest exactly where it matters: a 60-80 player open is the
+ordinary case, and the engine went from getting four rounds in five right
+to getting 179 of 180. By round on the 4-40 sweep, r9 went 69.46% ->
+86.83% and r8 82.04% -> 91.62%.
+
+`OPENPAIR_GLOBAL=0` selects the per-bracket cascade. It also stays the
+automatic fallback — `global_cascade/2` verifies its own result and
+returns `:infeasible` rather than emit an illegal round, and the
+backtracking search runs then. That matters, because the global path has
+no backtracking of its own.
+
+**What actually fixed it: brackets could not see far enough.** The port
+followed `dutch.cpp` literally in appending exactly one score group to
+the bracket graph. But C8 is "choose the set of downfloaters so that in
+the FOLLOWING bracket every criterion from C1 to C7 is complied with",
+and a bracket cannot check that against players it cannot see. Peeking
+further — the extra groups are visible to the matcher and to C8, never
+consumed, and nothing in them can be finalised — is worth:
+
+| peek | 4-40 rounds / pairs |
+|---|---|
+| 0 groups (the literal reading) | 90.29% / 96.89% |
+| 1 | 94.14% / 98.17% |
+| 2 | 95.62% / 98.52% |
+| 3 | 95.91% / 98.63% |
+| 4, 6, unbounded | 95.97% / 98.64% |
+
+Budgeted in PLAYERS (`@peek_budget`, 8) rather than groups, because
+groups are the wrong unit: a small field has score groups of one to
+three, so four of them is a handful of players; a 60-120 field has groups
+big enough that one already supplies the same context, and paying for
+four costs 2.6x the time for identical output.
+
+This does NOT contradict "do not read the lookahead as a licence to pair
+across brackets" below — that still holds and is still enforced.
+`collect_bracket/1` keeps a pair only when both ends are inside the
+current bracket. Seeing further and finalising further are different
+things, and only the second one ever measured badly.
+
+**How it was found**, since the method mattered more than the fix: the
+failure classifier and then `tools/adjudicate.exs`, which scores both
+engines' answers with this engine's own ladder. That flagged 47 of 167
+failures on one rung, and reducing those to
+`test/fixtures/open_questions/` produced two files with an IDENTICAL
+bracket graph that bbpPairings answers differently depending on what lies
+below. "The bracket's own graph does not determine the answer" is a
+statement about visibility, and C8 is the criterion that is supposed to
+provide it.
+
+**Remaining: 68 failures at 4-40** (was 164). By cause: float_partner 37,
+float_set 28, bye_assignee 2 (was 25), internal_pairing 1 (was 7).
+Adjudicated: 41 tie on every rung with the transposition order now split
+almost evenly (17/14/10, i.e. noise rather than a systematic tie-break
+error), 22 where our ladder prefers our own answer, 5 the reverse. 26 of
+the 68 involve C12 — but see `explain_round/3`'s "what it cannot see":
+that scorer cannot measure the C8 rungs, which outrank colour, so a C12
+verdict is a lead and not a conclusion. `colour_stats/1` was checked
+against `computePlayerData` rung for rung and is faithful.
+
+### Historical: the global cascade before the peek fix
 
 `global_cascade/2` is now bbpPairings' bracket algorithm ported stage for
 stage (`dutch.cpp` 1011-1649) rather than one matching per score level.

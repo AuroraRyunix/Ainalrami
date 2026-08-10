@@ -120,6 +120,21 @@ defmodule OpenPair.Pairing do
       the reference would not violate a criterion it implements.
     * identical — the difference is below the criteria entirely, i.e.
       transposition/exchange ordering.
+
+  ## What it cannot see
+
+  It scores only the pairs a bracket KEEPS, so the two C8 rungs — which
+  grade what a pairing leaves reachable in the brackets BELOW — are always
+  zero here. C8 outranks every colour and float criterion, so a verdict of
+  "this engine scores better on C12" may really mean "the reference is
+  better on C8, which this cannot measure". Treat a C12 verdict as a lead,
+  not a conclusion, and check the bracket below by hand.
+
+  Verified against `colour_stats/1`, which is a faithful port of
+  `computePlayerData` (tournament.cpp:43) rung for rung — including that a
+  perfectly balanced player still has a MILD preference for the opposite
+  of their last colour, and only a player who has never played has none.
+  So a C12 verdict is not evidence of a bug in the colour model.
   """
   def explain_round(players, pairs, opts \\ []) do
     Process.put(@expected_rounds_key, opts[:expected_rounds])
@@ -767,13 +782,35 @@ defmodule OpenPair.Pairing do
   # set — see `single_downfloater_is_bye_assignee?/4` for the gate, which
   # is deliberately over-inclusive rather than under.
 
-  # OFF by default. Set OPENPAIR_GLOBAL=1 to select it over the
-  # per-bracket cascade; `global_cascade/2` still falls back on
-  # `:infeasible` rather than emitting an illegal round.
+  # THE DEFAULT PATH, as of the peek-budget correction. It beats the
+  # per-bracket cascade on every field size measured, by a lot on the ones
+  # an open tournament actually has, and emits no illegal rounds:
+  #
+  #     field      global cascade        per-bracket cascade
+  #     4-40       95.97% / 98.64%       90.29% / 97.21%
+  #     60-80      99.44% / 99.97%       82.22% / 97.99%
+  #     90-120     98.61% / 99.87%       86.11% / 99.03%
+  #
+  # (exact rounds / individual pairs, against bbpPairings 6.0.0; 200x9,
+  # 20x9 and 8x9 respectively. Against javafo at 4-40 the same swap is
+  # 89.31% -> 94.18%, and javafo is on the superseded 2022 rules, so full
+  # agreement there is not even the goal.)
+  #
+  # It costs time — roughly 0.9s per round on a 120-player field against
+  # the per-bracket cascade's 0.07s, because each bracket is solved up to
+  # eight times and the matcher is superlinear. That is the right trade
+  # for pairing a round once, and `@peek_budget` is what keeps it from
+  # being far worse.
+  #
+  # `OPENPAIR_GLOBAL=0` selects the per-bracket cascade instead. It also
+  # remains the automatic fallback: `global_cascade/2` verifies its own
+  # result and returns `:infeasible` rather than emitting an illegal
+  # round, and `pair_later_round/1` then runs the backtracking search.
+  # That matters because this path has no backtracking of its own.
   defp maybe_global_cascade(brackets, allowed_byes) do
-    if System.get_env("OPENPAIR_GLOBAL"),
-      do: global_cascade(brackets, allowed_byes),
-      else: :infeasible
+    if System.get_env("OPENPAIR_GLOBAL") == "0",
+      do: :infeasible,
+      else: global_cascade(brackets, allowed_byes)
   end
 
   defp global_cascade(brackets, allowed_byes) do
@@ -849,7 +886,25 @@ defmodule OpenPair.Pairing do
         [group | tail] -> {group, tail}
       end
 
-    {new_pairs, carried, new_sgb} = pair_bracket(by_index ++ next_group, sgb, nsgb, ctx)
+    # Both confirmed anomalies (see `test/fixtures/open_questions/`) have
+    # the same signature: the bracket's own current+next graph does not
+    # explain bbpPairings' choice, and in the fixtures an IDENTICAL graph
+    # answers differently depending on what lies below it. C8 is the
+    # criterion that is supposed to reach down — "choose the downfloaters
+    # so the FOLLOWING bracket complies with C1-C7" — so the obvious test
+    # is whether the graph needs to see one group further than the C8
+    # rungs currently do.
+    #
+    # Only the group after next is ADDED to the graph; it is not consumed,
+    # and nothing in it can be finalised (a pair is kept only when both
+    # ends are below `nsgb`). It goes back to `rest` untouched.
+    peek = peek_groups(rest, peek_budget(), [])
+
+    {new_pairs, carried_all, new_sgb} =
+      pair_bracket(by_index ++ next_group ++ peek, sgb, nsgb, ctx)
+
+    peeked = MapSet.new(peek, & &1.rank)
+    carried = Enum.reject(carried_all, &MapSet.member?(peeked, &1.rank))
 
     # bbpPairings loops unconditionally because by this point it has
     # already PROVED a complete legal matching exists — its whole-field
@@ -864,6 +919,71 @@ defmodule OpenPair.Pairing do
     else
       bracket_loop(carried, new_sgb, rest, ctx, pairs ++ new_pairs)
     end
+  end
+
+  # How many score groups BEYOND the next one to put in the bracket's
+  # graph. They are visible to the matcher and to C8, never consumed, and
+  # nothing in them can be finalised.
+  #
+  # This is the single largest correction in the port. `dutch.cpp` appends
+  # exactly one score group, and read literally that is what the C8 rungs
+  # score — but C8 is "choose the set of downfloaters so that in the
+  # FOLLOWING bracket every criterion from C1 to C7 is complied with", and
+  # a bracket cannot check that against players it cannot see. Both
+  # confirmed anomalies in `test/fixtures/open_questions/` have exactly
+  # that signature: an identical current+next graph answering differently
+  # depending on what lies below it.
+  #
+  # Global cascade, 200x9 against bbpPairings:
+  #
+  #     depth 0 (one group, the literal reading)  90.29% / 96.89%
+  #     depth 1                                   94.14% / 98.17%
+  #     depth 2                                   95.62% / 98.52%
+  #     depth 3                                   95.91% / 98.63%
+  #     depth 4                                   95.97% / 98.64%
+  #     depth 6 and unbounded                     95.97% / 98.64%
+  #
+  # Zero illegal rounds at every depth, and it saturates at 4 (unbounded
+  # measures identically, for more time).
+  #
+  # Budgeted in PLAYERS rather than groups, because groups are the wrong
+  # unit: a 4-40 field has score groups of one to three, so four of them
+  # is a handful of players and depth genuinely buys accuracy; a 60-120
+  # field has groups big enough that ONE already supplies the same
+  # context. Measured — 60-80 and 90-120 both score identically at depth
+  # 1 and depth 4, while depth 4 costs 2.7x and 2.6x the time:
+  #
+  #     60-80 players    depth 1  99.44% / 99.97%   21s
+  #                      depth 4  99.44% / 99.97%   57s
+  #     90-120 players   depth 1  98.61% / 99.87%   64s
+  #                      depth 4  98.61% / 99.87%  166s
+  #
+  # A player budget gets the small field's depth and the large field's
+  # speed from one rule, and it is the same reasoning `depth_for/1` and
+  # `per_count_limit/1` already use: a big bracket has more ways to pair,
+  # so it needs less help.
+  #
+  # Note what this does NOT contradict: TODO.md's "do not read the
+  # lookahead as a licence to pair across brackets" still holds, and is
+  # still enforced — `collect_bracket/1` keeps a pair only when both ends
+  # are below `nsgb`. Seeing further and finalising further are different
+  # things, and it was only ever the second one that measured badly.
+  @peek_budget 8
+
+  defp peek_budget do
+    case System.get_env("OPENPAIR_PEEK") do
+      nil -> @peek_budget
+      n -> String.to_integer(n)
+    end
+  end
+
+  # Whole score groups, never a partial one — a bracket that could see
+  # half of a group would score C8 against a fiction.
+  defp peek_groups([], _budget, acc), do: List.flatten(Enum.reverse(acc))
+  defp peek_groups(_rest, budget, acc) when budget <= 0, do: List.flatten(Enum.reverse(acc))
+
+  defp peek_groups([group | rest], budget, acc) do
+    peek_groups(rest, budget - length(group), [group | acc])
   end
 
   defp pair_bracket(combined, sgb, nsgb, ctx) do

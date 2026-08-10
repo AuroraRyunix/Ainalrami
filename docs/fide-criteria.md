@@ -57,7 +57,7 @@ Verbatim from §2.4, with this engine's implementation beside each.
 |---|---|---|
 | C6 | Minimise the number of downfloaters *(equivalent to: maximise the number of pairs)*. | `spans.locality` |
 | C7 | Minimise the scores (taken in descending order) of the downfloaters. | `downfloater_scores/1` at candidate level, plus `spans.score_paired` per pair |
-| C8 | Choose the set of downfloaters so that in the following bracket every criterion from C1 to C7 is complied with. | default path: `placeable_below/1`, a weak approximation, see gaps. `OPENPAIR_GLOBAL=1`: real C8 rungs over real next-bracket edges |
+| C8 | Choose the set of downfloaters so that in the following bracket every criterion from C1 to C7 is complied with. | real C8 rungs over real next-bracket edges, with `@peek_budget` deciding how far down the bracket can actually see. `OPENPAIR_GLOBAL=0` falls back to `placeable_below/1`, a weak approximation — see gaps |
 | C9 | Minimise the number of unplayed games of the assignee of the pairing-allocated-bye. *(Applies to brackets downfloating exactly one player receiving the bye.)* | the `unplayed` term in `float_weight/4`, gated on `bye_bracket?` |
 | C10 | Minimise the number of topscorers or topscorers' opponents who get a colour difference higher than +2 or lower than -2. | `colour_criteria/2` bit 1 — **not restricted to topscorers** |
 | C11 | Minimise the number of topscorers or topscorers' opponents who get the same colour three times in a row. | `colour_criteria/2` bit 2 — **not restricted to topscorers** |
@@ -84,13 +84,23 @@ bbpPairings' `computeEdgeWeight` does the same inversion.
 
 ## Known divergences from the handbook
 
-1. **C8 is only approximated on the DEFAULT path. The global cascade
-   implements it properly, and now measures level with the default.**
-   The handbook requires the chosen downfloater set to leave the
-   *following* bracket able to satisfy C1-C7. This engine only asks whether
-   each candidate downfloater has at least one legal, colour-compatible
-   opponent waiting below (`placeable_below/1`) — strictly weaker: C1/C3
-   feasibility for one player, not C1-C7 compliance for a bracket.
+1. ~~**C8 is only approximated.**~~ **Closed — C8 is implemented, and
+   implementing it properly is what made the global cascade the default
+   path at 95.97% of exact rounds against the per-bracket cascade's
+   90.29% (99.44% vs 82.22% on 60-80 player fields).**
+
+   The account below is kept because it is the record of two failed
+   attempts and of the reasoning that eventually paid off — the
+   "structural, not scoring" conclusion at the end was right, and the
+   thing it identified is exactly what was wrong.
+
+   What the earlier attempts missed: C8 asks whether the FOLLOWING
+   bracket can satisfy C1-C7, and no scoring of a bracket that cannot SEE
+   the following bracket can answer that. The fix was visibility, not a
+   better measure — see `@peek_budget` and TODO.md. `placeable_below/1`
+   (the old approximation, still used when `OPENPAIR_GLOBAL=0`) is
+   strictly weaker: C1/C3 feasibility for one player, not C1-C7
+   compliance for a bracket.
 
    Attempt one scored each candidate by the pair COUNT the following
    bracket could reach. Inert ranked low, a regression ranked high, no

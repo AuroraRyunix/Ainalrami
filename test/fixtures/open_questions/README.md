@@ -1,7 +1,20 @@
 # Open questions, as minimal reproducers
 
-Not regression fixtures. Each of these is a live question about what
+Not regression fixtures. Each of these is a question about what
 bbpPairings actually does, reduced to the smallest input that shows it.
+
+> **`c6-vs-completion-*` is RESOLVED.** The answer turned out not to be
+> about the completion rung at all: the bracket could not SEE far enough
+> to evaluate C8, so its graph genuinely did not contain the information
+> the decision needed. That is why the same graph answered differently
+> depending on what lay below it — the thing that differed was outside
+> the graph. Fixed by `@peek_budget`; the real case this was reduced
+> from, `seed102-r7-p28`, now agrees, and the engine went from 90.29% to
+> 95.97% of exact rounds. Kept here as the record of how it was found,
+> and because the reasoning below is still the right way to read the
+> evidence.
+>
+> `seed104-r8-p14`, the C12 case at the end, is still open.
 
 ## `c6-vs-completion-{6,8}.trf`
 
