@@ -22,11 +22,28 @@ not agree about which they implement:
 | bbpPairings 6.0.0 | 2026-02-01 |
 | Gacrux (FIDE TBS) 1.9.57 | 2026-02-01 (`DUTCH_RULES[1]`, "Approved by FIDE Council on 01/02/2026") |
 
-Measured over 324 comparable rounds, bbpPairings and Gacrux agree with each
-other **100%**, while JaVaFo differs from both on the same 2.47%. That
-2.47% is the rule change, not engine variance — so "disagrees with JaVaFo"
-is no longer evidence of a bug, and the number to steer by is agreement
-with the two 2026 implementations.
+Measured over **3352 comparable rounds**, bbpPairings and Gacrux agree
+with each other **100%**, while JaVaFo differs from both on 2.47%. That
+2.47% is the rule change, not engine variance — so "disagrees with
+JaVaFo" is no longer evidence of a bug, and the number to steer by is
+agreement with the two 2026 implementations.
+
+**That sample size is the point, not a detail.** This claim used to rest
+on 324 rounds. Zero observed failures in `n` trials bounds the true rate
+at about `3/n` with 95% confidence, so 324 clean rounds only established
+the references disagree on less than roughly **0.9%** — which is not a
+usable ruler for an engine whose own error is 1.4%. At 3352 rounds the
+bound tightens to **0.09%**, about fifteen times smaller than the thing
+being measured, and the references become trustworthy ground truth at
+this engine's current accuracy.
+
+It also settles what the remaining disagreements are. Of the 47 rounds in
+that run where OpenPair differed from either reference, **all 47 had the
+two references agreeing with each other** — not one was a case of the
+references splitting and no ground truth existing. So there is no
+"legal-but-different, nobody is right" bucket left to hide in: every
+remaining disagreement is this engine being wrong. Re-run it with
+`mix test --only three_way` (see `three_way_comparison_test.exs`).
 
 ## Definitions (C.04.1)
 

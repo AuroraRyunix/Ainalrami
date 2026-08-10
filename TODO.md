@@ -212,11 +212,46 @@ older one.** Gacrux states them outright:
                     1: "2026-02-01" }  # Approved by FIDE Council on 01/02/2026
 
 and selects the 2026 one; bbpPairings 6.0.0 likewise implements the
-revised rules. They agree with each other PERFECTLY — two independent
-implementations, 324 rounds, zero disagreements — while JaVaFo 2.2
-differs from both on the same 2.47%. That 2.47% is not engine variance,
-it is the 2022 -> 2026 rule change, and every comparison in this file
-above was measured against JaVaFo, i.e. against the superseded rules.
+revised rules — its own README says so: "the 2025 rules for the Dutch
+system (the effective date for the rules was delayed to 2026)". Same
+document, renamed when the date slipped. They agree with each other
+PERFECTLY while JaVaFo 2.2 differs from both on the same 2.47%. That
+2.47% is not engine variance, it is the 2022 -> 2026 rule change, and
+every comparison in this file above was measured against JaVaFo, i.e.
+against the superseded rules.
+
+### 324 rounds was not enough to call the references a ruler
+
+The "100% agreement" above was originally measured over **324 rounds**,
+and that number was doing more work than it could bear. Zero observed
+failures in `n` trials bounds the true rate at roughly `3/n` with 95%
+confidence — so 324 clean rounds established only that the references
+disagree on **less than about 0.9%** of rounds. Fine when this engine sat
+at 90% and the error being measured was ten times the ruler's slack.
+Useless at 98.6%, where the error is 1.4% and the slack is comparable.
+
+`three_way_comparison_test.exs` now runs all three engines on identical
+positions at whatever scale is asked. At **3352 rounds**:
+
+| | agreement |
+|---|---|
+| bbpPairings vs Gacrux | **100.00%** (3352/3352) |
+| OpenPair vs bbpPairings | 98.6% |
+| OpenPair vs Gacrux | 98.6% |
+
+The bound on reference disagreement tightens from 0.9% to **0.09%** —
+about fifteen times smaller than this engine's own error, which makes
+them a usable ruler again.
+
+**And it settles what the remaining failures are.** Of the 47 rounds
+where OpenPair differed, **all 47 had the two references agreeing with
+each other**; not one was a case of the references splitting. There is no
+"legal-but-different, nobody is right" bucket to appeal to — every
+remaining disagreement is this engine being wrong, and majority-vote
+adjudication is unambiguous on all of them.
+
+Costs ~35x the two-way harness (Gacrux is Python, ~750ms a round against
+bbpPairings' ~21ms); 400x9 takes about 4.5 minutes parallelised.
 
 The number to steer by from here is the last one: **when all three
 references agree, OpenPair matches 89.87%** (284/316). Where they are

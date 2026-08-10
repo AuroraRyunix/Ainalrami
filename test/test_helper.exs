@@ -36,4 +36,18 @@ exclude_tags =
 # demand with `mix test --only taxonomy`.
 exclude_tags = [:taxonomy | exclude_tags]
 
+# The three-way comparison needs Gacrux (Otto Milvang's pairingchecker.py
+# from the FIDE Tie Break Server, located via GACRUX_DIR) and is ~35x the
+# cost of the two-way harness, since Gacrux is a Python script at roughly
+# 750ms a round. Excluded by default and run on demand with
+# `mix test --only three_way`.
+unless OpenPair.Test.Gacrux.available?() do
+  IO.puts(
+    "Three-way comparison unavailable: #{OpenPair.Test.Gacrux.script_path()} not present " <>
+      "(set GACRUX_DIR to override)"
+  )
+end
+
+exclude_tags = [:three_way | exclude_tags]
+
 ExUnit.start(exclude: exclude_tags)

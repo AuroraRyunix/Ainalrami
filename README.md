@@ -35,7 +35,7 @@ OpenPairings as a selectable engine.**
   measured *worse*, kept as negative results rather than quietly dropped.
 - **Depth, against bbpPairings 6.0.0** — the current headline, and the
   reference to steer by, since bbpPairings and Gacrux both implement the
-  2026 rules and agree with each other 100% over 324 rounds while JaVaFo
+  2026 rules and agree with each other 100% over 3352 rounds while JaVaFo
   (2022 rules) differs from both on 2.47%:
 
   | field | exact rounds | individual pairs | illegal |
@@ -65,13 +65,21 @@ OpenPairings as a selectable engine.**
   `OpenPair.Pairing.NoValidPairingError` rather than emitting a
   best-effort illegal result, matching bbpPairings' own
   `NoValidPairingException`.
-- **How the remaining gap is worked on**: two diagnostics rather than
-  guesswork, both in the repo. `failure_taxonomy_test.exs` classifies
-  every disagreement by the first bracket where the two engines part
-  company and why; `tools/adjudicate.exs` then scores BOTH answers with
-  OpenPair's own C1-C21 ladder, so each case comes back as "our search
-  failed", "our ladder is wrong", or "the criteria genuinely tie". That
-  pair of tools is what found the defects worth 90.29% -> 98.69%.
+- **Three engines, not two** — `three_way_comparison_test.exs` runs
+  bbpPairings, Gacrux and OpenPair on identical positions. Over 3352
+  rounds the two references agreed with each other on **every one**, which
+  bounds their true disagreement at ~0.09% and makes them a usable ruler
+  for an engine at 98.6%. It also shows there is no ambiguity left to hide
+  behind: of the 47 rounds where OpenPair differed, all 47 had the
+  references agreeing, so every remaining disagreement is OpenPair being
+  wrong rather than a rules-interpretation tie.
+- **How the remaining gap is worked on**: diagnostics rather than
+  guesswork, all in the repo. `failure_taxonomy_test.exs` classifies
+  every disagreement by the first bracket where the engines part company
+  and why; `tools/adjudicate.exs` then scores BOTH answers with OpenPair's
+  own C1-C21 ladder, so each case comes back as "our search failed", "our
+  ladder is wrong", or "the criteria genuinely tie". That pair of tools is
+  what found the defects worth 90.29% -> 98.69%.
 - **bbpPairings is run directly, not just read as source** —
   `test/support/bbppairings.ex` + `bbppairings_comparison_test.exs`.
   bbpPairings independently confirmed OpenPair's structural-deadlock
