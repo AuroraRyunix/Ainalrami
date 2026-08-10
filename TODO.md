@@ -273,7 +273,42 @@ rounds everywhere:
 | 60-80, 20x9 | **99.44% / 99.97%** | 82.22% / 97.99% |
 | 90-120, 8x9 | **98.61% / 99.87%** | 86.11% / 99.03% |
 | 4-40 + 10% forfeits | **97.03% / 99.16%** | 88.70% / 96.90% |
-| 4-40 + 8% byes | **87.65% / 96.99%** | 81.95% / 95.08% |
+| 4-40 + 8% byes | **98.15% / 99.44%** | 90.62% / 97.28% |
+| 4-40 + 15% byes | **97.50% / 99.19%** | — |
+
+### The bye weakness was an off-by-one in float history
+
+Arbiter-assigned byes were the worst axis by a wide margin (86.70%
+against 95.97%) right up until the cause turned out to be a single index.
+
+`getFloat` reads `player.matches[tournament.playedRounds - roundsBack]`.
+This engine read `length(player.games) - rounds_back`. Those agree only
+while every player has exactly one entry per played round — which is
+precisely what an arbiter bye breaks: a player holding a pre-recorded bye
+for the round about to be paired has one game MORE than the tournament
+has played, so the lookup landed on that FUTURE bye instead of their last
+real round. `score_before/3` was off by one the same way, so the score
+comparison behind every float direction was being taken at the wrong
+moment too. Every criterion from C14 to C21 was reading a fabricated
+history for those players.
+
+| | rounds | pairs |
+|---|---|---|
+| indexed by the player's own game count | 87.65% | 96.99% |
+| **indexed by the tournament's round count** | **98.15%** | **99.44%** |
+
+Byes went from the weakest axis to the strongest — better than the
+no-bye case, which is not as odd as it sounds: a bye removes a player
+from the round and shrinks the field the engine has to get exactly right.
+At a 15% bye rate it still measures 97.50%.
+
+The fallback path gained too (81.95% -> 90.62% with byes), since
+`float_direction/4` is shared.
+
+It is worth noting how long this hid. The bug is invisible without
+arbiter byes — the two indexings coincide — and the harness defaults to a
+0% bye rate, so nine tenths of every measurement taken on this project
+could not see it.
 
 Confirmed on a larger sample: **500x9 measures 97.88% / 99.39%**, zero
 illegal rounds. By round it is 100/100/99.80/99.16/97.68/97.81/97.34/

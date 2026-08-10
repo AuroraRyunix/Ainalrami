@@ -418,7 +418,7 @@ defmodule OpenPair.Pairing do
       # Float history first, over the WHOLE roster: `float_direction/3`
       # compares against the opponent's score at the time, and that
       # opponent may be sitting this round out.
-      |> with_float_history()
+      |> with_float_history(played)
       |> Enum.filter(&active_this_round?(&1, played))
       |> Enum.group_by(& &1.points)
       |> Enum.sort_by(fn {score, _} -> -score end)
@@ -632,13 +632,13 @@ defmodule OpenPair.Pairing do
   # round rather than per candidate pair — `float_direction/3` needs every
   # player (it compares against the OPPONENT's score at the time), which
   # `pair_weight/4` doesn't have and shouldn't need.
-  defp with_float_history(players) do
+  defp with_float_history(players, played) do
     by_rank = Map.new(players, &{&1.rank, &1})
 
     Enum.map(players, fn player ->
       Map.put(player, :floats, %{
-        1 => float_direction(player, 1, by_rank),
-        2 => float_direction(player, 2, by_rank)
+        1 => float_direction(player, 1, by_rank, played),
+        2 => float_direction(player, 2, by_rank, played)
       })
     end)
   end
@@ -652,10 +652,18 @@ defmodule OpenPair.Pairing do
   # An unplayed round counts as a downfloat whenever it scored better than
   # a loss, so a pairing-allocated bye is a downfloat — which is what makes
   # this criterion bite in odd-sized tournaments.
-  defp float_direction(player, rounds_back, by_rank) do
-    index = length(player.games) - rounds_back
+  # Indexed by the TOURNAMENT's played-round count, not by the player's own
+  # game count — bbpPairings reads `player.matches[tournament.playedRounds
+  # - roundsBack]`. The two are the same only while every player has an
+  # entry per round, which arbiter-assigned byes break: a player carrying a
+  # pre-recorded bye for the round about to be paired has one game MORE
+  # than the tournament has played, so `length(games) - 1` pointed at that
+  # future bye instead of their last real round, and every float criterion
+  # C14-C21 then read a fabricated history for them.
+  defp float_direction(player, rounds_back, by_rank, played) do
+    index = played - rounds_back
 
-    if index < 0 do
+    if index < 0 or index >= length(player.games) do
       :none
     else
       game = Enum.at(player.games, index)
@@ -668,8 +676,8 @@ defmodule OpenPair.Pairing do
           :none
 
         true ->
-          mine = score_before(player, rounds_back)
-          theirs = score_before(Map.fetch!(by_rank, game.opponent_rank), rounds_back)
+          mine = score_before(player, rounds_back, played)
+          theirs = score_before(Map.fetch!(by_rank, game.opponent_rank), rounds_back, played)
 
           cond do
             mine > theirs -> :down
@@ -680,12 +688,17 @@ defmodule OpenPair.Pairing do
     end
   end
 
-  # A player's score as it stood before the last `rounds_back` rounds —
-  # current score minus what those rounds paid out. bbpPairings keeps the
-  # same thing as `scoreWithAcceleration(tournament, roundsBack)`.
-  defp score_before(player, rounds_back) do
+  # A player's score as it stood after round `played - rounds_back` —
+  # current score minus what every later round paid out. bbpPairings keeps
+  # the same thing as `scoreWithAcceleration(tournament, roundsBack)`.
+  #
+  # Counted from the TOURNAMENT's round number for the same reason
+  # `float_direction/4` is: a player holding a pre-recorded bye has an
+  # extra game, and taking "the last `rounds_back`" off their own list
+  # then subtracts the wrong rounds.
+  defp score_before(player, rounds_back, played) do
     player.games
-    |> Enum.take(-rounds_back)
+    |> Enum.drop(max(played - rounds_back, 0))
     |> Enum.reduce(player.points, fn game, score -> score - result_points(game.result) end)
   end
 
