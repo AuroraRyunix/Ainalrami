@@ -1024,8 +1024,15 @@ defmodule OpenPair.Pairing do
     {pairs, by_index}
   end
 
+  # The FIRST bracket's C9 flag was hardcoded `true`, which is only right
+  # for a field that is a single score group. C9 is about the bye
+  # assignee, and the bye comes from the BOTTOM of the field, so in a
+  # multi-group field the top bracket is the one place it certainly does
+  # not apply. Same test as `next_single_bye?` below, minus the parts that
+  # need a previous bracket's tentative matching.
   defp bracket_loop(by_index, sgb, rest_groups, ctx, pairs) do
-    bracket_loop(by_index, sgb, rest_groups, ctx, pairs, true)
+    single_bye? = ctx.odd_field? and not is_nil(ctx.bye_score) and rest_groups == []
+    bracket_loop(by_index, sgb, rest_groups, ctx, pairs, single_bye?)
   end
 
   defp bracket_loop(by_index, _sgb, [], _ctx, pairs, _single_bye?) when length(by_index) <= 1 do
@@ -1073,8 +1080,22 @@ defmodule OpenPair.Pairing do
     # rung fired in brackets bbpPairings excludes, and measured WORSE than
     # having no C9 rung at all: 83.14% against 83.73% of exact rounds at
     # an 8% bye rate.
+    # `rest == []` is the missing half of "downfloating exactly ONE player
+    # RECEIVING THE BYE". The clearing step above only asks whether THIS
+    # bracket's floats run deeper than one group; it cannot see how many
+    # players the next bracket will itself float, and a bracket that floats
+    # two — one to pair below, one to take the bye — is not a C9 bracket at
+    # all. When a group still exists below the next bracket, the next
+    # bracket's floater pairs INTO it rather than taking the bye, so the
+    # criterion has no assignee to talk about.
+    #
+    # Traced on seed260-r7-p9: bracket 3.0 floated 7 (to play 2) and 5 (to
+    # the bye), so C9 should have been silent, but it fired and — sitting
+    # above the colour rungs — outscored the pairing bbpPairings chose,
+    # which satisfied a colour preference ours did not (C12 1 vs 0).
     next_single_bye? =
       ctx.odd_field? and not is_nil(ctx.bye_score) and next_group != [] and
+        rest == [] and
         ctx.bye_score >= hd(next_group).points and
         Enum.all?(carried_partner_scores, &(&1 >= hd(next_group).points))
 
