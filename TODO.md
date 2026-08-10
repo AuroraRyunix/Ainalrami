@@ -290,6 +290,38 @@ also fails does `pair_later_round/1` raise `NoValidPairingError` — and at
 that point it is the truth, because a whole-field maximum matching could
 not pair everyone either.
 
+**The repair fires zero times in normal running** — measured across plain
+fields, 8% and 15% bye rates and 10% forfeits. That is the right outcome
+and the wrong thing to leave on trust, so `OPENPAIR_FORCE_STRAND=1`
+restores the old wrong stop condition on purpose and
+`completion_repair_test.exs` asserts the engine still comes out legal
+under it, pairing each round twice to prove the fault actually bites.
+Insurance nothing has exercised is a guess.
+
+### How the three engines guarantee a complete round
+
+Same guarantee, three mechanisms — worth knowing before assuming ours is
+either a hack or an advantage:
+
+| | mechanism |
+|---|---|
+| bbpPairings | whole-field pre-pass proves a complete matching exists, throws `NoValidPairingException` if not (`dutch.cpp:828`). A CHECK — there is no repair anywhere in the file — then it trusts its incremental matcher to preserve completeness. |
+| Gacrux | precomputes per-level feasibility ("hamilton", `pairingdutch.py:300+`) and uses it to REJECT a bracket choice that would strand the rest. |
+| OpenPair | pairs first, then repairs if completeness was lost. |
+
+**Does ours produce legal rounds the others refuse?** No.
+`tools/refusals.exs` plays deep Swisses in small fields — where refusals
+actually happen — and asks OpenPair every round bbpPairings turns down.
+Over **118 refused rounds, OpenPair refused all 118**: never a case where
+it paired something bbpPairings could not, and never one where it emitted
+something illegal instead. The two agree exactly on whether a round is
+pairable at all, which is what should happen, since both answers come
+from an exact whole-field maximum matching over the same legal edges.
+
+So the repair is not a compliance advantage. It is insurance against
+THIS engine's own staged finalisation, which the other two do not need
+because they never lose completeness in the first place.
+
 **What made the fallback unnecessary was a one-line bug.**
 `bracket_loop/6` stopped when `rest == []`, which is the state *after*
 popping the final score group — so the round ended on the very iteration

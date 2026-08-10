@@ -846,11 +846,18 @@ defmodule OpenPair.Pairing do
 
       {:incomplete, reason} ->
         # The staged refinement finalises pairs one at a time and locks
-        # them, so a bracket can commit a pair that leaves someone further
-        # down unpairable. bbpPairings cannot: its whole-field pre-pass
-        # proves a complete matching exists before it starts, and its
-        # matcher then keeps one. Rather than hand the round to a
-        # different engine, repair it.
+        # them, so a bracket can in principle commit a pair that leaves
+        # someone further down unpairable.
+        #
+        # The three engines guard this differently. bbpPairings proves a
+        # complete matching exists before it starts and throws if not
+        # (dutch.cpp:828 — a CHECK, with no repair anywhere), then trusts
+        # its incremental matcher to preserve completeness. Gacrux
+        # precomputes per-level feasibility ("hamilton") and uses it to
+        # reject a bracket choice that would strand the rest. This one
+        # repairs after the fact instead.
+        if System.get_env("OPENPAIR_TRACE_FALLBACK"), do: IO.puts("[repair] #{reason}")
+
         case repair_completion(field, pairs, allowed_byes) do
           {:ok, repaired, repaired_leftover} = ok ->
             case check_completion(repaired, repaired_leftover, allowed_byes) do
@@ -1086,7 +1093,19 @@ defmodule OpenPair.Pairing do
     # any chance to pair with it. They were reported stranded and the
     # round was handed to the fallback engine. That single wrong condition
     # was most of the fallbacks.
-    if next_group == [] and new_pairs == [] do
+    # `OPENPAIR_FORCE_STRAND=1` restores the old, wrong condition on
+    # purpose. `repair_completion/3` is the engine's only completion
+    # safety net and it never fires in normal running — measured zero
+    # times across every configuration — which would leave it as untested
+    # emergency code. This is the fault injection that tests it: with the
+    # flag on, roughly a tenth of rounds strand, and the suite asserts
+    # every one of them still comes out legal.
+    stop? =
+      if System.get_env("OPENPAIR_FORCE_STRAND"),
+        do: rest == [] and new_pairs == [],
+        else: next_group == [] and new_pairs == []
+
+    if stop? do
       {pairs, carried}
     else
       bracket_loop(carried, new_sgb, rest, ctx, pairs ++ new_pairs, next_single_bye?)
