@@ -1031,7 +1031,11 @@ defmodule OpenPair.Pairing do
   # not apply. Same test as `next_single_bye?` below, minus the parts that
   # need a previous bracket's tentative matching.
   defp bracket_loop(by_index, sgb, rest_groups, ctx, pairs) do
-    single_bye? = ctx.odd_field? and not is_nil(ctx.bye_score) and rest_groups == []
+    players_below = Enum.sum(Enum.map(rest_groups, &length/1))
+
+    single_bye? =
+      ctx.odd_field? and not is_nil(ctx.bye_score) and rem(players_below, 2) == 0
+
     bracket_loop(by_index, sgb, rest_groups, ctx, pairs, single_bye?)
   end
 
@@ -1080,22 +1084,44 @@ defmodule OpenPair.Pairing do
     # rung fired in brackets bbpPairings excludes, and measured WORSE than
     # having no C9 rung at all: 83.14% against 83.73% of exact rounds at
     # an 8% bye rate.
-    # `rest == []` is the missing half of "downfloating exactly ONE player
-    # RECEIVING THE BYE". The clearing step above only asks whether THIS
-    # bracket's floats run deeper than one group; it cannot see how many
-    # players the next bracket will itself float, and a bracket that floats
-    # two — one to pair below, one to take the bye — is not a C9 bracket at
-    # all. When a group still exists below the next bracket, the next
-    # bracket's floater pairs INTO it rather than taking the bye, so the
-    # criterion has no assignee to talk about.
+    # How many players sit BELOW the next bracket is the missing half of
+    # "downfloating exactly ONE player RECEIVING THE BYE". The clearing
+    # step above only asks whether THIS bracket's floats run deeper than
+    # one group; it cannot see how many players the next bracket will
+    # itself float, and a bracket that floats two — one to pair below, one
+    # to take the bye — is not a C9 bracket at all.
     #
-    # Traced on seed260-r7-p9: bracket 3.0 floated 7 (to play 2) and 5 (to
-    # the bye), so C9 should have been silent, but it fired and — sitting
-    # above the colour rungs — outscored the pairing bbpPairings chose,
-    # which satisfied a colour preference ours did not (C12 1 vs 0).
+    # An EVEN number below can pair among itself, so the next bracket's
+    # lone floater has nobody left to meet and the bye is theirs. An odd
+    # number cannot: one of them needs a partner from above, so the
+    # bracket must float two and C9 has no single assignee to talk about.
+    #
+    # Both traced cases turn on exactly this count:
+    #
+    #   seed260-r7-p9   one player (2, at 1.5) below bracket 3.0. Odd, so
+    #                   the bracket floated 7 to play them AND 5 to the
+    #                   bye. C9 fired anyway and, sitting above the colour
+    #                   rungs, outscored bbpPairings' pairing — which
+    #                   satisfied a colour preference ours did not
+    #                   (C12 1 vs 0).
+    #
+    #   seed335-r8-p13  two players (10 at 2.5, 11 at 2.0) below bracket
+    #                   3.0. Even, and they paired with each other, so the
+    #                   bracket's single floater took the bye exactly as
+    #                   C9 describes.
+    #
+    # Two stricter readings were measured and rejected. `rest == []` ("no
+    # group below at all") silences seed335 and cost 0.02-0.24 points
+    # across the bye and forfeit profiles. Gating on the next bracket's
+    # own SIZE being odd — the same parity argument applied one level up —
+    # was far worse (97.57% against 99.94% at a 15% bye rate), because a
+    # bracket of odd size does not reliably float exactly one: whoever is
+    # left over depends on who can legally pair inside it at all.
+    players_below = Enum.sum(Enum.map(rest, &length/1))
+
     next_single_bye? =
       ctx.odd_field? and not is_nil(ctx.bye_score) and next_group != [] and
-        rest == [] and
+        rem(players_below, 2) == 0 and
         ctx.bye_score >= hd(next_group).points and
         Enum.all?(carried_partner_scores, &(&1 >= hd(next_group).points))
 

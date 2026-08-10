@@ -75,7 +75,7 @@ Verbatim from §2.4, with this engine's implementation beside each.
 | C6 | Minimise the number of downfloaters *(equivalent to: maximise the number of pairs)*. | `spans.locality` |
 | C7 | Minimise the scores (taken in descending order) of the downfloaters. | `downfloater_scores/1` at candidate level, plus `spans.score_paired` per pair |
 | C8 | Choose the set of downfloaters so that in the following bracket every criterion from C1 to C7 is complied with. | real C8 rungs over real next-bracket edges, with `@peek_budget` deciding how far down the bracket can actually see. `OPENPAIR_GLOBAL=0` falls back to `placeable_below/1`, a weak approximation — see gaps |
-| C9 | Minimise the number of unplayed games of the assignee of the pairing-allocated-bye. *(Applies to brackets downfloating exactly one player receiving the bye.)* | `unplayed_ranks/2`, gated on `single_bye?`. Both halves of the parenthetical are enforced: the previous bracket's tentative matching supplies "the float does not run deeper than one group", and `rest == []` supplies "the bracket is the last group", i.e. its leftover takes the bye instead of pairing into something below. Missing the second half cost 0.18 points of exact rounds at a 15% bye rate |
+| C9 | Minimise the number of unplayed games of the assignee of the pairing-allocated-bye. *(Applies to brackets downfloating exactly one player receiving the bye.)* | `unplayed_ranks/2`, gated on `single_bye?`. Both halves of the parenthetical are enforced: the previous bracket's tentative matching supplies "the float does not run deeper than one group", and an EVEN number of players below the bracket supplies "and that one receives the bye" — an even remainder pairs among itself, leaving the lone floater nobody to meet. Getting this gate right is worth more than any other single fix measured: see the gaps section |
 | C10 | Minimise the number of topscorers or topscorers' opponents who get a colour difference higher than +2 or lower than -2. | `colour_criteria/2` bit 1 — **not restricted to topscorers** |
 | C11 | Minimise the number of topscorers or topscorers' opponents who get the same colour three times in a row. | `colour_criteria/2` bit 2 — **not restricted to topscorers** |
 | C12 | Minimise the number of players who do not get their colour preference. | `colour_criteria/2` bit 3 |
@@ -216,17 +216,50 @@ bbpPairings' `computeEdgeWeight` does the same inversion.
    risk diverging if the two C3 implementations ever disagreed at the
    edges. Left alone deliberately.
 
-3. ~~**C12 may count colour preferences bbpPairings ignores.**~~
-   **Tested and refuted — do not retry.** After the C9 gate fix (see
-   `bracket_loop/6`) the last handful of bye-profile disagreements
-   inverted: the adjudicator started reporting *ours* scoring better on
-   C12, which is the shape that says our LADDER is over-crediting, since
-   a reference that implements a criterion will not casually violate it.
-   The hypothesis was that bbpPairings' colour-preference bit ignores a
-   MILD preference — a player at colour difference 0, who by E.5 prefers
-   the opposite of their last colour but has no imbalance behind it. On
-   seed242-r6-p10 that would have made `{6,7}` and `{6,8}` tie and let
-   transposition order pick bbpPairings' answer.
+3. ~~**C9's gate was wrong, and it dominated the colour criteria.**~~
+   **Closed — this was the single largest remaining defect.** C9 sits
+   above every colour rung, so wherever it fired spuriously it decided
+   the bracket outright.
+
+   The handbook scopes it to "brackets downfloating exactly one player
+   receiving the bye", and only the first half was enforced. The second
+   half turns out to be a parity fact about what lies BELOW the bracket:
+   an even number of players there pair among themselves, leaving the
+   bracket's lone floater nobody to meet and therefore the bye; an odd
+   number needs a partner from above, so the bracket floats two and the
+   criterion has no single assignee.
+
+   Two stricter readings were measured and rejected on the way. `rest ==
+   []` ("no group below at all") is correct but incomplete — it silences
+   the legitimate case where an even remainder pairs off. Gating instead
+   on the next bracket's own size being odd was much worse (97.57%
+   against 99.94% at a 15% bye rate): a bracket of odd size does not
+   reliably float exactly one, since who is left over depends on who can
+   legally pair inside it.
+
+   Measured at 600 tournaments x 9 rounds against bbpPairings.exe:
+
+   | profile | before | `rest == []` | players-below even |
+   |---|---|---|---|
+   | plain | 100.00% | 100.00% | 100.00% |
+   | 8% byes | 99.76% | 99.92% | **100.00%** |
+   | 15% byes | 99.73% | 99.94% | **99.98%** |
+   | 10% forfeits | 99.52% | 99.70% | **99.98%** |
+   | 10% byes + 10% forfeits | — | 99.78% | **99.96%** |
+
+   Forfeits improve for the same reason byes do: a forfeit is an unplayed
+   game, so it feeds the same `unplayed_ranks` the rung reads. Their
+   disagreement count over 5025 rounds went 15 -> 1.
+
+4. ~~**C12 may count colour preferences bbpPairings ignores.**~~
+   **Tested and refuted — do not retry.** Partway through the C9 work the
+   remaining disagreements inverted: the adjudicator started reporting
+   *ours* scoring better on C12, which is normally the shape that says
+   our LADDER is over-crediting, since a reference that implements a
+   criterion will not casually violate it. The hypothesis was that
+   bbpPairings' colour-preference bit ignores a MILD preference — a
+   player at colour difference 0, who by E.5 prefers the opposite of
+   their last colour but has no imbalance behind it.
 
    Requiring both sides of a clash to hold a strong-or-absolute
    preference collapsed the engine: 99.91% -> 57.88% of exact rounds at
@@ -234,7 +267,16 @@ bbpPairings' `computeEdgeWeight` does the same inversion.
    counts mild preferences, emphatically. `colour_criteria/2`'s
    `not clash?` is correct as written.
 
-4. **`deviation` and `spread` are not FIDE criteria.** They sit mid-ladder
+   Worth recording WHY the signal was misleading: those cases were not
+   colour defects at all. They were C9 firing in brackets it does not
+   belong in, and because C9 outranks the colour rungs the damage
+   surfaced at the first rung below it that happened to differ. An
+   "ours scores better on C<n>" verdict points at the first DIFFERING
+   rung, which is not necessarily the faulty one — check whether
+   anything above it is misgated before believing the criterion itself
+   is wrong.
+
+5. **`deviation` and `spread` are not FIDE criteria.** They sit mid-ladder
    in `within_bracket_weight/4` and do the work the handbook assigns to a
    different mechanism entirely — §3's transposition and exchange
    procedure, which picks among pairings that are already equal on every
@@ -243,7 +285,7 @@ bbpPairings' `computeEdgeWeight` does the same inversion.
    and the one this project's TODO has long described as "approximate
    bracket-ordering vs FIDE's exact transposition search".
 
-5. ~~**C5 is not enforced explicitly.**~~ **Closed.** The prediction that
+6. ~~**C5 is not enforced explicitly.**~~ **Closed.** The prediction that
    "these coincide in ordinary cases; whether they can diverge has not been
    tested" turned out to be testable and false. Diffing JaVaFo against
    bbpPairings/Gacrux surfaced a 5-player round-2 case where the 0.5
