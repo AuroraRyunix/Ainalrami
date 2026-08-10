@@ -26,21 +26,37 @@ OpenPairings as a selectable engine.**
   run (`OpenPair.Pairing.pair_round_one/1`, colour-blind composition diff —
   see `test/open_pair/javafo_comparison_test.exs`).
 - **Round 2+**: **99.85%** composition match (5991/6000 random round-1
-  outcomes) — `OpenPair.Pairing.pair_later_round/1`, general
-  maximum-weight matching over each score bracket via `OpenPair.Matching`.
+  outcomes) — `OpenPair.Pairing.pair_later_round/1`. The default path is
+  now `global_cascade/2`, a stage-for-stage port of bbpPairings' bracket
+  algorithm; the original per-bracket cascade remains as the fallback
+  when that cannot produce a legal round, and via `OPENPAIR_GLOBAL=0`.
   Every scoring term in it was measured against real `javafo.jar` rather
   than derived from the spec; [TODO.md](TODO.md) has the full table,
   including changes that looked obviously correct and measured *worse*
   (a bipartite bracket restriction at 10.7%, a natural-correspondence
   tie-break at 64.95%), all reverted rather than kept for elegance.
-- **Depth (rounds 1-9, 300 tournaments, 10-40 players)**: **97.19%** of
-  individual pairs match javafo, **88.93%** of whole rounds match exactly
-  — round 1 is exact, round 9 (the hardest, most opponent-exhausted round
-  measured) is 91.54%. What actually governs accuracy is not the round
-  number but how much of the field a player has already met — a 60-70
-  player field at 15 rounds is still 97.76%. See TODO.md's "Depth" and
-  "How close to javafo" sections for the full round-by-round table and
-  every fix that got it there.
+- **Depth, against bbpPairings 6.0.0** — the current headline, and the
+  reference to steer by, since bbpPairings and Gacrux both implement the
+  2026 rules and agree with each other 100% over 324 rounds while JaVaFo
+  (2022 rules) differs from both on 2.47%:
+
+  | field | exact rounds | individual pairs | illegal |
+  |---|---|---|---|
+  | 4-40, 500x9 | **96.38%** | **98.83%** | 0 |
+  | 60-80, 20x9 | **99.44%** | **99.97%** | 0 |
+  | 90-120, 8x9 | **98.61%** | **99.87%** | 0 |
+  | 4-40 + 10% forfeits | 95.72% | 98.66% | 0 |
+  | 4-40 + 8% arbiter byes | 86.70% | 96.48% | 0 |
+
+  Arbiter-assigned byes are the weakest axis and the next thing being
+  worked on. Against JaVaFo at 4-40 the engine measures 94.18% of exact
+  rounds, and full agreement there is not the goal — it is on the
+  superseded rulebook.
+
+  These numbers come from replacing the original per-bracket cascade with
+  a full port of bbpPairings' bracket algorithm (eight matchings per
+  bracket, not one). TODO.md has the whole account, including the
+  measurements that made it the default and the ones that failed.
 - **Legality, independent of javafo**: every player paired exactly once,
   no rematches, and exactly one pairing-allocated bye in an odd active
   field (none in an even one) — **0 illegal rounds** across every
@@ -52,11 +68,15 @@ OpenPairings as a selectable engine.**
   `OpenPair.Pairing.NoValidPairingError` rather than emitting a
   best-effort illegal result, matching bbpPairings' own
   `NoValidPairingException`.
-- **bbpPairings depth (rounds 1-9, 200 tournaments, 4-40 players)**:
-  **95.92%** of individual pairs and **86.32%** of whole rounds match
-  Bierema Boyz Programming's independent reference implementation, run
-  directly (not just read as source) — `test/support/bbppairings.ex` +
-  `bbppairings_comparison_test.exs`. **0 illegal rounds** here too, and
+- **How the remaining gap is worked on**: two diagnostics rather than
+  guesswork, both in the repo. `failure_taxonomy_test.exs` classifies
+  every disagreement by the first bracket where the two engines part
+  company and why; `tools/adjudicate.exs` then scores BOTH answers with
+  OpenPair's own C1-C21 ladder, so each case comes back as "our search
+  failed", "our ladder is wrong", or "the criteria genuinely tie". That
+  pair of tools is what found the defect worth 90.29% -> 95.97%.
+- **bbpPairings is run directly, not just read as source** —
+  `test/support/bbppairings.ex` + `bbppairings_comparison_test.exs`.
   bbpPairings independently confirmed OpenPair's structural-deadlock
   cases really are unpairable (its own exit code 1 on byte-identical
   input). See TODO.md's "Cross-validation against bbpPairings" for the

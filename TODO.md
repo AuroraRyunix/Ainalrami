@@ -275,6 +275,10 @@ rounds everywhere:
 | 4-40 + 10% forfeits | **95.72% / 98.66%** | 88.70% / 96.90% |
 | 4-40 + 8% byes | **86.70% / 96.48%** | 81.95% / 95.08% |
 
+Confirmed on a larger sample: **500x9 measures 96.38% / 98.83%**, zero
+illegal rounds, 50s. By round it is 100/100/99.80/98.73/96.62/95.39/
+93.79/92.16/88.84 — the old engine's round 9 was 69.46%.
+
 Byes remain the weakest axis by a wide margin — 86.70% against 95.97%
 without them — and the classifier says why: with byes, `bye_assignee` is
 30.3% of the remaining failures against 2.9% without. That is the next
