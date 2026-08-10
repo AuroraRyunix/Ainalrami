@@ -42,14 +42,14 @@ OpenPairings as a selectable engine.**
 
   | field | exact rounds | individual pairs | illegal |
   |---|---|---|---|
-  | 4-40, 500x9 | **96.38%** | **98.83%** | 0 |
+  | 4-40, 500x9 | **97.88%** | **99.39%** | 0 |
   | 60-80, 20x9 | **99.44%** | **99.97%** | 0 |
   | 90-120, 8x9 | **98.61%** | **99.87%** | 0 |
-  | 4-40 + 10% forfeits | 95.72% | 98.66% | 0 |
-  | 4-40 + 8% arbiter byes | 86.70% | 96.48% | 0 |
+  | 4-40 + 10% forfeits | 97.03% | 99.16% | 0 |
+  | 4-40 + 8% arbiter byes | 87.65% | 96.99% | 0 |
 
   Arbiter-assigned byes are the weakest axis and the next thing being
-  worked on. Against JaVaFo at 4-40 the engine measures 94.18% of exact
+  worked on. Against JaVaFo at 4-40 the engine measures 95.78% of exact
   rounds, and full agreement there is not the goal — it is on the
   superseded rulebook.
 

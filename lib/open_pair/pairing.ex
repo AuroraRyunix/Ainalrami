@@ -152,10 +152,13 @@ defmodule OpenPair.Pairing do
       partner = partner_map(pairs)
       ctx = global_context(field)
 
-      field
-      |> Enum.chunk_by(& &1.points)
-      |> Enum.reduce({[], []}, fn group, {acc, mdps} ->
-        {report, floated} = explain_bracket(mdps ++ group, group, partner, ctx)
+      groups = Enum.chunk_by(field, & &1.points)
+
+      groups
+      |> Enum.with_index()
+      |> Enum.reduce({[], []}, fn {group, i}, {acc, mdps} ->
+        next_group = Enum.at(groups, i + 1, [])
+        {report, floated} = explain_bracket(mdps ++ group, group, next_group, partner, ctx)
         {[report | acc], floated}
       end)
       |> elem(0)
@@ -173,7 +176,7 @@ defmodule OpenPair.Pairing do
     end)
   end
 
-  defp explain_bracket(bracket, group, partner, ctx) do
+  defp explain_bracket(bracket, group, next_group, partner, ctx) do
     ranks = MapSet.new(bracket, & &1.rank)
     score = hd(group).points
 
@@ -194,8 +197,28 @@ defmodule OpenPair.Pairing do
       |> Enum.map(fn p -> Enum.min_max([p.rank, Map.fetch!(partner, p.rank)]) end)
       |> Enum.uniq()
 
-    {places, place_span} = score_places(bracket)
-    count_span = length(bracket) + 1
+    # The C8 rungs grade what a bracket leaves reachable BELOW it, so they
+    # are scored over the pairs that reach from this bracket into the next
+    # score group — exactly the edges the real matcher sees with
+    # `in_current` false. Leaving them out was this diagnostic's blind
+    # spot: C8 outranks every colour and float criterion, so two answers
+    # differing only there used to come back as "tie on every rung", and
+    # the C12 verdict below them was then read as a colour bug.
+    next_ranks = MapSet.new(next_group, & &1.rank)
+    cross_by_rank = Map.new(bracket ++ next_group, &{&1.rank, &1})
+
+    cross_edges =
+      bracket
+      |> Enum.flat_map(fn p ->
+        case Map.get(partner, p.rank) do
+          nil -> []
+          other -> if MapSet.member?(next_ranks, other), do: [{p.rank, other}], else: []
+        end
+      end)
+      |> Enum.uniq()
+
+    {places, place_span} = score_places(bracket ++ next_group)
+    count_span = length(bracket) + length(next_group) + 1
 
     bands = %{
       places: places,
@@ -204,13 +227,19 @@ defmodule OpenPair.Pairing do
       reserve: 2 * count_span * count_span * count_span
     }
 
-    rungs =
-      edges
-      |> Enum.map(fn {x, y} ->
+    kept_rungs =
+      Enum.map(edges, fn {x, y} ->
         {a, b} = order_by_placement(Map.fetch!(by_rank, x), Map.fetch!(by_rank, y))
-        edge_rungs(a, b, true, ctx, bands, false)
+        edge_rungs(a, b, 0, ctx, bands, false)
       end)
-      |> sum_rungs()
+
+    cross_rungs =
+      Enum.map(cross_edges, fn {x, y} ->
+        {a, b} = order_by_placement(Map.fetch!(cross_by_rank, x), Map.fetch!(cross_by_rank, y))
+        edge_rungs(a, b, 1, ctx, bands, false)
+      end)
+
+    rungs = sum_rungs(kept_rungs ++ cross_rungs)
 
     {%{
        group: score,
@@ -826,12 +855,24 @@ defmodule OpenPair.Pairing do
     # The staged refinement is not told how many byes are legal, so the
     # result is checked rather than assumed. Falling back to the
     # backtracking cascade beats emitting an illegal round.
-    if length(leftover) <= allowed_byes and Enum.all?(leftover, &eligible_for_bye?/1) and
-         Enum.all?(leftover, &bye_score_ok?/1) do
-      {:ok, pairs, leftover}
-    else
-      :infeasible
+    cond do
+      length(leftover) > allowed_byes ->
+        trace_fallback("stranded #{length(leftover)}, allowed #{allowed_byes}")
+
+      not Enum.all?(leftover, &eligible_for_bye?/1) ->
+        trace_fallback("bye assignee is C2-ineligible")
+
+      not Enum.all?(leftover, &bye_score_ok?/1) ->
+        trace_fallback("bye assignee's score is above the C5 minimum")
+
+      true ->
+        {:ok, pairs, leftover}
     end
+  end
+
+  defp trace_fallback(reason) do
+    if System.get_env("OPENPAIR_TRACE_FALLBACK"), do: IO.puts("[fallback] #{reason}")
+    :infeasible
   end
 
   # Everything the ladder needs that is genuinely round-wide. The spans
@@ -1253,11 +1294,16 @@ defmodule OpenPair.Pairing do
   defp base_edge_weights(_arr, m, _sgb, _nsgb, _ctx, _bands, _single_bye?) when m < 2, do: %{}
 
   defp base_edge_weights(arr, m, sgb, nsgb, ctx, bands, single_bye?) do
+    reach = reach_table(arr, m, nsgb)
+    bands = Map.put(bands, :max_reach, reach |> Map.values() |> Enum.max(fn -> 0 end))
+
     Enum.reduce(0..(m - 2), %{}, fn i, acc ->
       a = elem(arr, i)
 
       Enum.reduce((i + 1)..(m - 1), acc, fn j, inner ->
-        case bracket_edge_weight(a, elem(arr, j), j, sgb, nsgb, ctx, bands, single_bye?) do
+        r = Map.get(reach, j, 0)
+
+        case bracket_edge_weight(a, elem(arr, j), j, sgb, r, ctx, bands, single_bye?) do
           nil -> inner
           w -> Map.put(inner, {i, j}, w)
         end
@@ -1265,12 +1311,34 @@ defmodule OpenPair.Pairing do
     end)
   end
 
-  defp bracket_edge_weight(a, b, j, sgb, nsgb, ctx, bands, single_bye?) do
+  # How far BELOW the current bracket each position sits, counted in score
+  # groups: 0 for the bracket itself, 1 for the next group, 2 for the one
+  # after it, and so on.
+  #
+  # bbpPairings needs no such thing, because its graph stops at the next
+  # group and `lowerPlayerInNextBracket` can only mean that one group. The
+  # peek budget broke that equivalence: with several groups visible, a
+  # plain "is the partner below?" bit scores a float that lands in the
+  # very next group exactly the same as one that falls three groups. C8 is
+  # about the FOLLOWING bracket specifically, so distance has to be graded.
+  defp reach_table(_arr, m, nsgb) when nsgb >= m, do: %{}
+
+  defp reach_table(arr, m, nsgb) do
+    nsgb..(m - 1)//1
+    |> Enum.reduce({%{}, 1, nil}, fn j, {acc, d, prev} ->
+      points = elem(arr, j).points
+      d = if prev != nil and points != prev, do: d + 1, else: d
+      {Map.put(acc, j, d), d, points}
+    end)
+    |> elem(0)
+  end
+
+  defp bracket_edge_weight(a, b, j, sgb, reach, ctx, bands, single_bye?) do
     # dutch.cpp:607 — no edge unless the LARGER index is a resident or
     # lower, which is what stops two MDPs being paired with each other.
     if j >= sgb and legal_pair?(a, b) and colour_compatible?(a, b) do
       a
-      |> edge_rungs(b, j < nsgb, ctx, bands, single_bye?)
+      |> edge_rungs(b, reach, ctx, bands, single_bye?)
       |> Enum.map(fn {_label, value, span} -> {value, span} end)
       |> ranked()
       |> Kernel.*(bands.reserve)
@@ -1285,10 +1353,16 @@ defmodule OpenPair.Pairing do
   # you whether the two implementations agreed.
   #
   # `a` is the higher-placed player of the pair, `b` the lower.
-  defp edge_rungs(a, b, in_current, ctx, bands, single_bye?) do
+  defp edge_rungs(a, b, reach, ctx, bands, single_bye?) do
+    in_current = reach == 0
     in_next = not in_current
     s = bands.count_span
+    max_reach = Map.get(bands, :max_reach, 1)
     place = Map.fetch!(bands.places, a.points)
+
+    # Nearer is better: a float landing in the very next score group
+    # scores above one that falls further. See `reach_table/3`.
+    nearness = if in_next, do: max(max_reach + 1 - reach, 1), else: 0
 
     {c1, c2, c3, c4} = colour_criteria(a, b)
     {f1, f2, f3, f4} = float_criteria(a, b)
@@ -1312,8 +1386,9 @@ defmodule OpenPair.Pairing do
       # C6, then C7 graded by which score group got paired.
       {"C6 pairs in bracket", bit(in_current), s},
       {"C7 scores paired", gate.(place, in_current), bands.place_span},
-      # C8, the same two rungs one bracket down.
-      {"C8 pairs next bracket", bit(in_next), s},
+      # C8, the same two rungs one bracket down — but graded by how far
+      # down, since the peek budget makes several groups visible at once.
+      {"C8 pairs next bracket", nearness, s * (max_reach + 1)},
       {"C8 scores next bracket", gate.(place, in_next), bands.place_span},
       {"C9 bye unplayed games", gate.(c9_rank(a, b, ctx), single_bye?), s * s},
       # C10-C13, `insertColorBits`.
@@ -3104,14 +3179,30 @@ defmodule OpenPair.Pairing do
   end
 
   # Absolute criterion C2: nobody receives a second pairing-allocated bye.
-  # bbpPairings' `eligibleForBye` phrases it as "no unplayed game already
-  # worth at least a win", which also rules out a player who took a forfeit
-  # win — a half-point bye leaves them eligible. Enforced as a hard
-  # requirement on the cascade's final state rather than scored, so the
-  # backtracking search has to find a legal bye assignee or report that
-  # none exists.
+  # bbpPairings' `eligibleForBye` (common.h:104) disqualifies a player who
+  # has ANY unplayed game either worth at least a win, or that was a
+  # pairing-allocated bye:
+  #
+  #     U   pairing-allocated bye        both limbs
+  #     F   full-point bye (arbiter)     worth a win
+  #     +   forfeit win                  worth a win
+  #     W   unplayed win                 worth a win
+  #
+  # and leaves eligible the ones worth less: `H` (half-point bye), `Z`
+  # (zero-point bye), `D` (unplayed draw), `L` (unplayed loss).
+  #
+  # `W` was missing here. The fuzz harness never generates it — it only
+  # produces `H`/`Z` byes and `+`/`-` forfeits — so no measurement would
+  # have caught it, but a real TRF can carry one and it would have let a
+  # player take a second full point without playing.
+  #
+  # Enforced as a hard requirement on the cascade's final state rather
+  # than scored, so the search has to find a legal bye assignee or report
+  # that none exists.
+  @bye_disqualifying_results ~w(U F + W)
+
   defp eligible_for_bye?(player) do
-    not Enum.any?(player.games, &(&1.result in ["U", "F", "+"]))
+    not Enum.any?(player.games, &(&1.result in @bye_disqualifying_results))
   end
 
   defp assign_colour_with_history({a, b}) do

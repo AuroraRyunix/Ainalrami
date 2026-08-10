@@ -269,15 +269,16 @@ rounds everywhere:
 
 | field | global (now default) | per-bracket (now fallback) |
 |---|---|---|
-| 4-40, 200x9 | **95.97% / 98.64%** | 90.29% / 97.21% |
+| 4-40, 200x9 | **97.51% / 99.26%** | 90.29% / 97.21% |
 | 60-80, 20x9 | **99.44% / 99.97%** | 82.22% / 97.99% |
 | 90-120, 8x9 | **98.61% / 99.87%** | 86.11% / 99.03% |
-| 4-40 + 10% forfeits | **95.72% / 98.66%** | 88.70% / 96.90% |
-| 4-40 + 8% byes | **86.70% / 96.48%** | 81.95% / 95.08% |
+| 4-40 + 10% forfeits | **97.03% / 99.16%** | 88.70% / 96.90% |
+| 4-40 + 8% byes | **87.65% / 96.99%** | 81.95% / 95.08% |
 
-Confirmed on a larger sample: **500x9 measures 96.38% / 98.83%**, zero
-illegal rounds, 50s. By round it is 100/100/99.80/98.73/96.62/95.39/
-93.79/92.16/88.84 — the old engine's round 9 was 69.46%.
+Confirmed on a larger sample: **500x9 measures 97.88% / 99.39%**, zero
+illegal rounds. By round it is 100/100/99.80/99.16/97.68/97.81/97.34/
+95.25/92.64 — the old engine's round 9 was 69.46%. Against javafo at
+4-40 the engine measures 95.78%.
 
 Byes remain the weakest axis by a wide margin — 86.70% against 95.97%
 without them — and the classifier says why: with byes, `bye_assignee` is
@@ -334,6 +335,23 @@ groups are the wrong unit: a small field has score groups of one to
 three, so four of them is a handful of players; a 60-120 field has groups
 big enough that one already supplies the same context, and paying for
 four costs 2.6x the time for identical output.
+
+**Peeking further then broke C8's own meaning, and fixing that is worth
+another 1.5 points.** bbpPairings' graph stops at the next score group,
+so its `lowerPlayerInNextBracket` bit can only ever mean that one group.
+With several groups visible, the same bit scored a float landing in the
+very next group exactly the same as one falling three groups down — and
+C8 is about the FOLLOWING bracket specifically. Grading the rung by
+distance (`reach_table/3`, nearer is better) measured:
+
+| | 4-40 | +8% byes | +10% forfeits | vs javafo |
+|---|---|---|---|---|
+| plain `in_next` bit | 95.97% | 86.70% | 95.72% | 94.18% |
+| **graded by distance** | **97.51%** | **87.65%** | **97.03%** | **95.78%** |
+
+Worth recording as a general lesson: porting a bit faithfully is not the
+same as porting it correctly once the surrounding structure has changed
+underneath it.
 
 This does NOT contradict "do not read the lookahead as a licence to pair
 across brackets" below — that still holds and is still enforced.
