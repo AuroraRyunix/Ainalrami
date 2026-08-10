@@ -905,19 +905,35 @@ defmodule OpenPair.Pairing do
       arr = List.to_tuple(field)
       chosen = MapSet.new(pairs, fn {w, b} -> Enum.min_max([w, b]) end)
 
-      # Three strictly-ordered bands. Cardinality first, so the repair
+      # Five strictly-ordered bands. Cardinality first, so the repair
       # breaks exactly as many of the cascade's pairs as completion
       # demands — usually one, since the shortfall is usually one pair.
-      # Preservation second, so among complete matchings it keeps as much
-      # as it can of the criteria-best answer the cascade already found.
-      # The criteria themselves last, to settle WHICH of several equally
-      # preserving completions to take: without that the choice falls to
-      # the matcher's arbitrary tie-break, and an arbitrary choice
-      # measurably loses rounds the cascade had right.
+      #
+      # Then the two ABSOLUTE criteria that constrain who may be left
+      # over, both phrased the way `bye_assignee_score/2` phrases them:
+      # pairing a player who may NOT take the bye is preferred, so
+      # whoever ends up unmatched is someone C2 and C5 allow. Cardinality
+      # alone does not pin this down — several maximum matchings usually
+      # exist and they do not leave the same vertex out — so without
+      # these bands the repair would hand `check_completion/3` a complete
+      # matching whose leftover is a player who has already had a bye,
+      # and the whole round was then refused as impossible. That was the
+      # entire "illegal" column at high round counts: 142 rounds out of
+      # 2126 at 39 rounds, every one of which bbpPairings paired legally.
+      #
+      # Preservation fourth, so among the completions that satisfy all of
+      # the above it keeps as much as it can of the criteria-best answer
+      # the cascade already found. The criteria themselves last, to
+      # settle WHICH of several equally preserving completions to take:
+      # without that the choice falls to the matcher's arbitrary
+      # tie-break, and an arbitrary choice measurably loses rounds the
+      # cascade had right.
       s = n + 1
       criteria_span = Integer.pow(s, 9)
       preserve = criteria_span * s
-      cardinality = preserve * s
+      bye_score_band = preserve * s
+      eligibility_band = bye_score_band * s
+      cardinality = eligibility_band * s
 
       edges =
         Enum.flat_map(0..(n - 2), fn i ->
@@ -930,7 +946,14 @@ defmodule OpenPair.Pairing do
               keep =
                 if MapSet.member?(chosen, Enum.min_max([a.rank, b.rank])), do: preserve, else: 0
 
-              [{i, j, cardinality + keep + repair_criteria(a, b, s)}]
+              eligibility = bit(not eligible_for_bye?(a)) + bit(not eligible_for_bye?(b))
+              bye_score = bit(not bye_score_ok?(a)) + bit(not bye_score_ok?(b))
+
+              weight =
+                cardinality + eligibility * eligibility_band + bye_score * bye_score_band +
+                  keep + repair_criteria(a, b, s)
+
+              [{i, j, weight}]
             else
               []
             end

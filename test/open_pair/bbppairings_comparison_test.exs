@@ -380,8 +380,13 @@ defmodule OpenPair.BbppairingsComparisonTest do
 
   defp report(comparisons, errors, exhausted, rounds) do
     IO.puts("\nbbpPairings comparison, #{rounds} round(s) per tournament:\n")
-    IO.puts("  round | exact rounds |    rate | individual pairs |    rate | illegal")
-    IO.puts("  ------+--------------+---------+------------------+---------+--------")
+    IO.puts(
+      "  round | exact rounds |    rate | individual pairs |    rate | refused | illegal"
+    )
+
+    IO.puts(
+      "  ------+--------------+---------+------------------+---------+---------+--------"
+    )
 
     comparisons
     |> Enum.group_by(& &1.round)
@@ -402,7 +407,10 @@ defmodule OpenPair.BbppairingsComparisonTest do
 
       IO.puts(
         "\n  LEGALITY: #{length(illegal)}/#{length(comparisons)} OpenPair rounds were not legal " <>
-          "pairings at all (#{Enum.join(by_kind, ", ")}) — independent of whether bbpPairings agreed."
+          "pairings at all (#{Enum.join(by_kind, ", ")}) — independent of whether bbpPairings agreed. " <>
+          "`raised` means OpenPair REFUSED to pair the round, which is a different failure from " <>
+          "emitting a wrong one: check whether bbpPairings paired it before assuming the round " <>
+          "was genuinely impossible."
       )
     end
 
@@ -452,7 +460,12 @@ defmodule OpenPair.BbppairingsComparisonTest do
     pairs_matched = Enum.sum(Enum.map(measurements, & &1.pairs_matched))
     pairs_total = Enum.sum(Enum.map(measurements, & &1.pairs_total))
 
-    illegal = Enum.count(measurements, &(&1.illegal != nil))
+    # Refusing to pair and emitting a wrong pairing are different
+    # failures and want different responses, so they get their own
+    # columns. Counting them together is how 142 refusals once read as
+    # 142 illegal pairings — see `OpenPair.DeepRoundsTest`.
+    refused = Enum.count(measurements, &(&1.illegal == :raised))
+    illegal = Enum.count(measurements, &(&1.illegal not in [nil, :raised]))
 
     String.pad_leading("#{rounds_matched}/#{rounds_total}", 12) <>
       " | " <>
@@ -461,7 +474,8 @@ defmodule OpenPair.BbppairingsComparisonTest do
       String.pad_leading("#{pairs_matched}/#{pairs_total}", 16) <>
       " | " <>
       String.pad_leading(percent(pairs_matched, pairs_total), 6) <>
-      "% | " <> String.pad_leading("#{illegal}", 7)
+      "% | " <>
+      String.pad_leading("#{refused}", 7) <> " | " <> String.pad_leading("#{illegal}", 7)
   end
 
   defp percent(_matched, 0), do: "n/a"
