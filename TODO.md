@@ -258,7 +258,53 @@ if they float — and nowhere else.
 cascade cannot be landed incrementally, do it in one piece or not at
 all" — has now been acted on and is resolved; see below.**
 
-### The global cascade is now the default, at 95.97%
+### The global cascade is now the ONLY engine, at 98.69%
+
+**Latest numbers first.** Against bbpPairings 6.0.0, exact rounds /
+individual pairs, zero illegal rounds everywhere:
+
+| field | now | the deleted per-bracket cascade |
+|---|---|---|
+| 4-40, 500x9 | **98.69% / 99.59%** | 90.29% / 97.21% |
+| 60-80, 20x9 | **100.00% / 100.00%** | 82.22% / 97.99% |
+| 90-120, 8x9 | **98.61% / 99.87%** | 86.11% / 99.03% |
+| 4-40 + 8% byes | **98.99% / 99.65%** | 81.95% / 95.08% |
+| 4-40 + 15% byes | **98.45% / 99.45%** | — |
+| 4-40 + 10% forfeits | **98.57% / 99.55%** | 88.70% / 96.90% |
+
+Against javafo at 4-40: 96.26%.
+
+**The second engine is gone**, along with ~950 lines: `cascade_brackets`,
+`greedy_cascade`, `bracket_options`, `bracket_candidates`,
+`deeper_floats`, `within_bracket_weight`, `float_weight`, `pair_weight`,
+`placeable_below`, `solve_bracket_all`, `mdp_deviation`,
+`natural_partner_map`, `spans/1`, `lex_scale`, and the five tuning
+attributes that fed them. It was reached zero times in ~1700 rounds with
+byes and forfeits on, and keeping a whole second engine warm for a path
+nothing takes is worse than not having it.
+
+What replaced it as the safety net is part of THIS engine:
+`repair_completion/3`, one whole-field matching that fixes completion
+while keeping as much of the cascade's answer as it can. Only when that
+also fails does `pair_later_round/1` raise `NoValidPairingError` — and at
+that point it is the truth, because a whole-field maximum matching could
+not pair everyone either.
+
+**What made the fallback unnecessary was a one-line bug.**
+`bracket_loop/6` stopped when `rest == []`, which is the state *after*
+popping the final score group — so the round ended on the very iteration
+that first brought that group in, before the players carried into it had
+any chance to pair with it. They were reported stranded and the round was
+handed to the fallback. The correct test is whether a group was
+CONSUMED (`next_group == []`), not whether any are left. That single
+condition was essentially every fallback: ~10% of rounds before, zero
+after, and it moved 4-40 from 97.51% to 98.69% and 60-80 to a perfect
+180/180.
+
+The section below is the older account, kept because the negative
+results in it are still worth having.
+
+### How the global cascade became the default, at 95.97%
 
 **Read this first — much of what follows was written while it was still
 losing, and is kept because the negative results are worth keeping.**

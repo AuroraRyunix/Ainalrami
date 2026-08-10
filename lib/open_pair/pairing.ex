@@ -39,35 +39,21 @@ defmodule OpenPair.Pairing do
 
   alias OpenPair.{Blossom, WeightedMatching}
 
-  # Bounds on the bracket cascade's backtracking search (see
-  # `cascade_brackets/4`): how many alternative matchings of a single
-  # bracket to consider, and how much total work to spend before giving up
-  # and returning a best-effort answer.
+  # This engine used to carry a second pairing path — a per-bracket
+  # cascade with a backtracking search over alternative matchings, tuned
+  # by five module attributes that lived here. It is gone, along with
+  # ~950 lines, because `global_cascade/2` beat it at every field size and
+  # then stopped falling back to it at all.
   #
-  # A genuinely direct, no-backtracking version of this cascade (single
-  # best `bracket_options/2` result per bracket, committed immediately)
-  # was tried and measured: 97.19% -> 81.99% of pairs against javafo at
-  # depth (300 tournaments x 9 rounds), with 302/2521 rounds newly hitting
-  # `NoValidPairingError`. That confirms backtracking is doing real work
-  # THIS weight formula still needs — bbpPairings' own equivalent step
-  # doesn't need it because its weights are richer (bracket-locality as a
-  # graded bonus rather than a hard partition, an exchange-minimization
-  # refinement pass), not because backtracking is unnecessary in
-  # principle. Revisit removing this once the weight formula itself is
-  # closer to that, not before.
-  @budget_key :openpair_cascade_budget
+  # The note those attributes carried is still worth keeping, because it
+  # predicted this: a no-backtracking version of the OLD cascade measured
+  # 97.19% -> 81.99% of pairs, and the reason given was that bbpPairings
+  # needs no backtracking only because its weights are richer — locality
+  # graded rather than partitioned, plus an exchange-minimisation
+  # refinement. That is exactly what the current path implements, and it
+  # needs no backtracking either.
   @bye_score_key :openpair_bye_score
   @expected_rounds_key :openpair_expected_rounds
-  @cascade_budget 2000
-  @alternatives_per_bracket 15
-  @alternatives_per_count 6
-
-  # How many extra players `bracket_candidates/3` will force to float
-  # beyond the bracket's own optimum, and how many candidates it carries
-  # forward at each step. See `deeper_floats/5`.
-  @max_bracket_for_alternatives 16
-  @forced_float_depth 2
-  @forced_float_beam 8
 
   @doc """
   Pairs the next round, dispatching to `pair_round_one/1` when no game
@@ -430,28 +416,28 @@ defmodule OpenPair.Pairing do
     # out does not.
     allowed_byes = rem(length(active), 2)
 
-    Process.put(@budget_key, @cascade_budget)
     Process.put(@bye_score_key, bye_assignee_score(brackets, allowed_byes))
 
     try do
-      case maybe_global_cascade(brackets, allowed_byes) do
+      case global_cascade(brackets, allowed_byes) do
         {:ok, pairs, leftover} ->
-          pairs ++ Enum.map(leftover, &{&1.rank, nil})
+          pairs
+          |> Kernel.++(Enum.map(leftover, &{&1.rank, nil}))
+          # Cheap when everything is already legal (`bye_legal?/3`'s check
+          # is the only work done), and a real safety net if the cascade's
+          # own eligibility check ever has a gap this does not.
+          |> repair_bye_count(active, allowed_byes)
 
         :infeasible ->
-          case cascade_brackets(brackets, [], [], allowed_byes) do
-            {:ok, pairs, leftover} -> pairs ++ Enum.map(leftover, &{&1.rank, nil})
-            :infeasible -> brackets |> greedy_cascade() |> repair_bye_count(active, allowed_byes)
-          end
+          # `global_cascade/2` only reports this once its own completion
+          # repair — a whole-field maximum matching — has also failed to
+          # pair everyone, which means no legal round exists at all.
+          # bbpPairings answers the same case the same way, with
+          # `NoValidPairingException`.
+          raise OpenPair.Pairing.NoValidPairingError,
+                "no legal pairing exists for #{length(active)} active player(s)"
       end
-      # Runs even on the backtracking search's own success path, not just
-      # the greedy fallback: cheap when everything's already legal
-      # (`bye_legal?/3`'s check is the only work done), and a real safety
-      # net if `cascade_brackets/4`'s own eligibility check ever has a gap
-      # `repair_bye_count/3` doesn't.
-      |> repair_bye_count(active, allowed_byes)
     after
-      Process.delete(@budget_key)
       Process.delete(@bye_score_key)
     end
   end
@@ -824,37 +810,23 @@ defmodule OpenPair.Pairing do
   # `bracket_loop/6`, where the dutch.cpp:1636-1643 clearing step lives.
   # Half-ported it measured WORSE than having no C9 rung at all.
 
-  # THE DEFAULT PATH, as of the peek-budget correction. It beats the
-  # per-bracket cascade on every field size measured, by a lot on the ones
-  # an open tournament actually has, and emits no illegal rounds:
+  # THE pairing path. There is no longer a second one.
   #
-  #     field      global cascade        per-bracket cascade
-  #     4-40       95.97% / 98.64%       90.29% / 97.21%
-  #     60-80      99.44% / 99.97%       82.22% / 97.99%
-  #     90-120     98.61% / 99.87%       86.11% / 99.03%
+  # A per-bracket cascade with backtracking used to sit behind this as a
+  # fallback, and for a while it was the default. It is gone: this beat it
+  # on every field size measured, and once the bracket loop stopped ending
+  # a round early (see `bracket_loop/6`) the fallback stopped being
+  # reached at all — zero times in ~1700 rounds, with byes and forfeits
+  # on. Keeping ~950 lines of a second engine warm for a path nothing
+  # takes is worse than not having it.
   #
-  # (exact rounds / individual pairs, against bbpPairings 6.0.0; 200x9,
-  # 20x9 and 8x9 respectively. Against javafo at 4-40 the same swap is
-  # 89.31% -> 94.18%, and javafo is on the superseded 2022 rules, so full
-  # agreement there is not even the goal.)
-  #
-  # It costs time — roughly 0.9s per round on a 120-player field against
-  # the per-bracket cascade's 0.07s, because each bracket is solved up to
-  # eight times and the matcher is superlinear. That is the right trade
-  # for pairing a round once, and `@peek_budget` is what keeps it from
-  # being far worse.
-  #
-  # `OPENPAIR_GLOBAL=0` selects the per-bracket cascade instead. It also
-  # remains the automatic fallback: `global_cascade/2` verifies its own
-  # result and returns `:infeasible` rather than emitting an illegal
-  # round, and `pair_later_round/1` then runs the backtracking search.
-  # That matters because this path has no backtracking of its own.
-  defp maybe_global_cascade(brackets, allowed_byes) do
-    if System.get_env("OPENPAIR_GLOBAL") == "0",
-      do: :infeasible,
-      else: global_cascade(brackets, allowed_byes)
-  end
-
+  # What replaced it as the safety net is `repair_completion/3`, which is
+  # part of THIS engine rather than a different one: if the staged
+  # refinement leaves anyone unpairable, one whole-field matching fixes
+  # the completion while keeping as much of the cascade's answer as it
+  # can. Only when that also fails does `pair_later_round/1` raise
+  # `NoValidPairingError`, which at that point is the truth — a
+  # whole-field maximum matching could not pair everyone either.
   defp global_cascade(brackets, allowed_byes) do
     field =
       brackets
@@ -868,19 +840,133 @@ defmodule OpenPair.Pairing do
     # The staged refinement is not told how many byes are legal, so the
     # result is checked rather than assumed. Falling back to the
     # backtracking cascade beats emitting an illegal round.
+    case check_completion(pairs, leftover, allowed_byes) do
+      :ok ->
+        {:ok, pairs, leftover}
+
+      {:incomplete, reason} ->
+        # The staged refinement finalises pairs one at a time and locks
+        # them, so a bracket can commit a pair that leaves someone further
+        # down unpairable. bbpPairings cannot: its whole-field pre-pass
+        # proves a complete matching exists before it starts, and its
+        # matcher then keeps one. Rather than hand the round to a
+        # different engine, repair it.
+        case repair_completion(field, pairs, allowed_byes) do
+          {:ok, repaired, repaired_leftover} = ok ->
+            case check_completion(repaired, repaired_leftover, allowed_byes) do
+              :ok -> ok
+              {:incomplete, r} -> trace_fallback("repair failed: #{r} (was #{reason})")
+            end
+
+          :infeasible ->
+            trace_fallback("no complete matching exists (#{reason})")
+        end
+    end
+  end
+
+  defp check_completion(_pairs, leftover, allowed_byes) do
     cond do
       length(leftover) > allowed_byes ->
-        trace_fallback("stranded #{length(leftover)}, allowed #{allowed_byes}")
+        {:incomplete, "stranded #{length(leftover)}, allowed #{allowed_byes}"}
 
       not Enum.all?(leftover, &eligible_for_bye?/1) ->
-        trace_fallback("bye assignee is C2-ineligible")
+        {:incomplete, "bye assignee is C2-ineligible"}
 
       not Enum.all?(leftover, &bye_score_ok?/1) ->
-        trace_fallback("bye assignee's score is above the C5 minimum")
+        {:incomplete, "bye assignee's score is above the C5 minimum"}
 
       true ->
-        {:ok, pairs, leftover}
+        :ok
     end
+  end
+
+  # One whole-field matching that must (a) pair as many players as
+  # possible, then (b) keep as much of the cascade's own answer as it can,
+  # then (c) prefer pairing equal scores where it has to choose.
+  #
+  # (a) strictly above (b) is the point: the cascade's answer is already
+  # the criteria-best one it could find, so the ONLY reason to overrule it
+  # is that it left someone unpairable. Ranking cardinality first means
+  # this breaks exactly as many of its pairs as completion requires and no
+  # more — usually one, since the shortfall is usually a single pair.
+  defp repair_completion(field, pairs, allowed_byes) do
+    n = length(field)
+
+    if n < 2 do
+      :infeasible
+    else
+      arr = List.to_tuple(field)
+      chosen = MapSet.new(pairs, fn {w, b} -> Enum.min_max([w, b]) end)
+
+      # Three strictly-ordered bands. Cardinality first, so the repair
+      # breaks exactly as many of the cascade's pairs as completion
+      # demands — usually one, since the shortfall is usually one pair.
+      # Preservation second, so among complete matchings it keeps as much
+      # as it can of the criteria-best answer the cascade already found.
+      # The criteria themselves last, to settle WHICH of several equally
+      # preserving completions to take: without that the choice falls to
+      # the matcher's arbitrary tie-break, and an arbitrary choice
+      # measurably loses rounds the cascade had right.
+      s = n + 1
+      criteria_span = Integer.pow(s, 9)
+      preserve = criteria_span * s
+      cardinality = preserve * s
+
+      edges =
+        Enum.flat_map(0..(n - 2), fn i ->
+          a = elem(arr, i)
+
+          Enum.flat_map((i + 1)..(n - 1), fn j ->
+            b = elem(arr, j)
+
+            if legal_pair?(a, b) and colour_compatible?(a, b) do
+              keep =
+                if MapSet.member?(chosen, Enum.min_max([a.rank, b.rank])), do: preserve, else: 0
+
+              [{i, j, cardinality + keep + repair_criteria(a, b, s)}]
+            else
+              []
+            end
+          end)
+        end)
+
+      matching = WeightedMatching.solve(n, edges)
+      leftover = for i <- 0..(n - 1), not is_map_key(matching, i), do: elem(arr, i)
+
+      if length(leftover) > allowed_byes do
+        :infeasible
+      else
+        repaired =
+          for {i, j} <- matching,
+              i < j,
+              do: assign_colour_with_history({elem(arr, i), elem(arr, j)})
+
+        {:ok, repaired, leftover}
+      end
+    end
+  end
+
+  # The subset of the ladder that still means something with no brackets
+  # to speak of: keep equal scores together (C6/C7's whole purpose),
+  # satisfy colour (C10-C13), and respect float history (C14-C17). The
+  # bracket-relative rungs — C8's reach, C9's bye gate — have no referent
+  # in a whole-field matching and are left out rather than faked.
+  defp repair_criteria(a, b, s) do
+    {higher, lower} = order_by_placement(a, b)
+    {c1, c2, c3, c4} = colour_criteria(higher, lower)
+    {f1, f2, f3, f4} = float_criteria(higher, lower)
+
+    ranked([
+      {bit(a.points == b.points), s},
+      {bit(c1), s},
+      {bit(c2), s},
+      {bit(c3), s},
+      {bit(c4), s},
+      {f1, s},
+      {f2, s},
+      {f3, s},
+      {f4, s}
+    ])
   end
 
   defp trace_fallback(reason) do
@@ -992,8 +1078,15 @@ defmodule OpenPair.Pairing do
     # (`bye_assignee_score/2` returns nil rather than aborting), so a last
     # bracket whose players simply cannot play each other would spin here
     # forever: no pairs made, nothing consumed, same arguments next time.
-    # Give up instead and let `global_cascade/2` report `:infeasible`.
-    if rest == [] and new_pairs == [] do
+    #
+    # The test is whether a group was CONSUMED, not whether any are left.
+    # An earlier version stopped on `rest == []`, which is the state after
+    # popping the final group — so the round ended on the very iteration
+    # that first brought that group in, before the players it carried had
+    # any chance to pair with it. They were reported stranded and the
+    # round was handed to the fallback engine. That single wrong condition
+    # was most of the fallbacks.
+    if next_group == [] and new_pairs == [] do
       {pairs, carried}
     else
       bracket_loop(carried, new_sgb, rest, ctx, pairs ++ new_pairs, next_single_bye?)
@@ -1918,96 +2011,6 @@ defmodule OpenPair.Pairing do
   # A current-bracket player who was not paired here IS a downfloater.
   defp mark_float(player, true), do: Map.put(player, :already_floated, true)
   defp mark_float(player, false), do: player
-
-  # Depth-first over the brackets, taking each bracket's own best matching
-  # first and only reconsidering it when everything downstream turns out to
-  # have no legal completion. Pairing each bracket greedily is what stranded
-  # a final bracket of two players who had already met (seed 14) — the
-  # bracket above had a slightly worse matching that floated two more
-  # players down, which is exactly what javafo picks.
-  #
-  # @alternatives_per_bracket caps the branching and @cascade_budget the
-  # total work, because this is a search and a pathological history should
-  # degrade to a wrong answer rather than to no answer. Confirmed necessary
-  # (not just cautious) by measurement: a direct, no-backtracking version
-  # of this — take each bracket's single best `bracket_options/2` result
-  # and never revisit it — was tried and dropped 97.19% -> 81.99% of pairs
-  # against javafo at depth, with 302/2521 rounds newly reaching
-  # `NoValidPairingError` that this search finds a legal answer for. See
-  # `@budget_key`'s own doc for the full account.
-  defp cascade_brackets([], floaters, pairs, allowed_byes) do
-    if length(floaters) <= allowed_byes and Enum.all?(floaters, &eligible_for_bye?/1) and
-         Enum.all?(floaters, &bye_score_ok?/1) do
-      {:ok, pairs, floaters}
-    else
-      :infeasible
-    end
-  end
-
-  defp cascade_brackets([residents | rest], floaters, pairs, allowed_byes) do
-    budget = Process.get(@budget_key, 0)
-
-    if budget <= 0 do
-      :infeasible
-    else
-      Process.put(@budget_key, budget - 1)
-      bracket = Enum.sort_by(floaters ++ residents, &{-&1.points, &1.rank})
-
-      # ONE bracket of lookahead, not a recursive merge. bbpPairings scores
-      # exactly this current-and-next slice too (`computeBaseEdgeWeights`
-      # is handed `playersByIndex`, built from the current bracket plus the
-      # next score group and nothing beyond it).
-      lookahead =
-        case rest do
-          [next | _] -> next
-          [] -> []
-        end
-
-      bracket
-      |> bracket_options(lookahead, rest == [])
-      |> Enum.reduce_while(:infeasible, fn {new_pairs, unpaired}, _acc ->
-        # Stamped on the way OUT, not the way in: `unpaired` mixes players
-        # who already carried the flag (floated into THIS bracket from
-        # above) with ones floating for the first time — both must enter
-        # the NEXT bracket already marked, so `float_weight/2` can tell
-        # "floated already" from "floating for the first time" at every
-        # level, not just the first.
-        marked = Enum.map(unpaired, &Map.put(&1, :already_floated, true))
-
-        # `rest` is passed through untouched: a peeked-ahead player is only
-        # ever consulted, never taken, so the next bracket still holds
-        # everyone it started with (see `resolve_lookahead/1`).
-        case cascade_brackets(rest, marked, pairs ++ new_pairs, allowed_byes) do
-          {:ok, final_pairs, final_floaters} -> {:halt, {:ok, final_pairs, final_floaters}}
-          :infeasible -> {:cont, :infeasible}
-        end
-      end)
-    end
-  end
-
-  # The score the pairing-allocated bye MUST land on, or `nil` when the
-  # field is even and there is no bye.
-  #
-  # C5 is an absolute criterion in the 2026 handbook, and this engine used
-  # to satisfy it only by accident: the bye fell out of whichever player
-  # was left over by the lowest bracket, which is usually the lowest score
-  # but need not be. A 5-player round-2 case found by diffing JaVaFo
-  # against bbpPairings/Gacrux shows the difference exactly — the 0.5
-  # bracket held two players who had already met, so somebody had to move,
-  # and keeping the top bracket whole (C6, a QUALITY criterion) left the
-  # bye on a 0.5 player when a 0.0 player was reachable. The 2026 answer
-  # breaks the top bracket up instead, because C5 outranks C6 absolutely.
-  #
-  # Answered the way bbpPairings answers it: ONE matching over the entire
-  # remaining field, before any bracket is looked at, whose weights
-  # (`dutch.cpp`, the block guarded by `sortedPlayers.size() & 1u`)
-  # maximise pair count first, then prefer pairing bye-INELIGIBLE players
-  # so the leftover is someone C2 allows, then maximise the score groups
-  # actually paired — which leaves the lowest-scoring eligible player
-  # unmatched. That player's score is the answer.
-  #
-  # This is affordable only because the bracket matcher is polynomial now;
-  # a whole-field match was out of reach for the subset DP this replaced.
   defp bye_assignee_score(_brackets, 0), do: nil
 
   defp bye_assignee_score(brackets, _allowed_byes) do
@@ -2069,404 +2072,6 @@ defmodule OpenPair.Pairing do
     end
   end
 
-  # Used only when no legal completion was found within the search budget:
-  # take each bracket's own best matching and accept whatever falls out,
-  # which is what this engine did unconditionally before. It can emit an
-  # illegal number of byes, but returning a wrong pairing beats returning
-  # none, and the harness reports it either way.
-  defp greedy_cascade(brackets) do
-    {pairs, leftover} =
-      Enum.reduce(brackets, {[], []}, fn residents, {pairs, floaters} ->
-        bracket = Enum.sort_by(floaters ++ residents, &{-&1.points, &1.rank})
-
-        # No lookahead in the fallback. It exists to produce SOMETHING
-        # when the real search has already given up, and `repair_bye_count/3`
-        # cleans up after it either way; threading consumed next-bracket
-        # players through a fold that has no backtracking would add a way
-        # to pair someone twice for no benefit.
-        [{new_pairs, unpaired} | _] =
-          bracket_options(bracket, [], residents == List.last(brackets))
-
-        {pairs ++ new_pairs, Enum.map(unpaired, &Map.put(&1, :already_floated, true))}
-      end)
-
-    pairs ++ Enum.map(leftover, &{&1.rank, nil})
-  end
-
-  # Every matching this bracket admits, best first — one per achievable
-  # number of floaters. The cascade takes the head unless the rest of the
-  # round can't be completed from it.
-  defp bracket_options(ranked, lookahead, bye_bracket?) do
-    # Built from the CURRENT bracket alone, and never consulted for a pair
-    # that reaches into `lookahead` — see `cross_bracket_weight/3` for why
-    # feeding it a merged list is the exact mistake that sank the previous
-    # attempt at this.
-    natural = natural_partner_map(ranked)
-
-    indexed =
-      (Enum.map(ranked, &Map.put(&1, :bracket_zone, :current)) ++
-         Enum.map(lookahead, &Map.put(&1, :bracket_zone, :lookahead)))
-      |> Enum.with_index()
-      |> Enum.map(fn {p, i} ->
-        p |> Map.put(:bracket_pos, i) |> Map.put(:colour_stats, colour_stats(p))
-      end)
-
-    bracket_spans = spans(indexed)
-    placeable = placeable_below(indexed)
-    pair_fun = &pair_weight(&1, &2, natural, bracket_spans)
-    float_fun = &float_weight(&1, bracket_spans, bye_bracket?, placeable)
-
-    indexed
-    |> bracket_candidates(pair_fun, float_fun)
-    |> Enum.map(fn {_weight, pairs, floaters} ->
-      {Enum.map(pairs, &assign_colour_with_history/1), floaters}
-    end)
-  end
-
-  # The bracket's own optimum, plus one alternative per player who could
-  # have floated instead — `{weight, pairs, floaters}`, best first.
-  #
-  # The alternatives are the whole reason this isn't a single matcher
-  # call. A bracket's optimum can strand a later one, and what the
-  # cascade needs to vary is WHICH players float, not how many: traced on
-  # seed 73 round 4, where the 1.0 bracket's best two-pair matching floats
-  # player 12, who has already played the only player below them, and the
-  # round cannot finish. javafo takes a different two-pair matching that
-  # floats player 10.
-  #
-  # `OpenPair.Matching`'s subset DP used to produce these for free — it
-  # enumerates every subset anyway, so keeping the best few per floater
-  # count cost nothing. A blossom matcher returns one optimum, so each
-  # alternative has to be asked for explicitly: re-solve with one player
-  # removed, which forces that player to float and lets the matcher find
-  # the best arrangement of everyone else around that. Still polynomial,
-  # where the DP was O(2^n) — see `solve_bracket/3`.
-  #
-  # Players already floating in a candidate are skipped when extending it:
-  # forcing a player to float who is ALREADY floating just reproduces it.
-  #
-  # One forced float is NOT enough, and the reason is the seed 14 case in
-  # `OpenPair.Matching`'s own doc: the cascade sometimes has to float an
-  # extra PAIR of players down so a later bracket can complete. Forcing a
-  # single player only ever reaches the next float count up, so a
-  # depth-one version left 6 rounds per 421 with no legal completion at
-  # all, against the DP's 0 — the DP got every float count for free,
-  # because enumerating subsets is what it does. Extending the best few
-  # candidates by one more forced float, `@forced_float_depth` times over,
-  # buys those deeper counts back at `@forced_float_beam * n` solves
-  # instead of `2^n` states.
-  defp bracket_candidates(indexed, pair_fun, float_fun) do
-    # Two independent axes, and the cascade needs both. `spine` is the
-    # best matching at every achievable float COUNT, exactly (see
-    # `solve_bracket_all/3`). `deeper_floats/5` then varies WHO floats
-    # within a count, which no single solve can express.
-    spine = solve_bracket_all(indexed, pair_fun, float_fun)
-    optimum = Enum.max_by(spine, &elem(&1, 0))
-
-    (spine ++
-       deeper_floats(indexed, [{[], optimum}], pair_fun, float_fun, depth_for(length(indexed))))
-    # An unused peeked-ahead player is NOT a floater — they never left
-    # their own bracket. Dropping them here rather than at the call site
-    # matters, because every ordering and de-duplication decision below
-    # keys on the floater set, and the cascade's whole contract is
-    # "fewest floaters first". Counting untouched next-bracket players as
-    # floaters would make a candidate that simply declined the lookahead
-    # look far worse than one that happened to use it.
-    |> Enum.map(&resolve_lookahead/1)
-    |> Enum.sort_by(fn {weight, _pairs, floaters} ->
-      # The handbook's own order, explicitly rather than via the packed
-      # weight: C6 how many float, C7 which scores float, C8 what that
-      # leaves the following bracket able to do. Only then the packed
-      # per-pair criteria, and last the lexicographic tie-break.
-      {length(floaters), downfloater_scores(floaters), -weight, floater_order(floaters)}
-    end)
-    |> Enum.uniq_by(fn {_weight, _pairs, floaters} ->
-      Enum.sort(Enum.map(floaters, & &1.rank))
-    end)
-    |> Enum.chunk_by(fn {_weight, _pairs, floaters} -> length(floaters) end)
-    |> Enum.flat_map(&Enum.take(&1, per_count_limit(length(indexed))))
-    |> Enum.take(@alternatives_per_bracket)
-  end
-
-  # Deterministic ordering for candidates that tie on BOTH float count and
-  # weight but float different players. Ties are common here and the
-  # choice is not free: leaving it to list order leaves it to whatever
-  # sequence `deeper_floats/5` happened to generate, which is exactly the
-  # kind of accidental tie-break that cost this engine 40 points when the
-  # matcher changed underneath it.
-  defp floater_order(floaters) do
-    floaters |> Enum.map(&(-&1.bracket_pos)) |> Enum.sort()
-  end
-
-  # Extend the best candidates so far by one more forced float, `depth`
-  # times over, collecting every level. Breadth is capped because the
-  # point is to REACH the deeper float counts, not to enumerate them: the
-  # cascade only ever looks past the first candidate when a later bracket
-  # has already failed, and it sorts by float count first regardless.
-  # Ranks of this bracket's players who have at least one legal,
-  # colour-compatible opponent waiting in the peeked-ahead bracket — i.e.
-  # who can actually BE placed if they float down.
-  defp placeable_below(indexed) do
-    {current, lookahead} = Enum.split_with(indexed, &(zone(&1) == :current))
-
-    for player <- current,
-        Enum.any?(lookahead, &(legal_pair?(player, &1) and colour_compatible?(player, &1))),
-        into: MapSet.new(),
-        do: player.rank
-  end
-
-  # C7: "Minimise the scores (taken in descending order) of the
-  # downfloaters."
-  #
-  # Compared as a descending list, so the highest floating score dominates
-  # and only an exact tie there defers to the next — which is what "taken
-  # in descending order" asks for, and is NOT what summing a per-pair term
-  # produces. The packed weight already carries `score_paired`, the same
-  # criterion seen from the paired side; measured, stating it explicitly at
-  # candidate level on top of that is worth +0.36 exact rounds against
-  # bbpPairings at 200x9 (89.93% -> 90.29%), because the lexicographic
-  # comparison and the sum genuinely disagree about which candidate wins.
-  defp downfloater_scores(floaters) do
-    floaters |> Enum.map(& &1.points) |> Enum.sort(:desc)
-  end
-
-  # Drop the peeked-ahead players from a candidate's floater list.
-  #
-  # They were never this bracket's to place: they contribute no edges (see
-  # `pair_weight/4`), so they are always unmatched, and counting them as
-  # floaters would wreck every ordering decision downstream — the cascade's
-  # contract is "fewest floaters first", and a candidate that simply
-  # declined to disturb the next bracket would look like the worst one.
-  defp resolve_lookahead({weight, pairs, floaters}) do
-    {weight, pairs, Enum.reject(floaters, &(zone(&1) == :lookahead))}
-  end
-
-  # How many extra players to force down, scaled to the bracket.
-  #
-  # `deeper_floats/5` costs `beam * depth * n` matcher calls on a bracket
-  # of `n`, and the matcher is superlinear in `n`, so the product runs away
-  # fast. Measured on a 90-player field, one round: depth 0 takes 40ms,
-  # depth 1 takes 818ms, depth 2 takes 7371ms -- 183x for the last step. At
-  # 200x9 against javafo that same step is worth +0.30 exact rounds
-  # (88.06% -> 88.36%): a fine trade on a club field, a terrible one on an
-  # open, and 90 players is an ordinary open.
-  #
-  # Scaled by the reasoning `per_count_limit/1` already uses, and
-  # `OpenPair.Matching`'s `@max_bracket_for_alternatives` before it: a large
-  # bracket has far more ways to pair, so it is the least likely to strand a
-  # later one and the least in need of alternatives at all.
-  #
-  # Confirmed to cost nothing where it actually engages, which the ordinary
-  # 4-40 fuzz range never reaches -- that range almost never builds a
-  # bracket past 16, so the runs showing "byte-identical accuracy" never
-  # exercised this at all. Measured on rosters of 60-80 against javafo:
-  # capped scores 81.48% of rounds and 98.05% of pairs, uncapped 79.63% and
-  # 97.84%. Free, and marginally better, since a longer candidate list
-  # mostly gives the cascade more chances to settle somewhere javafo did
-  # not.
-  defp depth_for(bracket_size) do
-    cond do
-      bracket_size <= @max_bracket_for_alternatives -> @forced_float_depth
-      bracket_size <= 2 * @max_bracket_for_alternatives -> 1
-      true -> 0
-    end
-  end
-
-  # Big brackets get ONE candidate per float count, not `n`.
-  #
-  # This mirrors `OpenPair.Matching`'s own `@max_bracket_for_alternatives`
-  # and adopts its reasoning: a large bracket has far more ways to pair,
-  # so it is the least likely to strand a later one and the least in need
-  # of alternatives. Carrying the full set there is not merely wasteful,
-  # it is worse — measured against javafo at 200x9, offering every
-  # alternative on big brackets let the cascade satisfy itself with a
-  # legal completion from deep in ONE bracket's list where javafo instead
-  # backtracks and re-pairs an earlier bracket. Keeping the cap costs
-  # nothing on the small brackets that actually strand.
-  defp per_count_limit(bracket_size) do
-    if bracket_size > @max_bracket_for_alternatives, do: 1, else: @alternatives_per_count
-  end
-
-  # A seed carries its FORCED set alongside the candidate it produced, and
-  # extending it forces only that set plus one more player. Carrying the
-  # candidate's whole floater list instead is wrong, and quietly so: an
-  # odd bracket's optimum already floats somebody, so re-forcing them
-  # jumped straight from one floater to three and never generated a
-  # single-floater alternative at all — which is precisely the case seed
-  # 73 needs (same float COUNT, different player floating). Measured
-  # against the DP's own candidate list, that omission left 52.6% of
-  # brackets with a shorter list, the misses concentrated at the shallow
-  # float counts the cascade actually reaches.
-  defp deeper_floats(_indexed, _seeds, _pair_fun, _float_fun, 0), do: []
-
-  defp deeper_floats(indexed, seeds, pair_fun, float_fun, depth) do
-    level =
-      seeds
-      |> Enum.take(@forced_float_beam)
-      |> Enum.flat_map(fn {forced, {_weight, _pairs, floaters}} ->
-        # Forcing a player who is already unpaired in this candidate just
-        # reproduces it.
-        floating = MapSet.new(floaters, & &1.bracket_pos)
-
-        # Only this bracket's OWN players are worth forcing out. A
-        # lookahead player is already free to go unpaired at no cost, so
-        # forcing one changes nothing except to hide a cross-bracket
-        # option the matcher might have wanted.
-        indexed
-        |> Enum.reject(&(MapSet.member?(floating, &1.bracket_pos) or zone(&1) == :lookahead))
-        |> Enum.map(fn player ->
-          next = [player | forced]
-          {next, force_floats(indexed, next, pair_fun, float_fun)}
-        end)
-      end)
-      |> Enum.uniq_by(fn {_forced, {_weight, _pairs, floaters}} ->
-        Enum.sort(Enum.map(floaters, & &1.bracket_pos))
-      end)
-      |> Enum.sort_by(fn {_forced, {weight, _pairs, _floaters}} -> -weight end)
-
-    Enum.map(level, fn {_forced, candidate} -> candidate end) ++
-      deeper_floats(indexed, level, pair_fun, float_fun, depth - 1)
-  end
-
-  # The best matching of the bracket with every player in `forced` left
-  # unpaired. Their float cost is added back explicitly, because
-  # `solve_bracket/3` never sees them and so never charges for them.
-  defp force_floats(indexed, forced, pair_fun, float_fun) do
-    forced_positions = MapSet.new(forced, & &1.bracket_pos)
-
-    {weight, pairs, floaters} =
-      indexed
-      |> Enum.reject(&MapSet.member?(forced_positions, &1.bracket_pos))
-      |> solve_bracket(pair_fun, float_fun)
-
-    charged = Enum.reduce(forced, 0, fn player, acc -> acc + float_fun.(player) end)
-    {weight + charged, pairs, forced ++ floaters}
-  end
-
-  # One maximum-weight matching over `players`, as
-  # `{total_weight, pairs, floaters}`.
-  #
-  # Floating is folded into the EDGE weights rather than modelled as a
-  # per-vertex cost, because `WeightedMatching` has no notion of a vertex
-  # weight — it simply leaves a vertex unmatched for free. The objective
-  #
-  #     sum(pair_weight over matched) + sum(float_weight over unmatched)
-  #
-  # is rewritten by adding the constant `sum(float_weight)` over EVERY
-  # player and subtracting it back per edge:
-  #
-  #     sum(pair_weight(a,b) - float_weight(a) - float_weight(b)) + C
-  #
-  # `C` is fixed for a given player set, so the two have the same argmax.
-  # Every transformed weight is comfortably positive — `float_weight/3`'s
-  # base alone is `-max_pair * slots` — which matters because
-  # `WeightedMatching.solve/2` treats a non-positive weight as "no edge".
-  #
-  # `players` may be a strict subset of the bracket (see
-  # `bracket_candidates/3`), so the graph's vertex indices are positions
-  # in THIS list and are deliberately not the same thing as
-  # `:bracket_pos`. The criterion functions keep reading `:bracket_pos`,
-  # which stays fixed to the player's place in the full bracket — that is
-  # what makes an alternative's weights comparable with the optimum's.
-  defp solve_bracket(players, pair_fun, float_fun) do
-    players |> solve_bracket_all(pair_fun, float_fun) |> Enum.max_by(&elem(&1, 0))
-  end
-
-  # The best matching at EVERY achievable float count, best-weight first —
-  # the same guarantee `OpenPair.Matching`'s subset DP gave the cascade,
-  # and for the same reason it is needed: a bracket's own optimum can
-  # strand a later one, and recovering means floating a DIFFERENT number
-  # of players down (seed 14, where javafo floats an extra pair so the
-  # last bracket can complete).
-  #
-  # This costs one solve, not one per count. A primal-dual matcher reaches
-  # its optimum by augmenting a single pair at a time, and the matching
-  # after k augmentations is already maximum-weight among all k-pair
-  # matchings, so `solve_by_cardinality/2` just observes the run that was
-  # happening anyway. Verified against the DP as an independent oracle
-  # over 360 random graphs: every snapshot valid, and optimal for its own
-  # cardinality.
-  #
-  # Approximating this by re-solving with players forcibly removed was
-  # measurably worse and is now only used for the other axis — several
-  # candidates at the SAME count, differing in WHO floats.
-  # FIDE section 3 orders transpositions lexicographically over S2 — which
-  # member of S2 faces S1[0], then S1[1], and so on. Only the S1 side
-  # indexes the sequence.
-  #
-  # The original form here summed BOTH endpoints, minimising the partner
-  # position of every player rather than of the S1 members alone. That is
-  # a different (and stricter) order: it lets an S2 member's own partner
-  # position outvote an earlier S1 member's, which the handbook's rule
-  # never does. Adjudicating the 164 disagreements against this engine's
-  # own ladder found 119 that tie on every criterion C1-C21, and among
-  # those the handbook's order prefers bbpPairings' answer 73 times to
-  # ours 17 — so the tie-break, not the criteria, is what is deciding
-  # them.
-  #
-  # `i < j` always, and `spread` has already forced the S1-vs-S2 halving
-  # by the time this is consulted, so `i` is the S1 endpoint.
-  defp lex_term(i, j, n, lex_pow) do
-    case System.get_env("OPENPAIR_LEX") do
-      "both" -> elem(lex_pow, n - i) * (n - j) + elem(lex_pow, n - j) * (n - i)
-      _ -> elem(lex_pow, n - i) * (n - j)
-    end
-  end
-
-  defp solve_bracket_all([], _pair_fun, _float_fun), do: [{0, [], []}]
-
-  defp solve_bracket_all([only], _pair_fun, float_fun), do: [{float_fun.(only), [], [only]}]
-
-  defp solve_bracket_all(players, pair_fun, float_fun) do
-    n = length(players)
-    arr = List.to_tuple(players)
-
-    {lex_span, lex_pow} = lex_scale(n)
-
-    edges =
-      Enum.flat_map(0..(n - 2), fn i ->
-        a = elem(arr, i)
-
-        Enum.flat_map((i + 1)..(n - 1), fn j ->
-          b = elem(arr, j)
-
-          case pair_fun.(a, b) do
-            nil ->
-              []
-
-            weight ->
-              real = weight - float_fun.(a) - float_fun.(b)
-              [{i, j, real * lex_span + lex_term(i, j, n, lex_pow)}]
-          end
-        end)
-      end)
-
-    n
-    |> WeightedMatching.solve_by_cardinality(edges)
-    |> Enum.map(fn {_pair_count, matching} ->
-      pairs = for {i, j} <- matching, i < j, do: {elem(arr, i), elem(arr, j)}
-      floaters = for i <- 0..(n - 1), not is_map_key(matching, i), do: elem(arr, i)
-
-      # Mirrors the edge weights exactly: a cross-bracket match still costs
-      # its current-bracket player a float, because that is what it means.
-      weight =
-        Enum.reduce(pairs, 0, fn {a, b}, acc -> acc + pair_fun.(a, b) end) +
-          Enum.reduce(floaters, 0, fn player, acc -> acc + float_fun.(player) end)
-
-      {weight, pairs, floaters}
-    end)
-  end
-
-  # One positional digit per score group present, lowest group least
-  # significant, each digit wide enough to count its own members. Returns
-  # `{score -> place value, total span}`.
-  #
-  # Shared by `spans/1` (C7/C18-C21, grading which scores got paired) and
-  # `bye_assignee_score/2` (C5, leaving the lowest score unpaired). Both
-  # need the same "a higher score group outranks any number of lower ones"
-  # ordering, and both rely on the span bounding the total across a whole
-  # bracket — a player belongs to one pair, so the sum of every player's
-  # place value stays below the product.
   defp score_places(players) do
     players
     |> Enum.group_by(& &1.points)
@@ -2477,317 +2082,6 @@ defmodule OpenPair.Pairing do
     end)
   end
 
-  # The scale factor and power table that force the matcher to a single,
-  # CANONICAL choice among equally-optimal matchings.
-  #
-  # A maximum-weight matcher may return any optimum, and this weight
-  # function leaves a great many: measured over a 20x9 javafo run,
-  # `WeightedMatching` and `OpenPair.Matching`'s subset DP reach an
-  # identical optimal weight in every one of 28,614 brackets, but return a
-  # DIFFERENT matching in 4.9% of them. A round holds ~15 brackets, so
-  # about half of all rounds caught at least one, which is exactly the
-  # 85% -> 45% of exact rounds the move to `WeightedMatching` cost before
-  # this existed.
-  #
-  # The DP's choice was worth ~40 points of round agreement, because its
-  # enumeration order — lowest-indexed player first, lowest-indexed
-  # partner wins a tie — approximates FIDE's real rule: the SMALLEST
-  # transposition of the natural order (Articles 3.3-3.5). That rule is
-  # LEXICOGRAPHIC. Two cheaper things were tried first and both failed on
-  # exactly that point: a "minimise total distance from the natural
-  # partner" weight term measured 87.89% -> 49.41%, because minimising a
-  # SUM genuinely disagrees with minimising position-by-position; and an
-  # equal-weight two-pair local search got 95.1% -> 99.6% of brackets
-  # agreeing but stalled on large ones, where the tied optima differ by
-  # alternating cycles longer than a two-pair swap can cross.
-  #
-  # So the rule is encoded exactly, in the weights, where the matcher
-  # cannot get stuck. Writing `c(p)` for the position p is matched to (or
-  # `n` when unmatched), lexicographic comparison of the whole sequence
-  # `c(0), c(1), ...` is what `lex_key` used to compare. Maximising
-  #
-  #     S = sum over p of B^(n-p) * (n - c(p))
-  #
-  # minimises that sequence, and S splits over edges: an edge `{i, j}`
-  # contributes `B^(n-i) * (n-j) + B^(n-j) * (n-i)`, with the unmatched
-  # positions folding into a constant. `B = n + 2` is the smallest base
-  # that works, and it is exactly sufficient rather than merely large: two
-  # matchings first differing at position p0 differ there by at least
-  # `B^(n-p0)`, while every later position together can differ by at most
-  # `n * B^(n-p0) / (B-1)`, so the leading term wins as soon as
-  # `B - 1 > n`.
-  #
-  # `lex_span` then lifts the real criteria above the whole tie-break, the
-  # same discipline `spans/1` uses internally: `S < B^(n+1)`, so
-  # multiplying the real weight by `B^(n+1)` leaves the tie-break strictly
-  # below every documented criterion, unable to buy a single one.
-  defp lex_scale(n) do
-    base = n + 2
-    powers = for k <- 0..(n + 1), do: Integer.pow(base, k)
-    table = List.to_tuple(powers)
-    {elem(table, n + 1), table}
-  end
-
-  # Upper bounds for the two non-boolean criteria, so `ranked/1` can pack
-  # them without one bleeding into the next. Computed per bracket rather
-  # than as global constants because both are bounded by the bracket, and
-  # a fixed constant that's too small silently corrupts the ordering.
-  # A criterion's span has to exceed the largest TOTAL every
-  # lower-priority criterion can reach across the whole bracket — every
-  # pair and every float — not merely the largest value a single pair can
-  # contribute. Otherwise a high-priority criterion can lose to the SUM of
-  # low-priority ones spread over several pairs, which is precisely what
-  # an 11-player round-3 disagreement (seed 12) turned out to be: one step
-  # of MDP displacement, correctly the more important term, was outvoted
-  # by a rank tie-break plus a spread difference on two other pairs.
-  #
-  # bbpPairings avoids this by shifting each criterion left by
-  # `playerCountBits` instead of by a single bit. Multiplying every span
-  # by the bracket size is the same guarantee, arithmetic instead of bits.
-  defp spans(indexed) do
-    slots = length(indexed)
-    max_rank = Enum.max(Enum.map(indexed, & &1.rank))
-
-    # bbpPairings does not merely ask WHETHER a pair stays inside the
-    # bracket, it grades WHICH SCORES got paired there — `computeEdgeWeight`
-    # sets a bit at `scoreGroupShifts[higherPlayer.score]`, one field per
-    # score group, the lowest score group at shift 0 and each higher group
-    # further left by enough bits to count its own members.
-    #
-    # Reproduced here as positional arithmetic rather than bit shifts, the
-    # same substitution `spans/1` already makes everywhere else: each score
-    # group is a digit whose radix is its own size + 1, so a group's pair
-    # count can never carry into the next group's digit, and a higher score
-    # group's digit is more significant. Maximising the resulting number
-    # therefore means "pair the highest score group as fully as possible,
-    # then the next", which is exactly what the bit layout buys.
-    {score_place, score_paired} = score_places(indexed)
-
-    spans = %{
-      slots: slots,
-      # A single boolean: is this pair fully within the CURRENT bracket
-      # (both `:current`), or does it reach into the peeked-ahead next
-      # bracket (`:lookahead`)? Placed ABOVE colour, matching
-      # `computeEdgeWeight`'s own order (`lowerPlayerInCurrentBracket` is
-      # scored before any colour bit) — bbpPairings maximizes pairs
-      # WITHIN a bracket first, and only lets a cross-bracket pair win on
-      # colour/float/spread when the bracket itself can't do better
-      # alone. See `pair_weight/4`'s doc for why the deviation term is
-      # simply absent (not merely low-priority) for a cross-bracket pair.
-      locality: 2,
-      # The graded companions of `locality`, in bbpPairings' own order:
-      # current-bracket pair COUNT (that is `locality`), then current
-      # -bracket SCORES paired, then next-bracket pair count, then
-      # next-bracket scores paired — all four above any colour bit.
-      #
-      # Porting `locality` alone and stopping was measured, and it is worse
-      # than not doing it at all: 86.40% -> 43.82% of rounds against javafo.
-      # A lone boolean says a cross-bracket pair is merely second-best
-      # without saying anything about HOW far it reaches, so the matcher
-      # spends cross-bracket pairs freely across large score gaps.
-      score_paired: score_paired,
-      score_place: score_place,
-      colour: slots + 1,
-      float_pair: 2 * slots + 1,
-      float_single: slots + 1,
-      deviation: slots * slots + 1,
-      spread: slots * max_rank + 1
-    }
-
-    # The unit value of each criterion is the product of every span below
-    # it, so `float_weight/2` can place its own terms at the right height
-    # relative to the pair criteria rather than guessing a magnitude.
-    unit_deviation = spans.spread
-    # C18-C21 sit directly below C14-C17: same four float-history questions,
-    # asked about the score DIFFERENCE rather than the count. Each is
-    # bounded by `score_paired` for the same reason C7 is — a player belongs
-    # to one pair, so the total over a bracket cannot exceed the sum of
-    # every player's own place value.
-    unit_s21 = unit_deviation * spans.deviation
-    unit_s20 = unit_s21 * spans.score_paired
-    unit_s19 = unit_s20 * spans.score_paired
-    unit_s18 = unit_s19 * spans.score_paired
-    unit_f4 = unit_s18 * spans.score_paired
-    unit_f3 = unit_f4 * spans.float_single
-    unit_f2 = unit_f3 * spans.float_pair
-    unit_f1 = unit_f2 * spans.float_single
-    unit_c4 = unit_f1 * spans.float_pair
-    unit_score_paired = unit_c4 * spans.colour * spans.colour * spans.colour * spans.colour
-    unit_locality = unit_score_paired * spans.score_paired
-
-    spans
-    |> Map.put(:unplayed_unit, unit_f4)
-    |> Map.put(:max_pair, unit_locality * spans.locality)
-  end
-
-  # The pairing each bracket would get with no constraints at all, as a
-  # position -> position involution — what Articles 3.2/3.3 call pairing
-  # S1[i] against S2[i]. Everything else is scored as deviation from this
-  # (see `pair_weight/3`), so getting the S1/S2 split itself right matters
-  # more than any tie-break on top of it.
-  #
-  # The split is NOT simply "top half vs bottom half" in general. That's
-  # only the homogeneous case (every player on the same score). A
-  # HETEROGENEOUS bracket — one that floaters (moved-down players, MDPs)
-  # joined from a higher score group — puts the MDPs alone in S1 and ALL
-  # the residents in S2 (Article 3.3.1): the MDPs pair against the
-  # best-ranked residents first, and only the residents left over
-  # ("the remainder", Article 3.3.3) then split into halves among
-  # themselves. Confirmed against real `javafo.jar`: an 8-player bracket
-  # of one MDP + seven residents paired the MDP with the FIRST resident
-  # whose colour preference was compatible, not with the resident a
-  # half-split would have given it.
-  defp natural_partner_map(ranked) do
-    n = length(ranked)
-    resident_score = ranked |> Enum.map(& &1.points) |> Enum.min()
-    mdp_count = Enum.count(ranked, &(&1.points > resident_score))
-
-    if mdp_count > 0 and 2 * mdp_count <= n do
-      mdp_map = for i <- 0..(mdp_count - 1), into: %{}, do: {i, mdp_count + i}
-      inverse = for {k, v} <- mdp_map, into: %{}, do: {v, k}
-
-      mdp_map
-      |> Map.merge(inverse)
-      |> Map.merge(half_split_map(2 * mdp_count, n - 2 * mdp_count))
-      |> Map.put(:mdp_count, mdp_count)
-    else
-      Map.put(half_split_map(0, n), :mdp_count, 0)
-    end
-  end
-
-  defp half_split_map(_offset, count) when count < 2, do: %{}
-
-  defp half_split_map(offset, count) do
-    half = div(count, 2)
-
-    Enum.reduce(0..(half - 1), %{}, fn i, acc ->
-      a = offset + i
-      b = offset + half + i
-      acc |> Map.put(a, b) |> Map.put(b, a)
-    end)
-  end
-
-  # `nil` (infeasible) for a rematch — the absolute criterion `Matching`
-  # can never violate. Otherwise: colour-preference satisfaction first
-  # (see `pair_later_round/1`'s doc for why), then the SMALLEST deviation
-  # from the bracket's natural S1[i]-vs-S2[i] correspondence (see
-  # `natural_partner_map/1`).
-  #
-  # That deviation term replaced an earlier "prefer the widest rank
-  # spread" tie-break, which was a guess extrapolated from round 1's own
-  # top-half-vs-bottom-half shape and produced real disagreements with
-  # `javafo.jar`. FIDE's actual procedure (Articles 3.3-3.5) works by
-  # applying the SMALLEST transposition of the natural order that
-  # satisfies the criteria — so when several pairings all satisfy colour
-  # equally, the one closest to the natural correspondence wins, which is
-  # not the same thing as the widest-spread one. Both cases that
-  # originally exposed this (a clean 4-player bracket, and an 8-player
-  # heterogeneous one) are explained by this rule and were not explained
-  # by the spread rule.
-  defp pair_weight(a, b, natural, spans) do
-    if legal_pair?(a, b) and colour_compatible?(a, b) do
-      # A pair with any peeked-ahead player in it — one or both — is scored
-      # but never emitted (`resolve_lookahead/1` discards it). Two
-      # peeked-ahead players are deliberately INCLUDED rather than refused:
-      # bbpPairings passes `lowerPlayerInNextBracket` for those edges too,
-      # and its rung 4 is literally "maximize the number of pairs in the
-      # next bracket". Refusing them throws away the only signal saying
-      # whether the next bracket can pair ITSELF up, which is exactly the
-      # question that should decide how many players to float into it.
-      # The peeked-ahead bracket contributes NO edges. Modelling a downfloat
-      # as a matched cross-bracket edge was tried and measured at 73.40% of
-      # rounds against javafo, against 86.40% with no lookahead at all, and
-      # it breaks something load-bearing: `solve_bracket_all/3` guarantees
-      # the best matching at each PAIR COUNT, but a cross edge counts as a
-      # pair while meaning a float, so that guarantee stops lining up with
-      # real floater counts and the spine silently stops being exact.
-      #
-      # What the lookahead is actually for survives as a per-player signal
-      # in `float_weight/4` instead — see `placeable_below/2`.
-      if zone(a) == :current and zone(b) == :current do
-        within_bracket_weight(a, b, natural, spans)
-      end
-    end
-  end
-
-  defp zone(player), do: Map.get(player, :bracket_zone, :current)
-
-  defp within_bracket_weight(a, b, %{mdp_count: mdp_count} = natural, spans) do
-    # bbpPairings passes (higherPlayer, lowerPlayer) by bracket order, and
-    # the absolute-preference tie-break in `colour_criteria/2` is not
-    # symmetric in the two, so the roles have to be assigned the same way
-    # here rather than taking `a`/`b` as the matcher happens to give them.
-    {higher, lower} = if a.bracket_pos <= b.bracket_pos, do: {a, b}, else: {b, a}
-    {c1, c2, c3, c4} = colour_criteria(higher, lower)
-    {f1, f2, f3, f4} = float_criteria(higher, lower)
-    {s18, s19, s20, s21} = float_score_criteria(higher, lower, spans)
-
-    deviation = mdp_deviation(a, b, natural, mdp_count)
-
-    ranked(
-      [
-        {1, spans.locality},
-        {Map.fetch!(spans.score_place, higher.points), spans.score_paired},
-        {bit(c1), spans.colour},
-        {bit(c2), spans.colour},
-        {bit(c3), spans.colour},
-        {bit(c4), spans.colour},
-        {f1, spans.float_pair},
-        {f2, spans.float_single},
-        {f3, spans.float_pair},
-        {f4, spans.float_single},
-        {s18, spans.score_paired},
-        {s19, spans.score_paired},
-        {s20, spans.score_paired},
-        {s21, spans.score_paired}
-      ] ++ ordering_rungs(a, b, deviation, spans)
-    )
-  end
-
-  # `deviation` and `spread` are NOT FIDE criteria. They stand in for
-  # section 3's transposition-and-exchange procedure, and they sit above
-  # the lexicographic tie-break in `bracket_options/3` — which is an
-  # actual encoding of that procedure ("the smallest transposition of the
-  # natural order"). So the stand-in currently outranks the real thing.
-  #
-  # Adjudicating all 164 disagreements against this engine's own ladder
-  # (`explain_round/3`) says that is where the failures are: 119 of them
-  # tie on every criterion C1-C21, and in 90 of those the lexicographic
-  # order picks bbpPairings' answer over ours. Something below the
-  # criteria is overriding the tie-break, and these two are what is there.
-  #
-  # Kept switchable while that is measured rather than deleted outright.
-  defp ordering_rungs(a, b, deviation, spans) do
-    case System.get_env("OPENPAIR_ORDERING") do
-      "lex" ->
-        []
-
-      "no_spread" ->
-        [{spans.deviation - 1 - deviation, spans.deviation}]
-
-      _ ->
-        [{spans.deviation - 1 - deviation, spans.deviation}, {abs(a.rank - b.rank), spans.spread}]
-    end
-  end
-
-  # C18-C21: the same four float-history questions `float_criteria/2` asks,
-  # weighted by the SCORE DIFFERENCE rather than counted.
-  #
-  #   [C18] Minimise the score differences (taken in descending order) of
-  #         MDPs who received a downfloat the previous round.
-  #
-  # and C19/C20/C21 likewise for upfloats, and for two rounds before. Each
-  # is graded by `spans.score_place`, one digit per score group with the
-  # higher group more significant, which is exactly what "taken in
-  # descending order" asks for: the largest score difference dominates, and
-  # only a tie there defers to the next.
-  #
-  # Same inversion as `float_criteria/2` and for the same reason (see
-  # `docs/fide-criteria.md`): the handbook minimises over the players left
-  # floating, `ranked/1` maximises over the pairs formed, and PAIRING a
-  # player is precisely how you keep them out of the minimised set. So a
-  # player whose float history triggers the criterion contributes their own
-  # place value when this pair rescues them.
   defp float_score_criteria(higher, lower, spans) do
     crossing? = higher.points > lower.points
 
@@ -2834,159 +2128,11 @@ defmodule OpenPair.Pairing do
 
   defp bit(true), do: 1
   defp bit(false), do: 0
-
-  # Deviation from the natural correspondence, applied ONLY to pairs that
-  # involve a moved-down player in a heterogeneous bracket (Article 3.3.1's
-  # "M1 MDPs from S1 against M1 residents from S2"). Measured and weighted
-  # separately from the general rank-spread tie-break below it because the
-  # two genuinely disagree, and only this one is confirmed: replacing the
-  # spread tie-break with a whole-bracket version of this deviation metric
-  # was measured at 33.9% against real `javafo.jar` versus the spread
-  # rule's 66.24% on the identical 2,000-history comparison set, so the
-  # general case keeps spread. Restricting the deviation term to MDP pairs
-  # is what actually fixed the traced heterogeneous-bracket cases (seeds 1
-  # and 5) without giving that back.
-  defp mdp_deviation(a, b, natural, mdp_count) do
-    i = a.bracket_pos
-    j = b.bracket_pos
-
-    # Measured from the MDP's side ONLY, not summed symmetrically over
-    # both. Summing both sides made genuinely different options tie: for a
-    # single MDP at position 0 whose natural partner is position 1,
-    # pairing it with position 2 scored |2-1| + |0-natural[2]| and pairing
-    # it with position 5 scored |5-1| + |0-natural[5]| — both 6, because
-    # the resident's own half-split partner distance drowned out the MDP's.
-    # The resident's natural partner is irrelevant here: Article 3.3.1's
-    # rule is about which resident the MDP takes, so only the MDP's own
-    # displacement counts.
-    cond do
-      i < mdp_count -> abs(j - Map.get(natural, i, j))
-      j < mdp_count -> abs(i - Map.get(natural, j, i))
-      true -> 0
-    end
-  end
-
-  # Deeply negative so any legal pairing (see `pair_weight/2`, always >= 0)
-  # is preferred over floating anyone — floating only ever happens when a
-  # player has no legal partner left in the bracket at all. `player.rank`
-  # is added (not subtracted) so a WORSE-ranked (higher-numbered) player's
-  # float weight is less negative, i.e. preferred, whenever the matcher
-  # has an actual choice of who floats.
-  #
-  # A player who already floated into this bracket from a higher one
-  # (`:already_floated`, stamped by `cascade_brackets/3`) gets a much more
-  # negative base — confirmed against a real `javafo.jar` disagreement
-  # (two bracket levels down, both engines agreed exactly one player had
-  # to float twice, but picked a different one): javafo strongly prefers
-  # floating a bracket's own fresh resident over floating the same player
-  # down two levels in a row when a choice exists, matching bbpPairings'
-  # own "minimise downfloaters" quality criterion (`dutch.cpp`).
-  #
-  # A player who already has an unplayed round in their history (a bye, or
-  # a forfeit) is also strongly protected from downfloating — traced from a
-  # real `javafo.jar` disagreement on a 3-player top bracket
-  # {1, 2, 7} where 7 had taken round 1's bye: the natural S1/S2 split
-  # pairs 1-2 and floats the worst-ranked player (7), which is what this
-  # engine did, but javafo paired 1-7 and floated 2 instead. Colour
-  # satisfaction was identical either way, so the bye history is the only
-  # thing distinguishing the two players.
-  # Every float is worth less than every pair, by an offset larger than any
-  # possible pair weight — the matcher must never buy a float with pairing
-  # quality. Because a bracket of a given parity always floats the same
-  # NUMBER of players, those offsets cancel when two candidate solutions
-  # are compared, leaving the ranked remainder below to decide only WHO
-  # floats, and only once the pairs themselves are equally good.
-  #
-  # That subordination is the point. Hand-tracing an 11-player round-3
-  # disagreement (seed 12) showed both engines producing fully
-  # colour-legal pairings that differed solely in which player took the
-  # bye — and this engine picking the one javafo rejected, because the old
-  # `+ player.rank` tie-break was numerically worth more than a whole step
-  # of MDP displacement. A float preference must never outvote a pairing
-  # criterion; it can only break a tie between them.
-  # A peeked-ahead player costs NOTHING to leave unpaired — they are not
-  # this bracket's responsibility and their own bracket will place them.
-  # A neutral cost is what keeps the lookahead optional: the matcher
-  # reaches into the next bracket only when a cross-bracket pair is
-  # genuinely worth more than the alternatives, never because leaving
-  # someone there is penalised.
-  defp float_weight(%{bracket_zone: :lookahead}, _spans, _bye_bracket?, _placeable), do: 0
-
-  defp float_weight(player, spans, bye_bracket?, placeable) do
-    # The whole value of peeking at the next bracket, expressed as a
-    # property of the player rather than as an edge: floating someone who
-    # has NO legal, colour-compatible partner waiting below strands them,
-    # and the cascade then has to backtrack to discover it. Penalised at
-    # the same near-absolute magnitude as the other structural bars.
-    #
-    # In the final bracket there is nothing below, so every player is
-    # equally unplaceable and the term cancels — it can only ever choose
-    # BETWEEN floaters, never add a bye.
-    stranded = if MapSet.member?(placeable, player.rank), do: 0, else: -spans.max_pair
-    # No number of floats can ever buy a pair, and a solution with more
-    # pairs always wins: `slots` floats together stay below one pair.
-    base = -spans.max_pair * spans.slots
-
-    # Re-floating a player who already floated into this bracket outranks
-    # every pairing criterion. Measured, not assumed: demoting this to a
-    # tie-break below the pair criteria cost seven points of pair
-    # agreement (90.33% -> 83.53%) and most of round 2.
-    repeat = if Map.get(player, :already_floated, false), do: -spans.max_pair, else: 0
-
-    # C2 (nobody receives a SECOND pairing-allocated bye) is an ABSOLUTE
-    # criterion — bbpPairings' own `matchingIsComplete` requires
-    # `eligibleForBye` for the designated bye and fails the WHOLE round
-    # rather than accept anything else (`swisssystems/dutch.cpp`). Distinct
-    # from `unplayed` below (a deliberately SOFT, magnitude-scaled
-    # preference for ANY unplayed round, restricted after seed 15 showed a
-    # hard version of THAT specific protection was wrong): this targets
-    # only actual C2 eligibility, which really is meant to be near-absolute,
-    # not a tie-break.
-    #
-    # Was previously enforced only by `repair_bye_count/3`'s last-resort
-    # Blossom pass, never by the cascade that produces the FIRST answer —
-    # found while tracing why that pass ever needed to run at all: the
-    # primary cascade had no reason not to float an ineligible player
-    # whenever nothing else distinguished the choice.
-    ineligible =
-      if bye_bracket? and not eligible_for_bye?(player), do: -spans.max_pair, else: 0
-
-    # Protecting a player who already holds an unplayed round applies ONLY
-    # in the bracket that actually assigns the bye. bbpPairings guards the
-    # equivalent criterion with `isSingleDownfloaterTheByeAssignee` and
-    # restricts it to players on the bye assignee's score: it is
-    # "minimise the unplayed games of the BYE ASSIGNEE", not a standing
-    # protection against downfloating anyone who once had a bye.
-    #
-    # Applying it everywhere was measurably wrong. Seed 15, round 4: the
-    # 1.5 bracket had to float one of players 6, 12 and 15, and 6-12 is
-    # the natural correspondence — which javafo took, floating 15. This
-    # engine floated 6 instead, purely because 15 held a round-1 bye, and
-    # that protection outweighed the whole pairing difference.
-    unplayed =
-      if bye_bracket?, do: unplayed_rounds(player) * spans.unplayed_unit, else: 0
-
-    # The plain "float the worse-ranked player" convention sits at the
-    # very bottom with rank spread — low enough that it can only ever
-    # break a tie, which is what seed 12 showed it must be.
-    base + repeat + ineligible + stranded - unplayed + player.rank
-  end
-
-  defp unplayed_rounds(player) do
-    Enum.count(player.games, &(not played?(&1)))
-  end
-
-  # bbpPairings' `gameWasPlayed`. Only an actually contested game counts:
-  # a forfeit carries both an opponent and a colour in the TRF, which is
-  # exactly what makes it dangerous — it LOOKS like a played game to any
-  # check that tests for the presence of an opponent or a colour, but
-  # FIDE Art. 16 treats it as unplayed. It must not affect colour balance,
-  # must not extend a repeated-colour run, and counts as an unplayed round
-  # for float direction and bye eligibility.
-  #
-  # Every one of those was wrong here until the harness started generating
-  # forfeits: three separate call sites tested for an opponent or a colour
-  # instead of asking whether the game happened.
+  # Only these three mean a game was actually contested. A forfeit carries
+  # an opponent AND a colour but is legally unplayed, which is why every
+  # caller has to ask whether the game HAPPENED rather than whether there
+  # was an opponent — four separate call sites had that wrong until the
+  # harness started generating forfeits.
   @played_results ~w(1 = 0)
 
   defp played?(game), do: game.result in @played_results

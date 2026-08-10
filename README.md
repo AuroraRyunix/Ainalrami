@@ -25,16 +25,14 @@ OpenPairings as a selectable engine.**
 - **Round 1**: 100% match against `javafo.jar` on a clean 20,000-random-roster
   run (`OpenPair.Pairing.pair_round_one/1`, colour-blind composition diff —
   see `test/open_pair/javafo_comparison_test.exs`).
-- **Round 2+**: **99.85%** composition match (5991/6000 random round-1
-  outcomes) — `OpenPair.Pairing.pair_later_round/1`. The default path is
-  now `global_cascade/2`, a stage-for-stage port of bbpPairings' bracket
-  algorithm; the original per-bracket cascade remains as the fallback
-  when that cannot produce a legal round, and via `OPENPAIR_GLOBAL=0`.
-  Every scoring term in it was measured against real `javafo.jar` rather
-  than derived from the spec; [TODO.md](TODO.md) has the full table,
-  including changes that looked obviously correct and measured *worse*
-  (a bipartite bracket restriction at 10.7%, a natural-correspondence
-  tie-break at 64.95%), all reverted rather than kept for elegance.
+- **Round 2+**: `OpenPair.Pairing.pair_later_round/1` — `global_cascade/2`,
+  a stage-for-stage port of bbpPairings' bracket algorithm (eight
+  matchings per bracket, not one). There is no second pairing path: the
+  per-bracket cascade that used to back it up was deleted once it stopped
+  being reached at all. Every scoring term was measured against real
+  reference output rather than derived from the spec; [TODO.md](TODO.md)
+  has the full table, including changes that looked obviously correct and
+  measured *worse*, kept as negative results rather than quietly dropped.
 - **Depth, against bbpPairings 6.0.0** — the current headline, and the
   reference to steer by, since bbpPairings and Gacrux both implement the
   2026 rules and agree with each other 100% over 324 rounds while JaVaFo
@@ -42,21 +40,20 @@ OpenPairings as a selectable engine.**
 
   | field | exact rounds | individual pairs | illegal |
   |---|---|---|---|
-  | 4-40, 500x9 | **97.88%** | **99.39%** | 0 |
-  | 60-80, 20x9 | **99.44%** | **99.97%** | 0 |
+  | 4-40, 500x9 | **98.69%** | **99.59%** | 0 |
+  | 60-80, 20x9 | **100.00%** | **100.00%** | 0 |
   | 90-120, 8x9 | **98.61%** | **99.87%** | 0 |
-  | 4-40 + 10% forfeits | 97.03% | 99.16% | 0 |
-  | 4-40 + 8% arbiter byes | **98.15%** | **99.44%** | 0 |
-  | 4-40 + 15% arbiter byes | 97.50% | 99.19% | 0 |
+  | 4-40 + 10% forfeits | 98.57% | 99.55% | 0 |
+  | 4-40 + 8% arbiter byes | 98.99% | 99.65% | 0 |
+  | 4-40 + 15% arbiter byes | 98.45% | 99.45% | 0 |
 
-  Against JaVaFo at 4-40 the engine measures 95.78% of exact rounds, and
+  Against JaVaFo at 4-40 the engine measures 96.26% of exact rounds, and
   full agreement there is not the goal — it is on the superseded
   rulebook.
 
-  These numbers come from replacing the original per-bracket cascade with
-  a full port of bbpPairings' bracket algorithm (eight matchings per
-  bracket, not one). TODO.md has the whole account, including the
-  measurements that made it the default and the ones that failed.
+  A 60-80 player open — the ordinary case — now matches the reference on
+  every board of every round tested. TODO.md has the whole account of how
+  it got here, including the measurements that failed.
 - **Legality, independent of javafo**: every player paired exactly once,
   no rematches, and exactly one pairing-allocated bye in an odd active
   field (none in an even one) — **0 illegal rounds** across every
@@ -74,7 +71,7 @@ OpenPairings as a selectable engine.**
   company and why; `tools/adjudicate.exs` then scores BOTH answers with
   OpenPair's own C1-C21 ladder, so each case comes back as "our search
   failed", "our ladder is wrong", or "the criteria genuinely tie". That
-  pair of tools is what found the defect worth 90.29% -> 95.97%.
+  pair of tools is what found the defects worth 90.29% -> 98.69%.
 - **bbpPairings is run directly, not just read as source** —
   `test/support/bbppairings.ex` + `bbppairings_comparison_test.exs`.
   bbpPairings independently confirmed OpenPair's structural-deadlock
