@@ -14,7 +14,9 @@ erl_crash.dump
 /openpair
 
 # scratch dumps from large fuzz/comparison runs (thousands of .trf/.txt
-# files, not meant to be tracked) — see overnight_run/run.sh
-/overnight_run/bye/
-/overnight_run/forfeit/
+# files, not meant to be tracked) — see overnight_run/run.sh. Covers
+# every dated/versioned dump directory (bye/, forfeit/, bye_v1_pre_fix/,
+# etc.), not just the two names run.sh currently writes.
+/overnight_run/bye*/
+/overnight_run/forfeit*/
 /overnight_run/*.log

@@ -354,20 +354,36 @@ outcome. **Fixed** with an `n <= 1` short-circuit (split into
 `bye_assignee_score/2` and `bye_assignee_score_from_field/2`): `n == 1`
 returns that lone player's own score directly, `n == 0` returns `nil`
 the same way the pre-existing `allowed_byes == 0` clause does. Verified
-against the saved repro: `crash_reports/seed4886-r5-p5.trf` now returns
-`[{3, nil}]`, byte-for-byte the same bye bbpPairings gave it. Full
-100,000×9 re-run queued to confirm at scale, not just on the one saved
-case.
+against the saved repro (`crash_reports/seed4886-r5-p5.trf` — copied
+into `test/fixtures/bye_assignee_score/one-candidate-left.trf` as a real
+regression test, `test/open_pair/bye_assignee_score_test.exs`, confirmed
+to fail on pre-fix code and pass on the fix) and then at the same scale
+the bug was found at: **re-ran the identical 100,000×9 bye-rate
+overnight batch**. 0 raised exceptions (was 95), illegal rounds
+102 → 7, exact-round matches 839565 → 839660 — up by exactly 95, so
+every one of those 95 crashes now produces bbpPairings' own correct
+pairing, not merely a legal one. Forfeit-axis batch, re-run identically,
+is unchanged (99.93%/99.98%/0 illegal both times) — confirms the fix
+didn't touch anything it shouldn't have.
 
-`crash_reports/seed4385-r5-p4.trf` (round 5, 4 players, same overnight
-run) is a **separate, still-open bug** — turns out NOT the same family.
-It never raised at all; `Pairing.pair_next_round/2` genuinely returns
-`{:ok, []}` for a 4-player round bbpPairings pairs cleanly as
-`{2,3},{4,1}`, and still does after the fix above (confirmed by direct
-re-run). Something in the cascade/repair fallback is deciding "no legal
-answer" and returning empty instead of either finding the real pairing
-or raising `NoValidPairingError` the way a genuine deadlock should. Not
-investigated further yet — flagged here so it isn't lost, not fixed.
+The remaining 7 illegal rounds turned out to be mostly explainable, and
+mostly NOT the same bug as `bye_assignee_score/2`. Of the 5
+`OpenPair: []` cases the new run dumped, 4 share one exact shape: EVERY
+active player in the field already carries a `0000 - Z`/`0000 - H` game
+for the very round being paired — i.e. the fuzz harness's own
+`assign_requested_byes/1` (called before every round, including round
+1) happened to roll a pre-assigned bye for the entire field at once, a
+genuinely degenerate input (a "bye" granted before the round it applies
+to has even been paired for anyone) rather than a real tournament state.
+Whether `{:ok, []}` is actually the RIGHT answer there, or bbpPairings'
+own willingness to still pair such a field is the more correct reading,
+isn't resolved — flagged as a maybe-artifact, not chased further.
+
+`crash_reports/seed4385-r5-p4.trf` (round 5, 4 players) is the ONE
+confirmed-genuine remaining case — real prior history, real points
+(3.5/2.0/2.5/0.5), nobody pre-byed, still returns `{:ok, []}` where
+bbpPairings pairs `{2,3},{4,1}` cleanly, both before and after tonight's
+fix. Still open, still not investigated past this point.
 
 **Confirms as arbiter-bye-specific, not a general odd-field issue**: the
 matching `PAIRING_FUZZ_FORFEIT_PCT=10` overnight run (same 100,000

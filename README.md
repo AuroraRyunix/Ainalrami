@@ -44,20 +44,21 @@ OpenPairings as a selectable engine.**
   | 60-80, 20x9 | **100.00%** | **100.00%** | 0 |
   | 90-120, 8x9 | **100.00%** | **100.00%** | 0 |
   | 4-40 + 8% arbiter byes | 99.76% | 99.94% | 0 |
-  | 4-40 + 15% arbiter byes, 100,000x9 | **99.97%** (839565/839776) | **99.99%** (8484247/8484704) | 102 |
+  | 4-40 + 15% arbiter byes, 100,000x9 | **99.99%** (839660/839776) | **100.00%** (8484342/8484704) | 7 |
   | 4-40 + 10% forfeits, 100,000x9 | **99.93%** (838793/839417) | **99.98%** (9934140/9936166) | 0 |
 
   Both the bye and forfeit rows above are 100,000-tournament overnight
   runs, not the earlier 300-tournament samples — same shape in both
-  (99.6% -> 99.97% byes, 99.5% -> 99.93% forfeits), but at two orders of
+  (99.6% -> 99.97%+ byes, 99.5% -> 99.93% forfeits), but at two orders of
   magnitude more rounds the confidence interval on "how rare is the
-  remaining gap" is far tighter. Only the bye run's 102 illegal rounds
-  are new information (see **Legality** below, this used to read 0) —
-  the forfeit run, same scale, found zero, which points at the illegal
-  cases being specific to the arbiter-bye path rather than a general
-  odd-field issue: pre-assigning H/Z byes shrinks a round's actual active
-  field below its nominal size, which is what makes the rare "exactly one
-  player left needing the round's bye" case actually reachable.
+  remaining gap" is far tighter. The bye row is a second, POST-FIX
+  overnight run — see **Legality** below for what the first one at this
+  scale found (102 illegal rounds, not the 0 every smaller sample had
+  shown) and what fixing it moved: 95 fewer illegal rounds, and exact-
+  round matches up by exactly 95, so every one of them now produces
+  bbpPairings' own correct answer, not merely a legal one. The forfeit
+  run is unchanged between the two passes (99.93%/99.98%/0 both times),
+  confirming the fix didn't touch anything it shouldn't have.
 
   On plain tournaments the engine reproduces bbpPairings **exactly** —
   every board of every round, at every field size tested. Confirmed on a
@@ -83,24 +84,32 @@ OpenPairings as a selectable engine.**
   `OpenPair.Pairing.NoValidPairingError` rather than emit a best-effort
   illegal result, matching bbpPairings' own `NoValidPairingException`.
 
-  **That held up to ~5,500 rounds; it does not hold at 839,776.** The
-  100,000-tournament overnight run above found **102 illegal rounds
-  (0.012%)**: 95 raised `ArgumentError` instead of either pairing
-  correctly or raising the intended `NoValidPairingError`, 5 returned the
-  wrong bye count, 2 returned a non-partition (someone seated twice or
-  dropped). The `ArgumentError` cases all reproduce on tiny fields (4-5
-  players) and share one cause, already root-caused: `bye_assignee_score/2`
-  builds its bootstrap-matching edge list over `0..(n-2)`, and when
-  exactly one player is left needing a bye (`n == 1`) that range is
-  `0..-1` — Elixir's default step for a descending range walks `0, -1`,
-  and `elem(arr, -1)` is an invalid index. Not fixed as of this writing;
-  reproductions saved at `crash_reports/seed4886-r5-p5.trf` (the crash)
-  and `crash_reports/seed4385-r5-p4.trf` (a related empty-result case,
-  same run). This is a straightforward, well-scoped fix — an `n <= 1`
-  guard returning the lone player's own score directly — just not yet
-  landed. The moral for this README: "0 illegal rounds" was true at every
-  sample size tested *until it was tested at 100x the previous scale*,
-  which is itself the argument for testing at 100x the previous scale.
+  **That held up to ~5,500 rounds; it did not hold at 839,776 — and a
+  100x-bigger sample is now the standing bar, not ~5,500.** The first
+  100,000-tournament bye-rate run found **102 illegal rounds (0.012%)**:
+  95 raised `ArgumentError` instead of either pairing correctly or
+  raising the intended `NoValidPairingError`, 5 returned the wrong bye
+  count, 2 returned a non-partition. The `ArgumentError` cases all
+  reproduced on tiny fields (4-5 players) and shared one cause:
+  `bye_assignee_score/2` built its bootstrap-matching edge list over
+  `0..(n-2)`, and when exactly one player was left needing a bye
+  (`n == 1`) that range was `0..-1` — Elixir's default step for a
+  descending range walks `0, -1`, and `elem(arr, -1)` is an invalid
+  index. **Fixed** with an `n <= 1` short-circuit, pinned down with a
+  real regression test (`test/open_pair/bye_assignee_score_test.exs`,
+  fails on pre-fix code, passes on the fix), and confirmed at the same
+  scale the bug was found at: re-running the identical 100,000-tournament
+  batch now shows **0 raised exceptions and 7 illegal rounds**, down from
+  102 — the remaining 7 are the wrong-bye-count/non-partition cases,
+  untouched by this fix, still open (see TODO.md; 4 of the 5 dumped
+  `[]`-result cases turned out to share one shape — every active player
+  in the field already pre-byed for the exact round being paired, a
+  fuzz-harness-generated degenerate input rather than confirmed a real
+  engine bug — one, `seed4385-r5-p4.trf`, has real prior history and is
+  a genuine confirmed-open bug). The moral for this README stands either
+  way: "0 illegal rounds" was true at every sample size tested until it
+  was tested at 100x the previous scale, which is the actual argument
+  for testing at 100x the previous scale — repeatedly, not once.
 - **Three engines, not two** — `three_way_comparison_test.exs` runs
   bbpPairings, Gacrux and OpenPair on identical positions. Over 3352
   rounds the two references agreed with each other on **every one**, which
