@@ -2155,6 +2155,30 @@ defmodule OpenPair.Pairing do
       end)
 
     n = length(field)
+
+    # Found by a 100,000-tournament overnight run (PAIRING_FUZZ_BYE_PCT=15
+    # — see TODO.md): with n <= 1 there is at most one candidate, so
+    # there's no pair to build an edge list over at all. The general path
+    # below builds it as `0..(n - 2)`, which for n == 1 is `0..-1` —
+    # Elixir's default step for a descending range walks `0, -1`, and
+    # `elem(arr, -1)` raised ArgumentError instead of pairing (n == 1) or
+    # doing nothing (n == 0). n == 1 is the reachable case in practice
+    # (one genuine bye candidate left after everyone else resolved) —
+    # trivially THEIR score, no matching needed. n == 0 shouldn't arise
+    # given the `allowed_byes == 0` clause above already short-circuits
+    # the no-candidates case, but costs nothing to make safe the same way
+    # rather than assume it can't happen.
+    if n <= 1 do
+      case field do
+        [player] -> player.points
+        [] -> nil
+      end
+    else
+      bye_assignee_score_from_field(field, n)
+    end
+  end
+
+  defp bye_assignee_score_from_field(field, n) do
     arr = List.to_tuple(field)
     {places, place_span} = score_places(field)
     max_place = places |> Map.values() |> Enum.max(fn -> 1 end)

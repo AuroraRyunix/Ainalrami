@@ -334,29 +334,40 @@ them; note that its verdicts have to be read with `explain_round/3`'s
 own C8 accounting in mind, which counts crosses into the immediate next
 group only — the same distinction the fix above turned on.
 
-### `bye_assignee_score/2` crashes when exactly one player is left needing a bye
+### ~~`bye_assignee_score/2` crashes when exactly one player is left needing a bye~~ **fixed**
 
 Found by a 100,000-tournament overnight run (`overnight_run/run.sh`,
 `PAIRING_FUZZ_BYE_PCT=15`) — the first sample large enough to hit it: 102
 illegal rounds out of 839,776 (0.012%), where every previous sample (up
-to ~5,500 rounds) had shown zero. 95 of those are this same crash; the
-other 7 are a wrong bye count (5) and a non-partition (2), not yet
-separately root-caused.
+to ~5,500 rounds) had shown zero. 95 of those were this crash; the other
+7 are a wrong bye count (5) and a non-partition (2), not yet separately
+root-caused.
 
-Root cause: `bye_assignee_score/2` builds its bootstrap-matching edges
+Root cause: `bye_assignee_score/2` built its bootstrap-matching edges
 over `0..(n - 2)` where `n` is how many players are left needing the
 round's bye. When exactly one is left (`n == 1`, a real, reachable case —
 everyone else already resolved, one genuine bye candidate remains), that
-range is `0..-1`. Elixir's default step for a descending range walks
-`0, -1`, and `elem(arr, -1)` is an invalid tuple index — raises
+range was `0..-1`. Elixir's default step for a descending range walks
+`0, -1`, and `elem(arr, -1)` is an invalid tuple index — raised
 `ArgumentError`, not the intended `NoValidPairingError`/legal-pairing
-outcome. Two reproductions saved: `crash_reports/seed4886-r5-p5.trf`
-(the crash itself, round 5, 5 players) and
-`crash_reports/seed4385-r5-p4.trf` (round 5, 4 players — same run,
-returns `[]` instead of pairing, likely the same family). **Not fixed
-yet** — the fix itself looks small (an `n <= 1` guard returning that
-lone player's own score directly, mirroring the `n == 0`/`allowed_byes
-== 0` clause already above it), but hasn't been written or measured.
+outcome. **Fixed** with an `n <= 1` short-circuit (split into
+`bye_assignee_score/2` and `bye_assignee_score_from_field/2`): `n == 1`
+returns that lone player's own score directly, `n == 0` returns `nil`
+the same way the pre-existing `allowed_byes == 0` clause does. Verified
+against the saved repro: `crash_reports/seed4886-r5-p5.trf` now returns
+`[{3, nil}]`, byte-for-byte the same bye bbpPairings gave it. Full
+100,000×9 re-run queued to confirm at scale, not just on the one saved
+case.
+
+`crash_reports/seed4385-r5-p4.trf` (round 5, 4 players, same overnight
+run) is a **separate, still-open bug** — turns out NOT the same family.
+It never raised at all; `Pairing.pair_next_round/2` genuinely returns
+`{:ok, []}` for a 4-player round bbpPairings pairs cleanly as
+`{2,3},{4,1}`, and still does after the fix above (confirmed by direct
+re-run). Something in the cascade/repair fallback is deciding "no legal
+answer" and returning empty instead of either finding the real pairing
+or raising `NoValidPairingError` the way a genuine deadlock should. Not
+investigated further yet — flagged here so it isn't lost, not fixed.
 
 **Confirms as arbiter-bye-specific, not a general odd-field issue**: the
 matching `PAIRING_FUZZ_FORFEIT_PCT=10` overnight run (same 100,000
