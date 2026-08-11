@@ -1,0 +1,5 @@
+seed 4385, round 5, 4 players
+pairs matched: 0/2
+
+OpenPair:     []
+bbpPairings:  [{2, 3}, {4, 1}]

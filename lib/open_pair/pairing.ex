@@ -144,7 +144,33 @@ defmodule OpenPair.Pairing do
       |> Enum.with_index()
       |> Enum.reduce({[], []}, fn {group, i}, {acc, mdps} ->
         next_group = Enum.at(groups, i + 1, [])
-        {report, floated} = explain_bracket(mdps ++ group, group, next_group, partner, ctx)
+        players_below = groups |> Enum.drop(i + 1) |> Enum.map(&length/1) |> Enum.sum()
+
+        # Approximates `bracket_loop/6`'s `single_bye?`/`next_single_bye?`
+        # gate (see that function's own doc) — NOT a full port: the real
+        # gate also requires `ctx.bye_score >= hd(next_group).points` and
+        # every carried MDP's partner to score at least that, both of
+        # which depend on the live cascade's own mid-solve state
+        # (`carried_partner_scores`) that this post-hoc reconstruction
+        # from a finished `pairs` list doesn't have. This is still a real
+        # fix over what it replaces: `edge_rungs/6` used to be called with
+        # a hardcoded `false` here, so C9 (bye unplayed games) never
+        # scored ANYTHING in this diagnostic, regardless of whether the
+        # real search actually had it active — silently blinding
+        # `tools/adjudicate.exs` to C9 on every single case. Confirmed via
+        # direct instrumentation of `pair_bracket/5`'s own `single_bye?`
+        # argument (seed223-r9-p23's score-3.0 bracket: really `true`,
+        # this formula also says `true` for that exact case) that this
+        # approximation is at least not a false negative for the cases
+        # investigated so far — a false POSITIVE (this says true when the
+        # extra conditions above would have said false) is still possible
+        # and would show up as C9 over-counting in some other case.
+        single_bye? =
+          ctx.odd_field? and not is_nil(ctx.bye_score) and rem(players_below, 2) == 0
+
+        {report, floated} =
+          explain_bracket(mdps ++ group, group, next_group, partner, ctx, single_bye?)
+
         {[report | acc], floated}
       end)
       |> elem(0)
@@ -162,7 +188,7 @@ defmodule OpenPair.Pairing do
     end)
   end
 
-  defp explain_bracket(bracket, group, next_group, partner, ctx) do
+  defp explain_bracket(bracket, group, next_group, partner, ctx, single_bye?) do
     ranks = MapSet.new(bracket, & &1.rank)
     score = hd(group).points
 
@@ -216,13 +242,13 @@ defmodule OpenPair.Pairing do
     kept_rungs =
       Enum.map(edges, fn {x, y} ->
         {a, b} = order_by_placement(Map.fetch!(by_rank, x), Map.fetch!(by_rank, y))
-        edge_rungs(a, b, 0, ctx, bands, false)
+        edge_rungs(a, b, 0, ctx, bands, single_bye?)
       end)
 
     cross_rungs =
       Enum.map(cross_edges, fn {x, y} ->
         {a, b} = order_by_placement(Map.fetch!(cross_by_rank, x), Map.fetch!(cross_by_rank, y))
-        edge_rungs(a, b, 1, ctx, bands, false)
+        edge_rungs(a, b, 1, ctx, bands, single_bye?)
       end)
 
     rungs = sum_rungs(kept_rungs ++ cross_rungs)
@@ -2147,11 +2173,42 @@ defmodule OpenPair.Pairing do
           b = elem(arr, j)
 
           if legal_pair?(a, b) and colour_compatible?(a, b) do
+            # NOT `bye_candidate?/2` (the eligible-AND-score<=threshold
+            # test): checked directly against dutch.cpp:766-786, the
+            # bootstrap matching that DETERMINES byeAssigneeScore for an odd
+            # field uses its own separate, simpler inline weight —
+            # `1u + !eligibleForBye(player) + !eligibleForBye(opponent)` —
+            # not the real per-bracket `computeEdgeWeight`/`isByeCandidate`
+            # test. That's not an oversight on the C++ side: `isByeCandidate`
+            # needs `byeAssigneeScore` as an input, which is exactly what
+            # this pass is computing, so testing candidates against it here
+            # would be circular. Confirmed by measurement too — swapping
+            # this to `bye_candidate?(_, nil)` (tried during the
+            # `tools/adjudicate.exs` investigation below) made ~80/2522
+            # rounds newly unpairable where bbpPairings still found a legal
+            # pairing, a large regression, not the intended fix.
             eligibility = 1 + bit(not eligible_for_bye?(a)) + bit(not eligible_for_bye?(b))
             score = Map.fetch!(places, a.points) + Map.fetch!(places, b.points)
             [{i, j, cardinality_unit + eligibility * eligibility_unit + score}]
           else
-            []
+            # dutch.cpp:768-791: `compatible/4`-failing pairs still get a
+            # real edge here (`edgeWeight` starts at, and for these stays,
+            # exactly 0) — the bootstrap matching_computer is built as a
+            # COMPLETE graph, so an incompatible pair is only ever a worse
+            # choice than a compatible one, never an impossible one.
+            # `WeightedMatching.solve/2`'s `build_state/2` silently drops
+            # any edge with weight `0` (`if w > 0`), so a literal port of
+            # "weight 0" would vanish here exactly like the omitted-edge
+            # version this replaces — hence weight `1`, the smallest weight
+            # that still registers, still guaranteed below every compatible
+            # edge's `cardinality_unit`-or-higher floor. Previously this
+            # pair contributed NO edge at all, so a field whose only
+            # legal/colour-compatible pairs can't form a near-perfect
+            # matching (heavy forfeits/absolute-colour clashes) could leave
+            # MORE than one player unmatched here — a case real bbpPairings
+            # doesn't hit at this bootstrap step, since it always has a
+            # complete graph to fall back on.
+            [{i, j, 1}]
           end
         end)
       end)

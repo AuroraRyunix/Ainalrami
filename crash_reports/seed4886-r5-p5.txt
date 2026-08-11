@@ -1,0 +1,5 @@
+seed 4886, round 5, 5 players
+pairs matched: 0/1
+
+OpenPair:     {:raised, %ArgumentError{message: "errors were found at the given arguments:\n\n  * 1st argument: out of range\n"}}
+bbpPairings:  [{3, nil}]

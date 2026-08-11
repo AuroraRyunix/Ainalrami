@@ -44,8 +44,14 @@ OpenPairings as a selectable engine.**
   | 60-80, 20x9 | **100.00%** | **100.00%** | 0 |
   | 90-120, 8x9 | **100.00%** | **100.00%** | 0 |
   | 4-40 + 8% arbiter byes | 99.76% | 99.94% | 0 |
-  | 4-40 + 15% arbiter byes | 99.64% | 99.92% | 0 |
-  | 4-40 + 10% forfeits | 99.52% | 99.91% | 0 |
+  | 4-40 + 15% arbiter byes, 100,000x9 | **99.97%** (839565/839776) | **99.99%** (8484247/8484704) | 102 |
+  | 4-40 + 10% forfeits | 99.52% | 99.91% | (100,000x9 re-run in progress) |
+
+  The 15%-bye row is a 100,000-tournament overnight run, not the earlier
+  300-tournament sample — same shape (99.6% -> 99.97%), but at two orders
+  of magnitude more rounds the confidence interval on "how rare is the
+  remaining gap" is far tighter. The 102 illegal rounds it turned up are
+  new information: see **Legality** below, this used to read 0.
 
   On plain tournaments the engine reproduces bbpPairings **exactly** —
   every board of every round, at every field size tested. Confirmed on a
@@ -63,15 +69,32 @@ OpenPairings as a selectable engine.**
   measurements that failed.
 - **Legality, independent of javafo**: every player paired exactly once,
   no rematches, and exactly one pairing-allocated bye in an odd active
-  field (none in an even one) — **0 illegal rounds** across every
-  configuration currently measured, including the hardest stress test
-  (30 rounds, 32-40 players) and arbiter-assigned-bye-heavy tournaments
-  (800 generated tournaments, ~5500 rounds, mixed bye rates). When no
-  legal pairing can exist at all — a genuine structural deadlock, not a
-  search failure — the engine raises
-  `OpenPair.Pairing.NoValidPairingError` rather than emitting a
-  best-effort illegal result, matching bbpPairings' own
-  `NoValidPairingException`.
+  field (none in an even one) — 0 illegal rounds on every sample up to
+  ~5,500 rounds (the hardest stress test, 30 rounds/32-40 players, and
+  800 arbiter-assigned-bye-heavy generated tournaments). When no legal
+  pairing can exist at all — a genuine structural deadlock, not a search
+  failure — the engine is supposed to raise
+  `OpenPair.Pairing.NoValidPairingError` rather than emit a best-effort
+  illegal result, matching bbpPairings' own `NoValidPairingException`.
+
+  **That held up to ~5,500 rounds; it does not hold at 839,776.** The
+  100,000-tournament overnight run above found **102 illegal rounds
+  (0.012%)**: 95 raised `ArgumentError` instead of either pairing
+  correctly or raising the intended `NoValidPairingError`, 5 returned the
+  wrong bye count, 2 returned a non-partition (someone seated twice or
+  dropped). The `ArgumentError` cases all reproduce on tiny fields (4-5
+  players) and share one cause, already root-caused: `bye_assignee_score/2`
+  builds its bootstrap-matching edge list over `0..(n-2)`, and when
+  exactly one player is left needing a bye (`n == 1`) that range is
+  `0..-1` — Elixir's default step for a descending range walks `0, -1`,
+  and `elem(arr, -1)` is an invalid index. Not fixed as of this writing;
+  reproductions saved at `crash_reports/seed4886-r5-p5.trf` (the crash)
+  and `crash_reports/seed4385-r5-p4.trf` (a related empty-result case,
+  same run). This is a straightforward, well-scoped fix — an `n <= 1`
+  guard returning the lone player's own score directly — just not yet
+  landed. The moral for this README: "0 illegal rounds" was true at every
+  sample size tested *until it was tested at 100x the previous scale*,
+  which is itself the argument for testing at 100x the previous scale.
 - **Three engines, not two** — `three_way_comparison_test.exs` runs
   bbpPairings, Gacrux and OpenPair on identical positions. Over 3352
   rounds the two references agreed with each other on **every one**, which

@@ -334,6 +334,151 @@ them; note that its verdicts have to be read with `explain_round/3`'s
 own C8 accounting in mind, which counts crosses into the immediate next
 group only — the same distinction the fix above turned on.
 
+### `bye_assignee_score/2` crashes when exactly one player is left needing a bye
+
+Found by a 100,000-tournament overnight run (`overnight_run/run.sh`,
+`PAIRING_FUZZ_BYE_PCT=15`) — the first sample large enough to hit it: 102
+illegal rounds out of 839,776 (0.012%), where every previous sample (up
+to ~5,500 rounds) had shown zero. 95 of those are this same crash; the
+other 7 are a wrong bye count (5) and a non-partition (2), not yet
+separately root-caused.
+
+Root cause: `bye_assignee_score/2` builds its bootstrap-matching edges
+over `0..(n - 2)` where `n` is how many players are left needing the
+round's bye. When exactly one is left (`n == 1`, a real, reachable case —
+everyone else already resolved, one genuine bye candidate remains), that
+range is `0..-1`. Elixir's default step for a descending range walks
+`0, -1`, and `elem(arr, -1)` is an invalid tuple index — raises
+`ArgumentError`, not the intended `NoValidPairingError`/legal-pairing
+outcome. Two reproductions saved: `crash_reports/seed4886-r5-p5.trf`
+(the crash itself, round 5, 5 players) and
+`crash_reports/seed4385-r5-p4.trf` (round 5, 4 players — same run,
+returns `[]` instead of pairing, likely the same family). **Not fixed
+yet** — the fix itself looks small (an `n <= 1` guard returning that
+lone player's own score directly, mirroring the `n == 0`/`allowed_byes
+== 0` clause already above it), but hasn't been written or measured.
+
+### C9's real gate needs a persistent whole-round matcher, not a bracket cascade
+
+**Two small, real bugs fixed and kept** (both safe, both measured, no
+regression, no rate change on the corpora tested — the disagreement they
+each touch just never showed up in these particular samples):
+
+- `explain_round/3`/`explain_bracket/6` (the `tools/adjudicate.exs`
+  diagnostic) used to call `edge_rungs/6` with `single_bye?` hardcoded
+  `false`, so C9 ("minimise the bye assignee's unplayed games") never
+  scored anything in this diagnostic, regardless of whether the real
+  search had it active. Fixed with an approximation of `bracket_loop/6`'s
+  own gate (odd field, `bye_score` known, `players_below` even) — not a
+  full port (the real gate also needs `carried_partner_scores`, which a
+  post-hoc reconstruction from a finished `pairs` list doesn't have), but
+  strictly better than a hardcoded `false`.
+- `bye_assignee_score/2`'s bootstrap matching used to simply OMIT an edge
+  between two incompatible (rematch/absolute-colour-clash) players.
+  Checked directly against `dutch.cpp:768-791`: bbpPairings' own
+  bootstrap `matchingComputer` is a COMPLETE graph — an incompatible pair
+  still gets an edge, weight 0, so it's only ever a worse choice than a
+  compatible one, never an impossible one. Ported as weight `1` (not
+  literal `0` — `WeightedMatching.solve/2`'s `build_state/2` silently
+  drops any edge with weight `0`, so a literal port would vanish exactly
+  like the omitted-edge version it replaces). Matters for fields where
+  the legal-only subgraph can't reach a near-perfect matching on its own
+  (heavy forfeits, several absolute-colour clashes) — not exercised by
+  the corpora measured today, so a real gap closed with 0 measured
+  regression, not a proven-worse trade either.
+
+**The real remaining gap, now precisely diagnosed instead of guessed at.**
+A live disagreement (`seed223-r9-p23`, 15% bye rate: bbpPairings/Gacrux
+both give the pairing-allocated bye to rank 6, this engine gives it to
+rank 10 — two players tied on both score and eligibility) turned out to
+be **confirmed non-arbitrary**: ran the identical position through
+Gacrux (`OttoMilvang/TieBreakServer`'s `pairingchecker.py -m dutch`, a
+completely independent implementation) and it agrees with bbpPairings
+exactly, board for board. Two independent engines converging rules out
+"arbitrary tie-break noise" — there is a real, shared rule here.
+
+Built bbpPairings from source (MinGW-w64/g++ 16.2.0, no code changes
+needed beyond adding `DBG_C9`-gated `fprintf` instrumentation around
+`isSingleDownfloaterTheByeAssignee` in `dutch.cpp`) and ran it on
+`seed223-r9-p23` directly, rather than continuing to infer its behaviour
+from reading the source. That produced the actual internal trace, not a
+reconstruction:
+
+- The disqualifying event that should suppress C9 for the 3.0-point
+  bracket's decision fires **one bracket earlier**, while bbpPairings is
+  still processing the 3.5-point bracket — triggered by rank 6, who at
+  that point is only a **preview** member of the 3.5 bracket's own
+  combined solve (its true residents are just {4, 18}, which pair with
+  each other cleanly), not a resident of anything yet.
+- Rank 6's tentative match at that moment, per bbpPairings' own trace,
+  is rank 20 — a player who isn't even loaded into the window this
+  engine's `peek` mechanism would have built at that point.
+- This engine's own `single_bye?`/`next_single_bye?` (`bracket_loop/6`)
+  only ever inspects `collect_bracket/1`'s `partner_scores`, itself
+  scoped to `i < st.nsgb` — true residents of the CURRENT bracket. It
+  never sees a disqualifying signal from a preview/peek member at all,
+  so it computes `true` where the real engine's own
+  `isSingleDownfloaterTheByeAssignee` was `false`.
+
+**Extending `partner_scores` to cover the full peek window (not just
+`i < st.nsgb`) fixes `seed223-r9-p23` exactly** — byte-for-byte the same
+three pairs and the same bye as both bbpPairings and Gacrux, confirmed.
+It also regresses the wider corpus (99.96%/99.96% → 99.92%/99.68% across
+the bye and forfeit samples), breaking two previously-correct cases
+(`seed207-r9-p14`, `seed242-r6-p10` from that run) that were re-verified
+independently correct against Gacrux too. **Ruled out that this was
+simply "peek isn't wide enough"**: re-ran with `OPENPAIR_PEEK=999`
+(effectively the whole remaining field loaded into every bracket's
+`combined`) — `seed223` stays fixed, `seed207`/`seed242` stay broken,
+unchanged from the narrow-peek result. So it isn't reach at all.
+
+**The actual cause: bbpPairings' `matchingComputer` is ONE persistent,
+incrementally-updated matcher for the entire remaining field, built once
+(`dutch.cpp:738`) and never discarded — `computeMatching()` is called
+repeatedly against the SAME instance as brackets are locked in
+(`finalizePair`), so a query late in the round reflects every decision
+already baked in earlier, not just what's currently "visible."
+`OpenPair.Pairing`'s `pair_bracket/5` is the opposite: a fresh,
+stateless `WeightedMatching.solve/2` call every time, scoped to whatever
+`combined` currently holds. A wider `combined` (more peek) makes the
+STATELESS solve see more players, but it's still re-derived from
+scratch against this bracket's own local weight function every time —
+it can never reproduce a tentative match that only exists because of
+specific decisions locked in several brackets earlier. Confirmed this
+distinction is the actual cause, not a remaining edge case of "how wide"
+— see the `OPENPAIR_PEEK=999` result above.
+
+**What a real fix needs**: not a wider peek, not a stricter or looser
+`single_bye?` formula (three variants tried today — blanket disable,
+`rest == []`, wide-peek `partner_scores` — each one either regressed the
+broader corpus or failed to generalise past the one case it was tuned
+against). It needs `OpenPair.Matching`'s solve to become genuinely
+incremental — persisting dual variables/blossom structure across bracket
+transitions the way `matching_computer` does, rather than a fresh
+`solve/2` per bracket — or equivalently, replacing the bracket-cascade
+architecture with one whole-field weighted matching whose edge weights
+already encode every bracket's priority via place value (closer to what
+`dutch.cpp`'s bit-packed `computeEdgeWeight` actually achieves; the
+per-bracket loop in the C++ reads more like incremental refinement/
+extraction from one continuously-evolving solve than genuinely
+independent per-bracket solves). Either is a rewrite of the core solving
+loop, not a tunable — properly scoped, its own dedicated effort with the
+same measure-before-trusting discipline as the stage-by-stage cascade
+port above, not something to improvise inside an unrelated session.
+
+Toolchain note for next time: no C++ compiler or package manager
+(`pacman`/`winget`/`choco`) was present on this machine. Portable
+MinGW-w64 (winlibs.com's zip build, no installer) plus `mingw32-make`
+built bbpPairings from a fresh clone cleanly on the first try —
+`~/Desktop/02cloud/tools/mingw64/bin` on `PATH`, `mingw32-make -j4` in
+the bbpPairings checkout. The `DBG_C9` instrumentation was not kept
+(reverted with the source clone, which itself wasn't kept in this repo,
+matching `OpenPair.Test.Bbppairings`'s own not-vendored stance) — redo
+it the same way (an env-var-gated `fprintf` block right after the
+"Compute the new values for the next pairing bracket" comment in
+`dutch.cpp`, rebuild, `DBG_C9=1 ./bbpPairings.exe --dutch <file> -p out`)
+rather than re-deriving the trace from reading the source cold.
+
 ### How it got there: the global cascade replacing the per-bracket one
 
 **Latest numbers first.** Against bbpPairings 6.0.0, exact rounds /

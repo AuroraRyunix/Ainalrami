@@ -12,3 +12,9 @@ erl_crash.dump
 
 # escript build artifact
 /openpair
+
+# scratch dumps from large fuzz/comparison runs (thousands of .trf/.txt
+# files, not meant to be tracked) — see overnight_run/run.sh
+/overnight_run/bye/
+/overnight_run/forfeit/
+/overnight_run/*.log
