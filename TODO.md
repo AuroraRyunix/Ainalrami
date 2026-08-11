@@ -358,6 +358,18 @@ yet** — the fix itself looks small (an `n <= 1` guard returning that
 lone player's own score directly, mirroring the `n == 0`/`allowed_byes
 == 0` clause already above it), but hasn't been written or measured.
 
+**Confirms as arbiter-bye-specific, not a general odd-field issue**: the
+matching `PAIRING_FUZZ_FORFEIT_PCT=10` overnight run (same 100,000
+tournaments, 9 rounds) found **0 illegal rounds**. Forfeits don't shrink
+a round's active field — a forfeited game still counts as played, the
+active count stays at its nominal size. Pre-assigned `H`/`Z` byes do
+shrink it (`assign_requested_byes/2` marks the player's round played
+before the `active = filter(&(length(&1.games) < round))` check even
+runs), which is what makes "exactly one genuine PAB candidate left"
+actually reachable at the field sizes this generator produces. Worth
+keeping this distinction when reproducing: `PAIRING_FUZZ_BYE_PCT`, not
+`PAIRING_FUZZ_FORFEIT_PCT`, is what surfaces it.
+
 ### C9's real gate needs a persistent whole-round matcher, not a bracket cascade
 
 **Two small, real bugs fixed and kept** (both safe, both measured, no

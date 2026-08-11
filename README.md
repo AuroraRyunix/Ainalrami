@@ -45,13 +45,19 @@ OpenPairings as a selectable engine.**
   | 90-120, 8x9 | **100.00%** | **100.00%** | 0 |
   | 4-40 + 8% arbiter byes | 99.76% | 99.94% | 0 |
   | 4-40 + 15% arbiter byes, 100,000x9 | **99.97%** (839565/839776) | **99.99%** (8484247/8484704) | 102 |
-  | 4-40 + 10% forfeits | 99.52% | 99.91% | (100,000x9 re-run in progress) |
+  | 4-40 + 10% forfeits, 100,000x9 | **99.93%** (838793/839417) | **99.98%** (9934140/9936166) | 0 |
 
-  The 15%-bye row is a 100,000-tournament overnight run, not the earlier
-  300-tournament sample — same shape (99.6% -> 99.97%), but at two orders
-  of magnitude more rounds the confidence interval on "how rare is the
-  remaining gap" is far tighter. The 102 illegal rounds it turned up are
-  new information: see **Legality** below, this used to read 0.
+  Both the bye and forfeit rows above are 100,000-tournament overnight
+  runs, not the earlier 300-tournament samples — same shape in both
+  (99.6% -> 99.97% byes, 99.5% -> 99.93% forfeits), but at two orders of
+  magnitude more rounds the confidence interval on "how rare is the
+  remaining gap" is far tighter. Only the bye run's 102 illegal rounds
+  are new information (see **Legality** below, this used to read 0) —
+  the forfeit run, same scale, found zero, which points at the illegal
+  cases being specific to the arbiter-bye path rather than a general
+  odd-field issue: pre-assigning H/Z byes shrinks a round's actual active
+  field below its nominal size, which is what makes the rare "exactly one
+  player left needing the round's bye" case actually reachable.
 
   On plain tournaments the engine reproduces bbpPairings **exactly** —
   every board of every round, at every field size tested. Confirmed on a
