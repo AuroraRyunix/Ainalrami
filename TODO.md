@@ -562,6 +562,41 @@ loop, not a tunable — properly scoped, its own dedicated effort with the
 same measure-before-trusting discipline as the stage-by-stage cascade
 port above, not something to improvise inside an unrelated session.
 
+**How much that rewrite is actually worth, measured rather than
+assumed.** The `seed223` diagnosis above is one case; the open question
+it left was whether the rest of the residual gap shares its cause or is
+a scatter of unrelated defects. Adjudicated the whole remaining set to
+find out — a 4,000-tournament / 33,601-round `PAIRING_FUZZ_BYE_PCT=15`
+batch leaves exactly **4** disagreeing rounds (223, 2582, 2628, 2738),
+dumped with `PAIRING_FUZZ_DUMP` and scored through
+`tools/adjudicate.exs`:
+
+| classification | n | cases |
+|---|---|---|
+| ours scores better (**our ladder is wrong**) | 3 | 223, 2628, 2738 |
+| tie on every rung | 1 | 2582 |
+
+All three of the first group are bye-related, and the two the
+adjudicator labels `C9 bye unplayed games` are unusually clean: **every
+single rung is identical between the two engines except C9** —
+seed2628 ours 7 / theirs 6, seed2738 ours 7 / theirs 5. bbpPairings is
+choosing the answer OUR OWN ladder scores worse, on one rung, with
+nothing else separating them. That is the signature of C9 being APPLIED
+where bbpPairings suppresses it, which is precisely the
+`isSingleDownfloaterTheByeAssignee` gate the instrumented-C++ trace
+above pinned on `seed223`. (`seed223` itself surfaces one rung higher,
+as `C2/C4/C5 bye-eligibility` — consistent rather than contradictory: a
+mis-fired C9 gate changes who ends up taking the bye, so it shows up as
+an eligibility difference downstream. Same root, different surface.)
+
+So the residual gap on the bye axis is **one root cause plus one
+genuine tie**, not a scatter — which is the useful thing to know before
+committing to the rewrite, because it also bounds the payoff: the
+architectural fix plausibly closes 3 of the 4, and `seed2582` is not
+reachable by any ladder change at all (it ties on every rung *and* on
+`lex`, so FIDE section 3's transposition order is what decides it —
+a separate, smaller piece of work with its own primary source to read).
+
 Toolchain note for next time: no C++ compiler or package manager
 (`pacman`/`winget`/`choco`) was present on this machine. Portable
 MinGW-w64 (winlibs.com's zip build, no installer) plus `mingw32-make`
