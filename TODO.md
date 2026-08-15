@@ -632,12 +632,45 @@ C2/C4/C5, the rung ABOVE C9 and outside that caveat, so they are not
 scorer artifacts.
 
 Worth noting they appear **only on the forfeit axis, never on the bye
-axis**, which is a lead rather than a conclusion: the obvious candidate
-is the forfeit-specific rematch rule already documented below
-(`dutch.cpp:664` — a forfeited pairing does NOT forbid a rematch), so
-the legal-edge set for a forfeit-heavy field is wider than for a plain
-one, and a search that under-explores it would look exactly like this.
-Unverified; that is the first thing to test if this gets picked up.
+axis**. Chased that on `seed1253-r7-p13`; **two obvious explanations are
+now ruled out, and the third is more interesting than either.**
+
+- **Not the forfeit-rematch rule.** The hypothesis was that
+  `dutch.cpp:664` (a forfeited pairing does not forbid a rematch) gives
+  bbpPairings a wider legal edge set on forfeit-heavy fields. It does
+  not: `legal_pair?/2` already gates on `played?/1`, so a forfeit
+  doesn't block a rematch here either. The disputed pair `{1,9}` is one
+  of these — ranks 1 and 9 have met TWICE before, both forfeits, and
+  bbpPairings pairs them a third time. We allow that too.
+- **Not colour-history contamination from forfeits.** The next
+  hypothesis was that unplayed games were leaking into colour stats and
+  manufacturing a false absolute clash. They aren't: `colour_stats/1`
+  filters to `played?/1` first. Checked the actual position — rank 1 is
+  W2/B1 (prefers black), rank 9 is W1/B2 (prefers white). Exactly
+  complementary; no clash of any kind.
+
+So `{1,9}` was **legal, colour-compatible, and reachable** — and
+`WeightedMatching.solve/2` is an exact maximum-weight matching, i.e.
+globally optimal for its own weight function. A weak or unlucky search
+cannot explain this. The only thing left is that the search's
+bracket-local weights and the round-level ladder genuinely disagree.
+
+**Which makes "search failure" the wrong label, and probably makes
+these the SAME architectural cause as the C9 group.** The rung these
+three classify on is C2/C4/C5 — *bye-eligibility* — which is a
+round-level property that isn't resolved until well after the bracket
+being solved. A bracket-local solve cannot price it, exactly as it
+cannot price C9's gate; bbpPairings' one persistent matcher can,
+because the relevant decisions are already baked into it. Same
+limitation, different rung.
+
+If that holds, the architecture accounts for **26 of 29 (90%)** rather
+than 23, and essentially the entire non-tie gap is one rewrite. Stated
+as the leading hypothesis, not a result: what would confirm it is the
+same instrumented-bbpPairings trace that cracked `seed223` (see the
+toolchain note below), run on `seed1253-r7-p13` to see whether its
+choice of `{1,9}` is driven by state carried in from an earlier
+bracket.
 
 Toolchain note for next time: no C++ compiler or package manager
 (`pacman`/`winget`/`choco`) was present on this machine. Portable
