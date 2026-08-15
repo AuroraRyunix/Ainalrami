@@ -597,6 +597,28 @@ reachable by any ladder change at all (it ties on every rung *and* on
 `lex`, so FIDE section 3's transposition order is what decides it —
 a separate, smaller piece of work with its own primary source to read).
 
+**All 25 confirmed three-way: Gacrux backs bbpPairings on every one.**
+The three-way harness had only ever been run on PLAIN tournaments
+(1007/1007, all three agreeing), so the forfeit-axis disagreements below
+had never actually been shown to Gacrux — they were two-way results,
+and at 99.93% the residual error is inside the ~0.3% bound on the
+references' own agreement rate, which is precisely where a two-way
+comparison stops being able to tell "we are wrong" from "the reference
+is wrong". Ran Gacrux over all 25 dumped cases: **25 agree with
+bbpPairings, 0 agree with OpenPair, 0 land on a third answer.**
+
+Two consequences, one of them not obvious:
+
+1. Every one of the 25 is genuinely ours. No ruler-slack escape hatch.
+2. **The 2 `tie_on_all_rungs` cases are not ties.** Our own ladder
+   cannot separate those answers — but two independent engines picking
+   the SAME one means a real deterministic rule decides it and this
+   engine doesn't implement it. "The criteria genuinely tie" was a
+   statement about our ladder's resolution, not about the rules. That
+   reclassifies them from "unreachable, needs FIDE section 3
+   transposition order as a tie-break" to "a missing rule, findable the
+   same way every other missing rule here was found".
+
 **The forfeit axis, characterised for the first time — and it is NOT
 the same story.** The bye axis above was the one with a diagnosis, so
 the forfeit axis's own 99.93% had never been broken down. Same method,
