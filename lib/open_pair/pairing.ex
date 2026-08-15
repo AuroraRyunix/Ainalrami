@@ -603,8 +603,48 @@ defmodule OpenPair.Pairing do
   # game, or a pairing-allocated bye, but not an arbiter-assigned one. So
   # the round number is the furthest any player has been genuinely paired
   # to, and a half-point bye recorded in advance doesn't move it.
+  #
+  # That is only HALF of bbpPairings' rule, and the missing half was a real
+  # bug — see `evenUpMatchHistories` (`trf.cpp:646-684`), which runs after
+  # parsing and can advance `playedRounds` once more:
+  #
+  #     forwardRoundIsComplete = includesUnpairedRound            // true here
+  #     for (valid player)
+  #       if (includesUnpairedRound ^ (matches.size() > playedRounds))
+  #         forwardRoundIsComplete = !includesUnpairedRound
+  #     if (playersByRank.size() && forwardRoundIsComplete) ++playedRounds
+  #
+  # Pairing mode passes `includesUnpairedRound = true` (`main.cpp:452`,
+  # under `if (doPairings)` — "compute the pairings of the next round";
+  # the checker's own read at `main.cpp:347` passes false), so that XOR
+  # reduces to "clear the flag for any player whose history is NOT longer
+  # than playedRounds", i.e. the increment happens exactly when EVERY
+  # player already carries a game for the trailing column. Then that
+  # column is a round that is already fully decided — everyone in it is
+  # accounted for — so it counts as PLAYED, and the round to pair is the
+  # one after it.
+  #
+  # The distinction that makes this safe is "every" vs "any": one player
+  # holding a pre-recorded half-point bye for the next round leaves
+  # everyone else's history shorter, the flag clears, and nothing
+  # advances — so the ordinary arbiter-bye case still pairs the round
+  # those other players are waiting for, exactly as `active_this_round?/2`
+  # below describes and as javafo was measured to do. Only a trailing
+  # column that is complete for the WHOLE field advances the count.
+  #
+  # Found via `crash_reports/seed4385-r5-p4.trf`, where all four players
+  # carry a round-5 bye: this engine returned `{:ok, []}` (nobody active
+  # for round 5) where bbpPairings pairs round 6 cleanly. TODO.md had
+  # recorded the four sibling cases as degenerate fuzz artifacts and this
+  # one as an unexplained genuine bug; they are all this single rule.
   defp rounds_played(players) do
-    players |> Enum.map(&paired_through/1) |> max_or_zero()
+    base = players |> Enum.map(&paired_through/1) |> max_or_zero()
+
+    if players != [] and Enum.all?(players, &(length(&1.games) > base)) do
+      base + 1
+    else
+      base
+    end
   end
 
   defp paired_through(player) do

@@ -366,24 +366,81 @@ pairing, not merely a legal one. Forfeit-axis batch, re-run identically,
 is unchanged (99.93%/99.98%/0 illegal both times) — confirms the fix
 didn't touch anything it shouldn't have.
 
-The remaining 7 illegal rounds turned out to be mostly explainable, and
-mostly NOT the same bug as `bye_assignee_score/2`. Of the 5
-`OpenPair: []` cases the new run dumped, 4 share one exact shape: EVERY
-active player in the field already carries a `0000 - Z`/`0000 - H` game
-for the very round being paired — i.e. the fuzz harness's own
-`assign_requested_byes/1` (called before every round, including round
-1) happened to roll a pre-assigned bye for the entire field at once, a
-genuinely degenerate input (a "bye" granted before the round it applies
-to has even been paired for anyone) rather than a real tournament state.
-Whether `{:ok, []}` is actually the RIGHT answer there, or bbpPairings'
-own willingness to still pair such a field is the more correct reading,
-isn't resolved — flagged as a maybe-artifact, not chased further.
+### ~~The remaining 5 `OpenPair: []` cases~~ **fixed** — all one missing rule
 
-`crash_reports/seed4385-r5-p4.trf` (round 5, 4 players) is the ONE
-confirmed-genuine remaining case — real prior history, real points
-(3.5/2.0/2.5/0.5), nobody pre-byed, still returns `{:ok, []}` where
-bbpPairings pairs `{2,3},{4,1}` cleanly, both before and after tonight's
-fix. Still open, still not investigated past this point.
+**This section previously split these five into "4 degenerate fuzz
+artifacts" plus "1 confirmed-genuine bug", and got both halves wrong.**
+They are a single missing rule, and the four dismissed ones were the
+clearest examples of it. Recorded here as written, because the wrong
+grouping is the more useful lesson: the four were waved off precisely
+BECAUSE their whole field was pre-byed ("a genuinely degenerate input
+... rather than a real tournament state"), which is exactly the input
+the rule exists to handle. `seed4385` was then filed as the odd one out
+on the strength of a claim — "nobody pre-byed" — that is simply false:
+all four of its players carry a round-5 bye (`Z`/`Z`/`Z`/`H`), the same
+shape as the other four. Checking that one assertion against the actual
+file would have collapsed the two groups into one immediately.
+
+**Root cause.** `rounds_played/1` implemented only half of bbpPairings'
+round-number rule. The half it had is real: `playedRounds` only advances
+for games the player PARTICIPATED IN THE PAIRING for
+(`trf.cpp:339-342`), so one player's pre-recorded half-point bye doesn't
+drag the round forward and strand everybody else.
+
+The missing half is `evenUpMatchHistories` (`trf.cpp:646-684`), which
+runs after parsing and can advance `playedRounds` once more:
+
+```cpp
+forwardRoundIsComplete = includesUnpairedRound;              // true here
+for (valid player)
+  if (includesUnpairedRound ^ (matches.size() > playedRounds))
+    forwardRoundIsComplete = !includesUnpairedRound;
+if (playersByRank.size() && forwardRoundIsComplete) ++playedRounds;
+```
+
+Pairing mode passes `includesUnpairedRound = true` (`main.cpp:452`,
+under `if (doPairings)` — "compute the pairings of the next round"; the
+checker's own read at `main.cpp:347` passes `false`), so that XOR
+reduces to: increment exactly when EVERY player already holds a game for
+the trailing column. A column filled in for the whole field is a round
+already fully decided, so it counts as PLAYED and the round to pair is
+the one after it. That is why bbpPairings pairs `seed4385` at all — it
+is pairing round 6, not round 5.
+
+`every`, not `any`, is what makes it safe: one player holding a
+pre-recorded bye leaves everyone else's history shorter, the flag
+clears, nothing advances, and the ordinary arbiter-bye case still pairs
+the round the others are waiting for — matching what javafo was measured
+to do.
+
+**Verified, not assumed:**
+- Real `bbpPairings.exe` on the saved `seed4385-r5-p4.trf`: exit 0,
+  `4 1` / `2 3`. OpenPair now returns `[{2,3},{4,1}]` — the same pairing,
+  where it used to return `[]`. `seed4886-r5-p5.trf` likewise matches
+  (`{3, nil}`).
+- **Behaviour-neutral everywhere else**, which is the real risk of
+  touching the round number: a 4,000-tournament / 33,601-round
+  `PAIRING_FUZZ_BYE_PCT=15` batch run twice, once on each side of the
+  change, gives byte-identical results — 33597/33601 exact rounds,
+  340929/340942 pairs, 0 refused, 0 illegal, and the SAME four
+  mismatching cases by seed and round (223/2582/2628/2738), not merely
+  the same count. `seed223-r9-p23` is the already-documented
+  bye-assignee gap below, untouched by this.
+- Regression cover: `test/open_pair/rounds_played_test.exs` +
+  `test/fixtures/rounds_played/trailing-round-complete.trf`. Fails on
+  pre-fix code, passes on the fix. A second test pins the `every`-not-
+  `any` half — one player's pre-recorded bye must NOT advance the round —
+  since that is the direction this change could plausibly have broken.
+
+An earlier draft of that second test was itself instructive: it reused
+the main fixture's players, where rank 1 already held a `U` bye and so
+was barred by C2 from taking another, leaving `{2,3}` as the only legal
+pair and the position genuinely unpairable. The engine correctly raised
+`NoValidPairingError` and the TEST was wrong — worth remembering before
+reading any future "engine refuses a pairable position" report as a bug.
+
+Still open from that run: the 2 wrong-bye-count / non-partition cases,
+untouched by this fix.
 
 **Confirms as arbiter-bye-specific, not a general odd-field issue**: the
 matching `PAIRING_FUZZ_FORFEIT_PCT=10` overnight run (same 100,000

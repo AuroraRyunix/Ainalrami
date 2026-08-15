@@ -380,13 +380,9 @@ defmodule OpenPair.BbppairingsComparisonTest do
 
   defp report(comparisons, errors, exhausted, rounds) do
     IO.puts("\nbbpPairings comparison, #{rounds} round(s) per tournament:\n")
-    IO.puts(
-      "  round | exact rounds |    rate | individual pairs |    rate | refused | illegal"
-    )
+    IO.puts("  round | exact rounds |    rate | individual pairs |    rate | refused | illegal")
 
-    IO.puts(
-      "  ------+--------------+---------+------------------+---------+---------+--------"
-    )
+    IO.puts("  ------+--------------+---------+------------------+---------+---------+--------")
 
     comparisons
     |> Enum.group_by(& &1.round)

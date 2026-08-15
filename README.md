@@ -100,16 +100,31 @@ OpenPairings as a selectable engine.**
   fails on pre-fix code, passes on the fix), and confirmed at the same
   scale the bug was found at: re-running the identical 100,000-tournament
   batch now shows **0 raised exceptions and 7 illegal rounds**, down from
-  102 — the remaining 7 are the wrong-bye-count/non-partition cases,
-  untouched by this fix, still open (see TODO.md; 4 of the 5 dumped
-  `[]`-result cases turned out to share one shape — every active player
-  in the field already pre-byed for the exact round being paired, a
-  fuzz-harness-generated degenerate input rather than confirmed a real
-  engine bug — one, `seed4385-r5-p4.trf`, has real prior history and is
-  a genuine confirmed-open bug). The moral for this README stands either
-  way: "0 illegal rounds" was true at every sample size tested until it
-  was tested at 100x the previous scale, which is the actual argument
-  for testing at 100x the previous scale — repeatedly, not once.
+  102.
+
+  **Five of those 7 are now fixed too, and were all one missing rule** —
+  `rounds_played/1` had only half of bbpPairings' round-number logic. It
+  correctly refused to let one player's pre-recorded bye drag the round
+  forward (`trf.cpp:339-342`), but was missing `evenUpMatchHistories`
+  (`trf.cpp:646-684`): when EVERY player already holds a game for the
+  trailing column, that column is a round already fully decided, so it
+  counts as played and the round to pair is the one after it. Which is
+  why bbpPairings pairs these files and this engine returned nothing —
+  it was trying to pair a round that was already over. Fixed, with
+  regression cover both ways (`test/open_pair/rounds_played_test.exs`),
+  and verified behaviour-neutral elsewhere: a 33,601-round bye-heavy
+  batch run on each side of the change gives byte-identical results,
+  down to the same four mismatching seeds. The remaining 2
+  (wrong-bye-count / non-partition) are still open.
+
+  TODO.md keeps the full account, including the part worth repeating
+  here: four of these five had been dismissed as degenerate fuzz
+  artifacts and the fifth filed as the one "confirmed-genuine" bug, on
+  the strength of a claim ("nobody pre-byed") that was simply false of
+  its own fixture. The moral for this README stands either way: "0
+  illegal rounds" was true at every sample size tested until it was
+  tested at 100x the previous scale, which is the actual argument for
+  testing at 100x the previous scale — repeatedly, not once.
 - **Three engines, not two** — `three_way_comparison_test.exs` runs
   bbpPairings, Gacrux and OpenPair on identical positions. Over 3352
   rounds the two references agreed with each other on **every one**, which
