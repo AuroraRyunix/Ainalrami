@@ -597,6 +597,48 @@ reachable by any ladder change at all (it ties on every rung *and* on
 `lex`, so FIDE section 3's transposition order is what decides it —
 a separate, smaller piece of work with its own primary source to read).
 
+**The forfeit axis, characterised for the first time — and it is NOT
+the same story.** The bye axis above was the one with a diagnosis, so
+the forfeit axis's own 99.93% had never been broken down. Same method,
+4,000 tournaments / 33,544 rounds at `PAIRING_FUZZ_FORFEIT_PCT=10`,
+0 illegal, 25 disagreements:
+
+| classification | n | first differing rung |
+|---|---|---|
+| ours scores better | 20 | C9 bye unplayed games |
+| **theirs scores better** | **3** | **C2/C4/C5 bye-eligibility** |
+| tie on every rung | 2 | lex picks THEIRS |
+
+The 20 are the same C9-gate signature as the bye axis, which is the
+useful confirmation: across BOTH axes, 22 of 29 disagreements are that
+one gate, plus `seed223` whose C++ trace already pinned it as C9-rooted
+too. **23 of 29 (79%) are the single architectural cause.**
+
+**The 3 `theirs_scores_better` cases are new, and are a different bug
+class.** Everything else found so far has been "our ladder is wrong"
+(we score better; the reference declines to violate a criterion it
+implements). These are the opposite — bbpPairings reaches a pairing OUR
+OWN ladder prefers and we do not, i.e. a genuine search failure, which
+no amount of ladder tuning fixes. Example `seed1253-r7-p13`, score-3.0
+bracket: ours `{11,12},{6,9},{1,4}` floating `[5,8,13]`, theirs
+`{11,12},{6,13},{1,9}` floating `[4,5,8]` — identical on every rung
+except C2/C4/C5 (ours 11, theirs 12) and C9 (22 vs 23).
+
+Deliberately checked before believing it, because `explain_round/3`'s
+`single_bye?` is documented right there as an approximation that can
+false-positive: `single_bye?` gates the **C9 rung only** — C2/C4/C5 is
+computed independently of it. All three of these cases are classified on
+C2/C4/C5, the rung ABOVE C9 and outside that caveat, so they are not
+scorer artifacts.
+
+Worth noting they appear **only on the forfeit axis, never on the bye
+axis**, which is a lead rather than a conclusion: the obvious candidate
+is the forfeit-specific rematch rule already documented below
+(`dutch.cpp:664` — a forfeited pairing does NOT forbid a rematch), so
+the legal-edge set for a forfeit-heavy field is wider than for a plain
+one, and a search that under-explores it would look exactly like this.
+Unverified; that is the first thing to test if this gets picked up.
+
 Toolchain note for next time: no C++ compiler or package manager
 (`pacman`/`winget`/`choco`) was present on this machine. Portable
 MinGW-w64 (winlibs.com's zip build, no installer) plus `mingw32-make`
