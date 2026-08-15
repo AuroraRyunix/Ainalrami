@@ -54,6 +54,12 @@ defmodule OpenPair.Pairing do
   # needs no backtracking either.
   @bye_score_key :openpair_bye_score
   @expected_rounds_key :openpair_expected_rounds
+  # dutch.cpp:845-870's `isSingleDownfloaterTheByeAssignee` as it stands
+  # when the FIRST bracket is paired. It is read off the same bootstrap
+  # whole-field matching that determines `byeAssigneeScore`, so it is
+  # computed there (`bye_assignee_score/2`) and stashed here rather than
+  # threaded through, exactly like the bye score itself.
+  @first_single_bye_key :openpair_first_single_bye
 
   @doc """
   Pairs the next round, dispatching to `pair_round_one/1` when no game
@@ -133,52 +139,61 @@ defmodule OpenPair.Pairing do
         |> Enum.map(&Map.put(&1, :colour_stats, colour_stats(&1)))
 
       brackets = field |> Enum.group_by(& &1.points) |> Enum.map(fn {_s, m} -> m end)
-      Process.put(@bye_score_key, bye_assignee_score(brackets, rem(length(field), 2)))
+
+      {bye_score, first_single_bye?} = bye_assignee_score(brackets, rem(length(field), 2))
+      Process.put(@bye_score_key, bye_score)
+      Process.put(@first_single_bye_key, first_single_bye?)
 
       partner = partner_map(pairs)
       ctx = global_context(field)
 
       groups = Enum.chunk_by(field, & &1.points)
+      points = Map.new(field, &{&1.rank, &1.points})
 
       groups
       |> Enum.with_index()
-      |> Enum.reduce({[], []}, fn {group, i}, {acc, mdps} ->
+      |> Enum.reduce({[], [], ctx.first_single_bye?}, fn {group, i}, {acc, mdps, single_bye?} ->
         next_group = Enum.at(groups, i + 1, [])
-        players_below = groups |> Enum.drop(i + 1) |> Enum.map(&length/1) |> Enum.sum()
-
-        # Approximates `bracket_loop/6`'s `single_bye?`/`next_single_bye?`
-        # gate (see that function's own doc) — NOT a full port: the real
-        # gate also requires `ctx.bye_score >= hd(next_group).points` and
-        # every carried MDP's partner to score at least that, both of
-        # which depend on the live cascade's own mid-solve state
-        # (`carried_partner_scores`) that this post-hoc reconstruction
-        # from a finished `pairs` list doesn't have. This is still a real
-        # fix over what it replaces: `edge_rungs/6` used to be called with
-        # a hardcoded `false` here, so C9 (bye unplayed games) never
-        # scored ANYTHING in this diagnostic, regardless of whether the
-        # real search actually had it active — silently blinding
-        # `tools/adjudicate.exs` to C9 on every single case. Confirmed via
-        # direct instrumentation of `pair_bracket/5`'s own `single_bye?`
-        # argument (seed223-r9-p23's score-3.0 bracket: really `true`,
-        # this formula also says `true` for that exact case) that this
-        # approximation is at least not a false negative for the cases
-        # investigated so far — a false POSITIVE (this says true when the
-        # extra conditions above would have said false) is still possible
-        # and would show up as C9 over-counting in some other case.
-        single_bye? =
-          ctx.odd_field? and not is_nil(ctx.bye_score) and rem(players_below, 2) == 0
 
         {report, floated} =
           explain_bracket(mdps ++ group, group, next_group, partner, ctx, single_bye?)
 
-        {[report | acc], floated}
+        {[report | acc], floated, next_single_bye?(ctx, next_group, floated, partner, points)}
       end)
       |> elem(0)
       |> Enum.reverse()
     after
       Process.delete(@expected_rounds_key)
       Process.delete(@bye_score_key)
+      Process.delete(@first_single_bye_key)
     end
+  end
+
+  # The same shape as `bracket_loop/6`'s own gate (dutch.cpp:1608-1643),
+  # reconstructed from a finished pairing. The one thing this cannot have
+  # is the TENTATIVE match a floating player carried at the moment the
+  # bracket closed — that only exists inside the live cascade's persistent
+  # matching. It substitutes the FINAL partner, which is the same player
+  # whenever the float ends up paired where the tentative match said it
+  # would, and a bye-taker reports their own score (an unmatched vertex is
+  # its own partner in bbpPairings' convention, dutch.cpp:1637).
+  #
+  # This replaces a much cruder stand-in (odd field, and an even number of
+  # players below the bracket) that ignored both the `byeAssigneeScore >=
+  # next group` precondition and the clearing step entirely, and so could
+  # score C9 in brackets where the engine itself does not.
+  defp next_single_bye?(_ctx, [], _floated, _partner, _points), do: false
+
+  defp next_single_bye?(ctx, next_group, floated, partner, points) do
+    next_score = hd(next_group).points
+
+    ctx.odd_field? and not is_nil(ctx.bye_score) and ctx.bye_score >= next_score and
+      Enum.all?(floated, fn p ->
+        case Map.get(partner, p.rank) do
+          nil -> p.points >= next_score
+          other -> Map.get(points, other, p.points) >= next_score
+        end
+      end)
   end
 
   defp partner_map(pairs) do
@@ -442,7 +457,9 @@ defmodule OpenPair.Pairing do
     # out does not.
     allowed_byes = rem(length(active), 2)
 
-    Process.put(@bye_score_key, bye_assignee_score(brackets, allowed_byes))
+    {bye_score, first_single_bye?} = bye_assignee_score(brackets, allowed_byes)
+    Process.put(@bye_score_key, bye_score)
+    Process.put(@first_single_bye_key, first_single_bye?)
 
     try do
       case global_cascade(brackets, allowed_byes) do
@@ -465,6 +482,7 @@ defmodule OpenPair.Pairing do
       end
     after
       Process.delete(@bye_score_key)
+      Process.delete(@first_single_bye_key)
     end
   end
 
@@ -1078,7 +1096,8 @@ defmodule OpenPair.Pairing do
     %{
       bye_score: bye_score,
       unplayed_ranks: unplayed_ranks(field, bye_score),
-      odd_field?: rem(length(field), 2) == 1
+      odd_field?: rem(length(field), 2) == 1,
+      first_single_bye?: Process.get(@first_single_bye_key, false)
     }
   end
 
@@ -1113,19 +1132,15 @@ defmodule OpenPair.Pairing do
     {pairs, by_index}
   end
 
-  # The FIRST bracket's C9 flag was hardcoded `true`, which is only right
-  # for a field that is a single score group. C9 is about the bye
-  # assignee, and the bye comes from the BOTTOM of the field, so in a
-  # multi-group field the top bracket is the one place it certainly does
-  # not apply. Same test as `next_single_bye?` below, minus the parts that
-  # need a previous bracket's tentative matching.
+  # The FIRST bracket's C9 flag is not a bracket property at all — it is
+  # read off the bootstrap whole-field matching that also produced the bye
+  # assignee's score (dutch.cpp:851-870, ported in `first_single_bye?/4`).
+  # Two earlier readings lived here: a hardcoded `true`, which is only
+  # right for a field that is a single score group, and then "odd field
+  # with an even number of players below", which was a guess at the same
+  # thing without the matching to read it from.
   defp bracket_loop(by_index, sgb, rest_groups, ctx, pairs) do
-    players_below = Enum.sum(Enum.map(rest_groups, &length/1))
-
-    single_bye? =
-      ctx.odd_field? and not is_nil(ctx.bye_score) and rem(players_below, 2) == 0
-
-    bracket_loop(by_index, sgb, rest_groups, ctx, pairs, single_bye?)
+    bracket_loop(by_index, sgb, rest_groups, ctx, pairs, ctx.first_single_bye?)
   end
 
   defp bracket_loop(by_index, _sgb, [], _ctx, pairs, _single_bye?) when length(by_index) <= 1 do
@@ -1141,22 +1156,16 @@ defmodule OpenPair.Pairing do
         [group | tail] -> {group, tail}
       end
 
-    # Both confirmed anomalies (see `test/fixtures/open_questions/`) have
-    # the same signature: the bracket's own current+next graph does not
-    # explain bbpPairings' choice, and in the fixtures an IDENTICAL graph
-    # answers differently depending on what lies below it. C8 is the
-    # criterion that is supposed to reach down — "choose the downfloaters
-    # so the FOLLOWING bracket complies with C1-C7" — so the obvious test
-    # is whether the graph needs to see one group further than the C8
-    # rungs currently do.
-    #
-    # Only the group after next is ADDED to the graph; it is not consumed,
-    # and nothing in it can be finalised (a pair is kept only when both
-    # ends are below `nsgb`). It goes back to `rest` untouched.
+    # The graph is the WHOLE remaining field — see `peek_groups/3`. Only
+    # the current bracket and the next score group (`wsgb` players, the
+    # exact analogue of bbpPairings' `playersByIndex`) are consumed or can
+    # be finalised; everything past `wsgb` is visible to the matcher and
+    # goes back to `rest` untouched.
     peek = peek_groups(rest, peek_budget(), [])
+    wsgb = nsgb + length(next_group)
 
     {new_pairs, carried_all, new_sgb, carried_partner_scores} =
-      pair_bracket(by_index ++ next_group ++ peek, sgb, nsgb, ctx, single_bye?)
+      pair_bracket(by_index ++ next_group ++ peek, sgb, nsgb, wsgb, ctx, single_bye?)
 
     peeked = MapSet.new(peek, & &1.rank)
     carried = Enum.reject(carried_all, &MapSet.member?(peeked, &1.rank))
@@ -1173,44 +1182,36 @@ defmodule OpenPair.Pairing do
     # rung fired in brackets bbpPairings excludes, and measured WORSE than
     # having no C9 rung at all: 83.14% against 83.73% of exact rounds at
     # an 8% bye rate.
-    # How many players sit BELOW the next bracket is the missing half of
-    # "downfloating exactly ONE player RECEIVING THE BYE". The clearing
-    # step above only asks whether THIS bracket's floats run deeper than
-    # one group; it cannot see how many players the next bracket will
-    # itself float, and a bracket that floats two — one to pair below, one
-    # to take the bye — is not a C9 bracket at all.
     #
-    # An EVEN number below can pair among itself, so the next bracket's
-    # lone floater has nobody left to meet and the bye is theirs. An odd
-    # number cannot: one of them needs a partner from above, so the
-    # bracket must float two and C9 has no single assignee to talk about.
+    # ## Why the clearing step only started working once the matching went
+    # ## whole-field
     #
-    # Both traced cases turn on exactly this count:
+    # `carried_partner_scores` is the score of each carried player's
+    # TENTATIVE match. bbpPairings reads that off its one persistent
+    # matcher over the entire remaining field, so the clearing player can
+    # be tentatively matched to somebody several score groups away who has
+    # nothing to do with this bracket. Instrumented C++ trace of
+    # `seed1253-r7-p13`'s score-3.0 bracket:
     #
-    #   seed260-r7-p9   one player (2, at 1.5) below bracket 3.0. Odd, so
-    #                   the bracket floated 7 to play them AND 5 to the
-    #                   bye. C9 fired anyway and, sitting above the colour
-    #                   rungs, outscored bbpPairings' pairing — which
-    #                   satisfied a colour preference ours did not
-    #                   (C12 1 vs 0).
+    #     DBG float id=9 tentative_match=10 match_score=1.5
+    #                    next_group_score=3.0 gate_was=1
+    #     DBG   -> gate CLEARED by this float
     #
-    #   seed335-r8-p13  two players (10 at 2.5, 11 at 2.0) below bracket
-    #                   3.0. Even, and they paired with each other, so the
-    #                   bracket's single floater took the bye exactly as
-    #                   C9 describes.
+    # Rank 10 has 1.5 points and is not a member of the 3.0 bracket at
+    # all. A per-bracket solve scoped to a bracket-plus-peek window cannot
+    # produce that tentative match, so it computed the gate as `true`,
+    # applied C9, and landed on a different pairing.
     #
-    # Two stricter readings were measured and rejected. `rest == []` ("no
-    # group below at all") silences seed335 and cost 0.02-0.24 points
-    # across the bye and forfeit profiles. Gating on the next bracket's
-    # own SIZE being odd — the same parity argument applied one level up —
-    # was far worse (97.57% against 99.94% at a 15% bye rate), because a
-    # bracket of odd size does not reliably float exactly one: whoever is
-    # left over depends on who can legally pair inside it at all.
-    players_below = Enum.sum(Enum.map(rest, &length/1))
-
+    # A parity stand-in used to sit here — "an even number of players
+    # below the next bracket" — reasoning that an odd remainder forces the
+    # next bracket to float two players and so cannot have a single bye
+    # assignee. It was a proxy for exactly this clearing step, added when
+    # the step could not be evaluated properly, and it is dropped now that
+    # it can: bbpPairings has no such term (dutch.cpp:1608-1643 is the
+    # whole rule), and keeping both means suppressing C9 in brackets the
+    # reference scores it in.
     next_single_bye? =
       ctx.odd_field? and not is_nil(ctx.bye_score) and next_group != [] and
-        rem(players_below, 2) == 0 and
         ctx.bye_score >= hd(next_group).points and
         Enum.all?(carried_partner_scores, &(&1 >= hd(next_group).points))
 
@@ -1295,7 +1296,47 @@ defmodule OpenPair.Pairing do
   # still enforced — `collect_bracket/1` keeps a pair only when both ends
   # are below `nsgb`. Seeing further and finalising further are different
   # things, and it was only ever the second one that measured badly.
-  @peek_budget 8
+  #
+  # ## Why it is now UNBOUNDED
+  #
+  # bbpPairings' `matchingComputer` is one persistent matcher over the
+  # whole remaining field, built once (dutch.cpp:738) and re-solved as
+  # brackets are locked in. That is not the same object as a wide peek —
+  # but the difference collapses, because `finalizePair` (common.h:164)
+  # locks a pair by leaving its two vertices exactly one usable edge each
+  # and zeroing every other edge incident on them. A vertex with a single
+  # positive edge to a partner in the same state is ISOLATED: any matching
+  # either takes that edge or leaves both ends unmatched, and taking it is
+  # strictly better and blocks nothing. So a finalised pair contributes
+  # nothing to the rest of the optimisation, and dropping those vertices
+  # from the graph — which is what carrying only the unpaired players
+  # forward already does — gives the identical matching on the identical
+  # remaining vertices.
+  #
+  # What is left is the SCOPE, and that is what an unbounded peek supplies:
+  # every unfinalised player is a vertex, so a player floating out of this
+  # bracket gets a real tentative match against the field below it instead
+  # of no match at all. `bracket_loop/6`'s C9 gate is derived from exactly
+  # those tentative matches, and could not be evaluated correctly while
+  # the graph stopped a few groups down.
+  #
+  # A wide peek ALONE was measured earlier and changed nothing (TODO.md:
+  # `OPENPAIR_PEEK=999` left the disputed cases exactly as they were),
+  # which is consistent: without the gate reading the wider matching, the
+  # extra vertices had nothing to say. The two halves only work together.
+  #
+  # The weights stay bracket-flavoured throughout, and that is faithful
+  # rather than a shortcut. `reach_table/3` grades every visible player by
+  # how far below the bracket they sit, `in_current` is `reach == 0` and
+  # C8 is `reach == 1`, so a pair two or more groups down scores only the
+  # completion rung and C9 — exactly the weight bbpPairings leaves on its
+  # own out-of-window edges (`computeEdgeWeight` with both
+  # `lowerPlayerInCurrentBracket` and `lowerPlayerInNextBracket` false,
+  # dutch.cpp:766-786's bootstrap). The one knowing difference: bbpPairings
+  # never REFRESHES those out-of-window edges, so they keep the C9 gate
+  # value the bootstrap pass computed, where these are recomputed with the
+  # current bracket's gate.
+  @peek_budget :unbounded
 
   defp peek_budget do
     case System.get_env("OPENPAIR_PEEK") do
@@ -1305,27 +1346,40 @@ defmodule OpenPair.Pairing do
   end
 
   # Whole score groups, never a partial one — a bracket that could see
-  # half of a group would score C8 against a fiction.
+  # half of a group would score C8 against a fiction. `:unbounded` takes
+  # everything that is left, which is the default; the numeric budget is
+  # kept so `OPENPAIR_PEEK=<n>` can still narrow the graph for measurement.
   defp peek_groups([], _budget, acc), do: List.flatten(Enum.reverse(acc))
+  defp peek_groups(rest, :unbounded, acc), do: List.flatten(Enum.reverse([rest | acc]))
   defp peek_groups(_rest, budget, acc) when budget <= 0, do: List.flatten(Enum.reverse(acc))
 
   defp peek_groups([group | rest], budget, acc) do
     peek_groups(rest, budget - length(group), [group | acc])
   end
 
-  defp pair_bracket(combined, sgb, nsgb, ctx, single_bye?) do
+  # `sgb` is where the residents start (everything before it is a
+  # moved-down player), `nsgb` where the bracket ends, and `wsgb` where the
+  # NEXT SCORE GROUP ends — bbpPairings' `playersByIndex.size()`. Anything
+  # from `wsgb` on is visible to the matcher only: it can never be
+  # finalised, consumed, or exchanged into, and it exists so that players
+  # leaving this bracket get a realistic tentative match (see
+  # `peek_groups/3`).
+  defp pair_bracket(combined, sgb, nsgb, wsgb, ctx, single_bye?) do
     m = length(combined)
     arr = List.to_tuple(combined)
 
-    # Sized to THIS bracket, not the field. Every sum the ladder takes is
-    # over one bracket's matching, so a field-wide span only inflates the
-    # bignums the matcher then compares — and it re-solves the same graph
-    # up to eight times per bracket, so that cost lands eight times over.
+    # Sized to the GRAPH, which is now the whole remaining field. That is
+    # what bbpPairings does too — `scoreGroupSizeBits`/`scoreGroupShifts`
+    # are computed once over `sortedPlayers` and never re-derived per
+    # bracket (dutch.cpp:684-730) — and it is what makes the weights
+    # commensurable in the first place: one solve now mixes edges scored
+    # for this bracket with edges scored as plain completability, and two
+    # differently-scaled radices cannot be compared.
     #
-    # `places` stays a positional radix over score groups, just restricted
-    # to the groups this bracket actually holds. The ORDER is what "taken
-    # in descending order" compares, and restricting preserves it exactly;
-    # weights are never compared between brackets.
+    # The cost is real and was the reason this used to be bracket-sized:
+    # a field-wide span inflates the bignums the matcher compares, eight
+    # re-solves per bracket over. Measured rather than assumed — see the
+    # timing note in TODO.md.
     {places, place_span} = score_places(combined)
     count_span = m + 1
 
@@ -1344,6 +1398,7 @@ defmodule OpenPair.Pairing do
       m: m,
       sgb: sgb,
       nsgb: nsgb,
+      wsgb: wsgb,
       ctx: ctx,
       bands: bands,
       base: base,
@@ -1855,9 +1910,14 @@ defmodule OpenPair.Pairing do
     end)
   end
 
+  # dutch.cpp:1218 seeds the addend with `playersByIndex.size()` — the
+  # bracket plus the next score group, i.e. `wsgb`, NOT the size of the
+  # whole graph. It used to read `st.m`, which was the same order of
+  # magnitude while the graph stopped a few groups down and is not now that
+  # the graph is the whole remaining field.
   defp prefer_high_opponents(st, mdp) do
     {live, _} =
-      Enum.reduce((st.nsgb - 1)..st.sgb//-1, {st.live, st.m}, fn opp, {acc, addend} ->
+      Enum.reduce((st.nsgb - 1)..st.sgb//-1, {st.live, st.wsgb}, fn opp, {acc, addend} ->
         if MapSet.member?(st.matched, opp) do
           {acc, addend}
         else
@@ -2055,9 +2115,13 @@ defmodule OpenPair.Pairing do
 
   # A player promoted out of the lower half can no longer play anyone
   # ABOVE them in the remainder, nor anyone in the next score group —
-  # dutch.cpp cuts both sets of edges from the base weights, permanently.
+  # dutch.cpp:1473-1484 cuts both sets of edges from the base weights,
+  # permanently. The second set is `nextScoreGroupBegin ..
+  # playersByIndex.size()`, i.e. the next score group EXACTLY: players
+  # further down are outside the window and keep their edges, so the
+  # bound is `wsgb`, not the size of the graph.
   defp cut_exchanged(st, player, pos) do
-    cuts = Enum.take(st.remainder, pos) ++ Enum.to_list(st.nsgb..(st.m - 1)//1)
+    cuts = Enum.take(st.remainder, pos) ++ Enum.to_list(st.nsgb..(st.wsgb - 1)//1)
 
     {base, live} =
       Enum.reduce(cuts, {st.base, st.live}, fn opp, {b, l} ->
@@ -2168,10 +2232,25 @@ defmodule OpenPair.Pairing do
     # score of whoever the tentative matching had them with — that is what
     # tells the NEXT bracket whether its downfloat runs deeper than one
     # group, and so whether C9 applies there at all. An unmatched carried
-    # player constrains nothing, so they report their own score.
+    # player constrains nothing, so they report their own score
+    # (bbpPairings reads an unmatched vertex as matched to itself).
+    #
+    # The scan runs to `wsgb`, not `nsgb`: dutch.cpp:1613 loops over the
+    # whole of `playersByIndex`, which is the bracket AND the next score
+    # group, and every one of those that is not finalised here goes into
+    # the next bracket and gets its tentative match checked. Members of the
+    # next group are exactly the players who become residents next time, so
+    # excluding them dropped the majority of the clearing signal.
+    #
+    # It stops there rather than running to `st.m`. Everything past `wsgb`
+    # is graph-only lookahead that bbpPairings has no analogue for — its
+    # window IS bracket-plus-next-group — and an earlier attempt that used
+    # the full peek window here fixed one traced case and broke two others
+    # (TODO.md), which is what a too-wide scan looks like: players who are
+    # nowhere near this decision clearing its gate.
     partner_scores =
       for i <- 0..(st.m - 1)//1,
-          i < st.nsgb,
+          i < st.wsgb,
           p = partner(st, i),
           not (p != i and p < st.nsgb and MapSet.member?(st.matched, i)),
           do: elem(st.arr, if(p == i, do: i, else: p)).points
@@ -2182,7 +2261,14 @@ defmodule OpenPair.Pairing do
   # A current-bracket player who was not paired here IS a downfloater.
   defp mark_float(player, true), do: Map.put(player, :already_floated, true)
   defp mark_float(player, false), do: player
-  defp bye_assignee_score(_brackets, 0), do: nil
+  # Returns `{bye assignee score | nil, isSingleDownfloaterTheByeAssignee}`.
+  # The two come from the SAME bootstrap whole-field matching in
+  # bbpPairings (dutch.cpp:818-870) and are returned together for the same
+  # reason: the C9 gate's first-bracket value is a property of that
+  # matching, not something recoverable afterwards. On an even field
+  # bbpPairings never computes either (dutch.cpp:872's `else` branch sets
+  # the flag `false` and leaves the score at its zero initialiser).
+  defp bye_assignee_score(_brackets, 0), do: {nil, false}
 
   defp bye_assignee_score(brackets, _allowed_byes) do
     field =
@@ -2210,8 +2296,11 @@ defmodule OpenPair.Pairing do
     # rather than assume it can't happen.
     if n <= 1 do
       case field do
-        [player] -> player.points
-        [] -> nil
+        # One player, who takes the bye. They are also the whole top score
+        # group and are matched to themselves, so dutch.cpp:851-870's scan
+        # finds nothing below the top score and the flag stays `true`.
+        [player] -> {player.points, true}
+        [] -> {nil, false}
       end
     else
       bye_assignee_score_from_field(field, n)
@@ -2283,9 +2372,43 @@ defmodule OpenPair.Pairing do
       # No legal complete round exists; leave C5 unconstrained and let the
       # cascade and `repair_bye_count/3` produce the best answer they can
       # rather than refusing every candidate here.
-      [] -> nil
-      leftovers -> leftovers |> Enum.map(&elem(arr, &1).points) |> Enum.min()
+      [] ->
+        {nil, false}
+
+      leftovers ->
+        score = leftovers |> Enum.map(&elem(arr, &1).points) |> Enum.min()
+        {score, first_single_bye?(arr, n, matching, score)}
     end
+  end
+
+  # dutch.cpp:851-870, verbatim. C9 ("minimise the unplayed games of the
+  # bye assignee") only means anything in a bracket that downfloats exactly
+  # ONE player and that player takes the bye. For the very first bracket
+  # bbpPairings decides that from the bootstrap matching above: the bye has
+  # to fall in the TOP score group at all (`byeAssigneeScore >= topScore`),
+  # and no top-group player may already be tentatively matched below it —
+  # if one is, the top group is floating someone down as well as producing
+  # the bye, so there is no single assignee to talk about.
+  #
+  # In practice this is usually FALSE, because the bye assignee is normally
+  # the lowest-scoring eligible player and `byeAssigneeScore >= topScore`
+  # then only holds for a field that is effectively one score group. That
+  # is the point: `bracket_loop/5` used to approximate this as "odd field,
+  # and an even number of players below the top bracket", which fires far
+  # more often and so scored C9 in brackets bbpPairings excludes.
+  #
+  # The scan stops at the first player below the top score — the C++ loop
+  # `break`s there — which the sorted field turns into a plain implication.
+  # An unmatched vertex is its own partner in bbpPairings' convention, so
+  # the bye assignee themselves never clears the flag.
+  defp first_single_bye?(arr, n, matching, bye_score) do
+    top = elem(arr, 0).points
+
+    bye_score >= top and
+      Enum.all?(0..(n - 1)//1, fn i ->
+        elem(arr, i).points < top or
+          elem(arr, Map.get(matching, i, i)).points >= top
+      end)
   end
 
   # C5, the PAB Criterion: "Minimise the score of the assignee of the

@@ -454,6 +454,107 @@ actually reachable at the field sizes this generator produces. Worth
 keeping this distinction when reproducing: `PAIRING_FUZZ_BYE_PCT`, not
 `PAIRING_FUZZ_FORFEIT_PCT`, is what surfaces it.
 
+### ~~C9's real gate needs a persistent whole-round matcher~~ **done — every measured axis is now 100.00%**
+
+The section below is the diagnosis; this is what acting on it produced.
+Against bbpPairings 6.0.0, exact rounds / individual pairs, 4-40 players,
+9 rounds, 4,000 tournaments per axis:
+
+| axis | before | after |
+|---|---|---|
+| plain | 98.69% / 99.59% (500x9) | **33708/33708 = 100.00% / 400021 pairs = 100.00%** |
+| 15% byes | 33597/33601 = 99.99% / 340929 of 340942 | **33601/33601 = 100.00% / 340942 = 100.00%** |
+| 10% forfeits | 33519/33544 = 99.93% / 399125 of 399201 | **33544/33544 = 100.00% / 399201 = 100.00%** |
+| 60-80, 20x9 | 100.00% / 100.00% | 180/180 = 100.00% / 100.00% |
+| 90-120, 8x9 | 98.61% / 99.87% | **72/72 = 100.00% / 3834 = 100.00%** |
+
+Zero illegal rounds and zero refusals everywhere, `mix test` 85 passed
+(unchanged), and the three-way harness 1007/1007 against BOTH references.
+All 29 catalogued disagreements are gone, including the four bye-axis
+seeds ({223, 2582, 2628, 2738}) and all 25 forfeit-axis ones — so the two
+`tie_on_all_rungs` cases and the uncharacterised bye-axis tie were the
+same cause after all, exactly as the "plausibly all 29" caveat allowed.
+
+**The rewrite turned out to be much smaller than "persist dual variables
+across bracket transitions".** `finalizePair` (common.h:164) locks a pair
+by leaving its two vertices one usable edge each and zeroing every other
+edge incident on them, then re-runs `computeMatching()` on the same
+instance. A vertex in that state is ISOLATED — any matching either takes
+its one edge or leaves both ends unmatched, and taking it is strictly
+better and blocks nothing — so a finalised pair contributes nothing to
+the rest of the optimisation. Dropping those vertices from the graph
+gives the identical matching on the identical remaining vertices, which
+is exactly what carrying only the unpaired players forward already did.
+bbpPairings' incrementality is a performance optimisation, not a semantic
+requirement, and `WeightedMatching.solve/2` was left completely untouched.
+
+What actually had to change was three things:
+
+1. **The graph's SCOPE.** `@peek_budget` is now `:unbounded`: every
+   unfinalised player is a vertex in every bracket's solve. Weights stay
+   bracket-flavoured — `reach_table/3` already grades visible players by
+   distance, so a pair two or more groups down scores only the completion
+   rung and C9, which is precisely the weight bbpPairings leaves on its
+   own out-of-window edges (`computeEdgeWeight` with both
+   `lowerPlayerInCurrentBracket` and `lowerPlayerInNextBracket` false).
+2. **`bands` sized to the graph rather than the bracket.** Not optional
+   once a single solve mixes bracket-scored and completability-scored
+   edges: two differently-scaled radices cannot be compared. This is also
+   what bbpPairings does (`scoreGroupSizeBits`/`scoreGroupShifts` are
+   computed once over `sortedPlayers`, dutch.cpp:684-730). The bignum
+   inflation this section previously warned about is real but affordable
+   — see the timings below.
+3. **The C9 gate read from that matching instead of guessed at.** Both
+   halves of it:
+   * The FIRST bracket's flag (dutch.cpp:851-870) is read off the same
+     bootstrap whole-field matching that produces `byeAssigneeScore` —
+     the bye must fall in the top score group AND no top-group player may
+     already be tentatively matched below it. `first_single_bye?/4`.
+     Usually FALSE, where the "odd field, even number of players below"
+     stand-in it replaces fired constantly.
+   * The per-bracket clearing step (dutch.cpp:1608-1643) lost its
+     `rem(players_below, 2) == 0` term, which was a proxy for exactly this
+     clearing step invented when the step could not be evaluated properly,
+     and gained the right scan bound: `i < wsgb`, not `i < nsgb`.
+
+**`wsgb` is the other half of the scope change, and skipping it would
+have broken things quietly.** With the graph now the whole field, `st.m`
+stopped being an approximation of bbpPairings' `playersByIndex.size()`
+(bracket + next score group). Three places meant that specific bound and
+had been reading `m` or `nsgb`: `prefer_high_opponents/2`'s addend seed
+(dutch.cpp:1218), `cut_exchanged/3`'s second cut set
+(dutch.cpp:1473-1484), and `collect_bracket/1`'s `partner_scores` scan
+(dutch.cpp:1613). That last one is why the earlier "extend
+`partner_scores` to the full peek window" experiment regressed: the
+correct bound is the next score group, not however far the peek happened
+to reach, and a too-wide scan lets players nowhere near the decision
+clear its gate.
+
+**Risk 1, tie-breaking: did not materialise, and needed no fix.** The
+worry was that a from-scratch solve might pick a different maximum-weight
+matching than an incremental update would (bbpPairings calls its result
+`stableMatching`). No deterministic tie-break had to be added: 100.00%
+agreement across ~101,000 compared rounds and ~1.14M pairs on three axes
+is not a result compatible with tie-break noise. The eight refinement
+stages appear to settle every tie before the matcher's own arbitrary
+choice can matter, which is the same conclusion `transposition_terms/3`
+already reached from the other direction.
+
+**Risk 2, performance: ~2x on large fields, free on the corpus that
+matters.** Measured on the same machine, same configs, stash-and-compare:
+
+|  | before | after |
+|---|---|---|
+| 4-40, 200x9, 15% byes | 23.9s | 24.0s |
+| 60-80, 20x9 | 19.4s | 36.9s |
+| 90-120, 8x9 | 42.6s | 90.3s |
+
+(Wall clock including the bbpPairings subprocess, so the engine-only
+factor is somewhat worse than 2x.) The 4-40 case is free because a
+bracket there could already see most of the field under the 8-player peek
+budget. `OPENPAIR_PEEK=<n>` still narrows the graph if a much larger
+field ever needs it — at the cost of the gate becoming wrong again.
+
 ### C9's real gate needs a persistent whole-round matcher, not a bracket cascade
 
 **Two small, real bugs fixed and kept** (both safe, both measured, no
@@ -926,7 +1027,9 @@ consumed, and nothing in them can be finalised — is worth:
 | 3 | 95.91% / 98.63% |
 | 4, 6, unbounded | 95.97% / 98.64% |
 
-Budgeted in PLAYERS (`@peek_budget`, 8) rather than groups, because
+(Historical: `@peek_budget` is `:unbounded` now — see the persistent-
+matcher section above for why the depth question turned out to be the
+wrong one.) Budgeted in PLAYERS (`@peek_budget`, 8) rather than groups, because
 groups are the wrong unit: a small field has score groups of one to
 three, so four of them is a handful of players; a 60-120 field has groups
 big enough that one already supplies the same context, and paying for
