@@ -686,13 +686,47 @@ cannot price C9's gate; bbpPairings' one persistent matcher can,
 because the relevant decisions are already baked into it. Same
 limitation, different rung.
 
-If that holds, the architecture accounts for **26 of 29 (90%)** rather
-than 23, and essentially the entire non-tie gap is one rewrite. Stated
-as the leading hypothesis, not a result: what would confirm it is the
-same instrumented-bbpPairings trace that cracked `seed223` (see the
-toolchain note below), run on `seed1253-r7-p13` to see whether its
-choice of `{1,9}` is driven by state carried in from an earlier
-bracket.
+**CONFIRMED by instrumented trace — it is the same cause.** Rebuilt
+bbpPairings with `DBG_C9` instrumentation (recipe in the toolchain note
+below; the MinGW toolchain survived the PC reinstall, and the build was
+clean first try) and traced `seed1253-r7-p13`. The score-3.0 bracket,
+the one in dispute:
+
+```
+DBG float id=9  tentative_match=10  match_score=1.5  next_group_score=3.0  gate_was=1
+DBG   -> gate CLEARED by this float
+DBG pair 11-12
+DBG pair 6-13
+DBG pair 1-9          <- the answer this engine could not reach
+```
+
+`isSingleDownfloaterTheByeAssignee` was TRUE entering that bracket and
+was **cleared by rank 9's tentative match to rank 10** — a 1.5-point
+player who is not a member of the 3.0 bracket at all, and whose
+tentative match exists only inside the persistent global matcher. With
+the gate cleared, C9 does not apply to this bracket's decision, and
+`{1,9}` follows immediately. This engine's stateless per-bracket solve
+cannot observe that tentative match, computes the gate as `true`,
+applies C9, and lands elsewhere.
+
+So a case the adjudicator labelled `C2/C4/C5` is driven by the same
+`isSingleDownfloaterTheByeAssignee` gate as the ones it labels `C9` —
+the rung a disagreement SURFACES on is not the rung that caused it.
+
+**Where that leaves the count**, by evidence rather than assumption:
+
+| | n | confidence |
+|---|---|---|
+| gate, confirmed by direct trace | 2 | `seed223`, `seed1253` |
+| gate, adjudicator-labelled C9 | 22 | strongly implied, same signature |
+| ties — gate is exercised in the round (2 clear-events each) | 2 | consistent, NOT proven to cause those divergences |
+| bye-axis tie | 1 | uncharacterised |
+
+That is **24 of 29 confirmed or strongly implied**, and plausibly all
+29. The honest caveat on the last three: a gate-clear happening
+somewhere in the round does not establish it caused that round's
+disagreement — proving those needs the divergent bracket identified
+first, which is a further trace, not a re-reading of this one.
 
 Toolchain note for next time: no C++ compiler or package manager
 (`pacman`/`winget`/`choco`) was present on this machine. Portable
