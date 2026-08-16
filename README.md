@@ -186,7 +186,8 @@ round with this engine. It takes no input file — it creates a tournament
 rather than reading one — and writes to stdout when given no output path:
 
 ```
-openpair -g out.trf --seed=42 --players=30 --rounds=9 --forfeit-pct=10 --bye-pct=5
+openpair -g out.trf --seed=42 --players=30 --rounds=9 --forfeit-pct=10 --bye-pct=5 \
+  --forbidden-pct=10 --acceleration=baku
 ```
 
 Every run is reproducible from its seed, and the seed is written into the
@@ -201,6 +202,52 @@ The two modes are each other's test: `-g` output fed to `-c` checks clean
 by construction, since the generator pairs with the same engine the
 checker replays. That round-trip is covered for plain tournaments and for
 ones carrying forfeits and arbiter-assigned byes.
+
+### TRF extension lines
+
+Beyond TRF16 proper, OpenPair reads three of JaVaFo's `XX` extension
+codes, in both directions (`OpenPair.Trf` parses and serializes all
+three):
+
+| line | meaning |
+|---|---|
+| `XXR n` | number of rounds, JaVaFo's spelling of TRF16's `142` |
+| `XXP a b [c ...]` | a mutually-forbidden GROUP — no two of these players may ever meet |
+| `XXA` | per-player acceleration ("virtual points"), round by round |
+
+`XXP` is an absolute criterion of exactly the standing of the no-rematch
+rule, which is also how bbpPairings expresses it: `compatible`
+(`dutch.cpp:39-68`) tests one `forbiddenPairs` set, and the no-rematch rule
+is inserted into that same set. One line names a group, not just a pair, so
+`XXP 4 9 17` forbids all three of 4-9, 4-17 and 9-17.
+
+`XXA` is a **fixed-column** line and the columns are load-bearing: `XXA` at
+column 1, the starting rank right-aligned in columns 5-8, then each round's
+`pp.p` right-aligned at column `10 + 5*(r-1)`. A line one column wide at
+any field is rejected outright by real bbpPairings (`Invalid line`, exit
+3), and free-form `XXA` crashes real JaVaFo with a bare
+`NullPointerException`. The full round-by-round record matters even for
+rounds that pay nothing, because the float history is derived from the
+scores as they stood at the time — virtual points included.
+
+A malformed `XXP` or `XXA` raises rather than being skipped. `XXR` is the
+exception and can afford to be: a missing round count has a fallback,
+while a dropped exclusion produces a complete, perfectly legal-*looking*
+pairing that seats two players an arbiter said must never meet, with
+nothing downstream able to detect it.
+
+Both are validated by the same oracle as everything else, because
+bbpPairings implements both and reads the same file: **1,789,554 rounds
+and 8,536,147 individual pairs carrying at least one extension line,
+100.00% agreement, zero illegal rounds** across eleven axes (`XXP` at
+10/25/30%, Baku and random `XXA`, and combinations of both with byes and
+forfeits, on 4-40, 4-10, 60-120 and 13-round fields). Every
+previously-measured axis is byte-identical after the change — the same
+numerators and denominators, not merely the same percentages. TODO.md's
+"`XXP` and `XXA`" section has the full table, plus what the old
+line-dropping behaviour actually cost: at 20% forbidden-pair density it
+seated a forbidden pair in **27.72%** of rounds, and Baku acceleration
+paired **66.12%** of rounds on the wrong scores.
 
 ### Verbose by default
 

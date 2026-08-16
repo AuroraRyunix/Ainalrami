@@ -498,4 +498,139 @@ defmodule OpenPair.TrfTest do
       assert length(parsed.players) == 2
     end
   end
+
+  describe "XXP (JaVaFo's forbidden-pairings extension)" do
+    test "reads one line as a group of starting ranks" do
+      parsed = OpenPair.Trf.parse(roster_trf("XXP 1 2\r\n"))
+
+      assert parsed.tournament[:forbidden_pairs] == [[1, 2]]
+    end
+
+    # `readForbiddenPairsXxp` (`trf.cpp:554-568`) tokenizes the whole rest
+    # of the line, so one line can name any number of players and forbids
+    # every pair within the group. Tab is a separator too.
+    test "reads an N-player group, space- or tab-separated" do
+      parsed = OpenPair.Trf.parse(roster_trf("XXP 1\t2  1\r\n"))
+
+      assert parsed.tournament[:forbidden_pairs] == [[1, 2, 1]]
+    end
+
+    test "collects several lines" do
+      parsed = OpenPair.Trf.parse(roster_trf("XXP 1 2\r\nXXP 2 1\r\n"))
+
+      assert parsed.tournament[:forbidden_pairs] == [[1, 2], [2, 1]]
+    end
+
+    test "a file with no XXP line has no forbidden_pairs key at all" do
+      refute Map.has_key?(OpenPair.Trf.parse(roster_trf("")).tournament, :forbidden_pairs)
+    end
+
+    # Unlike XXR next door, this RAISES. An unreadable exclusion has no
+    # safe fallback: silently dropping it yields a complete, legal-looking
+    # pairing that seats two players an arbiter said must never meet.
+    test "a malformed XXP raises rather than being skipped" do
+      assert_raise OpenPair.Trf.ValidationError, ~r/not a starting rank/, fn ->
+        OpenPair.Trf.parse(roster_trf("XXP 1 banana\r\n"))
+      end
+    end
+
+    test "round-trips through serialize" do
+      text =
+        OpenPair.Trf.serialize(%{
+          tournament: %{name: "T", type: "swiss", forbidden_pairs: [[1, 2], [1, 2, 3]]},
+          players: [%{rank: 1, name: "A", points: 0.0, games: []}]
+        })
+
+      assert OpenPair.Trf.parse(text).tournament[:forbidden_pairs] == [[1, 2], [1, 2, 3]]
+    end
+  end
+
+  describe "XXA (JaVaFo's acceleration extension)" do
+    # The columns are the whole story here — see `@xxa_rank_cols`. Asserted
+    # explicitly because a one-column drift is invisible to a round-trip
+    # test (this parser and this serializer would simply agree on the wrong
+    # answer) and is exactly the mistake the sibling project made.
+    test "emits the fixed columns the spec and bbpPairings both require" do
+      text =
+        OpenPair.Trf.serialize(%{
+          tournament: %{name: "T", type: "swiss"},
+          players: [
+            %{rank: 12, name: "A", points: 0.0, games: [], accelerations: [1.0, 0.5, 0.0]}
+          ]
+        })
+
+      line = text |> String.split("\r\n") |> Enum.find(&String.starts_with?(&1, "XXA"))
+
+      assert col(line, 1, 3) == "XXA"
+      assert col(line, 5, 8) == "  12"
+      assert col(line, 10, 13) == " 1.0"
+      assert col(line, 15, 18) == " 0.5"
+      assert col(line, 20, 23) == " 0.0"
+    end
+
+    test "attaches the values to the player it names" do
+      parsed = OpenPair.Trf.parse(roster_trf("XXA    2  1.0  0.5\r\n"))
+
+      assert [%{rank: 1} = first, %{rank: 2} = second] = parsed.players
+      refute Map.has_key?(first, :accelerations)
+      assert second[:accelerations] == [1.0, 0.5]
+    end
+
+    # bbpPairings pre-sizes `tournament.players` from the XXA line and
+    # moves the accelerations onto the real record when the 001 line
+    # arrives (`trf.cpp:369-372`), so order cannot matter.
+    test "an XXA line before the player's own 001 line still lands" do
+      text = "012 T\r\nXXA    1  1.0\r\n" <> roster_trf("")
+
+      assert [%{accelerations: [1.0]}, _] = OpenPair.Trf.parse(text).players
+    end
+
+    # `startIndex + 4 <= line.size()` (`trf.cpp:501`): a blank slot that is
+    # fully present reads as zero rather than ending the record.
+    test "a blank but present slot reads as zero" do
+      parsed = OpenPair.Trf.parse(roster_trf("XXA    1  1.0       0.5\r\n"))
+
+      assert [first, _second] = parsed.players
+      assert first[:accelerations] == [1.0, 0.0, 0.5]
+    end
+
+    # `push_back` onto the player's existing record (`trf.cpp:510`), and
+    # `tournament.players[id]` persists between lines — so a second line
+    # for the same player CONTINUES the record rather than replacing it.
+    test "two XXA lines for one player append rather than the second winning" do
+      parsed = OpenPair.Trf.parse(roster_trf("XXA    1  1.0\r\nXXA    1  0.5\r\n"))
+
+      assert [first, _second] = parsed.players
+      assert first[:accelerations] == [1.0, 0.5]
+    end
+
+    test "a file with no XXA line leaves every player without the key" do
+      assert Enum.all?(
+               OpenPair.Trf.parse(roster_trf("")).players,
+               &(not Map.has_key?(&1, :accelerations))
+             )
+    end
+
+    # The sibling project's own emitter right-aligns the rank in a
+    # FIVE-column field, which puts it in columns 5-9 rather than 5-8. Real
+    # bbpPairings rejects such a line outright (`Invalid line "XXA     1
+    # ..."`, exit code 3, reproduced directly against the vendored binary),
+    # and this must not quietly pair an unaccelerated tournament instead.
+    test "the sibling project's one-column-wide layout raises rather than being ignored" do
+      assert_raise OpenPair.Trf.ValidationError, ~r/columns 5-8/, fn ->
+        OpenPair.Trf.parse(roster_trf("XXA     1  1.0  1.0\r\n"))
+      end
+    end
+
+    test "round-trips through serialize" do
+      text =
+        OpenPair.Trf.serialize(%{
+          tournament: %{name: "T", type: "swiss"},
+          players: [%{rank: 3, name: "A", points: 0.0, games: [], accelerations: [1.0, 0.5, 0.0]}]
+        })
+
+      assert [player] = OpenPair.Trf.parse(text).players
+      assert player[:accelerations] == [1.0, 0.5, 0.0]
+    end
+  end
 end

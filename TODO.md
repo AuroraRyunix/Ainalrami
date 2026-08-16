@@ -2075,6 +2075,200 @@ it that happened to differ — the identical failure mode that item 4
 already records, one layer further down. A silent rung is not an
 exonerated rung.
 
+## `XXP` and `XXA` (2026-08-16) — the extension lines that were being discarded
+
+`OpenPair.Trf` parsed exactly one extension line, `XXR`. Every other `XX*`
+line fell through `parse_header_line/3`'s `nil -> acc` clause and was
+dropped without a word. For two of them that is not a tidiness issue:
+
+- **`XXP`** (forbidden pairings) — an arbiter's "these two must never
+  meet" was ignored, and the engine then returned a complete, perfectly
+  legal-LOOKING pairing that seated them together. Nothing downstream
+  could detect it. This is why the sibling project, having just wired
+  OpenPair in as an optional engine, had to **refuse to pair** whenever
+  the generated TRF carried any non-`XXR` `XX` line at all.
+- **`XXA`** (acceleration) — virtual points were ignored, so brackets
+  formed on the wrong scores.
+
+Both are now read, and both are ported from bbpPairings rather than
+invented — `readForbiddenPairsXxp` (`trf.cpp:554-568`) and
+`readPlayerAccelerationsXxa` (`trf.cpp:487-514`) for the reading,
+`resolveForbiddenPairs` (`tournament.cpp:100-116`) and
+`scoreWithAcceleration` (`tournament.h:335-359`) for the meaning.
+
+### Where each one belongs
+
+**`XXP` is an absolute criterion, not a scored term**, and the reference
+settles that rather than an argument about it: `compatible`
+(`dutch.cpp:39-68`) opens with
+`!forbiddenPairs[player0.id].count(player1.id)` before it looks at colour
+at all, and the no-rematch rule reaches that same test by being INSERTED
+INTO the very same set (`dutch.cpp:653-666`). The two rules are literally
+one lookup in the C++, so the port is one line in `legal_pair?/2` and
+nothing anywhere else. One `XXP` line is an N-player GROUP, not a pair —
+`readForbiddenPairsXxp` tokenizes the whole rest of the line — so
+`XXP 4 9 17` forbids all three of 4-9, 4-17 and 9-17.
+
+**`XXA` is folded into `:points`** for the round being paired, which is
+the port rather than a shortcut. Inside `dutch.cpp` there is essentially
+no other kind of score: bracket formation (680, 698-701), the bye
+assignee (846, 882), the C9 gate (852-865), the bracket loop's own reads
+(1114-1126, 1611-1640), bye eligibility (220), the float criteria's score
+comparisons (295-457) and `compatible`'s own final-round exception (63-65)
+all go through `scoreWithAcceleration`. The ONLY reads of
+`scoreWithoutAcceleration` in the whole engine are in `common.cpp`'s
+`sortResults` (180-206), which orders the output and is not pairing. So
+the accelerated score is what `.points` means inside the engine, and the
+two things that genuinely need the real score take it first: the float
+history, and the caller's standings.
+
+That second one is the subtle half. `scoreWithAcceleration(tournament,
+roundsBack)` winds its round index back in step with the score it is
+stripping and adds `accelerations[roundIndex]` — the virtual points that
+applied AT THE TIME, not this round's. Which is exactly why JaVaFo's
+manual insists the `XXA` line carry the full round-by-round record.
+
+Round 1 now routes through the bracket cascade when either extension is
+present. `pair_round_one/1` is a shortcut that assumes one score group and
+decides everything by rank; acceleration breaks the first assumption and a
+forbidden pair breaks the second, and bbpPairings has no round-one special
+case for either to be compared against.
+
+### Two column findings, both confirmed against the real binary
+
+**`XXA` is fixed-column and the columns are not negotiable.**
+`readPlayerAccelerationsXxa` reads the rank from `line[4]..line[8)` —
+columns 5-8 — then walks `startIndex = 9; startIndex += 5` reading four
+characters at each stop, i.e. columns `10 + 5*(r-1)` for round `r`. That
+is the JaVaFo AUM's spec exactly. Verified end to end: an 8-player round 1
+with the top four accelerated by 1.0 pairs 1-5/2-6/3-7/4-8 unaccelerated
+and **1-3/2-4/5-7/6-8** accelerated, and bbpPairings and OpenPair produce
+the same answer on the same file, colours included.
+
+**The sibling project's own `XXA` emitter is one column wide at every
+field**, and real bbpPairings rejects those lines outright:
+
+    Error parsing file ...: Invalid line "XXA     1  1.0  1.0  0.5  0.0  0.0"
+
+exit code 3, reproduced directly against the vendored binary.
+`acceleration_lines/4` in `../openpairings` right-aligns the rank in a
+FIVE-column field (so it lands in columns 5-9, and bbpPairings reads four
+blanks) and each value in a five-column field. Real javafo evidently
+tolerates it — the sibling verified the pairing genuinely changes shape —
+but it is not the spec and it is not readable by the second reference.
+**This parser raises on such a line rather than quietly pairing an
+unaccelerated tournament**, which is the same reasoning that put the
+feature here in the first place: a silently dropped arbiter instruction is
+the failure mode, so the fix must not reintroduce it one layer down.
+`XXR`'s tolerant shrug stays, because a missing round count has a fallback
+and a missing exclusion does not.
+
+### Results
+
+Both features are validated by the EXISTING oracle, because bbpPairings
+implements both: `OpenPair.Generator` and the comparison harness learned to
+emit the lines (`PAIRING_FUZZ_FORBIDDEN_PCT`, `PAIRING_FUZZ_ACCEL=baku`
+`|random`), the same file goes to both engines, and the diff is the same
+diff every other axis uses. The harness's legality check gained
+`:forbidden_pair` — the one violation that leaves a round looking correct
+in every other respect (clean partition, right bye count, no rematch, and
+two people who were never to meet sitting across a board).
+
+**Every previously-measured axis is BYTE-IDENTICAL after the change.** Not
+"still 100.00%" — the same numerators and denominators, all eleven:
+
+| axis | before | after |
+|---|---|---|
+| plain 4-40, 4000x9 | 33708/33708, 400021/400021 | identical |
+| small 4-10 no byes, 100000x9 | 599779/599779, 2434429/2434429 | identical |
+| small 4-10 +15% byes, 100000x9 | 582297/582297, 2040785/2040785 | identical |
+| 15% byes 4-40, 4000x9 | 33601/33601, 340942/340942 | identical |
+| 10% forfeits 4-40, 4000x9 | 33544/33544, 399201/399201 | identical |
+| 10% byes + 10% forfeits, 4000x9 | 33715/33715, 360941/360941 | identical |
+| deep 13 rounds 4-40, 2000x13 | 22860/22860, 279818/279818 | identical |
+| deep 13 rounds + 15% byes, 2000x13 | 22716/22716, 238034/238034 | identical |
+| large 60-80, 300x9 | 2700/2700, 94896/94896 | identical |
+| large 90-120, 120x9 | 1080/1080, 56700/56700 | identical |
+| large 60-120 + 15% byes, 200x9 | 1800/1800, 69951/69951 | identical |
+
+Zero illegal rounds and zero refusals throughout, both times. That is the
+result the design predicts and the reason it was worth designing for:
+without an `XXP` line the forbidden set is `nil` and `legal_pair?/2` reads
+one process-dictionary key that isn't there; without an `XXA` line
+`with_acceleration/2` returns the roster untouched. The change is inert
+when the lines are absent, and this measures that rather than asserting it.
+
+**The new axes, against bbpPairings 6.0.0, exact rounds / individual
+pairs.** Every one at 100.00%, zero illegal rounds, zero refusals:
+
+| axis | rounds | pairs |
+|---|---|---|
+| plain 4-40, 4000x9 *(control, re-run on the final code)* | 33708/33708 = 100.00% | 400021/400021 = 100.00% |
+| XXP 10% 4-40, 4000x9 | 33315/33315 = 100.00% | 398444/398444 = 100.00% |
+| XXP 30% 4-40, 4000x9 | 32726/32726 = 100.00% | 396048/396048 = 100.00% |
+| XXA baku 4-40, 4000x9 | 33834/33834 = 100.00% | 400410/400410 = 100.00% |
+| XXA random 4-40, 4000x9 | 33753/33753 = 100.00% | 400159/400159 = 100.00% |
+| XXP 15% + XXA baku + 15% byes + 10% forfeits, 4000x9 | 33409/33409 = 100.00% | 340223/340223 = 100.00% |
+| deep 13 rounds + XXA baku, 2000x13 | 22922/22922 = 100.00% | 279971/279971 = 100.00% |
+| large 60-120 + XXP 10% + XXA baku, 200x9 | 1800/1800 = 100.00% | 82143/82143 = 100.00% |
+| small 4-10 + XXP 25%, 100000x9 | 492239/492239 = 100.00% | 2010814/2010814 = 100.00% |
+| small 4-10 + XXA random, 100000x9 | 601001/601001 = 100.00% | 2435952/2435952 = 100.00% |
+| small 4-10 + XXP 25% + XXA baku + 15% byes, 100000x9 | 504555/504555 = 100.00% | 1791983/1791983 = 100.00% |
+
+**1,789,554 rounds and 8,536,147 individual pairs carrying at least one
+extension line, and not one disagreement.** The three small-field rows are
+deliberately the ones that historically carried every residual defect this
+project has found (see the triage above); half a million rounds each of
+`XXP` and `XXA` on that surface is the measurement that matters most.
+
+The `XXP` rows lose tournaments early far more often than the plain axis
+does — 98,598 of 100,000 on small fields at 25%, against 78,126 with no
+exclusions at all — which is the expected signature and not a failure: a
+4-10 player field with a quarter of the players excluded from someone runs
+out of legal opponents fast, bbpPairings says so with its own
+no-valid-pairing exit, and the harness ends the tournament there. It is
+also the shape that proves the exclusions are load-bearing rather than
+decorative.
+
+### How wrong the old behaviour actually was
+
+"The line was ignored" is easy to state and easy to under-weigh, so it was
+measured: same corpus, same file to bbpPairings, and OpenPair told nothing
+about the extension lines — i.e. exactly what this engine did last week.
+
+| | compared rounds | differs from bbpPairings | seats a forbidden pair |
+|---|---|---|---|
+| `XXP` at 20%, 4-40, 1000x9 | 8230 | **2281 (27.72%)** | **2281 (27.72%)** |
+| `XXA` baku, 4-40, 1000x9 | 8421 | **5568 (66.12%)** | — |
+
+Two things worth reading off that. For `XXP` the two columns are the SAME
+number, every round: on that axis the old engine's entire disagreement
+with bbpPairings was the ignored exclusion — nothing else differed, and
+every difference was a violation of an arbiter's explicit instruction, in
+better than one round in four. And for `XXA`, two thirds of all rounds
+were paired on the wrong scores.
+
+Neither number was visible before, because the engine could not have known
+to look: it produced a complete, legal, well-formed pairing every time.
+
+### What is not covered
+
+- **`260`** (round-limited forbidden pairs) and **`250`** (round-limited
+  acceleration), bbpPairings' fixed-column siblings of these two
+  (`trf.cpp:519-548` and `418-482`). `XXP`/`XXA` are the universal forms
+  and the ones the sibling project emits; the round-range machinery
+  (`ForbiddenPairsEntry`'s `roundStart`/`roundEnd`) is deliberately absent
+  rather than stubbed, since `resolveForbiddenPairs` filters on a range
+  that for `XXP` is always `[0, expectedRounds)`.
+- **bbpPairings' own Baku flag.** `applyBakuAcceleration`
+  (`trf.cpp:708-753`) sizes Group A as `ceil(n/2)` where FIDE C.04.7 as the
+  sibling project reads it uses `2 * ceil(n/4)` — 5 players against 6 on a
+  10-player field, agreeing exactly on the round split. That path is
+  reached only through its own flag, never through `XXA`, so it cannot
+  make the two engines disagree here: both read the identical `XXA` lines
+  out of the identical file. The generator follows the sibling's reading
+  because that is what OpenPair will actually be handed.
+
 ## Explicitly deferred / not being pursued yet
 
 - Any FIDE endorsement application for OpenPair itself. It's meant to stay

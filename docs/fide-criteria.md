@@ -66,6 +66,26 @@ remaining disagreement is this engine being wrong. Re-run it with
 | C4 | *(Completion Criterion)* A pairing complying with all the absolute criteria shall always exist for all players not yet paired. | the `cascade_brackets/4` backtracking search; `NoValidPairingError` when genuinely impossible |
 | C5 | *(PAB Criterion)* Minimise the score of the assignee of the pairing-allocated-bye. | `bye_assignee_score/2` — a whole-field pre-pass fixing the bye's score, enforced in `cascade_brackets/4`'s base case |
 
+### The arbiter's own absolute criterion
+
+An `XXP` line — "these players must never meet", for family members, the
+same club, or a federation exclusion rule — is not in the handbook's list,
+because it is not a pairing rule: it is an instruction the arbiter gives
+the engine about this particular event. But it has exactly C1's STANDING,
+and bbpPairings settles that rather than leaving it to taste. `compatible`
+(`dutch.cpp:39-68`) tests one `forbiddenPairs` set before it looks at
+colour at all, and C1 itself reaches that test by being inserted into the
+very same set (`dutch.cpp:653-666`). One lookup, two rules.
+
+So it lives in `legal_pair?/2` beside C1 and is never weighed against
+anything. One line names a GROUP, not a pair: `XXP 4 9 17` forbids 4-9,
+4-17 and 9-17 alike (`readForbiddenPairsXxp`, `trf.cpp:554-568`).
+
+Acceleration (`XXA`) is the mirror image — not a criterion at all, but a
+change to the score every criterion reads. See `with_acceleration/2` in
+`OpenPair.Pairing`, and TODO.md's "`XXP` and `XXA`" section for why that is
+the port rather than a shortcut.
+
 ## Quality criteria — in descending priority
 
 Verbatim from §2.4, with this engine's implementation beside each.
