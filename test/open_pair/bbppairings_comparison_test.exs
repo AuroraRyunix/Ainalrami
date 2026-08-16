@@ -132,7 +132,11 @@ defmodule OpenPair.BbppairingsComparisonTest do
 
   defp play_round(players, seed, round, total_rounds, player_count) do
     players = assign_requested_byes(players)
-    active = Enum.filter(players, &(length(&1.games) < round))
+    # `OpenPair.Test.Field.active/1`, NOT `length(games) < round` — the
+    # latter misses the completed-trailing-column rule and reports rounds
+    # as illegal that agree with bbpPairings byte for byte. See that
+    # module's moduledoc.
+    active = OpenPair.Test.Field.active(players)
     trf = build_trf(players, total_rounds)
 
     base = %{

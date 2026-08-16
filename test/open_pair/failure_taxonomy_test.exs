@@ -238,7 +238,7 @@ defmodule OpenPair.FailureTaxonomyTest do
 
     case Bbppairings.pair(trf) do
       {:ok, bbp_pairs} ->
-        active = Enum.filter(players, &(length(&1.games) < round))
+        active = OpenPair.Test.Field.active(players)
         ours = safely_pair(players, total_rounds)
         next = apply_round(players, bbp_pairs, simulate_results(bbp_pairs))
 

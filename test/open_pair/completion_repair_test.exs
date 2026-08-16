@@ -59,7 +59,7 @@ defmodule OpenPair.CompletionRepairTest do
 
   defp run_tournament(players, seed, acc) do
     Enum.reduce(1..@rounds, {players, acc}, fn round, {ps, {illegal, differed, paired}} ->
-      active = Enum.filter(ps, &(length(&1.games) < round))
+      active = OpenPair.Test.Field.active(ps)
 
       faulted = pair_with(ps, "1")
       clean = pair_with(ps, nil)

@@ -183,7 +183,8 @@ defmodule OpenPair.JavafoComparisonTest do
   # not OpenPair's).
   defp play_round(players, seed, round, total_rounds, player_count) do
     players = assign_requested_byes(players)
-    active = Enum.filter(players, &(length(&1.games) < round))
+    # See `OpenPair.Test.Field` for why this is not `length(games) < round`.
+    active = OpenPair.Test.Field.active(players)
     trf = build_trf(players, total_rounds)
 
     base = %{
