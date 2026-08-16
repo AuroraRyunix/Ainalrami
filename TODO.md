@@ -2035,9 +2035,26 @@ exact rounds, 20,416,198 / 20,416,202 pairs, zero illegal, zero
 refusals.** One disagreement remains where there were 36 — the same
 corpus, the same seeds. In FE1's units that is **1 per ~5.8 million
 rounds** on the engine's worst axis, against a bar of 1 per 500
-tournaments. Whether that survivor is a new shape or the same
-Gacrux-backed dispute is not established here; it is dumped to
-`/root/triage2/` on the measurement box for whoever picks this up.
+tournaments.
+
+**And the survivor is `seed735265-r7-p10`** — the Gacrux-backed
+rules-interpretation dispute, the same one that survived in
+`/root/triage/`. Nothing else on that corpus differs from bbpPairings at
+all. So the residue is no longer a defect class with a rate; it is one
+named case with an argument attached, and FE1 provides for escalating
+exactly that to the SPPC.
+
+Establishing it took a second pass with `PAIRING_FUZZ_DUMP` set, and that
+pass is worth recording on its own: it reported **two** disagreements,
+not one, and dumped `seed133484-r2-p7` alongside — a 7-player round for
+which bbpPairings had supposedly returned fifteen pairs with ranks up to
+33. That is not a pairing of that tournament at all, and the harness had
+already said so: `WARNING: 2 bbpPairings process error(s) — this run was
+likely resource-starved`. Re-run alone, bbpPairings gives `2 7 / 3 5 /
+4 6`, which is OpenPair's answer exactly. **A saturated box can
+manufacture a phantom disagreement**, the harness flags it, and the flag
+is worth reading before chasing the case — the same 36-core box was
+running an unrelated job at 2800% CPU throughout.
 
 The three-way harness agrees with **both** references on both profiles —
 1000x9 over 4-40 (8,402 rounds) and 2000x9 over the small-fields+byes
