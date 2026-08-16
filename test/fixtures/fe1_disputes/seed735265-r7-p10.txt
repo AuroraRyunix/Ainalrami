@@ -1,0 +1,5 @@
+seed 735265, round 7, 10 players
+pairs matched: 0/4
+
+OpenPair:     [{3, 9}, {5, 1}, {7, nil}, {8, 2}]
+bbpPairings:  [{2, 9}, {3, nil}, {7, 5}, {8, 1}]

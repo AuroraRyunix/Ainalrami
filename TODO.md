@@ -2288,23 +2288,50 @@ to look: it produced a complete, legal, well-formed pairing every time.
 
 ## Open
 
-- **`explain_round/3` never stamps float history.** The real path calls
-  `with_float_history/2` (`pairing.ex:505`); the diagnostic builds its field
-  with `with_acceleration` + `colour_stats` only. So **C14–C21 score zero on
-  both sides** of every verdict `tools/adjudicate.exs` has ever printed —
-  including the adjudication tables in this file. It cannot invent a
-  disagreement out of nothing (both sides are equally blank, so a tie stays
-  a tie), but it CAN hide one: any case actually decided on a float-history
-  rung gets misreported as tying there and surfacing lower down. Worth
-  fixing before the next round of adjudication is trusted, and worth
-  re-running the 40-case triage afterwards.
+- ~~**`explain_round/3` never stamps float history.**~~ **Fixed.** The real
+  path calls `with_float_history/2` before `with_acceleration/2`, over the
+  whole roster (`pair_later_round/1`); the diagnostic stamped acceleration
+  and colour stats only. `float_of/2` therefore read `:none` for every
+  player in every position, so **C14–C21 scored a constant on both sides of
+  every verdict `tools/adjudicate.exs` has ever printed** — C14/C16 pinned
+  at zero, C15/C17 at one per in-bracket pair.
+
+  It could not invent a disagreement (both sides were scored with the same
+  blank history, so a tie stayed a tie); it could only MISATTRIBUTE one, by
+  reporting a round genuinely decided on a float rung as tying there and
+  differing further down. `explain_round/3` had no test of any kind until
+  `test/open_pair/explain_round_test.exs`, which is how this survived; both
+  of its cases fail on the pre-fix code.
+
+  **The adjudication tables above were produced with the blank history and
+  have not been re-run.** They are not wrong about WHETHER the engines
+  differed — that comes from the harness, not the scorer — but the "first
+  differing rung" column is only trustworthy where the winning rung
+  outranks C14. Anything the tables attribute to C14–C21 is unverified, and
+  a case attributed to a rung BELOW them could really have been decided
+  above. Re-running needs a fresh large fuzz, since the dumps were never
+  kept.
 - **`seed735265-r7-p10`** — the one surviving disagreement, and the only
   case in this project's history where Gacrux backs OpenPair against
   bbpPairings. FE1 category 3 (rules-interpretation dispute), which FE1
   explicitly provides for escalating to the SPPC rather than "fixing".
   Needs a written-up position before it can be escalated.
+
+  Now kept as `test/fixtures/fe1_disputes/seed735265-r7-p10.trf` with its
+  own README, and re-adjudicated after the float-history fix: the verdict
+  is **unchanged** (`theirs_scores_better`, first differing rung `C2/C4/C5
+  bye-eligibility`). That rung outranks C14–C21, so the fix could not have
+  reached it — recorded so nobody re-runs it expecting a change.
 - **The 2 wrong-bye-count / non-partition illegal cases** from the original
   100,000-tournament bye run (line 442). Every axis has measured zero
-  illegal rounds since the C9-gate rewrite, so these are most likely
-  already closed by it — but that has never been checked against those
-  specific saved positions. Confirm and strike, or reopen with a repro.
+  illegal rounds since the C9-gate rewrite, across ≈26M pairings, so these
+  are almost certainly closed by it — but no repro was ever saved, so that
+  has never been checked against the actual positions. Settling it means
+  re-running the original configuration (100,000 × 9 at
+  `PAIRING_FUZZ_BYE_PCT=15`), which is a server job, not a local one.
+
+Reproducing any dumped case is now cheap: `PAIRING_FUZZ_SEED_FROM` starts
+the seed range anywhere, and every seed is independent, so
+`seed735265-r7-p10` regenerates in about a second instead of requiring the
+735,264 tournaments before it. That knob not existing is a large part of
+why the catalogued cases were adjudicated once and never revisited.

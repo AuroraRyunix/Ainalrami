@@ -186,6 +186,16 @@ defmodule OpenPair.Pairing do
 
       field =
         players
+        # Same two stamps, in the same order and over the same whole roster,
+        # as `pair_later_round/1` — see its own comment for why float history
+        # has to precede acceleration and cannot be scoped to the active
+        # field. This used to skip `with_float_history/2` entirely, which
+        # silently zeroed C14-C21 on BOTH sides of every verdict this
+        # function produced: a round genuinely decided on a float rung was
+        # reported as tying there and surfacing further down the ladder. It
+        # could never invent a disagreement (both sides were equally blank),
+        # only misattribute one, which is the harder failure to notice.
+        |> with_float_history(played)
         |> with_acceleration(played)
         |> Enum.filter(&active_this_round?(&1, played))
         |> Enum.sort_by(&{-&1.points, &1.rank})

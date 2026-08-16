@@ -40,6 +40,22 @@ defmodule OpenPair.BbppairingsComparisonTest do
   `PAIRING_FUZZ_ROUNDS`, `PAIRING_FUZZ_MIN_PLAYERS`/`_MAX_PLAYERS`,
   `PAIRING_FUZZ_BYE_PCT`, `PAIRING_FUZZ_FORFEIT_PCT`, `PAIRING_FUZZ_DUMP`.
 
+  `PAIRING_FUZZ_SEED_FROM` (default 1) moves where the seed range starts,
+  so a dumped case can be reproduced on its own:
+
+      PAIRING_FUZZ_SEED_FROM=735265 PAIRING_FUZZ_COUNT=1 \\
+        PAIRING_FUZZ_MAX_PLAYERS=10 PAIRING_FUZZ_BYE_PCT=15 \\
+        PAIRING_FUZZ_ROUNDS=9 mix test --only bbppairings
+
+  Every seed is independent (`run_tournament!/3` reseeds `:rand` from it
+  alone), so seed *n* generates the same tournament whether it is reached
+  first or 735,264 tournaments in. Without this, revisiting one dumped
+  disagreement meant re-running everything before it — which is why the
+  cases catalogued in TODO.md were adjudicated once, from dumps, and never
+  re-checked when the adjudicator itself changed. The seed, round and
+  player count in a dump's filename are all that is needed; the rest of the
+  configuration has to match what produced it.
+
   Two more cover the `XX` extension lines, and they work because
   bbpPairings implements both — the same file is handed to both engines, so
   the oracle validates them exactly as it validates every other axis:
@@ -64,9 +80,10 @@ defmodule OpenPair.BbppairingsComparisonTest do
     count = env_int("PAIRING_FUZZ_COUNT", 20)
     rounds = env_int("PAIRING_FUZZ_ROUNDS", 2)
     players = env_int("PAIRING_FUZZ_MIN_PLAYERS", 4)..env_int("PAIRING_FUZZ_MAX_PLAYERS", 40)
+    seed_from = env_int("PAIRING_FUZZ_SEED_FROM", 1)
 
     measurements =
-      1..count
+      seed_from..(seed_from + count - 1)
       |> Task.async_stream(&run_tournament(&1, rounds, players),
         max_concurrency: System.schedulers_online(),
         timeout: :infinity,
