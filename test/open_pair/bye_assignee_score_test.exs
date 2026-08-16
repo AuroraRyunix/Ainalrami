@@ -46,4 +46,35 @@ defmodule OpenPair.ByeAssigneeScoreTest do
     assert Enum.sort(seated) == Enum.sort(Enum.map(active, & &1.rank)),
            "every active player must be seated exactly once"
   end
+
+  @c9_fixture "test/fixtures/bye_assignee_score/top-score-group-tiebreak.trf"
+
+  # The same bootstrap matching, but for the OTHER thing it produces:
+  # `isSingleDownfloaterTheByeAssignee`, the C9 gate for the FIRST bracket
+  # (dutch.cpp:851-870). See `bye_assignee_score_from_field/2`'s `tie_unit`
+  # comment for the missing third field this covers.
+  #
+  # Copied from `/root/triage/seed940641-r4-p5.trf`, one of the 40 residual
+  # disagreements catalogued in TODO.md. Five players, round 4, score
+  # groups 2.0 = {3,4,5}, 1.5 = {1}, 1.0 = {2}. The bootstrap matching has
+  # a genuine three-way tie on eligibility and score — leaving out 4 or 5
+  # scores identically, and `{1-5, 2-3}` ties them both — and only the
+  # top-score-group field separates them. Without it the matcher happened
+  # to return `{1-5, 2-3}`, whose top-group player 3 is tentatively matched
+  # BELOW the top group, so the gate scan cleared the flag and C9 was dead
+  # for the whole first bracket. bbpPairings and Gacrux both bye rank 4,
+  # who has played all three rounds, over rank 5, who sat out round 1 —
+  # which is C9 exactly.
+  test "the C9 gate survives a tie in the bootstrap matching" do
+    %{players: players} = OpenPair.Trf.parse(File.read!(@c9_fixture))
+
+    pairs = Pairing.pair_next_round(players, expected_rounds: 9)
+
+    assert {4, nil} in pairs,
+           "rank 4 has no unplayed games and rank 5 has one, so C9 puts the bye on 4 — " <>
+             "the answer real bbpPairings and Gacrux both give"
+
+    assert Enum.sort(Enum.map(pairs, fn {w, b} -> {min(w, b || w), b && max(w, b)} end)) ==
+             [{1, 2}, {3, 5}, {4, nil}]
+  end
 end

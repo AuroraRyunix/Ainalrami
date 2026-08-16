@@ -1889,6 +1889,165 @@ consistent with the same cause reaching a different candidate. Combined
 with the bye-dependence above, the shape to chase is: **small field +
 pre-assigned bye + candidate ordering among criteria-equal pairings.**
 
+**Superseded by the section below.** The shape was right and the
+attribution was wrong: it is not transposition ordering, and it is not a
+criteria-equal tiebreak. 39 of the 40 were one missing field in the
+bootstrap matching, and the surviving one is the Gacrux-backed dispute.
+
+## The first bracket's C9 gate was undefined, not absent (2026-08-16)
+
+**39 of the 40 catalogued disagreements are gone. Every measured axis
+stays at 100.00%, and `seed735265-r7-p10` — the rules-interpretation
+dispute where Gacrux backs US — is the one that remains.**
+
+### The case, and why C9 was the suspect
+
+`seed940641-r4-p5` (kept as
+`test/fixtures/bye_assignee_score/top-score-group-tiebreak.trf`). Five
+players, round 4, score groups 2.0 = {3,4,5}, 1.5 = {1}, 1.0 = {2}; the
+only legal pairs are 1-2, 1-5, 2-3, 3-4, 3-5. Ranks 2 and 3 hold `U`
+byes so are C2-ineligible, and rank 1 cannot take the bye because the
+remainder then cannot pair legally — so the bye is rank 4 or rank 5 and
+both answers are legal.
+
+    ours          [{1,2}, {3,4}, {5,nil}]
+    bbpPairings   [{1,2}, {3,5}, {4,nil}]      <- Gacrux agrees
+
+C9 is the whole difference: rank 4 has played all three rounds, rank 5
+sat out round 1 with an `H`, and "minimise the number of unplayed games
+of the bye assignee" therefore byes rank 4. An instrumented bbpPairings
+confirmed the rung was live for it (`gate_was=1`), while
+`tools/adjudicate.exs` scored C9 as **0 vs 0, not differing**, with the
+disagreement surfacing at C12.
+
+### The cause: a packed field that was never ported
+
+`bye_assignee_score_from_field/2` is the bootstrap whole-field matching
+of `dutch.cpp:766-786`, and it produces two things — `byeAssigneeScore`
+and `isSingleDownfloaterTheByeAssignee`, the C9 gate for the FIRST
+bracket. The C++ edge weight packs THREE fields; this port had two:
+
+    eligibility   1u + !eligibleForBye(player) + !eligibleForBye(opponent)
+    score         scoreGroupShifts[playerScore] + scoreGroupShifts[opponentScore]
+    MISSING       player->score >= sortedPlayers.front()->score
+
+`player` is the outer loop variable and the inner loop breaks at
+`opponentIndex == playerIndex`, so `player` is always the worse-sorted of
+the pair. On a field sorted best-first that bottom field means *the edge
+lies wholly inside the top score group*, and summed over a matching it is
+a count: **maximise the pairs formed inside the top score group.**
+
+**Why it is not redundant with the two fields above it.** On an odd field
+the matcher returns a near-perfect matching, so all but one player is
+covered and both higher fields collapse into statements about that one
+leftover — eligibility into "leave out someone who may actually take the
+bye", score into "leave out the lowest-placed player". Neither can
+distinguish two matchings with the same leftover, nor two leftovers that
+tie on both. The bottom field is the only one that says anything about
+the matching's SHAPE.
+
+**And shape is exactly what the gate reads.** `first_single_bye?/4`
+(`dutch.cpp:851-870`) clears the flag when any top-group player is
+tentatively matched BELOW the top group. For this case the bootstrap has
+a genuine three-way tie — `{1-2, 3-4}` (leftover 5), `{1-2, 3-5}`
+(leftover 4) and `{1-5, 2-3}` (leftover 4) all score identically on
+eligibility and on score — and a maximum-weight matcher may return any of
+them. Ours returned `{1-5, 2-3}`, whose top-group player 3 is matched to
+a 1.0 player, so the scan cleared the flag and **C9 was dead for the
+entire first bracket**. Probed directly, since the process-dictionary key
+is deleted before `pair_next_round/2` returns:
+
+    PROBE bootstrap matching=[{3,2},{4,4},{5,1},{1,5},{2,3}]
+          leftovers=[4] bye_score=2.0 first_single_bye?=false
+
+The bottom field gives `{1-5, 2-3}` a count of 0 against 1 for the other
+two, so bbpPairings never sees the tie. Both survivors set the flag.
+
+### The fix
+
+Three lines. The new term is SCALED rather than packed: multiplying
+everything above it by `div(n, 2) + 1` — one more than the number of
+edges a matching can hold, hence one more than the largest attainable bit
+total — makes it provably a pure tiebreak, unable to overturn a
+difference in the fields above and able only to decide one they leave
+open. bbpPairings gets the same guarantee from bit widths, sizing the
+field at `scoreGroupSizeBits` so its sum cannot carry. Packing by hand
+here would have meant re-deriving band separation for the existing
+multiplicative `score_places/1` encoding, which the scaling sidesteps
+entirely — every previously-measured ordering is preserved exactly.
+
+### Results
+
+Re-pairing all 40 dumped cases in `/root/triage/` with the live engine:
+
+| | before | after |
+|---|---|---|
+| reproduce the stored disagreement | 40 | 1 |
+| **match bbpPairings** | **0** | **39** |
+
+The survivor is `seed735265-r7-p10`, the one case Gacrux backs us on —
+i.e. everything the triage classified as a candidate-program error is
+fixed, and everything it classified as a rules-interpretation dispute is
+untouched. That is the outcome the triage predicted if its own
+three-way classification was sound.
+
+`tools/adjudicate.exs` over the same 40, scoring the STORED answers:
+
+| | before | after |
+|---|---|---|
+| ours scores better | 22 (C12 x19, C13 x3) | 0 |
+| tie on all rungs | 17 | 0 |
+| theirs scores better | 1 (C2/C4/C5) | **40 — C9 x39, C2/C4/C5 x1** |
+
+Which is the same finding from the other side: with the gate fixed, our
+own ladder now says bbpPairings' answer was the better one on C9 for all
+39, where before the rung was silent on both sides and the argument
+surfaced at whatever colour rung happened to differ.
+
+**Every axis, against bbpPairings 6.0.0, exact rounds / individual
+pairs. Zero illegal rounds and zero refusals on all of them.**
+
+| axis | rounds | pairs |
+|---|---|---|
+| plain 4-40, 4000x9 | 33708/33708 = 100.00% | 400021/400021 = 100.00% |
+| small 4-10 **no byes**, 100000x9 | 599779/599779 = 100.00% | 2434429/2434429 = 100.00% |
+| small 4-10 **+15% byes**, 100000x9 | 582297/582297 = 100.00% | 2040785/2040785 = 100.00% |
+| 15% byes 4-40, 4000x9 | 33601/33601 = 100.00% | 340942/340942 = 100.00% |
+| 10% forfeits 4-40, 4000x9 | 33544/33544 = 100.00% | 399201/399201 = 100.00% |
+| 10% byes + 10% forfeits, 4000x9 | 33715/33715 = 100.00% | 360941/360941 = 100.00% |
+| deep 13 rounds 4-40, 2000x13 | 22860/22860 = 100.00% | 279818/279818 = 100.00% |
+| deep 13 rounds + 15% byes, 2000x13 | 22716/22716 = 100.00% | 238034/238034 = 100.00% |
+| large 60-80, 300x9 | 2700/2700 = 100.00% | 94896/94896 = 100.00% |
+| large 90-120, 120x9 | 1080/1080 = 100.00% | 56700/56700 = 100.00% |
+| large 60-120 + 15% byes, 200x9 | 1800/1800 = 100.00% | 69951/69951 = 100.00% |
+
+The plain, 15%-byes and 10%-forfeits rows are bit-for-bit identical to
+the totals recorded for the same axes above, which is the check that
+matters most: the change is confined to a tie the old code resolved
+arbitrarily.
+
+The small-fields-with-byes row is the one that moved. That axis carried
+36 of the 43 residual disagreements; the 100,000-tournament slice of it
+had 3 and now has 0 over 582,297 rounds.
+
+The three-way harness agrees with **both** references over 8,402 rounds
+(1000x9, 4-40): bbpPairings vs Gacrux 100.0%, OpenPair vs bbpPairings
+100.0%, OpenPair vs Gacrux 100.0%.
+
+`mix test` 86 passed (85 before, plus the new regression test).
+
+### The methodological note
+
+`docs/fide-criteria.md` item 4's lesson held a second time, and needs
+one extension. The adjudicator reporting a rung as **0 vs 0** looks like
+evidence that the rung is irrelevant, and is not: a rung switched OFF on
+both sides scores zero on both sides, which is indistinguishable from a
+rung with nothing to say. C9 read 0 vs 0 on all 40 cases *because it was
+gated off*, and the visible C12/C13 disagreement was the first rung below
+it that happened to differ — the identical failure mode that item 4
+already records, one layer further down. A silent rung is not an
+exonerated rung.
+
 ## Explicitly deferred / not being pursued yet
 
 - Any FIDE endorsement application for OpenPair itself. It's meant to stay

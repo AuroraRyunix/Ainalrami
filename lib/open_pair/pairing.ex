@@ -2318,6 +2318,46 @@ defmodule OpenPair.Pairing do
     edge_ceiling = 3 * eligibility_unit + 2 * max_place
     cardinality_unit = div(n, 2) * edge_ceiling + 1
 
+    # dutch.cpp:782-786's THIRD packed field, which this port was missing
+    # entirely: after the eligibility and score-group fields are shifted
+    # up, the bottom `scoreGroupSizeBits` hold
+    #
+    #     player->scoreWithAcceleration(tournament)
+    #       >= sortedPlayers.front()->scoreWithAcceleration(tournament)
+    #
+    # `player` is the OUTER loop variable and `opponent` the inner one,
+    # and the inner loop breaks at `opponentIndex == playerIndex`, so
+    # `player` is always the WORSE-sorted of the two. On a field sorted
+    # best-first that makes the test "the lower player is still in the top
+    # score group", i.e. the edge lies WHOLLY inside the top score group.
+    # Summed over a matching it is a count: *maximise the number of pairs
+    # formed inside the top score group*.
+    #
+    # Why it is not redundant with the two fields above it. On an odd
+    # field the matcher returns a near-perfect matching, so every player
+    # but one is covered and both higher fields collapse to statements
+    # about that one leftover — eligibility to "leave out someone who may
+    # actually take the bye", score to "leave out the lowest-placed
+    # player". They cannot distinguish two matchings with the SAME
+    # leftover, nor two leftovers that tie on both. This field can, and it
+    # is the only one that says anything about the matching's SHAPE.
+    #
+    # Shape is exactly what `first_single_bye?/4` reads back out. That
+    # scan clears the C9 gate when any top-group player is tentatively
+    # matched BELOW the top group — which is precisely the arrangement
+    # this field penalises — so leaving it out let the gate be decided by
+    # whichever member of a tie the matcher happened to return.
+    #
+    # Scaled rather than packed. Multiplying everything above it by
+    # `div(n, 2) + 1` — one more than the number of edges a matching can
+    # hold, hence one more than the largest attainable bit total — makes
+    # this strictly a TIEBREAK: it can never overturn a difference in the
+    # fields above, only decide one they leave open. bbpPairings gets the
+    # same guarantee from bit widths, sizing the field at
+    # `scoreGroupSizeBits` so its sum cannot carry.
+    top_score = elem(arr, 0).points
+    tie_unit = div(n, 2) + 1
+
     edges =
       Enum.flat_map(0..(n - 2), fn i ->
         a = elem(arr, i)
@@ -2342,7 +2382,12 @@ defmodule OpenPair.Pairing do
             # pairing, a large regression, not the intended fix.
             eligibility = 1 + bit(not eligible_for_bye?(a)) + bit(not eligible_for_bye?(b))
             score = Map.fetch!(places, a.points) + Map.fetch!(places, b.points)
-            [{i, j, cardinality_unit + eligibility * eligibility_unit + score}]
+            # `b` is the worse-sorted of the two, so testing it alone is
+            # the whole of the C++ condition — see `tie_unit` above.
+            top_pair = bit(b.points >= top_score)
+            weight = cardinality_unit + eligibility * eligibility_unit + score
+
+            [{i, j, tie_unit * weight + top_pair}]
           else
             # dutch.cpp:768-791: `compatible/4`-failing pairs still get a
             # real edge here (`edgeWeight` starts at, and for these stays,
@@ -2361,7 +2406,10 @@ defmodule OpenPair.Pairing do
             # MORE than one player unmatched here — a case real bbpPairings
             # doesn't hit at this bootstrap step, since it always has a
             # complete graph to fall back on.
-            [{i, j, 1}]
+            #
+            # Scaled by `tie_unit` along with every compatible edge, so an
+            # incompatible pair stays exactly as far below them as before.
+            [{i, j, tie_unit}]
           end
         end)
       end)
@@ -2401,6 +2449,14 @@ defmodule OpenPair.Pairing do
   # `break`s there — which the sorted field turns into a plain implication.
   # An unmatched vertex is its own partner in bbpPairings' convention, so
   # the bye assignee themselves never clears the flag.
+  #
+  # This reads the matching's SHAPE, so it is only as well-defined as the
+  # matching is. Where several matchings tie on weight the flag can differ
+  # between them, and a maximum-weight matcher may return any of them —
+  # which is exactly why the bootstrap's lowest-order weight field (see
+  # `tie_unit` above) is not optional. That field prefers matchings that
+  # pair the top score group internally, i.e. the ones this scan does NOT
+  # clear, so the tie is resolved before it ever gets here.
   defp first_single_bye?(arr, n, matching, bye_score) do
     top = elem(arr, 0).points
 

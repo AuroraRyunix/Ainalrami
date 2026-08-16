@@ -251,6 +251,21 @@ bbpPairings' `computeEdgeWeight` does the same inversion.
    game, so it feeds the same `unplayed_ranks` the rung reads. Their
    disagreement count over 5025 rounds went 15 -> 1.
 
+   **A third layer, found later and worth stating separately: the gate
+   also has to be well-DEFINED.** For the first bracket the gate is not
+   computed, it is READ — off the bootstrap whole-field matching, by
+   `first_single_bye?/4`, which asks whether any top-group player is
+   tentatively matched below the top group. That makes it a property of
+   the matching's SHAPE, and a maximum-weight matcher may return any
+   optimum. `bye_assignee_score_from_field/2` was missing
+   `dutch.cpp:782-786`'s lowest packed field — a bit set when an edge lies
+   wholly inside the top score group, i.e. "maximise the pairs formed
+   inside the top score group" — which is exactly what resolves those
+   ties in bbpPairings' favour. Without it the gate was decided by
+   whichever tied matching came back, and it came back FALSE often enough
+   to kill C9 in the first bracket of small fields. See TODO.md; it closed
+   39 of the 40 catalogued residual disagreements.
+
 4. ~~**C12 may count colour preferences bbpPairings ignores.**~~
    **Tested and refuted — do not retry.** Partway through the C9 work the
    remaining disagreements inverted: the adjudicator started reporting
@@ -275,6 +290,17 @@ bbpPairings' `computeEdgeWeight` does the same inversion.
    rung, which is not necessarily the faulty one — check whether
    anything above it is misgated before believing the criterion itself
    is wrong.
+
+   **That held a second time, on the same rung.** The 40 residual cases
+   catalogued in TODO.md surfaced at C12 (19) and C13 (3), with the rest
+   tying outright — and C9 was reported as 0 vs 0, "not differing", which
+   reads like evidence that the rung is irrelevant and is not. A rung
+   switched OFF on both sides scores zero on both sides, and that is
+   indistinguishable in the adjudicator's output from a rung with nothing
+   to say. C9's first-bracket gate was false for every one of those cases;
+   making it true fixed 39. So extend the lesson: a rung reading 0 vs 0 is
+   not exonerated, only silent, and WHY it is silent is worth establishing
+   before believing the first rung that does differ.
 
 5. **`deviation` and `spread` are not FIDE criteria.** They sit mid-ladder
    in `within_bracket_weight/4` and do the work the handbook assigns to a
