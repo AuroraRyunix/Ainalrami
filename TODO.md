@@ -1803,10 +1803,101 @@ Once OpenPair is wired back into OpenPairings as a selectable engine, this
 harness should run as a *third* comparison arm there too, not just
 standalone here.
 
+## Residual-error triage (2026-08-16) — FE1-shaped, and byes are load-bearing
+
+Post-rewrite the engine agrees with bbpPairings on every axis to 100.00%
+at reporting precision, so the residue is now small enough to enumerate
+case by case rather than describe statistically. Every disagreement found
+across **2.5M+ tournaments** was collected and triaged three ways.
+
+**Rate, in FE1's own units.** FE1's bar is *"1 difference every 500 test
+tournaments"* (equivalently: 5000 tournaments, at most 10 discrepancies).
+
+| corpus | tournaments | disagreements |
+|---|---|---|
+| 8-axis validation (plain/byes/forfeits/combined/small/deep/large×2) | 527,000 | 7 |
+| small fields 4-10 + 15% byes | 1,000,000 | 36 |
+| small fields 4-10, **no byes** | 1,000,000 | **0** |
+| **total** | **2,527,000** | **43** |
+
+That is **1 per ~59,000 tournaments — roughly 120x inside FE1's bar.** A
+5000-tournament auto-test would expect 0.09 discrepancies against 10
+allowed. Zero illegal rounds throughout (≈26M individual pairings), once
+the harness's own stale active-field rule was fixed — see that commit;
+the 62 "illegal" rounds it first reported were the checker, not the
+engine.
+
+**Byes are necessary for the defect — a clean controlled result.** Two
+1,000,000-tournament runs over the identical field sizes (4-10 players),
+differing only in whether arbiter byes were generated: 36 disagreements
+with byes, **0 without, across 6.0M rounds**. Whatever is left needs a
+pre-assigned bye in the position to manifest at all.
+
+**Three-way triage (40 collected cases, all 5-10 player fields):**
+
+| | n | FE1 category |
+|---|---|---|
+| bbpPairings and Gacrux agree, we differ | 39 | candidate-program error |
+| **Gacrux backs US, bbpPairings differs** | **1** | **rules-interpretation dispute** |
+| three-way split | 0 | — |
+
+`seed735265-r7-p10` is the dispute, and the first case in this project's
+history where Gacrux has sided with OpenPair against bbpPairings. Round
+7, 10 players; the engines disagree about who takes the bye — ours and
+Gacrux's give it to rank 7, bbpPairings' to rank 3. Notably it is ALSO
+the only case the adjudicator scores `theirs_scores_better`, so our own
+ladder prefers bbpPairings' answer while our engine (and Gacrux) produce
+the other one. Not resolved here; FE1 explicitly provides for escalating
+exactly this to the SPPC rather than "fixing" it.
+
+**Adjudication of all 40 — and why C12 is a red herring:**
+
+| verdict | n | first differing rung |
+|---|---|---|
+| ours scores better | 22 | C12 colour preference (19), C13 strong (3) |
+| tie on every rung | 17 | lex picks ours (9), lex picks theirs (8) |
+| theirs scores better | 1 | C2/C4/C5 bye-eligibility |
+
+The C12/C13 surface is not the cause, and this was checked rather than
+assumed — the colour predicates were compared line by line against the
+primary source:
+
+- C12: bbpPairings' `colorPreferencesAreCompatible` (`common.h:90-98`) is
+  `p0 != p1 || p0 == NONE || p1 == NONE`; our `not clash?` where
+  `clash? = not is_nil(p) and p == o` is logically identical.
+- C13: same four disjuncts in the same order as `dutch.cpp:204-211`.
+- The INPUTS match too: bbpPairings' preference ladder
+  (`tournament.cpp:80-84`) is `imbalance > 1 -> lower : consecutive > 1 ->
+  invert(repeated) : imbalance > 0 -> lower : consecutive -> invert :
+  NONE`, which is `colour_stats/1`'s `cond` tier for tier, as are
+  `lowerColor`, `colorImbalance` and `repeatedColor`.
+- Both colour rungs are gated on `in_current`, matching bbpPairings'
+  `inCurrentScoreGroup` mask (`dutch.cpp:170`).
+
+So the ladder is a correct port and the earlier "do not retry" verdict in
+`docs/fide-criteria.md` item 4 stands — now on verification rather than
+on its own authority. The divergence originates ABOVE C12 and merely
+surfaces there, which is that document's own hard-won lesson.
+
+**Where that points.** 17 of 40 tie on every single rung and are decided
+purely by the tiebreak, which splits nearly evenly (9 ours / 8 theirs) —
+the signature of an ORDERING difference, not a criteria one. That is
+`docs/fide-criteria.md` item 5: `deviation` and `spread` standing in for
+FIDE §3's exact transposition-and-exchange procedure, already described
+there as "the largest remaining gap". The 22 C12-surfacing cases are
+consistent with the same cause reaching a different candidate. Combined
+with the bye-dependence above, the shape to chase is: **small field +
+pre-assigned bye + candidate ordering among criteria-equal pairings.**
+
 ## Explicitly deferred / not being pursued yet
 
 - Any FIDE endorsement application for OpenPair itself. It's meant to stay
   a non-default, non-homologated-tournament-only option inside
   OpenPairings, at least until (if ever) it's genuinely proven out — see
   the endorsement-risk discussion in OpenPairings' own project history.
-- A license file / open-source release. Undecided.
+  The error ratio is no longer the obstacle (see the triage above); what
+  remains is strategic — declaring "Internal engine: YES" on FE1 means
+  owning pairing correctness rather than inheriting JaVaFo's endorsement,
+  with two-week/two-month mandatory fix windows attached.
+- A license file / open-source release. Undecided — and a blocker for any
+  submission, since software with no declared license cannot be filed.
