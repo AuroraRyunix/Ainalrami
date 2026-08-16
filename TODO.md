@@ -2279,5 +2279,32 @@ to look: it produced a complete, legal, well-formed pairing every time.
   remains is strategic — declaring "Internal engine: YES" on FE1 means
   owning pairing correctness rather than inheriting JaVaFo's endorsement,
   with two-week/two-month mandatory fix windows attached.
-- A license file / open-source release. Undecided — and a blocker for any
-  submission, since software with no declared license cannot be filed.
+- ~~A license file / open-source release.~~ **Done (2026-08-16, `f984803`)** —
+  **Apache-2.0**, with a `NOTICE` naming `lib/open_pair/pairing.ex` and
+  `lib/open_pair/weighted_matching.ex` as derived from bbpPairings and
+  recording the §4(b) changes. Not really a choice: bbpPairings is
+  Apache-2.0 and those two files are ports of it, so the licence is
+  inherited. The repo is public. This is no longer a submission blocker.
+
+## Open
+
+- **`explain_round/3` never stamps float history.** The real path calls
+  `with_float_history/2` (`pairing.ex:505`); the diagnostic builds its field
+  with `with_acceleration` + `colour_stats` only. So **C14–C21 score zero on
+  both sides** of every verdict `tools/adjudicate.exs` has ever printed —
+  including the adjudication tables in this file. It cannot invent a
+  disagreement out of nothing (both sides are equally blank, so a tie stays
+  a tie), but it CAN hide one: any case actually decided on a float-history
+  rung gets misreported as tying there and surfacing lower down. Worth
+  fixing before the next round of adjudication is trusted, and worth
+  re-running the 40-case triage afterwards.
+- **`seed735265-r7-p10`** — the one surviving disagreement, and the only
+  case in this project's history where Gacrux backs OpenPair against
+  bbpPairings. FE1 category 3 (rules-interpretation dispute), which FE1
+  explicitly provides for escalating to the SPPC rather than "fixing".
+  Needs a written-up position before it can be escalated.
+- **The 2 wrong-bye-count / non-partition illegal cases** from the original
+  100,000-tournament bye run (line 442). Every axis has measured zero
+  illegal rounds since the C9-gate rewrite, so these are most likely
+  already closed by it — but that has never been checked against those
+  specific saved positions. Confirm and strike, or reopen with a repro.
