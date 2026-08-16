@@ -2381,7 +2381,33 @@ defmodule OpenPair.Pairing do
             # rounds newly unpairable where bbpPairings still found a legal
             # pairing, a large regression, not the intended fix.
             eligibility = 1 + bit(not eligible_for_bye?(a)) + bit(not eligible_for_bye?(b))
+
+            # A deliberate NON-literal reading, argued rather than copied.
+            # bbpPairings sums the raw SHIFT amounts here —
+            # `scoreGroupShifts[a] + scoreGroupShifts[b]`, roughly linear
+            # in the score-group index — where everywhere else it uses
+            # them as shifts (`1u << scoreGroupShifts[...]`). `places` is
+            # the mixed-radix encoding used by the rest of this port, and
+            # it is geometric, so the two are different functions.
+            #
+            # They agree on everything this pass can observe. The field is
+            # odd, the graph is complete, so the matcher covers all but one
+            # player and this band's total is `constant - value(leftover)`
+            # under EITHER encoding. Both are strictly increasing in the
+            # score-group index, so both say the same thing: minimise the
+            # leftover's score. The same collapse applies to the
+            # eligibility band above (`(n-1)/2 + ineligible_total -
+            # [leftover ineligible]`), which is why neither band can see
+            # the matching's shape and the field below had to.
+            #
+            # The reduction needs every edge compatible. Where it isn't,
+            # more than one player goes uncovered and the two encodings
+            # could in principle part company — but that is the case where
+            # real bbpPairings throws `NoValidPairingException` instead,
+            # and the `[] -> {nil, false}` branch below already declines to
+            # constrain C5 there.
             score = Map.fetch!(places, a.points) + Map.fetch!(places, b.points)
+
             # `b` is the worse-sorted of the two, so testing it alone is
             # the whole of the C++ condition — see `tie_unit` above.
             top_pair = bit(b.points >= top_score)

@@ -2030,9 +2030,19 @@ The small-fields-with-byes row is the one that moved. That axis carried
 36 of the 43 residual disagreements; the 100,000-tournament slice of it
 had 3 and now has 0 over 582,297 rounds.
 
-The three-way harness agrees with **both** references over 8,402 rounds
-(1000x9, 4-40): bbpPairings vs Gacrux 100.0%, OpenPair vs bbpPairings
-100.0%, OpenPair vs Gacrux 100.0%.
+**The full 1,000,000-tournament corpus, re-run: 5,822,425 / 5,822,426
+exact rounds, 20,416,198 / 20,416,202 pairs, zero illegal, zero
+refusals.** One disagreement remains where there were 36 — the same
+corpus, the same seeds. In FE1's units that is **1 per ~5.8 million
+rounds** on the engine's worst axis, against a bar of 1 per 500
+tournaments. Whether that survivor is a new shape or the same
+Gacrux-backed dispute is not established here; it is dumped to
+`/root/triage2/` on the measurement box for whoever picks this up.
+
+The three-way harness agrees with **both** references on both profiles —
+1000x9 over 4-40 (8,402 rounds) and 2000x9 over the small-fields+byes
+profile that carried the defect (11,879 rounds). bbpPairings vs Gacrux,
+OpenPair vs bbpPairings and OpenPair vs Gacrux are all 100.0% on both.
 
 `mix test` 86 passed (85 before, plus the new regression test).
 
