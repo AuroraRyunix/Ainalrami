@@ -24,8 +24,9 @@ defmodule OpenPair.Generator do
 
   ## What it varies
 
-  Roster size, round count, ratings, and results. Optionally forfeits and
-  arbiter-assigned byes, both off by default — see `generate/1`.
+  Roster size, round count, ratings, and results. Optionally forfeits,
+  arbiter-assigned byes, `XXP` forbidden pairings and `XXA` acceleration —
+  all four off by default, see `generate/1`.
 
   Retirements are NOT modelled: a retired player is expressed as a run of
   arbiter-assigned byes to the end of the tournament, which
@@ -47,6 +48,11 @@ defmodule OpenPair.Generator do
     * `:forfeit_pct` — percentage of games forfeited (default 0)
     * `:requested_bye_pct` — percentage of players granted an
       arbiter-assigned half- or zero-point bye each round (default 0)
+    * `:forbidden_pct` — percentage of players given one arbiter-forbidden
+      opponent, emitted as `XXP` lines (default 0)
+    * `:acceleration` — `:baku` for FIDE C.04.7's virtual points, or
+      `:random` for arbitrary per-player-per-round ones; emitted as `XXA`
+      lines (default: none)
 
   Returns `{trf_text, seed}`.
   """
@@ -65,6 +71,8 @@ defmodule OpenPair.Generator do
 
     forfeit_pct = Keyword.get(opts, :forfeit_pct, 0)
     bye_pct = Keyword.get(opts, :requested_bye_pct, 0)
+    forbidden = forbidden_pairs(players, Keyword.get(opts, :forbidden_pct, 0))
+    accelerations = accelerations(players, rounds, Keyword.get(opts, :acceleration))
 
     # A round can have no legal completion at all — not the engine failing
     # to search hard enough, but a proven deadlock (`OpenPair.Pairing`'s
@@ -76,9 +84,14 @@ defmodule OpenPair.Generator do
     # tournament at the last round that actually completed rather than
     # letting one bad round crash the whole generation.
     {final, played_rounds} =
-      Enum.reduce_while(1..rounds, {roster(players), 0}, fn round_no, {current, _last} ->
+      Enum.reduce_while(1..rounds, {roster(players, accelerations), 0}, fn round_no,
+                                                                           {current, _last} ->
         try do
-          next = current |> grant_requested_byes(bye_pct) |> play_one_round(rounds, forfeit_pct)
+          next =
+            current
+            |> grant_requested_byes(bye_pct)
+            |> play_one_round(rounds, forfeit_pct, forbidden)
+
           {:cont, {next, round_no}}
         rescue
           Pairing.NoValidPairingError -> {:halt, {current, round_no - 1}}
@@ -95,7 +108,8 @@ defmodule OpenPair.Generator do
           # knew just `142` got no round count at all, which silently
           # changed the final-round pairing — see `OpenPair.Trf`'s
           # `parse_xxr/2`.
-          number_of_rounds: played_rounds
+          number_of_rounds: played_rounds,
+          forbidden_pairs: forbidden
         },
         players: final
       }) <> "XXR #{played_rounds}\r\n"
@@ -103,17 +117,89 @@ defmodule OpenPair.Generator do
     {text, seed}
   end
 
-  defp roster(count) do
+  defp roster(count, accelerations) do
     for rank <- 1..count do
-      %{
+      player = %{
         rank: rank,
         name: "Player#{rank}",
         fide_rating: Enum.random(1400..2700),
         points: 0.0,
         games: []
       }
+
+      case Map.get(accelerations, rank) do
+        nil -> player
+        values -> Map.put(player, :accelerations, values)
+      end
     end
   end
+
+  # One `XXP` group of two per selected player. Groups are emitted verbatim
+  # and may overlap, which is fine and realistic — an arbiter separating a
+  # family of three writes three lines (or one of three ids, which
+  # `OpenPair.Trf` also reads).
+  #
+  # Deliberately allowed to make the tournament unpairable. bbpPairings
+  # answers that with its own no-valid-pairing exit and the comparison
+  # harness ends the tournament there, so an over-constrained field is a
+  # measured case rather than a generator bug — and the alternative,
+  # filtering the pairs down to a provably-satisfiable set, would build the
+  # very rule under test into the fixture.
+  defp forbidden_pairs(_count, pct) when pct <= 0, do: []
+
+  defp forbidden_pairs(count, _pct) when count < 2, do: []
+
+  defp forbidden_pairs(count, pct) do
+    for rank <- 1..count, :rand.uniform(100) <= pct do
+      other = Enum.random(Enum.reject(1..count, &(&1 == rank)))
+      Enum.sort([rank, other])
+    end
+    |> Enum.uniq()
+  end
+
+  # FIDE C.04.7's Baku acceleration, or arbitrary virtual points.
+  #
+  # The `:baku` shape is the FIDE text as the sibling project's own
+  # `acceleration_lines/4` reads it: Group A is the top `2 * ceil(n/4)`
+  # players by starting rank, the accelerated rounds are the first
+  # `ceil(rounds/2)`, and within those the first `ceil(accelerated/2)` pay
+  # a full virtual point and the rest a half.
+  #
+  # Worth recording that bbpPairings' OWN Baku (`applyBakuAcceleration`,
+  # `trf.cpp:708-753`) sizes Group A differently — `(n - 1) / 2` as a
+  # 0-based last rank, i.e. `ceil(n/2)` players, so 5 rather than 6 on a
+  # 10-player field — while agreeing exactly on the round split. That path
+  # is only reached through its own Baku flag, never through `XXA`, so it
+  # cannot make the two engines disagree here: both read the identical
+  # `XXA` lines out of the identical file. The generator follows the
+  # sibling's reading because that is what OpenPair will actually be handed
+  # in production.
+  defp accelerations(_count, _rounds, nil), do: %{}
+
+  defp accelerations(count, rounds, :baku) do
+    group_a = 2 * ceil_div(count, 4)
+    accelerated = ceil_div(rounds, 2)
+    full = ceil_div(accelerated, 2)
+
+    values =
+      Enum.map(1..rounds//1, fn round ->
+        cond do
+          round <= full -> 1.0
+          round <= accelerated -> 0.5
+          true -> 0.0
+        end
+      end)
+
+    Map.new(1..min(group_a, count)//1, &{&1, values})
+  end
+
+  defp accelerations(count, rounds, :random) do
+    Map.new(1..count//1, fn rank ->
+      {rank, Enum.map(1..rounds//1, fn _ -> Enum.random([0.0, 0.0, 0.5, 1.0]) end)}
+    end)
+  end
+
+  defp ceil_div(a, b), do: div(a + b - 1, b)
 
   # An arbiter-assigned bye is granted BEFORE the round is paired and
   # recorded in advance, which is exactly how the engine knows to leave
@@ -136,8 +222,13 @@ defmodule OpenPair.Generator do
     end)
   end
 
-  defp play_one_round(players, total_rounds, forfeit_pct) do
-    pairs = Pairing.pair_next_round(players, expected_rounds: total_rounds)
+  defp play_one_round(players, total_rounds, forfeit_pct, forbidden) do
+    pairs =
+      Pairing.pair_next_round(players,
+        expected_rounds: total_rounds,
+        forbidden_pairs: forbidden
+      )
+
     by_rank = Enum.reduce(pairs, %{}, &record_game(&1, &2, forfeit_pct))
 
     Enum.map(players, fn player ->

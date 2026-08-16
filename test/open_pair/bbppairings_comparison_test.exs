@@ -39,6 +39,19 @@ defmodule OpenPair.BbppairingsComparisonTest do
   Same tunables as the javafo harness: `PAIRING_FUZZ_COUNT`,
   `PAIRING_FUZZ_ROUNDS`, `PAIRING_FUZZ_MIN_PLAYERS`/`_MAX_PLAYERS`,
   `PAIRING_FUZZ_BYE_PCT`, `PAIRING_FUZZ_FORFEIT_PCT`, `PAIRING_FUZZ_DUMP`.
+
+  Two more cover the `XX` extension lines, and they work because
+  bbpPairings implements both — the same file is handed to both engines, so
+  the oracle validates them exactly as it validates every other axis:
+
+    * `PAIRING_FUZZ_FORBIDDEN_PCT` — percentage of players given one
+      arbiter-forbidden opponent, emitted as `XXP`.
+    * `PAIRING_FUZZ_ACCEL` — `baku` or `random`, emitted as `XXA`.
+
+  Both are fixed per TOURNAMENT, not per round: an exclusion and an
+  acceleration record are properties of the event, and `XXA` in particular
+  is only meaningful as a full round-by-round history (JaVaFo's manual is
+  explicit that the record is what the float history is derived from).
   """
 
   use ExUnit.Case
@@ -108,11 +121,12 @@ defmodule OpenPair.BbppairingsComparisonTest do
   defp run_tournament!(seed, rounds, player_range) do
     :rand.seed(:exsss, {seed, seed * 7919, seed * 104_729})
     player_count = Enum.random(player_range)
-    roster = initial_roster(player_count)
+    forbidden = forbidden_pairs(player_count)
+    roster = player_count |> initial_roster() |> accelerate(rounds)
 
     {measurements, _final} =
       Enum.reduce_while(1..rounds, {[], roster}, fn round, {acc, players} ->
-        case play_round(players, seed, round, rounds, player_count) do
+        case play_round(players, seed, round, rounds, player_count, forbidden) do
           {:ok, measurement, next_players} -> {:cont, {[measurement | acc], next_players}}
           {:error, measurement} -> {:halt, {[measurement | acc], players}}
         end
@@ -130,14 +144,79 @@ defmodule OpenPair.BbppairingsComparisonTest do
     |> Enum.map(fn {p, i} -> %{p | rank: i} end)
   end
 
-  defp play_round(players, seed, round, total_rounds, player_count) do
+  # One forbidden opponent for each selected player, as a two-id `XXP`
+  # group. Chosen once for the whole tournament and deliberately allowed to
+  # over-constrain the field — bbpPairings answers an impossible round with
+  # its own no-valid-pairing exit, which the harness already treats as "the
+  # tournament ends here", so an unpairable draw is measured rather than
+  # avoided.
+  defp forbidden_pairs(player_count) do
+    pct = env_int("PAIRING_FUZZ_FORBIDDEN_PCT", 0)
+
+    if pct == 0 or player_count < 2 do
+      []
+    else
+      for rank <- 1..player_count, :rand.uniform(100) <= pct do
+        Enum.sort([rank, Enum.random(Enum.reject(1..player_count, &(&1 == rank)))])
+      end
+      |> Enum.uniq()
+    end
+  end
+
+  # `XXA` virtual points, stamped onto the roster once and carried by every
+  # round's TRF unchanged — the full round-by-round record JaVaFo's manual
+  # requires, and the same list `OpenPair.Trf.parse/1` hands the engine.
+  # `:baku` is FIDE C.04.7; `:random` exists because Baku alone only ever
+  # produces two distinct acceleration values in one flat block, which
+  # exercises far less of the bracket machinery than arbitrary per-player
+  # histories do.
+  defp accelerate(players, rounds) do
+    case System.get_env("PAIRING_FUZZ_ACCEL") do
+      nil -> players
+      "baku" -> baku(players, rounds)
+      "random" -> Enum.map(players, &random_acceleration(&1, rounds))
+      other -> raise "PAIRING_FUZZ_ACCEL must be \"baku\" or \"random\", got #{inspect(other)}"
+    end
+  end
+
+  defp baku(players, rounds) do
+    count = length(players)
+    group_a = 2 * ceil_div(count, 4)
+    accelerated = ceil_div(rounds, 2)
+    full = ceil_div(accelerated, 2)
+
+    values =
+      Enum.map(1..rounds//1, fn round ->
+        cond do
+          round <= full -> 1.0
+          round <= accelerated -> 0.5
+          true -> 0.0
+        end
+      end)
+
+    Enum.map(players, fn p ->
+      if p.rank <= group_a, do: Map.put(p, :accelerations, values), else: p
+    end)
+  end
+
+  defp random_acceleration(player, rounds) do
+    Map.put(
+      player,
+      :accelerations,
+      Enum.map(1..rounds//1, fn _ -> Enum.random([0.0, 0.0, 0.5, 1.0]) end)
+    )
+  end
+
+  defp ceil_div(a, b), do: div(a + b - 1, b)
+
+  defp play_round(players, seed, round, total_rounds, player_count, forbidden) do
     players = assign_requested_byes(players)
     # `OpenPair.Test.Field.active/1`, NOT `length(games) < round` — the
     # latter misses the completed-trailing-column rule and reports rounds
     # as illegal that agree with bbpPairings byte for byte. See that
     # module's moduledoc.
     active = OpenPair.Test.Field.active(players)
-    trf = build_trf(players, total_rounds)
+    trf = build_trf(players, total_rounds, forbidden)
 
     base = %{
       trf: trf,
@@ -162,7 +241,7 @@ defmodule OpenPair.BbppairingsComparisonTest do
          })}
 
       {:ok, bbp_pairs} ->
-        openpair_pairs = safely_pair(players, total_rounds)
+        openpair_pairs = safely_pair(players, total_rounds, forbidden)
 
         measurement =
           Map.merge(base, %{
@@ -171,7 +250,7 @@ defmodule OpenPair.BbppairingsComparisonTest do
             bbppairings: Enum.sort(bbp_pairs)
           })
           |> Map.merge(pair_agreement(openpair_pairs, bbp_pairs))
-          |> Map.put(:illegal, illegality(openpair_pairs, active, players))
+          |> Map.put(:illegal, illegality(openpair_pairs, active, players, forbidden))
 
         next_players = apply_round(players, bbp_pairs, simulate_results(bbp_pairs))
         {:ok, measurement, next_players}
@@ -188,8 +267,11 @@ defmodule OpenPair.BbppairingsComparisonTest do
     end
   end
 
-  defp safely_pair(players, total_rounds) do
-    Pairing.pair_next_round(players, expected_rounds: total_rounds)
+  defp safely_pair(players, total_rounds, forbidden) do
+    Pairing.pair_next_round(players,
+      expected_rounds: total_rounds,
+      forbidden_pairs: forbidden
+    )
   rescue
     e -> {:raised, e}
   end
@@ -202,9 +284,9 @@ defmodule OpenPair.BbppairingsComparisonTest do
   defp summarise({:raised, _} = raised), do: raised
   defp summarise(pairs), do: Enum.sort(pairs)
 
-  defp illegality({:raised, _}, _active, _players), do: :raised
+  defp illegality({:raised, _}, _active, _players, _forbidden), do: :raised
 
-  defp illegality(pairs, active, players) do
+  defp illegality(pairs, active, players, forbidden) do
     byes = Enum.count(pairs, fn {_white, black} -> is_nil(black) end)
     seated = Enum.flat_map(pairs, fn {w, b} -> if b, do: [w, b], else: [w] end)
     by_rank = Map.new(players, &{&1.rank, &1})
@@ -229,11 +311,30 @@ defmodule OpenPair.BbppairingsComparisonTest do
         _ -> false
       end)
 
+    # An arbiter's `XXP` exclusion, checked here rather than trusted to the
+    # engine. This is the only one of these five that can be violated
+    # WITHOUT the round looking wrong in any other way: the pairing is a
+    # clean partition, byes are correct, nobody is a rematch, and two
+    # people who were never to meet are sitting across a board. It is the
+    # entire reason the sibling project refused to hand OpenPair a TRF
+    # carrying one, so it is measured, not assumed.
+    forbidden_set =
+      Enum.reduce(forbidden, MapSet.new(), fn group, acc ->
+        for a <- group, b <- group, a < b, into: acc, do: {a, b}
+      end)
+
+    forbidden_pair? =
+      Enum.any?(pairs, fn
+        {_w, nil} -> false
+        {w, b} -> MapSet.member?(forbidden_set, {min(w, b), max(w, b)})
+      end)
+
     cond do
       byes != rem(length(active), 2) -> :bad_bye_count
       Enum.sort(seated) != Enum.sort(Enum.map(active, & &1.rank)) -> :not_a_partition
       rematch? -> :rematch
       repeat_bye? -> :repeat_bye
+      forbidden_pair? -> :forbidden_pair
       true -> nil
     end
   end
@@ -260,9 +361,11 @@ defmodule OpenPair.BbppairingsComparisonTest do
   # same "deliberately colour-blind" stance `OpenPair.JavafoComparisonTest`
   # takes and for the identical reason (Article 5.1's drawing of lots has
   # no deterministic rule either engine's fixed convention needs to match).
-  defp build_trf(players, total_rounds) do
-    OpenPair.Trf.serialize(%{tournament: %{name: "Fuzz", type: "swiss"}, players: players}) <>
-      "152 W\r\nXXR #{total_rounds}\r\n"
+  defp build_trf(players, total_rounds, forbidden) do
+    OpenPair.Trf.serialize(%{
+      tournament: %{name: "Fuzz", type: "swiss", forbidden_pairs: forbidden},
+      players: players
+    }) <> "152 W\r\nXXR #{total_rounds}\r\n"
   end
 
   defp assign_requested_byes(players) do

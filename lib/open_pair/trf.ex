@@ -31,6 +31,32 @@ defmodule OpenPair.Trf do
   archived TRF06 specs (Annexure-B/2006, Annexure-C/2016) — the
   `allow_dangling_playing_code` tolerance and the `parse_games/1` blank-round
   handling below both come directly from that work, not reinvented here.
+
+  ## The `XX*` extension lines
+
+  Three of JaVaFo's own `XX` extension codes are read and written:
+
+    * `XXR n` — the round count (see `parse_xxr/2`).
+    * `XXP a b [c ...]` — a mutually-forbidden GROUP of players
+      (see `parse_xxp/2`), surfaced as `tournament[:forbidden_pairs]`.
+    * `XXA` — per-player acceleration/virtual points, round by round
+      (see `parse_xxa/2`), surfaced as each player's `:accelerations`.
+
+  Anything else beginning `XX` still falls through `parse_header_line/3`'s
+  `nil -> acc` clause and is ignored. That silent-discard behaviour is
+  correct for a genuinely unknown code and was WRONG for these two: an
+  arbiter's `XXP` "these two must never meet" was dropped on the floor and
+  the engine then returned a complete, perfectly legal-looking pairing that
+  seated them together, with nothing downstream able to detect it. That is
+  why the sibling project had to refuse to pair any TRF carrying a
+  non-`XXR` `XX` line at all.
+
+  For the same reason, a MALFORMED `XXP`/`XXA` line raises
+  `OpenPair.Trf.ValidationError` rather than being skipped — see
+  `parse_xxp/2`. bbpPairings does the same (`InvalidLineException`, exit
+  code 3); `parse_xxr/2`'s shrug is the exception, and it can afford one
+  because a missing round count has a fallback and a missing exclusion
+  does not.
   """
 
   alias OpenPair.Trf.ValidationError
@@ -166,6 +192,33 @@ defmodule OpenPair.Trf do
     {base, base + 3}
   end
 
+  # `XXA` is FIXED-COLUMN, unlike the free-form `XXR`/`XXP` extension lines
+  # next to it, and the columns are not negotiable in either direction.
+  #
+  # bbpPairings' `readPlayerAccelerationsXxa` (`trf.cpp:487-514`) reads the
+  # starting rank from `line[4]..line[8)` — 0-indexed, so columns 5-8 — and
+  # then walks `startIndex = 9; startIndex += 5`, reading four characters at
+  # each stop: columns 10-13, 15-18, 20-23, i.e. `10 + 5*(r-1)` for round
+  # `r`, with a single separator column between fields. That is exactly the
+  # JaVaFo 2.2 Advanced User Manual's own spec ("XXA NNNN pp.p pp.p ...",
+  # `NNNN` at column 5, each `pp.p` at column `10 + 5*(r-1)`).
+  #
+  # The sibling project confirmed by direct experiment that free-form `XXA`
+  # crashes real javafo with a bare NullPointerException while the
+  # fixed-column form runs clean — see `acceleration_lines/4`'s docs in
+  # `../openpairings`. Its own emitter, however, right-aligns the rank in a
+  # FIVE-column field (cols 5-9) and each value in a five-column field
+  # (10-14, 15-19, ...), which is one column wider than the spec at every
+  # stop; javafo evidently tolerates that, bbpPairings does not (it reads
+  # four blanks where the rank should be). The widths below are the spec's,
+  # and are what bbpPairings actually round-trips.
+  @xxa_rank_cols {5, 8}
+
+  defp xxa_points_cols(round) do
+    base = 10 + (round - 1) * 5
+    {base, base + 3}
+  end
+
   ## ---------- Serializing ----------
 
   @doc """
@@ -184,6 +237,12 @@ defmodule OpenPair.Trf do
   purely a human-readability courtesy, no header code of its own, and
   safely ignored by any TRF16 reader (including `parse/1`, since these
   lines don't start with a recognized 3-digit code). Off by default.
+
+  A player carrying `:accelerations` (a list of virtual-point values, one
+  per round from round 1) gets an `XXA` line, and
+  `tournament[:forbidden_pairs]` (a list of mutually-forbidden starting-rank
+  GROUPS) becomes one `XXP` line per group. Both are emitted after the
+  player/team rows, and both round-trip through `parse/1`.
   """
   def serialize(data, opts \\ [])
 
@@ -196,7 +255,39 @@ defmodule OpenPair.Trf do
     |> Kernel.++(legend_lines(opts[:column_legend], max_round))
     |> Kernel.++(Enum.map(players, &player_line/1))
     |> Kernel.++(Enum.map(teams, &team_line/1))
+    |> Kernel.++(acceleration_lines(players))
+    |> Kernel.++(forbidden_pair_lines(t[:forbidden_pairs]))
     |> Enum.map_join("", &(&1 <> "\r\n"))
+  end
+
+  defp acceleration_lines(players) do
+    players
+    |> Enum.filter(&(&1[:accelerations] not in [nil, []]))
+    |> Enum.map(&acceleration_line/1)
+  end
+
+  defp acceleration_line(player) do
+    player[:accelerations]
+    |> Enum.with_index(1)
+    |> Enum.reduce(
+      [] |> place({1, 3}, "XXA") |> place(@xxa_rank_cols, player[:rank], align: :right),
+      fn {points, round}, acc ->
+        place(acc, xxa_points_cols(round), format_points(points), align: :right)
+      end
+    )
+    |> render()
+  end
+
+  # Free-form, matching `readForbiddenPairsXxp` (`trf.cpp:554-568`): it
+  # takes `line.substr(3)` and tokenizes on space/tab, so the whole line
+  # after the code is just a list of starting ranks. A group of N ids
+  # forbids every pair WITHIN it, not merely the first two.
+  defp forbidden_pair_lines(nil), do: []
+
+  defp forbidden_pair_lines(groups) do
+    groups
+    |> Enum.reject(&(length(&1) < 2))
+    |> Enum.map(&("XXP " <> Enum.join(&1, " ")))
   end
 
   defp legend_lines(true, max_round) when max_round > 0 do
@@ -490,6 +581,12 @@ defmodule OpenPair.Trf do
   `allow_dangling_playing_code` option) — column positions are otherwise
   byte-identical between the two versions, so no separate TRF06 parser is
   needed, just this one relaxed rule.
+
+  `XXP` lines land in `tournament[:forbidden_pairs]`, and `XXA` lines
+  attach an `:accelerations` list to the player they name. Neither key is
+  added at all when the file carries no such line, so a plain TRF parses
+  to exactly the same shape it always did. A malformed one of either
+  raises `OpenPair.Trf.ValidationError` — see the moduledoc.
   """
   def parse(text) do
     lines =
@@ -497,20 +594,48 @@ defmodule OpenPair.Trf do
       |> String.split(~r/\r?\n/)
       |> Enum.reject(&(String.trim(&1) == ""))
 
+    empty = %{tournament: %{deputy_arbiters: []}, players: [], teams: [], accelerations: %{}}
+
     result =
-      Enum.reduce(lines, %{tournament: %{deputy_arbiters: []}, players: [], teams: []}, fn line,
-                                                                                           acc ->
+      Enum.reduce(lines, empty, fn line, acc ->
         case String.slice(line, 0, 3) do
           "001" -> update_in(acc.players, &(&1 ++ [parse_player_line(line)]))
           "013" -> update_in(acc.teams, &(&1 ++ [parse_team_line(line)]))
           "132" -> put_in(acc.tournament[:round_dates], parse_round_dates(line))
           "XXR" -> parse_xxr(acc, line)
+          "XXP" -> parse_xxp(acc, line)
+          "XXA" -> parse_xxa(acc, line)
           code -> parse_header_line(acc, code, line)
         end
       end)
 
     validate_games!(result.players, allow_dangling_playing_code: true)
-    result
+    attach_accelerations(result)
+  end
+
+  # An `XXA` line may legally precede the `001` line of the player it names
+  # — bbpPairings handles the same ordering problem by pre-sizing
+  # `tournament.players` in `readPlayerAccelerationsXxa` and then MOVING the
+  # accelerations onto the real player record when its `001` line arrives
+  # (`trf.cpp:369-372`). Collecting them in a rank-keyed map and merging at
+  # the end is the same thing without the resize dance.
+  #
+  # The key is only added to players that actually have one, so a file with
+  # no `XXA` at all parses to the identical map it did before.
+  defp attach_accelerations(%{accelerations: accelerations} = result) do
+    players =
+      if accelerations == %{} do
+        result.players
+      else
+        Enum.map(result.players, fn player ->
+          case Map.fetch(accelerations, player[:rank]) do
+            {:ok, values} -> Map.put(player, :accelerations, values)
+            :error -> player
+          end
+        end)
+      end
+
+    result |> Map.put(:players, players) |> Map.delete(:accelerations)
   end
 
   # `XXR n` is JaVaFo's own extension for the number of rounds, and it is
@@ -532,6 +657,106 @@ defmodule OpenPair.Trf do
       :error ->
         acc
     end
+  end
+
+  # `XXP a b [c ...]` — a mutually-forbidden GROUP of players, JaVaFo's own
+  # extension for an arbiter's "these must never meet" (family members, the
+  # same club, a federation exclusion rule).
+  #
+  # A port of `readForbiddenPairsXxp` (`trf.cpp:554-568`), which takes
+  # `line.substr(3)` and tokenizes on space/tab into a LIST of player ids.
+  # So one line is an N-player group in which EVERY pair is forbidden, not
+  # just a pair — the sibling project only ever emits two ids per line, but
+  # the general form is what the reference reads and so is what this reads.
+  # bbpPairings then files each list under rounds `[0, expectedRounds)`
+  # (`trf.cpp:1344-1347`), i.e. universally, which is why no round range is
+  # kept here; its round-limited sibling is the `260` line, not this one.
+  #
+  # An unreadable id RAISES, where `parse_xxr/2` next door merely shrugs.
+  # That difference is deliberate and is the whole point of this commit:
+  # `XXR` has a safe fallback (the `142` header, or no round count at all),
+  # while a dropped `XXP` produces a complete, perfectly legal-LOOKING
+  # pairing that seats two players an arbiter said must never meet, with
+  # nothing downstream able to tell. bbpPairings takes the same view —
+  # `readPlayerId` throws `InvalidLineException` and the whole file is
+  # rejected (exit code 3, confirmed by direct invocation).
+  #
+  # A line naming fewer than two players is accepted and then dropped, not
+  # raised on: bbpPairings accepts it too (an empty or one-element deque
+  # inserts a player into their own forbidden set at most, and nobody is
+  # ever a candidate opponent for themselves).
+  defp parse_xxp(acc, line) do
+    ids =
+      line
+      |> String.slice(3..-1//1)
+      |> String.split([" ", "\t"], trim: true)
+      |> Enum.map(fn token ->
+        parse_int(token) ||
+          raise ValidationError,
+            message: "XXP line names #{inspect(token)}, which is not a starting rank: #{line}"
+      end)
+
+    if length(ids) < 2 do
+      acc
+    else
+      update_in(acc.tournament[:forbidden_pairs], &((&1 || []) ++ [ids]))
+    end
+  end
+
+  # `XXA` — per-player acceleration ("virtual points", FIDE C.04.7 Baku
+  # Acceleration and anything else an arbiter chooses to hand out), one
+  # value per round from round 1. Fixed-column; see `@xxa_rank_cols`.
+  #
+  # A port of `readPlayerAccelerationsXxa` (`trf.cpp:487-514`). Its loop
+  # condition is `startIndex + 4 <= line.size()`, so a round's slot counts
+  # only when all four of its characters are actually present, and a slot
+  # that is present but blank reads as zero rather than ending the line.
+  #
+  # An unreadable rank or value RAISES, for the reason `parse_xxp/2` gives:
+  # silently discarding it changes which bracket a player is paired in and
+  # produces a wrong answer that looks entirely well-formed. It is also
+  # the concrete way a caller finds out its `XXA` columns are wrong, which
+  # is not hypothetical — the sibling project's own emitter is one column
+  # wide at every field, and bbpPairings rejects those lines outright
+  # (`Invalid line "XXA     1  1.0 ..."`, exit 3, reproduced directly).
+  # Reading the rank out of columns 5-8 of such a line finds four blanks,
+  # so this raises where a tolerant parser would have quietly paired an
+  # unaccelerated tournament and said nothing.
+  defp parse_xxa(acc, line) do
+    rank =
+      parse_int(read(line, @xxa_rank_cols)) ||
+        raise ValidationError,
+          message:
+            "XXA line has no starting rank in columns 5-8 (see OpenPair.Trf's " <>
+              "@xxa_rank_cols for the fixed-column layout): #{inspect(line)}"
+
+    put_in(acc.accelerations[rank], parse_xxa_points(line))
+  end
+
+  defp parse_xxa_points(line) do
+    length = String.length(line)
+    {_round1_start, round1_end} = xxa_points_cols(1)
+
+    round_count =
+      if length < round1_end do
+        0
+      else
+        div(length - round1_end, 5) + 1
+      end
+
+    Enum.map(1..round_count//1, fn round ->
+      case read(line, xxa_points_cols(round)) do
+        "" ->
+          0.0
+
+        field ->
+          parse_float(field) ||
+            raise ValidationError,
+              message:
+                "XXA line, round #{round}: #{inspect(field)} is not a virtual-point " <>
+                  "value: #{inspect(line)}"
+      end
+    end)
   end
 
   defp read(line, {start_col, end_col}) do

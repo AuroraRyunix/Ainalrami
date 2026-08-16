@@ -44,6 +44,17 @@ defmodule OpenPair.CLI do
     Enum.split_with(argv, &(&1 in known_bare_flags or &1 =~ ~r/^--[a-z-]+=/))
   end
 
+  # The one `-g` option whose value is a word rather than an integer.
+  # Anything other than the two known modes is treated as absent, which is
+  # the same silence `option/2` gives an unparsable integer.
+  defp acceleration_option(flags) do
+    Enum.find_value(flags, fn
+      "--acceleration=baku" -> :baku
+      "--acceleration=random" -> :random
+      _ -> nil
+    end)
+  end
+
   # `--key=value` options, used only by `-g`. Anything unrecognised is left
   # for the mode to reject rather than silently ignored.
   defp option(flags, key) do
@@ -77,8 +88,9 @@ defmodule OpenPair.CLI do
   end
 
   # Random Tournament Generator (RTG). `openpair -g [output.trf]` with
-  # optional `--seed=`, `--players=`, `--rounds=`, `--forfeit-pct=` and
-  # `--bye-pct=`; writes to stdout when no output path is given.
+  # optional `--seed=`, `--players=`, `--rounds=`, `--forfeit-pct=`,
+  # `--bye-pct=`, `--forbidden-pct=` and `--acceleration=`; writes to
+  # stdout when no output path is given.
   defp generate(positional, flags) do
     opts =
       [
@@ -86,7 +98,9 @@ defmodule OpenPair.CLI do
         players: option(flags, "players"),
         rounds: option(flags, "rounds"),
         forfeit_pct: option(flags, "forfeit-pct"),
-        requested_bye_pct: option(flags, "bye-pct")
+        requested_bye_pct: option(flags, "bye-pct"),
+        forbidden_pct: option(flags, "forbidden-pct"),
+        acceleration: acceleration_option(flags)
       ]
       |> Enum.reject(fn {_key, value} -> is_nil(value) end)
 
@@ -122,7 +136,9 @@ defmodule OpenPair.CLI do
         if round_count == 0, do: "pairing round 1", else: "pairing round #{round_count + 1}"
       )
 
-      case pair_next_round(parsed.players, parsed.tournament[:number_of_rounds]) do
+      report_extensions(parsed)
+
+      case pair_next_round(parsed.players, parsed.tournament) do
         {:ok, pairs} ->
           write_pairs(pairs, positional_rest)
           0
@@ -140,12 +156,43 @@ defmodule OpenPair.CLI do
   # `OpenPair.Pairing.NoValidPairingError`'s doc) rather than a crash. That
   # matches how JaVaFo itself reports it: an empty pairing, not a stack
   # trace.
-  defp pair_next_round(players, expected_rounds) do
-    {:ok, Pairing.pair_next_round(players, expected_rounds: expected_rounds)}
+  defp pair_next_round(players, tournament) do
+    {:ok, Pairing.pair_next_round(players, pairing_opts(tournament))}
   rescue
     e in Pairing.NoValidPairingError ->
       Log.error("no legal pairing exists for this round: #{Exception.message(e)}")
       {:error, :halt}
+  end
+
+  # Everything the engine needs that lives on the tournament rather than on
+  # a player. Acceleration is absent because it doesn't belong here: `XXA`
+  # is per-player and rides along on the player maps themselves.
+  defp pairing_opts(tournament) do
+    [
+      expected_rounds: tournament[:number_of_rounds],
+      forbidden_pairs: tournament[:forbidden_pairs]
+    ]
+  end
+
+  # An arbiter's exclusions and any acceleration are reported explicitly.
+  # These were silently discarded until this engine learned to read them,
+  # and a silent "no `XXP` line here after all" is exactly the failure the
+  # trace should make impossible to miss.
+  defp report_extensions(parsed) do
+    for group <- parsed.tournament[:forbidden_pairs] || [] do
+      Log.detail("forbidden pairing: #{Enum.map_join(group, " / ", &"##{&1}")}")
+    end
+
+    for player <- parsed.players, player[:accelerations] not in [nil, []] do
+      Log.detail(
+        "##{player.rank} acceleration: " <>
+          Enum.map_join(
+            player[:accelerations],
+            " ",
+            &:erlang.float_to_binary(&1 / 1, decimals: 1)
+          )
+      )
+    end
   end
 
   # Pairings Checker (FPC). Replays a completed tournament round by round,
@@ -195,9 +242,7 @@ defmodule OpenPair.CLI do
   defp check_round(parsed, round) do
     before = state_before_round(parsed.players, round)
 
-    expected =
-      Pairing.pair_next_round(before, expected_rounds: parsed.tournament[:number_of_rounds])
-
+    expected = Pairing.pair_next_round(before, pairing_opts(parsed.tournament))
     actual = recorded_pairs(parsed.players, round)
 
     if composition(expected) == composition(actual) do

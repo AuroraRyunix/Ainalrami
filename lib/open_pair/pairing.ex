@@ -60,10 +60,24 @@ defmodule OpenPair.Pairing do
   # computed there (`bye_assignee_score/2`) and stashed here rather than
   # threaded through, exactly like the bye score itself.
   @first_single_bye_key :openpair_first_single_bye
+  # `resolveForbiddenPairs`' answer for the round being paired
+  # (`tournament.cpp:100-116`), as `%{rank => MapSet.t(rank)}`, or nil when
+  # the tournament has no `XXP` line at all. Stashed for the same reason
+  # `@expected_rounds_key` is: `legal_pair?/2` is reached from four call
+  # sites deep inside the cascade and the matcher, none of which carry a
+  # tournament-level context, and threading one through purely for a rule
+  # that is usually absent would touch every weight function on the way.
+  @forbidden_key :openpair_forbidden_pairs
 
   @doc """
   Pairs the next round, dispatching to `pair_round_one/1` when no game
   history exists yet, or the bracket cascade below otherwise.
+
+  `opts[:forbidden_pairs]` is a list of mutually-forbidden starting-rank
+  GROUPS, exactly as `OpenPair.Trf.parse/1` reports a file's `XXP` lines in
+  `tournament[:forbidden_pairs]`. Acceleration needs no option: it rides on
+  the players themselves, as each player's `:accelerations` list — again
+  the shape `OpenPair.Trf.parse/1` produces from `XXA`.
   """
   def pair_next_round(players, opts \\ []) do
     # The tournament's total round count, when the caller knows it (a
@@ -72,11 +86,22 @@ defmodule OpenPair.Pairing do
     # a required argument, and stashed rather than threaded through the
     # cascade, matching how the search budget is already carried.
     Process.put(@expected_rounds_key, opts[:expected_rounds])
+    Process.put(@forbidden_key, forbidden_map(opts[:forbidden_pairs]))
 
     try do
-      active = Enum.filter(players, &active_this_round?(&1, rounds_played(players)))
+      played = rounds_played(players)
+      active = Enum.filter(players, &active_this_round?(&1, played))
 
-      if Enum.all?(active, &(&1.games == [])) do
+      # `pair_round_one/1` is a shortcut: it knows the whole field is tied
+      # on zero, so rank order alone decides the split and nothing has to
+      # be searched. Both of this commit's features break that assumption —
+      # acceleration means round 1 is NOT a single score group, and a
+      # forbidden pair means the S1[i]-vs-S2[i] answer may not be legal —
+      # and bbpPairings has no round-one special case for either to be
+      # compared against: `computeMatching` runs the same bracket machinery
+      # from round 1 on. So when either is in play, so does this.
+      if Enum.all?(active, &(&1.games == [])) and is_nil(Process.get(@forbidden_key)) and
+           not Enum.any?(active, &(acceleration_at(&1, played) != 0.0)) do
         pair_round_one(active)
       else
         # The FULL roster, not just the active players — float direction
@@ -86,7 +111,31 @@ defmodule OpenPair.Pairing do
       end
     after
       Process.delete(@expected_rounds_key)
+      Process.delete(@forbidden_key)
     end
+  end
+
+  # `resolveForbiddenPairs` (`tournament.cpp:100-116`): each group is
+  # inserted WHOLE into every member's own forbidden set, so an N-player
+  # `XXP` line forbids all N*(N-1)/2 pairs within it. A player ends up in
+  # their own set, exactly as in the C++ — harmless, since nobody is ever a
+  # candidate opponent for themselves.
+  #
+  # nil rather than an empty map when there is nothing to forbid, so
+  # `forbidden_pair?/2`'s hot path is a single process-dictionary read
+  # returning nil rather than a map lookup per candidate edge.
+  defp forbidden_map(groups) when groups in [nil, []], do: nil
+
+  defp forbidden_map(groups) do
+    Enum.reduce(groups, %{}, fn group, acc ->
+      members = MapSet.new(group)
+
+      Enum.reduce(
+        group,
+        acc,
+        &Map.update(&2, &1, members, fn set -> MapSet.union(set, members) end)
+      )
+    end)
   end
 
   @doc """
@@ -130,11 +179,15 @@ defmodule OpenPair.Pairing do
   """
   def explain_round(players, pairs, opts \\ []) do
     Process.put(@expected_rounds_key, opts[:expected_rounds])
+    Process.put(@forbidden_key, forbidden_map(opts[:forbidden_pairs]))
 
     try do
+      played = rounds_played(players)
+
       field =
         players
-        |> Enum.filter(&active_this_round?(&1, rounds_played(players)))
+        |> with_acceleration(played)
+        |> Enum.filter(&active_this_round?(&1, played))
         |> Enum.sort_by(&{-&1.points, &1.rank})
         |> Enum.map(&Map.put(&1, :colour_stats, colour_stats(&1)))
 
@@ -164,6 +217,7 @@ defmodule OpenPair.Pairing do
       |> Enum.reverse()
     after
       Process.delete(@expected_rounds_key)
+      Process.delete(@forbidden_key)
       Process.delete(@bye_score_key)
       Process.delete(@first_single_bye_key)
     end
@@ -438,15 +492,23 @@ defmodule OpenPair.Pairing do
   """
   def pair_later_round(players) do
     played = rounds_played(players)
-    active = Enum.filter(players, &active_this_round?(&1, played))
 
-    brackets =
+    field =
       players
       # Float history first, over the WHOLE roster: `float_direction/3`
       # compares against the opponent's score at the time, and that
-      # opponent may be sitting this round out.
+      # opponent may be sitting this round out. It runs BEFORE
+      # `with_acceleration/2` on purpose — `score_before/3` reconstructs a
+      # historic score by subtracting later results from the current one,
+      # so it needs the REAL score to subtract from, and adds that round's
+      # own acceleration itself.
       |> with_float_history(played)
-      |> Enum.filter(&active_this_round?(&1, played))
+      |> with_acceleration(played)
+
+    active = Enum.filter(field, &active_this_round?(&1, played))
+
+    brackets =
+      active
       |> Enum.group_by(& &1.points)
       |> Enum.sort_by(fn {score, _} -> -score end)
       |> Enum.map(fn {_score, members} -> members end)
@@ -698,6 +760,48 @@ defmodule OpenPair.Pairing do
   # engine paired player 6 with player 4.
   defp active_this_round?(player, rounds_played), do: length(player.games) <= rounds_played
 
+  # Fold each player's acceleration for the round about to be paired INTO
+  # their `:points`, so every score read below this line is the accelerated
+  # one.
+  #
+  # That is not a shortcut, it is the port. Inside `dutch.cpp` there is
+  # essentially no other kind of score: bracket formation
+  # (`dutch.cpp:680`, 698-701), the bye assignee (846, 882), the C9 gate
+  # (852-865), the bracket loop's own score reads (1114-1126, 1611-1640),
+  # `bye_candidate?`'s eligibility (220), the float criteria's score
+  # comparisons (295-457) and even `compatible`'s final-round exception
+  # (63-65) ALL go through `scoreWithAcceleration`. The only reads of
+  # `scoreWithoutAcceleration` in the whole engine are in `common.cpp`'s
+  # `sortResults` (180-206), which orders the OUTPUT and is not pairing.
+  # So rather than auditing every `.points` in this module one at a time,
+  # the accelerated score is what `.points` means from here on, and the two
+  # places that genuinely need the real score take it before this runs:
+  # `with_float_history/2` above, and the caller's own standings.
+  #
+  # The whole list is returned untouched when no player carries an
+  # `:accelerations` key at all, which is every tournament without an `XXA`
+  # line — the ordinary case pays one `Enum.any?` and allocates nothing.
+  defp with_acceleration(players, played) do
+    if Enum.any?(players, &Map.has_key?(&1, :accelerations)) do
+      Enum.map(players, fn p -> %{p | points: p.points + acceleration_at(p, played)} end)
+    else
+      players
+    end
+  end
+
+  # `accelerations[roundIndex]`, with `roundIndex >= size` reading as zero
+  # (`tournament.h:346-348`). The index is the TOURNAMENT's played-round
+  # count, 0-based, so the value that applies to the round about to be
+  # paired is the one at `played` — `accelerations[0]` is round 1's.
+  defp acceleration_at(_player, round_index) when round_index < 0, do: 0.0
+
+  defp acceleration_at(player, round_index) do
+    case player do
+      %{accelerations: values} -> Enum.at(values, round_index) || 0.0
+      _ -> 0.0
+    end
+  end
+
   # Stamp each player's float direction for the last two rounds, once per
   # round rather than per candidate pair — `float_direction/3` needs every
   # player (it compares against the OPPONENT's score at the time), which
@@ -766,10 +870,20 @@ defmodule OpenPair.Pairing do
   # `float_direction/4` is: a player holding a pre-recorded bye has an
   # extra game, and taking "the last `rounds_back`" off their own list
   # then subtracts the wrong rounds.
+  #
+  # The acceleration term is that round's, not this one's:
+  # `scoreWithAcceleration` (`tournament.h:335-359`) winds `roundIndex`
+  # back in step with the score it is stripping and then adds
+  # `accelerations[roundIndex]`. A float direction is therefore judged on
+  # the scores as the two players' brackets saw them AT THE TIME, virtual
+  # points included — which is precisely why JaVaFo's manual insists the
+  # `XXA` line carry the full round-by-round record rather than just the
+  # current round's value.
   defp score_before(player, rounds_back, played) do
     player.games
     |> Enum.drop(max(played - rounds_back, 0))
     |> Enum.reduce(player.points, fn game, score -> score - result_points(game.result) end)
+    |> Kernel.+(acceleration_at(player, played - rounds_back))
   end
 
   defp result_points(result) do
@@ -2705,9 +2819,29 @@ defmodule OpenPair.Pairing do
   # preference to two rematch-free alternatives it could have taken
   # instead — so this is javafo's actual behaviour, not an artefact of
   # having no other option.
+  #
+  # An arbiter's `XXP` exclusion lives here, and nowhere else, because
+  # that is where bbpPairings puts it: `compatible` (`dutch.cpp:39-68`)
+  # opens with `!forbiddenPairs[player0.id].count(player1.id)` and only
+  # then considers colour, and the rematch rule reaches that same test by
+  # being INSERTED INTO the very same set (`dutch.cpp:653-666`). The two
+  # rules are literally one lookup in the reference. So a forbidden pair is
+  # an absolute criterion of exactly the standing of "you have already
+  # played this opponent" — never a term weighed against the others.
   defp legal_pair?(p1, p2) do
-    not Enum.any?(p1.games, &(played?(&1) and &1.opponent_rank == p2.rank))
+    not forbidden_pair?(p1.rank, p2.rank) and
+      not Enum.any?(p1.games, &(played?(&1) and &1.opponent_rank == p2.rank))
   end
+
+  defp forbidden_pair?(rank1, rank2) do
+    case Process.get(@forbidden_key) do
+      nil -> false
+      map -> map |> Map.get(rank1) |> forbids?(rank2)
+    end
+  end
+
+  defp forbids?(nil, _rank), do: false
+  defp forbids?(set, rank), do: MapSet.member?(set, rank)
 
   # Two players who both hold an ABSOLUTE colour preference for the same
   # colour cannot be paired at all. bbpPairings puts this in `compatible`
