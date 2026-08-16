@@ -594,6 +594,16 @@ defmodule OpenPair.TrfTest do
       assert first[:accelerations] == [1.0, 0.0, 0.5]
     end
 
+    # `push_back` onto the player's existing record (`trf.cpp:510`), and
+    # `tournament.players[id]` persists between lines — so a second line
+    # for the same player CONTINUES the record rather than replacing it.
+    test "two XXA lines for one player append rather than the second winning" do
+      parsed = OpenPair.Trf.parse(roster_trf("XXA    1  1.0\r\nXXA    1  0.5\r\n"))
+
+      assert [first, _second] = parsed.players
+      assert first[:accelerations] == [1.0, 0.5]
+    end
+
     test "a file with no XXA line leaves every player without the key" do
       assert Enum.all?(
                OpenPair.Trf.parse(roster_trf("")).players,

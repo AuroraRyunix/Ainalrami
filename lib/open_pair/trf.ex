@@ -730,7 +730,11 @@ defmodule OpenPair.Trf do
             "XXA line has no starting rank in columns 5-8 (see OpenPair.Trf's " <>
               "@xxa_rank_cols for the fixed-column layout): #{inspect(line)}"
 
-    put_in(acc.accelerations[rank], parse_xxa_points(line))
+    # APPENDS rather than replaces, matching `push_back` onto a player's
+    # existing `accelerations` (`trf.cpp:510`) — `tournament.players[id]`
+    # persists between lines, so two `XXA` lines for one player continue
+    # the same record rather than the second one winning.
+    update_in(acc.accelerations[rank], &((&1 || []) ++ parse_xxa_points(line)))
   end
 
   defp parse_xxa_points(line) do

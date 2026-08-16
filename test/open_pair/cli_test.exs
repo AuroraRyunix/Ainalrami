@@ -245,6 +245,44 @@ defmodule OpenPair.CLITest do
       end
     end
 
+    # The same round-trip, but now the file carries `XXP`/`XXA` lines. This
+    # is a stronger test of those than it looks: `-c` reads the extension
+    # lines back out of the generated file and hands them to the engine, so
+    # a serializer and parser that disagree about `XXA`'s columns — the
+    # exact mistake that makes real bbpPairings reject the sibling
+    # project's own output — fails here rather than silently pairing an
+    # unaccelerated tournament.
+    test "generated tournaments carrying XXP and XXA also check clean" do
+      for opts <- [
+            [seed: 11, players: 16, rounds: 6, forbidden_pct: 15],
+            [seed: 12, players: 16, rounds: 6, acceleration: :baku],
+            [seed: 13, players: 14, rounds: 7, acceleration: :random],
+            [
+              seed: 14,
+              players: 18,
+              rounds: 6,
+              forbidden_pct: 10,
+              acceleration: :baku,
+              requested_bye_pct: 8,
+              forfeit_pct: 8
+            ]
+          ] do
+        {text, _seed} = OpenPair.Generator.generate(opts)
+        path = write_trf!(text)
+        parsed = Trf.parse(text)
+
+        if opts[:forbidden_pct],
+          do: assert(parsed.tournament[:forbidden_pairs] not in [nil, []])
+
+        if opts[:acceleration],
+          do: assert(Enum.any?(parsed.players, &(&1[:accelerations] not in [nil, []])))
+
+        {_out, code} = run_capturing(fn -> CLI.run([path, "-c", "-q"]) end)
+
+        assert code == 0, "generated tournament failed its own checker: #{inspect(opts)}"
+      end
+    end
+
     test "rounds are capped so the field cannot run out of legal opponents" do
       {text, _seed} = OpenPair.Generator.generate(seed: 9, players: 6, rounds: 40)
       parsed = Trf.parse(text)
