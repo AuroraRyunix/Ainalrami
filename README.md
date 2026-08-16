@@ -272,5 +272,24 @@ binary) — matches OpenPairings' own standalone-binary story
 
 ## License
 
-Not yet decided/declared. Don't treat this as open-source-licensed for reuse
-until a `LICENSE` file is added.
+[Apache License 2.0](LICENSE).
+
+Deliberately the same licence as [bbpPairings](
+https://github.com/BieremaBoyzProgramming/bbpPairings), because parts of
+this engine are derived from it: `OpenPair.Pairing`'s bracket cascade is a
+stage-for-stage port of `dutch.cpp`, and `OpenPair.WeightedMatching`'s
+control flow was read directly from bbpPairings' own matching sources
+while writing the Elixir equivalent. No bbpPairings code is reproduced
+here — it is C++ and this is Elixir — but the algorithm and structure are
+theirs, the originating file and line numbers are cited inline throughout,
+and matching their licence is the cleanest way to honour that rather than
+leaving it ambiguous.
+
+[NOTICE](NOTICE) spells out exactly which files are derived, what changed
+relative to bbpPairings (section 4(b)), and which parts are not derived
+from it at all — `Trf` implements FIDE's published TRF16 spec, `Blossom`
+is an independent implementation of a classic algorithm, and the CLI,
+generator and logging are original.
+
+JaVaFo is © Roberto Ricca, is not open source, and is not bundled here —
+see [Development](#development).
