@@ -627,7 +627,13 @@ defmodule Ainalrami.Trf do
       |> String.split(~r/\r?\n/)
       |> Enum.reject(&(String.trim(&1) == ""))
 
-    empty = %{tournament: %{deputy_arbiters: []}, players: [], teams: [], accelerations: %{}}
+    empty = %{
+      tournament: %{deputy_arbiters: []},
+      players: [],
+      teams: [],
+      accelerations: %{},
+      acceleration_ranges: []
+    }
 
     result =
       Enum.reduce(lines, empty, fn line, acc ->
@@ -638,6 +644,8 @@ defmodule Ainalrami.Trf do
           "XXR" -> parse_xxr(acc, line)
           "XXP" -> parse_xxp(acc, line)
           "XXA" -> parse_xxa(acc, line)
+          "250" -> parse_250(acc, line)
+          "260" -> parse_260(acc, line)
           code -> parse_header_line(acc, code, line)
         end
       end)
@@ -655,20 +663,60 @@ defmodule Ainalrami.Trf do
   #
   # The key is only added to players that actually have one, so a file with
   # no `XXA` at all parses to the identical map it did before.
-  defp attach_accelerations(%{accelerations: accelerations} = result) do
+  defp attach_accelerations(%{accelerations: accelerations, acceleration_ranges: ranges} = result) do
+    # `250` ranges are expanded first and `XXA` rows laid over them, which
+    # is the order bbpPairings reaches the same state in: both write into
+    # the same per-player vector, and `XXA` names one player explicitly
+    # where `250` paints a block. A file carrying both is exotic; a file
+    # carrying either alone — the only shapes seen in practice — is
+    # unaffected by the layering.
+    expanded = Enum.reduce(ranges, %{}, &expand_acceleration_range/2)
+    merged = Map.merge(expanded, accelerations)
+
     players =
-      if accelerations == %{} do
+      if merged == %{} do
         result.players
       else
         Enum.map(result.players, fn player ->
-          case Map.fetch(accelerations, player[:rank]) do
+          case Map.fetch(merged, player[:rank]) do
             {:ok, values} -> Map.put(player, :accelerations, values)
             :error -> player
           end
         end)
       end
 
-    result |> Map.put(:players, players) |> Map.delete(:accelerations)
+    result
+    |> Map.put(:players, players)
+    |> Map.delete(:accelerations)
+    |> Map.delete(:acceleration_ranges)
+  end
+
+  # One `250` line covers players `first_player..last_player` for rounds
+  # `first_round..last_round`, both inclusive. Rounds before the range pay
+  # nothing, which is the `accelerations.resize(roundStart)` zero-fill in
+  # `readAccelerations250`.
+  defp expand_acceleration_range({points, first_round, last_round, first, last}, acc) do
+    row = for round <- 1..last_round, do: if(round >= first_round, do: points, else: 0.0)
+
+    Enum.reduce(first..last, acc, fn rank, inner ->
+      Map.update(inner, rank, row, &merge_acceleration_rows(&1, row))
+    end)
+  end
+
+  # Two ranges can overlap in rounds; the later line wins for the rounds it
+  # names, and anything it does not reach keeps the earlier value.
+  defp merge_acceleration_rows(existing, new) do
+    length = max(length(existing), length(new))
+
+    for index <- 0..(length - 1)//1 do
+      value = Enum.at(new, index)
+
+      if is_nil(value) or value == 0.0 do
+        Enum.at(existing, index, 0.0)
+      else
+        value
+      end
+    end
   end
 
   # `XXR n` is JaVaFo's own extension for the number of rounds, and it is
@@ -762,6 +810,141 @@ defmodule Ainalrami.Trf do
       acc
     else
       update_in(acc.tournament[:forbidden_pairs], &((&1 || []) ++ [ids]))
+    end
+  end
+
+  # `250` — bbpPairings' ROUND-LIMITED acceleration, the fixed-column
+  # sibling of `XXA`. One line hands the same number of virtual points to a
+  # RANGE of players over a RANGE of rounds, where `XXA` spells out one
+  # player's whole row.
+  #
+  # A port of `readAccelerations250` (`trf.cpp:418-482`). Columns, all
+  # 1-based here and inclusive: match points in 5-9, which must be blank or
+  # zero; game points in 10-14, which must be non-zero; the round range in
+  # 15-18 and 19-22; the player range in 23-27 and 28-32. Shorter than 31
+  # characters, either range inverted, or a zero round index, and the line
+  # is refused — every one of those is an `InvalidLineException` there.
+  #
+  # Silently discarding it was the same defect `260` had: acceleration
+  # changes a player's score for bracketing purposes, so a dropped line
+  # produces a complete, well-formed round paired on the wrong scores.
+  # bbpPairings' own Baku pass measured that at 66.12% of rounds when
+  # `XXA` was being dropped.
+  defp parse_250(acc, line) do
+    if String.length(line) < 31 do
+      raise ValidationError, message: "250 line is too short: #{line}"
+    end
+
+    match_points = read(line, {5, 9})
+
+    if match_points not in ["", "0", "0.0"] do
+      raise ValidationError,
+        message: "250 line must not carry match points, got #{inspect(match_points)}: #{line}"
+    end
+
+    points =
+      case line |> read({10, 14}) |> parse_float() do
+        nil ->
+          raise ValidationError, message: "250 line has unreadable game points: #{line}"
+
+        value ->
+          if value == 0.0 do
+            raise ValidationError, message: "250 line has zero game points: #{line}"
+          end
+
+          value
+      end
+
+    first_round = round_field!(line, {15, 18}, line)
+    last_round = round_field!(line, {19, 22}, line)
+    first_player = round_field!(line, {23, 27}, line)
+    last_player = round_field!(line, {28, 32}, line)
+
+    if first_round > last_round or first_player > last_player do
+      raise ValidationError, message: "250 line has an inverted range: #{line}"
+    end
+
+    update_in(
+      acc.acceleration_ranges,
+      &(&1 ++ [{points, first_round, last_round, first_player, last_player}])
+    )
+  end
+
+  # `260` — bbpPairings' ROUND-LIMITED forbidden pairs, the fixed-column
+  # sibling of `XXP`. Same meaning, but confined to a range of rounds:
+  # "these players must not meet in rounds 3 to 7".
+  #
+  # A port of `readForbiddenPairs260` (`trf.cpp:519-548`): the first round
+  # is read from columns 5-7, the last from 9-11, and the ids follow from
+  # column 13 in four-character fields every five columns. bbpPairings
+  # stores the range as `[first, last + 1)`, i.e. the last round is
+  # INCLUSIVE, and rejects the line outright if it is shorter than 18
+  # characters or carries anything but spaces after the final id.
+  #
+  # This was on the "deliberately not covered" list until 2026-08-17, on
+  # the reasoning that `XXP` is the universal form and the one the sibling
+  # project emits. That reasoning was wrong in a specific and dangerous
+  # way: "not covered" meant the line fell through to `parse_header_line/3`
+  # and was SILENTLY DISCARDED, so a file saying "1 and 3 must never meet"
+  # produced a complete, perfectly legal-looking round that seated 1
+  # against 3. That is precisely the failure `parse_xxp/2` exists to
+  # prevent, in a different spelling, and it was verified happening before
+  # this was written.
+  defp parse_260(acc, line) do
+    if String.length(line) < 18 do
+      raise ValidationError, message: "260 line is too short to hold a round range: #{line}"
+    end
+
+    first = round_field!(line, {5, 7}, line)
+    last = round_field!(line, {9, 11}, line)
+
+    ids = read_260_ids(line, 13, [])
+
+    if length(ids) < 2 do
+      acc
+    else
+      update_in(
+        acc.tournament[:forbidden_pairs],
+        &((&1 || []) ++ [{ids, first, last}])
+      )
+    end
+  end
+
+  # Round numbers in the file are 1-based, and `readRoundIndex`
+  # (`trf.cpp:113-140`) rejects a round index of 0 outright before
+  # converting to its own 0-based form. This keeps the 1-based value, since
+  # that is what the engine compares against the round being paired.
+  defp round_field!(line, cols, whole) do
+    case line |> read(cols) |> Integer.parse() do
+      {value, ""} when value > 0 ->
+        value
+
+      _ ->
+        raise ValidationError,
+          message: "260 line has an unreadable round number in columns #{inspect(cols)}: #{whole}"
+    end
+  end
+
+  # Ids sit in four-character fields every five columns from 13. The loop
+  # takes a field only when all four characters are present, matching
+  # bbpPairings' `startIndex <= line.size() - 4` condition; a trailing
+  # partial field is not silently swallowed but caught below.
+  defp read_260_ids(line, start, acc) do
+    if start + 3 <= String.length(line) do
+      case line |> read({start, start + 3}) |> Integer.parse() do
+        {id, ""} ->
+          read_260_ids(line, start + 5, [id | acc])
+
+        _ ->
+          if line |> String.slice((start - 1)..-1//1) |> String.trim() == "" do
+            Enum.reverse(acc)
+          else
+            raise ValidationError,
+              message: "260 line has an unreadable starting rank at column #{start}: #{line}"
+          end
+      end
+    else
+      Enum.reverse(acc)
     end
   end
 

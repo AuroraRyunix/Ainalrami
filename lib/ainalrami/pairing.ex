@@ -107,10 +107,14 @@ defmodule Ainalrami.Pairing do
       opts[:initial_colour] || infer_initial_colour(players) || "w"
     )
 
-    Process.put(@forbidden_key, forbidden_map(opts[:forbidden_pairs]))
-
     try do
       played = rounds_played(players)
+
+      # After `played`, not before: a `260` group is confined to a range of
+      # rounds, so the map cannot be built until the round being paired is
+      # known.
+      Process.put(@forbidden_key, forbidden_map(opts[:forbidden_pairs], played + 1))
+
       active = Enum.filter(players, &active_this_round?(&1, played))
 
       # `pair_round_one/1` is a shortcut: it knows the whole field is tied
@@ -147,19 +151,38 @@ defmodule Ainalrami.Pairing do
   # nil rather than an empty map when there is nothing to forbid, so
   # `forbidden_pair?/2`'s hot path is a single process-dictionary read
   # returning nil rather than a map lookup per candidate edge.
-  defp forbidden_map(groups) when groups in [nil, []], do: nil
+  defp forbidden_map(groups, _round) when groups in [nil, []], do: nil
 
-  defp forbidden_map(groups) do
-    Enum.reduce(groups, %{}, fn group, acc ->
-      members = MapSet.new(group)
+  # A group is either a plain list of starting ranks — `XXP`'s universal
+  # form, forbidden for the whole tournament — or `{ranks, first, last}`
+  # from a `260` line, forbidden only for rounds `first..last` inclusive.
+  # Round-limited groups outside the round being paired are dropped here
+  # rather than filtered at every lookup, so the map the cascade sees is
+  # always simply "who may this player not meet, now".
+  defp forbidden_map(groups, round) do
+    map =
+      Enum.reduce(groups, %{}, fn group, acc ->
+        case applicable(group, round) do
+          nil ->
+            acc
 
-      Enum.reduce(
-        group,
-        acc,
-        &Map.update(&2, &1, members, fn set -> MapSet.union(set, members) end)
-      )
-    end)
+          ranks ->
+            members = MapSet.new(ranks)
+
+            Enum.reduce(
+              ranks,
+              acc,
+              &Map.update(&2, &1, members, fn set -> MapSet.union(set, members) end)
+            )
+        end
+      end)
+
+    if map == %{}, do: nil, else: map
   end
+
+  defp applicable({ranks, first, last}, round) when round >= first and round <= last, do: ranks
+  defp applicable({_ranks, _first, _last}, _round), do: nil
+  defp applicable(ranks, _round) when is_list(ranks), do: ranks
 
   @doc """
   Scores an ALREADY-CHOSEN pairing against this engine's own C1-C21
@@ -221,11 +244,10 @@ defmodule Ainalrami.Pairing do
       opts[:initial_colour] || infer_initial_colour(players) || "w"
     )
 
-    Process.put(@forbidden_key, forbidden_map(opts[:forbidden_pairs]))
-
     try do
       played = rounds_played(players)
       Process.put(@played_key, played)
+      Process.put(@forbidden_key, forbidden_map(opts[:forbidden_pairs], played + 1))
 
       field =
         players
@@ -659,7 +681,8 @@ defmodule Ainalrami.Pairing do
 
     Process.put(
       @forbidden_key,
-      (opts[:forbidden_pairs] && forbidden_map(opts[:forbidden_pairs])) ||
+      (opts[:forbidden_pairs] &&
+         forbidden_map(opts[:forbidden_pairs], rounds_played(players) + 1)) ||
         Process.get(@forbidden_key)
     )
 

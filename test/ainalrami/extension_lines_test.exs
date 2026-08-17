@@ -31,6 +31,200 @@ defmodule Ainalrami.ExtensionLinesTest do
     {players, tournament}
   end
 
+  describe "250 round-limited acceleration" do
+    # `250` is bbpPairings' fixed-column, round-limited sibling of `XXA`:
+    # one line gives the same virtual points to a RANGE of players over a
+    # RANGE of rounds, where `XXA` spells out one player's whole row.
+    #
+    # Columns per `readAccelerations250` (`trf.cpp:418-482`), 1-based and
+    # inclusive: match points 5-9 (must be blank or zero), game points
+    # 10-14 (must be non-zero), rounds 15-18 and 19-22, players 23-27 and
+    # 28-32. Both expected pairings below came from bbpPairings 6.0.0 on
+    # the same bytes.
+    defp eight_player_roster do
+      players =
+        for r <- 1..8 do
+          %{
+            rank: r,
+            name: "Player #{r}",
+            sex: "",
+            title: "",
+            fide_rating: 2400 - r * 10,
+            federation: "",
+            fide_number: nil,
+            birth_date: "",
+            points: 0.0,
+            games: []
+          }
+        end
+
+      Trf.serialize(%{
+        tournament: %{
+          name: "Code 250",
+          type: "swiss",
+          number_of_rounds: 5,
+          initial_colour: "w"
+        },
+        players: players
+      })
+    end
+
+    defp line_250(points, first_round, last_round, first_player, last_player) do
+      "250 " <>
+        "     " <>
+        String.pad_leading(points, 4) <>
+        " " <>
+        String.pad_leading(first_round, 3) <>
+        " " <>
+        String.pad_leading(last_round, 3) <>
+        " " <>
+        String.pad_leading(first_player, 4) <>
+        " " <> String.pad_leading(last_player, 4) <> "\r\n"
+    end
+
+    defp pair_eight(extra) do
+      parsed = Trf.parse(eight_player_roster() <> extra)
+
+      parsed.players
+      |> Pairing.pair_next_round(
+        expected_rounds: parsed.tournament[:number_of_rounds],
+        initial_colour: "w"
+      )
+      |> normalize()
+    end
+
+    test "acceleration changes the brackets, and so the pairing" do
+      # Unaccelerated, round one is the plain top-half-vs-bottom-half split.
+      assert pair_eight("") == [[1, 5], [2, 6], [3, 7], [4, 8]]
+
+      # A point to players 1-4 splits the field into two score groups of
+      # four, which pair within themselves.
+      assert pair_eight(line_250("1.0", "1", "2", "1", "4")) ==
+               [[1, 3], [2, 4], [5, 7], [6, 8]]
+    end
+
+    test "the range is expanded onto the named players only" do
+      parsed = Trf.parse(eight_player_roster() <> line_250("1.0", "1", "2", "1", "4"))
+
+      accelerated =
+        parsed.players
+        |> Enum.map(&{&1[:rank], &1[:accelerations]})
+        |> Enum.reject(&is_nil(elem(&1, 1)))
+
+      assert accelerated == [{1, [1.0, 1.0]}, {2, [1.0, 1.0]}, {3, [1.0, 1.0]}, {4, [1.0, 1.0]}]
+    end
+
+    test "rounds before the range pay nothing" do
+      parsed = Trf.parse(eight_player_roster() <> line_250("1.0", "2", "3", "1", "2"))
+      first = Enum.find(parsed.players, &(&1[:rank] == 1))
+
+      assert first[:accelerations] == [0.0, 1.0, 1.0]
+    end
+
+    test "a malformed 250 raises rather than being skipped" do
+      bad = [
+        # too short to hold its own fields
+        "250 short\r\n",
+        # zero game points, which bbpPairings rejects outright
+        line_250("0.0", "1", "2", "1", "4"),
+        # inverted round range
+        line_250("1.0", "3", "1", "1", "4"),
+        # inverted player range
+        line_250("1.0", "1", "2", "4", "1")
+      ]
+
+      for line <- bad do
+        assert_raise Trf.ValidationError, fn ->
+          Trf.parse(eight_player_roster() <> line)
+        end
+      end
+    end
+  end
+
+  describe "260 round-limited forbidden pairs" do
+    # `260` is bbpPairings' fixed-column, round-limited sibling of `XXP`:
+    # "these players must not meet in rounds 3 to 7". It was on the
+    # explicitly-not-covered list until 2026-08-17, on the reasoning that
+    # `XXP` is the universal form and the one the sibling project emits.
+    #
+    # "Not covered" turned out to mean SILENTLY DISCARDED. A file saying 1
+    # and 3 must never meet produced a complete, perfectly legal-looking
+    # round that seated 1 against 3 — the exact failure `XXP` exists to
+    # prevent, in a different spelling. Every expected pairing below was
+    # confirmed against bbpPairings 6.0.0 run on the same bytes.
+    #
+    # Columns, per `readForbiddenPairs260` (`trf.cpp:519-548`): first round
+    # in 5-7, last round in 9-11, then four-character starting ranks from
+    # column 13 every five columns. The range is INCLUSIVE of the last
+    # round (bbpPairings stores it as `[first, last + 1)`).
+    defp four_player_roster do
+      """
+      012 Code 260\r
+      062 4\r
+      XXR 5\r
+      152 W\r
+      001    1 m  gm Alpha                            2400 BEL     1000001 1990/01/01  0.0    1\r
+      001    2 m  gm Beta                             2300 BEL     1000002 1990/01/01  0.0    2\r
+      001    3 m  gm Gamma                            2200 BEL     1000003 1990/01/01  0.0    3\r
+      001    4 m  gm Delta                            2100 BEL     1000004 1990/01/01  0.0    4\r
+      """
+    end
+
+    defp line_260(first, last, a, b) do
+      "260 " <>
+        String.pad_leading(first, 3) <>
+        " " <>
+        String.pad_leading(last, 3) <>
+        " " <> String.pad_leading(a, 4) <> " " <> String.pad_leading(b, 4) <> "\r\n"
+    end
+
+    defp pair_roster(extra) do
+      parsed = Trf.parse(four_player_roster() <> extra)
+
+      parsed.players
+      |> Pairing.pair_next_round(
+        expected_rounds: parsed.tournament[:number_of_rounds],
+        forbidden_pairs: parsed.tournament[:forbidden_pairs],
+        initial_colour: "w"
+      )
+      |> normalize()
+    end
+
+    test "a 260 covering the round being paired keeps the pair apart" do
+      # Without it the engine seats 1 against 3; bbpPairings does the same,
+      # and both avoid it once the line is present.
+      assert pair_roster("") == [[1, 3], [2, 4]]
+      assert pair_roster(line_260("1", "3", "1", "3")) == [[1, 4], [2, 3]]
+    end
+
+    test "a 260 whose range excludes this round does nothing" do
+      # The whole point of the round range, and the case a universal
+      # implementation would get wrong in the safe-looking direction.
+      assert pair_roster(line_260("4", "5", "1", "3")) == [[1, 3], [2, 4]]
+    end
+
+    test "the range is inclusive of its last round" do
+      assert pair_roster(line_260("1", "1", "2", "4")) == [[1, 4], [2, 3]]
+    end
+
+    test "the parsed form carries the range" do
+      parsed = Trf.parse(four_player_roster() <> line_260("2", "6", "1", "3"))
+
+      assert parsed.tournament[:forbidden_pairs] == [{[1, 3], 2, 6}]
+    end
+
+    test "a malformed 260 raises rather than being skipped" do
+      # Same standard as XXP and XXA: a dropped exclusion is undetectable
+      # downstream, so a line that cannot be read is refused outright. Real
+      # bbpPairings throws `InvalidLineException` (exit 3) on both of these.
+      for bad <- ["260 1 3\r\n", "260 abc   3    1    3\r\n"] do
+        assert_raise Trf.ValidationError, fn ->
+          Trf.parse(four_player_roster() <> bad)
+        end
+      end
+    end
+  end
+
   describe "XXR and 142 are the same field" do
     # `142` is TRF16's round count and `XXR` is JaVaFo's spelling of it. A
     # file that has passed through both toolchains can carry each, and two

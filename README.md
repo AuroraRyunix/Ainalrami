@@ -137,6 +137,18 @@ extension codes:
 | `XXR n` | number of rounds — JaVaFo's spelling of TRF16's `142` |
 | `XXP a b [c …]` | a mutually-forbidden **group**: no two of these players may ever meet |
 | `XXA` | per-player acceleration ("virtual points"), round by round |
+| `260` | forbidden pairs, limited to a range of rounds |
+| `250` | acceleration for a range of players over a range of rounds |
+
+`XXR` and `142` are the same field: a file may carry both, but they must
+**agree**, and two different counts are refused rather than silently
+resolved. Every implementation resolves them differently, and the loser of
+that choice is a final round paired under the wrong rules.
+
+`260` and `250` are bbpPairings' fixed-column, round-limited siblings of
+`XXP` and `XXA`. They were unimplemented until 2026-08-18, which meant
+*silently discarded* — a file saying two players must never meet produced
+a complete, legal-looking round that seated them together.
 
 `XXP` carries exactly the standing of the no-rematch rule, which is how
 bbpPairings expresses it too — one `forbiddenPairs` set, with no-rematch

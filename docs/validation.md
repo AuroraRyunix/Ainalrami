@@ -242,8 +242,16 @@ the wrong scores.
 
 Stated so the claim's boundary is explicit:
 
-- **`260` and `250`** — bbpPairings' round-limited siblings of `XXP` and
-  `XXA`. Deliberately absent rather than stubbed.
+- ~~**`260` and `250`**~~ — **implemented 2026-08-18.** These are
+  bbpPairings' round-limited siblings of `XXP` and `XXA`, and they were
+  listed here as "deliberately absent rather than stubbed". That was wrong
+  in a specific way: absent meant the lines fell through to the header
+  parser and were *silently discarded*, so a file saying "1 and 3 must
+  never meet in rounds 1-3" produced a complete, legal-looking round that
+  seated 1 against 3. Verified happening before the fix. Both are now read,
+  both raise on a malformed line, and every case was checked against the
+  real binary — including a `260` whose range excludes the round being
+  paired, which must do nothing.
 - **bbpPairings' own Baku flag**, which sizes Group A as `ceil(n/2)` where
   FIDE C.04.7 uses `2 * ceil(n/4)`. Reached only through its own flag,
   never through `XXA`, so it cannot make the two engines disagree here —
