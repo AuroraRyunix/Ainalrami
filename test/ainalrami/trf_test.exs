@@ -460,6 +460,63 @@ defmodule Ainalrami.TrfTest do
     assert real == %{opponent_rank: 2, colour: "b", result: "1"}
   end
 
+  describe "line endings" do
+    # Real bbpPairings writes its generated TRFs with a BARE `\r` and no
+    # `\n` at all — 212 of them in a 209-player file, zero newlines. The
+    # splitter was `~r/\r?\n/`, which matches neither, so the whole file
+    # parsed as ONE line and `parse/1` returned zero players without
+    # complaint.
+    #
+    # So this engine could not read the reference implementation's own
+    # output, and no test could have seen it: the comparison harness only
+    # ever feeds OUR files to THEM. Found by generating a tournament with
+    # `bbpPairings --dutch -g -o` and reading it back — on which, once
+    # fixed, the two engines agree on all 105 boards including colour.
+    for {label, ending} <- [{"CRLF", "\r\n"}, {"LF", "\n"}, {"bare CR", "\r"}] do
+      test "a file terminated with #{label} parses" do
+        ending = unquote(ending)
+
+        text =
+          Enum.join(
+            [
+              "012 Endings",
+              "062 2",
+              "142 5",
+              "001    1 m  gm Alpha                            2400 BEL     1000001 1990/01/01  1.0    1     2 w 1",
+              "001    2 m  gm Beta                             2300 BEL     1000002 1990/01/01  0.0    2     1 b 0"
+            ],
+            ending
+          ) <> ending
+
+        parsed = Ainalrami.Trf.parse(text)
+
+        assert length(parsed.players) == 2
+        assert parsed.tournament[:number_of_rounds] == 5
+
+        first = Enum.find(parsed.players, &(&1[:rank] == 1))
+        assert first[:points] == 1.0
+        assert [%{opponent_rank: 2, colour: "w", result: "1"}] = first[:games]
+      end
+    end
+
+    test "a mixture of endings in one file still parses" do
+      # Not merely tidiness: a file written by one tool and appended to by
+      # another carries both, which is exactly how the interop case above
+      # was reproduced (an `XXR` line added to a bare-CR file).
+      text =
+        "012 Mixed\r" <>
+          "062 2\n" <>
+          "001    1 m  gm Alpha                            2400 BEL     1000001 1990/01/01  0.0    1\r\n" <>
+          "001    2 m  gm Beta                             2300 BEL     1000002 1990/01/01  0.0    2\r" <>
+          "142 5\n"
+
+      parsed = Ainalrami.Trf.parse(text)
+
+      assert length(parsed.players) == 2
+      assert parsed.tournament[:number_of_rounds] == 5
+    end
+  end
+
   describe "XXR (JaVaFo's round-count extension)" do
     # A two-player roster plus whatever extension lines the test wants.
     defp roster_trf(extra) do

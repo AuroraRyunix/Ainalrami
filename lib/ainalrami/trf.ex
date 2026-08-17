@@ -624,7 +624,20 @@ defmodule Ainalrami.Trf do
   def parse(text) do
     lines =
       text
-      |> String.split(~r/\r?\n/)
+      # All three line endings, not just the two anyone expects. Real
+      # bbpPairings writes its generated TRFs with a BARE `\r` and no `\n`
+      # at all -- 212 of them in a 209-player file, zero newlines -- so
+      # `\r?\n` matched nothing, the whole file parsed as a single line,
+      # and `parse/1` returned zero players without complaint.
+      #
+      # That made this engine unable to read the reference implementation's
+      # own output, which no test could see: the comparison harness only
+      # ever feeds OUR files to THEM. Found by generating a tournament with
+      # `bbpPairings --dutch -g -o` and reading it back.
+      #
+      # `\r\n` has to be first in the alternation so a CRLF is consumed as
+      # one separator rather than as two.
+      |> String.split(~r/\r\n|\n|\r/)
       |> Enum.reject(&(String.trim(&1) == ""))
 
     empty = %{
