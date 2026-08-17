@@ -51,13 +51,34 @@ disagreement**, from the 2026-08-17 runs on a 36-core machine.
 > None of them touches a path this corpus exercises — the harness writes
 > its own `152` and passes the colour explicitly, so the inference never
 > fires; it emits `XXP`/`XXA` and never `260`/`250`; and `forbidden_map`'s
-> behaviour for a plain group list is unchanged. The claim is nevertheless
-> that the *engine* was re-validated, not that the corpus was: **5,000
-> tournaments / 35,525 rounds / 354,804 pairings after the changes, at
-> 100.00% with zero illegal rounds and zero unexplained colour
-> differences**, across the combined-axis and even-round configurations.
->
-> Re-running the full corpus is a machine-hours job, not a code change.
+> behaviour for a plain group list is unchanged. That is an argument
+> though, not a measurement, so the *engine* was re-validated even though
+> the corpus was not.
+
+### Re-validation after the 2026-08-18 changes
+
+**11,000 tournaments / 69,038 rounds / 680,022 individual pairings, at
+100.00% with zero illegal rounds, zero refusals and zero unexplained
+colour differences.**
+
+| axis | rounds | individual pairs |
+|---|---|---|
+| byes + forfeits + `XXP` + `XXA`, 7 rounds | 16,605 | 165,629 |
+| 15% byes, **8** rounds | 18,920 | 189,175 |
+| plain, 4–10 players | 6,586 | 26,032 |
+| **60–120 players** | 840 | 38,717 |
+| 15% byes, **6** rounds | 6,990 | 68,567 |
+| 15% byes, **10** rounds | 11,015 | 112,155 |
+| **`152 B`** + byes + forfeits | 8,082 | 79,747 |
+
+Two of those axes are new rather than repeats. The **Black draw** row
+exercises the half of Article 5.2.5 that hands out the *opposite* colour,
+which no axis ran until the `152` field was read at all; and the round
+counts deliberately span 6, 7, 8 and 10, for the reason the next section
+gives.
+
+Re-running the full 4.3M corpus is a machine-hours job rather than a code
+change, and is worth doing before any endorsement submission.
 
 | axis | tournaments | exact rounds | individual pairs | illegal |
 |---|---|---|---|---|
