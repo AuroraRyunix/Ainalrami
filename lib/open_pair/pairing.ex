@@ -9,9 +9,9 @@ defmodule OpenPair.Pairing.NoValidPairingError do
   computes ONE matching over the whole field and throws rather than ever
   emitting more byes than `rem(active_count, 2)`. `OpenPair.Pairing`
   matches that: `global_cascade/2`'s `:infeasible` result
-  (`OpenPair.Blossom`, verified to find a TRUE maximum matching
-  regardless of starting point) only reaches this if the true maximum
-  itself still leaves too many players unmatched — proof no legal
+  (`repair_completion/3`'s whole-field maximum-weight matching) only
+  reaches this if the true maximum itself still leaves too many players
+  unmatched — proof no legal
   completion exists, not evidence the search didn't try hard enough. A
   small field deep into a Swiss (colour-absolute exclusions stacking on
   top of near-exhausted rematch-free opponents) is the realistic way to
@@ -37,7 +37,7 @@ defmodule OpenPair.Pairing do
   — the shape `OpenPair.Trf.parse/1` returns.
   """
 
-  alias OpenPair.{Blossom, WeightedMatching}
+  alias OpenPair.WeightedMatching
 
   # This engine used to carry a second pairing path — a per-bracket
   # cascade with a backtracking search over alternative matchings, tuned
@@ -605,12 +605,15 @@ defmodule OpenPair.Pairing do
     try do
       case global_cascade(brackets, allowed_byes) do
         {:ok, pairs, leftover} ->
-          pairs
-          |> Kernel.++(Enum.map(leftover, &{&1.rank, nil}))
-          # Cheap when everything is already legal (`bye_legal?/3`'s check
-          # is the only work done), and a real safety net if the cascade's
-          # own eligibility check ever has a gap this does not.
-          |> repair_bye_count(active, allowed_byes)
+          # `global_cascade/2` returns `:ok` only after `check_completion/3`
+          # has passed on exactly these pairs and this leftover, so the round
+          # is already known legal here: bye count, C2 eligibility and the C5
+          # bye score. A `repair_bye_count/3` pass used to follow, guarded by
+          # a `bye_legal?/3` that restated two of those three tests over the
+          # same set — provably true whenever it was reached, so its repair
+          # branch, and with it every use of `OpenPair.Blossom`, could not
+          # run. Both are gone; see TODO.md.
+          pairs ++ Enum.map(leftover, &{&1.rank, nil})
 
         :infeasible ->
           # `global_cascade/2` only reports this once its own completion
@@ -625,148 +628,6 @@ defmodule OpenPair.Pairing do
       Process.delete(@bye_score_key)
       Process.delete(@first_single_bye_key)
     end
-  end
-
-  # Last resort: take whatever the deterministic cascade produced and try
-  # to fix it into something legal via `OpenPair.Blossom`'s general-graph
-  # maximum-weight-free matching (augmenting paths, with contraction for
-  # odd cycles — see that module's doc).
-  #
-  # An earlier version of this ran a plain alternating-path BFS with no
-  # blossom handling. Measured at 30 rounds in a 32-40 player field, that
-  # closed 1477/2997 illegal rounds to 65 — real progress, but the
-  # remaining 65 were specifically the cases a blossom-blind search cannot
-  # reach: an odd cycle among the round's OWN unresolved pairing
-  # possibilities hiding a legal augmenting path from a naive search.
-  #
-  # Strictly an improvement regardless of how many byes it closes: it
-  # never unpairs anyone, never runs on a round the cascade already
-  # solved, and a round that ends up legal is worth more than a
-  # better-scored round that is not a legal pairing at all.
-  #
-  # Checks bye ELIGIBILITY (C2), not just bye COUNT. `eligible_for_bye?/1`
-  # was previously enforced only as the backtracking search's own success
-  # condition (see `cascade_brackets/1`'s history) — a player who already
-  # had a pairing-allocated bye could still end up floated again here
-  # without anything catching it, since `Blossom.augment/3` only
-  # guarantees MAXIMUM CARDINALITY, not WHICH specific vertex is left
-  # unmatched when more than one maximum matching exists. Fixed by
-  # processing ineligible floaters FIRST — `Blossom.augment/3` runs one
-  # augmenting-path search per vertex in the order given, applying each
-  # path it finds before moving to the next, so a vertex searched first
-  # gets first claim on a scarce augmenting path an eligible player would
-  # otherwise "use up" by sheer iteration order.
-  #
-  # `Blossom.augment/3` is proven to reach a TRUE maximum matching
-  # regardless of starting point (Berge augmenting paths), so if its
-  # result STILL exceeds `allowed_byes` or still leaves an ineligible
-  # player unmatched despite going first, that is not this pass failing
-  # to try hard enough — it is proof no legal completion exists at all.
-  # Traced two "still illegal after repair" cases to ground the
-  # count-only version of this: one (10 players, round 8) had a player
-  # who had already played every active opponent except one that was
-  # colour-absolute-blocked — a genuine deadlock, confirmed independently
-  # by an exhaustive active-players-only search, not a missed solution.
-  # Silently returning the extra-bye pairing anyway was the actual bug —
-  # bbpPairings' own `compatible`/`matchingIsComplete` never accepts more
-  # than `rem(active_count, 2)` byes either; it throws
-  # `NoValidPairingException` instead (`swisssystems/dutch.cpp`).
-  defp repair_bye_count(result, active, allowed_byes) do
-    by_rank = Map.new(active, &{&1.rank, &1})
-
-    if bye_legal?(result, by_rank, allowed_byes) do
-      result
-    else
-      # Colour stats are normally stamped inside `collect_bracket/1`;
-      # this path never went through it.
-      stamped_by_rank =
-        Map.new(by_rank, fn {r, p} -> {r, Map.put(p, :colour_stats, colour_stats(p))} end)
-
-      matching = Map.new(result, fn {w, b} -> {w, b} end) |> add_reverse_edges()
-
-      neighbours_fun = fn rank ->
-        player = Map.fetch!(stamped_by_rank, rank)
-
-        stamped_by_rank
-        |> Map.values()
-        |> Enum.filter(
-          &(&1.rank != rank and legal_pair?(player, &1) and colour_compatible?(player, &1))
-        )
-        |> Enum.map(& &1.rank)
-      end
-
-      ineligible = bye_ranks(result) |> Enum.reject(&eligible_for_bye?(Map.fetch!(by_rank, &1)))
-      # `Map.keys/1` is unordered and `sort_by/2` is stable, so within the
-      # eligible group the augmenting search visited vertices in map order —
-      # and `Blossom`'s own doc is explicit that search order decides which
-      # vertex ends up unmatched. Rank is the tie-break the rest of this
-      # module uses; using it here makes the choice the engine's rather than
-      # the runtime's.
-      ordered_ranks =
-        stamped_by_rank
-        |> Map.keys()
-        |> Enum.sort()
-        |> Enum.sort_by(&(&1 not in ineligible))
-
-      repaired =
-        ordered_ranks
-        |> Blossom.augment(matching, neighbours_fun)
-        |> to_pairs(active)
-
-      if bye_legal?(repaired, by_rank, allowed_byes) do
-        repaired
-      else
-        raise OpenPair.Pairing.NoValidPairingError,
-          message:
-            "no legal pairing exists for this round: the maximum matching over " <>
-              "#{length(active)} active players still leaves " <>
-              "#{length(bye_ranks(repaired))} unmatched (#{allowed_byes} allowed, some " <>
-              "possibly bye-ineligible)"
-      end
-    end
-  end
-
-  defp bye_ranks(pairs), do: for({white, nil} <- pairs, do: white)
-
-  defp bye_legal?(pairs, by_rank, allowed_byes) do
-    byes = bye_ranks(pairs)
-    length(byes) <= allowed_byes and Enum.all?(byes, &eligible_for_bye?(Map.fetch!(by_rank, &1)))
-  end
-
-  defp add_reverse_edges(matching) do
-    Enum.reduce(matching, %{}, fn
-      {_white, nil}, acc -> acc
-      {white, black}, acc -> acc |> Map.put(white, black) |> Map.put(black, white)
-    end)
-  end
-
-  defp to_pairs(matching, active) do
-    by_rank = Map.new(active, &{&1.rank, &1})
-
-    {pairs, _seen} =
-      Enum.reduce(Enum.sort_by(active, & &1.rank), {[], MapSet.new()}, fn player, {acc, seen} ->
-        cond do
-          MapSet.member?(seen, player.rank) ->
-            {acc, seen}
-
-          partner = Map.get(matching, player.rank) ->
-            # Article 5.2, not rank order. This built every pair as
-            # `{player.rank, partner}` with the lower-ranked player always
-            # White — no colour history, no preference strength, none of
-            # `choose_colour/2`. Every other pair-producing site in this
-            # module calls `assign_colour_with_history/1`; this one is only
-            # masked by being unreachable (see `repair_bye_count/3`), and a
-            # relaxation upstream would have it emitting a whole round with
-            # colours decided by seeding alone.
-            {acc ++ [assign_colour_with_history({player, Map.fetch!(by_rank, partner)})],
-             seen |> MapSet.put(player.rank) |> MapSet.put(partner)}
-
-          true ->
-            {acc ++ [{player.rank, nil}], MapSet.put(seen, player.rank)}
-        end
-      end)
-
-    pairs
   end
 
   # How many rounds the tournament has actually completed.
@@ -2094,8 +1955,22 @@ defmodule OpenPair.Pairing do
           matched_left == 0 ->
             {st, group, remaining, matched_left}
 
-          remaining <= matched_left ->
-            {%{st | matched: MapSet.put(st.matched, i)}, group, remaining, matched_left}
+          # Every MDP still to process in this group is matched internally, so
+          # they can be committed without re-deriving it — `matched_left` can
+          # never exceed `remaining`, so this arm only fires when the two are
+          # equal.
+          #
+          # `internal?/2` is checked anyway, and that is not belt-and-braces.
+          # `matched_left` is counted once when the group is entered, while
+          # `nudge_mdp_edges/2` below re-solves the matching mid-loop and can
+          # move a LATER member of the same group out of the bracket — after
+          # which the count is stale and this arm would freeze an MDP against
+          # a partner in the next score group. The invariant was previously
+          # held only by `collect_bracket/1`'s `p < st.nsgb` guard, a
+          # downstream filter documented as this port's own addition rather
+          # than bbpPairings'. Enforced at the decision instead.
+          remaining <= matched_left and internal?(st, i) ->
+            {%{st | matched: MapSet.put(st.matched, i)}, group, remaining - 1, matched_left - 1}
 
           true ->
             st = if internal?(st, i), do: st, else: nudge_mdp_edges(st, i)

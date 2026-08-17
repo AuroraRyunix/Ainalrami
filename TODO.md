@@ -2383,6 +2383,45 @@ dispute where Gacrux sides with this engine. In FE1's units (1 difference
 per 500 tournaments allowed) that is **1 per ~4.3 million**, four orders of
 magnitude inside the bar.
 
+## Removed: the bye-count repair and OpenPair.Blossom (2026-08-17)
+
+Recorded because deleting a tested 233-line matcher deserves an explanation,
+and because git is the recovery path if this reasoning is ever found wrong.
+
+`repair_bye_count/3` sat on the output of `global_cascade/2`, guarded by
+`bye_legal?/3`. `global_cascade/2` returns `{:ok, pairs, leftover}` **only
+after `check_completion/3` has passed** on exactly those pairs and that
+leftover — bye count, C2 eligibility and the C5 bye score. `bye_legal?/3`
+restated two of those three tests over the same set, so it was true whenever
+it was reached, so the repair branch could not execute. `OpenPair.Blossom`'s
+only non-test caller was inside it.
+
+The sweep found this as "a predicate implied by its own parent". Unifying
+`bye_legal?/3` to delegate to `check_completion/3` made it literal: the
+guard became the same function call that had already returned `:ok`.
+
+Two further reasons not to keep it as insurance:
+
+- **The dead path was wrong.** `to_pairs/2` assigned colours by rank alone,
+  with no `assign_colour_with_history/1` — so if `check_completion/3` were
+  ever relaxed, the "safety net" would have emitted a whole round with
+  colours decided by seeding, bypassing Article 5.2. Insurance that would
+  itself produce an illegal round is not insurance.
+- **The project's own principle.** "Insurance nothing has exercised is a
+  guess" (TODO.md, on `repair_completion/3`, which IS fault-injected via
+  `OPENPAIR_FORCE_STRAND=1`). That standard was applied to one repair path
+  and not to this one.
+
+`repair_completion/3` — the whole-field maximum-weight matching inside
+`global_cascade/2` — is untouched and remains the real completion fallback.
+It is reached, it is tested, and it is fault-injected.
+
+Removed: ~152 lines from `pairing.ex` (`repair_bye_count/3`, `bye_legal?/3`,
+`to_pairs/2`, `add_reverse_edges/1`, `bye_ranks/1`, the stamping helpers),
+`lib/open_pair/blossom.ex` (233 lines) and `test/open_pair/blossom_test.exs`.
+Validated after removal on four axes (rounds 6/8/9, byes, forfeits, `XXP`,
+`XXA`): 100.00% of rounds and pairs, zero illegal.
+
 ## Open
 
 
