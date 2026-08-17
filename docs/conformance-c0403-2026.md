@@ -100,3 +100,39 @@ disagreement with bbpPairings — 4.3M tournaments, one disagreement, and that
 one is a case where bbpPairings breaches C2 (see
 `docs/dispute-seed735265.md`) — but "not observed" is not "cannot happen",
 and this is the place it would come from.
+
+`OpenPair.Sequence` implements Article 4's ordering itself, checked against
+every worked example the article gives, so the oracle for closing this now
+exists. What does not exist is the differential test that would use it.
+
+### Why that test is harder than it looks
+
+The obvious version — enumerate every legal round-pairing, score each with
+the ladder, check the engine picks an optimal one — was built and thrown
+away, because the question it asks is not one the regulations answer.
+
+**The rules define no global optimum over whole-round pairings.** They
+define a sequential procedure: brackets are paired in order, each bracket's
+candidate chosen as best given the downfloats it inherits (3.3-3.8), and the
+result carried forward. "The best pairing of the round" is whatever that
+procedure produces. It is not the argmax of a function over complete
+round-pairings, and asking which round-pairing scores highest is a question
+with no defined answer.
+
+Two symptoms of asking it anyway, both hit immediately:
+
+* the ladder is defined **per bracket**, and bracket composition depends on
+  which players a pairing floats — so two round-pairings produce different
+  bracket structures and their rung vectors are not commensurable. That is
+  the same defect `explain_round/3`'s `edge_count` guard exists to catch,
+  one level up.
+* an enumerator is only as good as its legality test. The discarded one
+  checked C1 and neither C2 nor C3, so it reported "legal pairings the
+  engine refused" — it had admitted illegal ones. A weaker oracle accusing a
+  stronger implementation is the expected result, not a finding.
+
+**A valid test has to run per bracket**, comparing candidates within one
+bracket against a fixed set of incoming MDPs, which is where the regulations
+actually define an ordering. That means wiring `OpenPair.Sequence` into the
+bracket loop rather than around the round. That is the remaining work on
+this gap, and it is real work rather than a script.
