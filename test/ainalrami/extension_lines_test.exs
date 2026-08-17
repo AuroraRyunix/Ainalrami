@@ -213,6 +213,69 @@ defmodule Ainalrami.ExtensionLinesTest do
       assert parsed.tournament[:forbidden_pairs] == [{[1, 3], 2, 6}]
     end
 
+    test "one 260 line names a GROUP, forbidding every pair within it" do
+      # Like `XXP`, a `260` line is a list of ids and every pair among them
+      # is forbidden — not just the first two.
+      #
+      # The group has to straddle the halves to prove anything. A first
+      # version of this test forbade {1,2,3}, all of whom are in the top
+      # half of a six-player field and so could never meet in round one
+      # anyway: it passed identically with and without the line, which is
+      # the same vacuity that made an early XXP regression test worthless.
+      # {1,4,5} bites — 1v4 is the natural first board.
+      six =
+        Trf.serialize(%{
+          tournament: %{
+            name: "Group",
+            type: "swiss",
+            number_of_rounds: 5,
+            initial_colour: "w"
+          },
+          players:
+            for r <- 1..6 do
+              %{
+                rank: r,
+                name: "P#{r}",
+                sex: "",
+                title: "",
+                fide_rating: 2400 - r * 10,
+                federation: "",
+                fide_number: nil,
+                birth_date: "",
+                points: 0.0,
+                games: []
+              }
+            end
+        })
+
+      group_line =
+        "260 " <>
+          "  1" <>
+          " " <> "  5" <> " " <> Enum.map_join([1, 4, 5], " ", &String.pad_leading("#{&1}", 4))
+
+      pair = fn text ->
+        parsed = Trf.parse(text)
+
+        parsed.players
+        |> Pairing.pair_next_round(
+          expected_rounds: 5,
+          forbidden_pairs: parsed.tournament[:forbidden_pairs],
+          initial_colour: "w"
+        )
+        |> normalize()
+      end
+
+      assert Trf.parse(six <> group_line <> "\r\n").tournament[:forbidden_pairs] ==
+               [{[1, 4, 5], 1, 5}]
+
+      # Without the line the natural first board is 1v4.
+      assert pair.(six) == [[1, 4], [2, 5], [3, 6]]
+
+      # With it, none of 1-4, 1-5 or 4-5 may be seated. bbpPairings gives
+      # the same answer on the same bytes.
+      assert pair.(six <> group_line <> "\r\n") == [[1, 6], [2, 4], [3, 5]]
+    end
+
     test "a malformed 260 raises rather than being skipped" do
       # Same standard as XXP and XXA: a dropped exclusion is undetectable
       # downstream, so a line that cannot be read is refused outright. Real
