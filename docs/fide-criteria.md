@@ -4,7 +4,7 @@
 > A previous version of this file mapped articles onto `cascade_brackets/4`,
 > `placeable_below/1`, `downfloater_scores/1`, `bracket_options/3`,
 > `within_bracket_weight/4`, `spans.locality`, `spans.score_paired` and an
-> `OPENPAIR_GLOBAL` environment variable — **none of which exist in `lib/`**.
+> `AINALRAMI_GLOBAL` environment variable — **none of which exist in `lib/`**.
 > They were real once and were deleted with the per-bracket cascade; this
 > file was not updated. A rules-to-code map naming functions the code does
 > not have is worse than no map, because it gets read as authority. If you
@@ -70,7 +70,7 @@ being measured, and the references become trustworthy ground truth at
 this engine's current accuracy.
 
 It also settles what the remaining disagreements are. Of the 47 rounds in
-that run where OpenPair differed from either reference, **all 47 had the
+that run where Ainalrami differed from either reference, **all 47 had the
 two references agreeing with each other** — not one was a case of the
 references splitting and no ground truth existing. So there is no
 "legal-but-different, nobody is right" bucket left to hide in: every
@@ -115,7 +115,7 @@ anything. One line names a GROUP, not a pair: `XXP 4 9 17` forbids 4-9,
 
 Acceleration (`XXA`) is the mirror image — not a criterion at all, but a
 change to the score every criterion reads. See `with_acceleration/2` in
-`OpenPair.Pairing`, and TODO.md's "`XXP` and `XXA`" section for why that is
+`Ainalrami.Pairing`, and TODO.md's "`XXP` and `XXA`" section for why that is
 the port rather than a shortcut.
 
 ## Quality criteria — in descending priority

@@ -4,16 +4,16 @@
 #   mix run tools/rung_diff.exs test/fixtures/fe1_disputes/seed735265-r7-p10.trf
 
 [path | _] = System.argv()
-%{players: players} = OpenPair.Trf.parse(File.read!(path))
+%{players: players} = Ainalrami.Trf.parse(File.read!(path))
 
-ours = OpenPair.Pairing.pair_next_round(players, expected_rounds: 9)
+ours = Ainalrami.Pairing.pair_next_round(players, expected_rounds: 9)
 theirs = [{7, 5}, {8, 1}, {2, 9}, {3, nil}]
 
 IO.puts("ours:   #{inspect(Enum.sort(ours))}")
 IO.puts("theirs: #{inspect(Enum.sort(theirs))}\n")
 
-o = OpenPair.Pairing.explain_round(players, ours, expected_rounds: 9)
-t = OpenPair.Pairing.explain_round(players, theirs, expected_rounds: 9)
+o = Ainalrami.Pairing.explain_round(players, ours, expected_rounds: 9)
+t = Ainalrami.Pairing.explain_round(players, theirs, expected_rounds: 9)
 
 Enum.zip(o, t)
 |> Enum.with_index()

@@ -1,4 +1,4 @@
-OpenPair
+Ainalrami
 Copyright 2026 Jorian Burssens
 
 This product is licensed under the Apache License, Version 2.0. The full
@@ -8,25 +8,25 @@ text of the license is in LICENSE.
 Attribution: BBP Pairings
 --------------------------------------------------------------------------
 
-OpenPair contains work derived from BBP Pairings
+Ainalrami contains work derived from BBP Pairings
 (https://github.com/BieremaBoyzProgramming/bbpPairings),
 Copyright 2016-2026 Jeremy Bierema, licensed under the Apache License,
 Version 2.0.
 
-No BBP Pairings source code is reproduced here. OpenPair is written in
+No BBP Pairings source code is reproduced here. Ainalrami is written in
 Elixir and BBP Pairings in C++, so nothing was copied verbatim. What was
 taken is the ALGORITHM AND CONTROL FLOW of two components, read directly
 from the BBP Pairings source while writing the Elixir equivalents, with
 the originating file and line numbers cited inline throughout. Stating
 that plainly here rather than leaving it to be inferred:
 
-  * lib/open_pair/pairing.ex — the FIDE Dutch-system bracket cascade,
+  * lib/ainalrami/pairing.ex — the FIDE Dutch-system bracket cascade,
     ported stage for stage from src/swisssystems/dutch.cpp, including the
     C1-C21 criteria encoding, the bootstrap bye-assignee matching, the
     per-bracket refinement stages and the candidate-ordering (addend)
     passes.
 
-  * lib/open_pair/weighted_matching.ex — the Galil/Micali/Gabow (1986)
+  * lib/ainalrami/weighted_matching.ex — the Galil/Micali/Gabow (1986)
     primal-dual maximum-weight matching algorithm, with the control flow
     read from src/matching/detail/graph.cpp, rootblossom.cpp,
     parentblossom.cpp and src/matching/computer.cpp. The underlying
@@ -35,19 +35,19 @@ that plainly here rather than leaving it to be inferred:
 
 Changes made relative to BBP Pairings, as required by section 4(b) of the
 License: the code is a reimplementation in a different language and is not
-a line-for-line translation. OpenPair.WeightedMatching deliberately omits
+a line-for-line translation. Ainalrami.WeightedMatching deliberately omits
 BBP Pairings' incremental caches (minOuterEdges, per-blossom
 minOuterEdgeResistance) and rescans instead, trading the O(n^3) bound for
-a smaller and more directly verifiable translation. OpenPair.Pairing
+a smaller and more directly verifiable translation. Ainalrami.Pairing
 differs in its peek/window handling and in several places where a
 non-literal reading is argued in the code comments rather than copied.
 Individual deviations are documented at their call sites and in TODO.md.
 
-The following parts of OpenPair are NOT derived from BBP Pairings:
-lib/open_pair/trf.ex implements FIDE's published TRF16 specification
+The following parts of Ainalrami are NOT derived from BBP Pairings:
+lib/ainalrami/trf.ex implements FIDE's published TRF16 specification
 (C.04 Annex 2) and was adapted from the author's own OpenPairings
-project; lib/open_pair/blossom.ex is an independent implementation of
-Edmonds' Blossom algorithm; lib/open_pair/cli.ex, generator.ex,
+project; lib/ainalrami/blossom.ex is an independent implementation of
+Edmonds' Blossom algorithm; lib/ainalrami/cli.ex, generator.ex,
 matching.ex and log.ex are original work.
 
 --------------------------------------------------------------------------

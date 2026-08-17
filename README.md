@@ -1,16 +1,16 @@
-# OpenPair
+# Ainalrami
 
 A FIDE Dutch-system Swiss pairing engine, written in Elixir.
 
-OpenPair is the sibling project to
+Ainalrami is the sibling project to
 [OpenPairings](https://github.com/AuroraRyunix/openpairings) (the Elixir/
 Phoenix tournament manager), which today wraps FIDE's own reference
 implementation, [JaVaFo](https://www.rrweb.org/javafo/), for every Swiss
-pairing decision. OpenPair's goal is to become an **optional second pairing
+pairing decision. Ainalrami's goal is to become an **optional second pairing
 engine** inside that app — JaVaFo stays the default, especially for
 FIDE-rated/homologated tournaments, where OpenPairings' whole endorsement
 story rests on the same "uses JaVaFo, thru JaVaFo" pattern Vega, Swiss
-Manager and TournamentService already use. OpenPair is for everything else:
+Manager and TournamentService already use. Ainalrami is for everything else:
 tournaments that don't need that precedent, experimentation with pairing
 variants JaVaFo doesn't expose (acceleration systems beyond Baku, alternate
 tiebreak orderings), and a third independent data point for cross-checking
@@ -23,9 +23,9 @@ bbpPairings output, not just our own unit tests. Not yet wired into
 OpenPairings as a selectable engine.**
 
 - **Round 1**: 100% match against `javafo.jar` on a clean 20,000-random-roster
-  run (`OpenPair.Pairing.pair_round_one/1`, colour-blind composition diff —
-  see `test/open_pair/javafo_comparison_test.exs`).
-- **Round 2+**: `OpenPair.Pairing.pair_later_round/1` — `global_cascade/2`,
+  run (`Ainalrami.Pairing.pair_round_one/1`, colour-blind composition diff —
+  see `test/ainalrami/javafo_comparison_test.exs`).
+- **Round 2+**: `Ainalrami.Pairing.pair_later_round/1` — `global_cascade/2`,
   a stage-for-stage port of bbpPairings' bracket algorithm (eight
   matchings per bracket, not one). There is no second pairing path: the
   per-bracket cascade that used to back it up was deleted once it stopped
@@ -101,7 +101,7 @@ OpenPairings as a selectable engine.**
   800 arbiter-assigned-bye-heavy generated tournaments). When no legal
   pairing can exist at all — a genuine structural deadlock, not a search
   failure — the engine is supposed to raise
-  `OpenPair.Pairing.NoValidPairingError` rather than emit a best-effort
+  `Ainalrami.Pairing.NoValidPairingError` rather than emit a best-effort
   illegal result, matching bbpPairings' own `NoValidPairingException`.
 
   **That held up to ~5,500 rounds; it did not hold at 839,776 — and a
@@ -116,7 +116,7 @@ OpenPairings as a selectable engine.**
   (`n == 1`) that range was `0..-1` — Elixir's default step for a
   descending range walks `0, -1`, and `elem(arr, -1)` is an invalid
   index. **Fixed** with an `n <= 1` short-circuit, pinned down with a
-  real regression test (`test/open_pair/bye_assignee_score_test.exs`,
+  real regression test (`test/ainalrami/bye_assignee_score_test.exs`,
   fails on pre-fix code, passes on the fix), and confirmed at the same
   scale the bug was found at: re-running the identical 100,000-tournament
   batch now shows **0 raised exceptions and 7 illegal rounds**, down from
@@ -131,7 +131,7 @@ OpenPairings as a selectable engine.**
   counts as played and the round to pair is the one after it. Which is
   why bbpPairings pairs these files and this engine returned nothing —
   it was trying to pair a round that was already over. Fixed, with
-  regression cover both ways (`test/open_pair/rounds_played_test.exs`),
+  regression cover both ways (`test/ainalrami/rounds_played_test.exs`),
   and verified behaviour-neutral elsewhere: a 33,601-round bye-heavy
   batch run on each side of the change gives byte-identical results,
   down to the same four mismatching seeds. **The remaining 2
@@ -149,23 +149,23 @@ OpenPairings as a selectable engine.**
   tested at 100x the previous scale, which is the actual argument for
   testing at 100x the previous scale — repeatedly, not once.
 - **Three engines, not two** — `three_way_comparison_test.exs` runs
-  bbpPairings, Gacrux and OpenPair on identical positions. Over 3352
+  bbpPairings, Gacrux and Ainalrami on identical positions. Over 3352
   rounds the two references agreed with each other on **every one**, which
   bounds their true disagreement at ~0.09% and makes them a usable ruler
   for an engine at 98.6%. It also shows there is no ambiguity left to hide
-  behind: of the 47 rounds where OpenPair differed, all 47 had the
-  references agreeing, so every remaining disagreement is OpenPair being
+  behind: of the 47 rounds where Ainalrami differed, all 47 had the
+  references agreeing, so every remaining disagreement is Ainalrami being
   wrong rather than a rules-interpretation tie.
 - **How the remaining gap is worked on**: diagnostics rather than
   guesswork, all in the repo. `failure_taxonomy_test.exs` classifies
   every disagreement by the first bracket where the engines part company
-  and why; `tools/adjudicate.exs` then scores BOTH answers with OpenPair's
+  and why; `tools/adjudicate.exs` then scores BOTH answers with Ainalrami's
   own C1-C21 ladder, so each case comes back as "our search failed", "our
   ladder is wrong", or "the criteria genuinely tie". That pair of tools is
   what found the defects worth 90.29% -> 98.69%.
 - **bbpPairings is run directly, not just read as source** —
   `test/support/bbppairings.ex` + `bbppairings_comparison_test.exs`.
-  bbpPairings independently confirmed OpenPair's structural-deadlock
+  bbpPairings independently confirmed Ainalrami's structural-deadlock
   cases really are unpairable (its own exit code 1 on byte-identical
   input). See TODO.md's "Cross-validation against bbpPairings" for the
   full round-by-round table.
@@ -181,10 +181,10 @@ OpenPairings' real `System.cmd` call
 that already knows how to drive JaVaFo only has to swap the executable name:
 
 ```bash
-openpair input.trf -p output.trf   # pair the next round
-openpair input.trf -p              # same, but the pairing prints to stdout
-openpair -g output.trf             # Random Tournament Generator
-openpair input.trf -c              # Pairings Checker: replay and diff every round
+ainalrami input.trf -p output.trf   # pair the next round
+ainalrami input.trf -p              # same, but the pairing prints to stdout
+ainalrami -g output.trf             # Random Tournament Generator
+ainalrami input.trf -c              # Pairings Checker: replay and diff every round
 ```
 
 `-g` and `-c` mirror JaVaFo's own RTG/FPC modes (used for FIDE's FE1
@@ -209,7 +209,7 @@ round with this engine. It takes no input file — it creates a tournament
 rather than reading one — and writes to stdout when given no output path:
 
 ```
-openpair -g out.trf --seed=42 --players=30 --rounds=9 --forfeit-pct=10 --bye-pct=5 \
+ainalrami -g out.trf --seed=42 --players=30 --rounds=9 --forfeit-pct=10 --bye-pct=5 \
   --forbidden-pct=10 --acceleration=baku
 ```
 
@@ -219,7 +219,7 @@ generated file's own tournament name, so a file always reproduces itself.
 opponents left; it can also stop earlier still, if some round along the
 way turns out to have no legal pairing at all (a real, if rare,
 possibility for a small field deep into a Swiss — see
-`OpenPair.Pairing.NoValidPairingError`).
+`Ainalrami.Pairing.NoValidPairingError`).
 
 The two modes are each other's test: `-g` output fed to `-c` checks clean
 by construction, since the generator pairs with the same engine the
@@ -228,8 +228,8 @@ ones carrying forfeits and arbiter-assigned byes.
 
 ### TRF extension lines
 
-Beyond TRF16 proper, OpenPair reads three of JaVaFo's `XX` extension
-codes, in both directions (`OpenPair.Trf` parses and serializes all
+Beyond TRF16 proper, Ainalrami reads three of JaVaFo's `XX` extension
+codes, in both directions (`Ainalrami.Trf` parses and serializes all
 three):
 
 | line | meaning |
@@ -275,8 +275,8 @@ paired **66.12%** of rounds on the wrong scores.
 ### Verbose by default
 
 Unlike JaVaFo, which prints almost nothing beyond the paired result,
-OpenPair prints a step-by-step trace of what it's doing by default. Pass
-`-q`/`--quiet` to suppress it. See `OpenPair.Log`'s moduledoc for the
+Ainalrami prints a step-by-step trace of what it's doing by default. Pass
+`-q`/`--quiet` to suppress it. See `Ainalrami.Log`'s moduledoc for the
 reasoning — the intent is that "why did board 3 downfloat instead of board
 5" should be answerable by reading the run's own output.
 
@@ -286,7 +286,7 @@ reasoning — the intent is that "why did board 3 downfloat instead of board
 mix deps.get
 mix test
 mix format
-mix escript.build   # produces a standalone `openpair` executable
+mix escript.build   # produces a standalone `ainalrami` executable
 ```
 
 Requires Elixir `~> 1.17`, no runtime dependencies (no JVM, no external
@@ -299,8 +299,8 @@ binary) — matches OpenPairings' own standalone-binary story
 
 Deliberately the same licence as [bbpPairings](
 https://github.com/BieremaBoyzProgramming/bbpPairings), because parts of
-this engine are derived from it: `OpenPair.Pairing`'s bracket cascade is a
-stage-for-stage port of `dutch.cpp`, and `OpenPair.WeightedMatching`'s
+this engine are derived from it: `Ainalrami.Pairing`'s bracket cascade is a
+stage-for-stage port of `dutch.cpp`, and `Ainalrami.WeightedMatching`'s
 control flow was read directly from bbpPairings' own matching sources
 while writing the Elixir equivalent. No bbpPairings code is reproduced
 here — it is C++ and this is Elixir — but the algorithm and structure are

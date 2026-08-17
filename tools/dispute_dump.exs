@@ -4,7 +4,7 @@
 #   mix run tools/dispute_dump.exs
 
 path = "test/fixtures/fe1_disputes/seed735265-r7-p10.trf"
-%{players: players, tournament: t} = OpenPair.Trf.parse(File.read!(path))
+%{players: players, tournament: t} = Ainalrami.Trf.parse(File.read!(path))
 
 played =
   players
@@ -62,5 +62,5 @@ eligible =
 
 IO.puts("bye-eligible among them: #{Enum.map_join(eligible, ", ", &"#{&1.rank}")}")
 
-IO.puts("\nOpenPair:    #{inspect(OpenPair.Pairing.pair_next_round(players, expected_rounds: 9))}")
+IO.puts("\nAinalrami:    #{inspect(Ainalrami.Pairing.pair_next_round(players, expected_rounds: 9))}")
 IO.puts("bbpPairings: [{7, 5}, {8, 1}, {2, 9}, {3, nil}]   (run directly, exit 0)")

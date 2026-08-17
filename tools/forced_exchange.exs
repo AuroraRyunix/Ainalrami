@@ -92,7 +92,7 @@ IO.puts("\nevery S1 x S2 pair already met? #{cross_all_met?}")
 IO.puts("no S1 pair has met?            #{intra_none_met?}")
 
 trf =
-  OpenPair.Trf.serialize(%{
+  Ainalrami.Trf.serialize(%{
     tournament: %{name: "Forced exchange", number_of_players: 8, number_of_rounds: 5},
     players: players
   })
@@ -101,4 +101,4 @@ path = Path.join(File.cwd!(), "forced_exchange.trf")
 File.write!(path, trf)
 IO.puts("\nwrote #{path}")
 
-IO.puts("\nOpenPair: #{inspect(Enum.sort(OpenPair.Pairing.pair_next_round(players, expected_rounds: 5)))}")
+IO.puts("\nAinalrami: #{inspect(Enum.sort(Ainalrami.Pairing.pair_next_round(players, expected_rounds: 5)))}")

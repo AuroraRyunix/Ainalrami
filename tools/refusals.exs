@@ -2,12 +2,12 @@
 #
 # bbpPairings proves a complete matching exists before it pairs and
 # throws NoValidPairingException otherwise (dutch.cpp:828); Gacrux
-# constrains bracket choices with precomputed feasibility; OpenPair
+# constrains bracket choices with precomputed feasibility; Ainalrami
 # repairs after the fact. All three are meant to answer "is this round
 # pairable at all" identically — this checks whether they do.
 #
 # Plays tournaments forward on bbpPairings' own answers. When bbpPairings
-# refuses a round, OpenPair is asked the same question and its answer is
+# refuses a round, Ainalrami is asked the same question and its answer is
 # checked for legality independently: every active player paired exactly
 # once, no rematch, and the right number of byes going to someone C2
 # allows. Deep Swisses in a small field are where refusals happen, so
@@ -21,7 +21,7 @@ rounds = Enum.at(args, 1, "13") |> String.to_integer()
 min_p = Enum.at(args, 2, "8") |> String.to_integer()
 max_p = Enum.at(args, 3, "14") |> String.to_integer()
 
-alias OpenPair.{Pairing, Test.Bbppairings}
+alias Ainalrami.{Pairing, Test.Bbppairings}
 
 defmodule Ref do
   def roster(n) do
@@ -34,7 +34,7 @@ defmodule Ref do
   end
 
   def trf(players, rounds) do
-    OpenPair.Trf.serialize(%{tournament: %{name: "Refusals", type: "swiss"}, players: players}) <>
+    Ainalrami.Trf.serialize(%{tournament: %{name: "Refusals", type: "swiss"}, players: players}) <>
       "152 W\r\nXXR #{rounds}\r\n"
   end
 

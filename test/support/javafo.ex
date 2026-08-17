@@ -1,8 +1,8 @@
-defmodule OpenPair.Test.Javafo do
+defmodule Ainalrami.Test.Javafo do
   @moduledoc """
   Thin wrapper for invoking the real `javafo.jar` (FIDE's own reference
   Dutch-system implementation) locally, purely for comparison-testing
-  OpenPair's own pairing output against it. NOT vendored into this repo —
+  Ainalrami's own pairing output against it. NOT vendored into this repo —
   it's a third-party binary not ours to redistribute (same reasoning as the
   sibling project OpenPairings' own `test_helper.exs`) — located via
   `JAVAFO_JAR`, defaulting to that sibling project's own vendored copy
@@ -21,10 +21,10 @@ defmodule OpenPair.Test.Javafo do
   including any `XXR`/`XXA`/`XXP` extension lines the caller wants) and
   returns `{:ok, pairs}` where each pair is `{white_rank, black_rank | nil}`
   — `nil` for a pairing-allocated bye (javafo's own `0`), same convention
-  `OpenPair.Pairing` uses.
+  `Ainalrami.Pairing` uses.
   """
   def pair(trf_text) do
-    dir = Path.join(System.tmp_dir!(), "openpair-javafo-#{System.unique_integer([:positive])}")
+    dir = Path.join(System.tmp_dir!(), "ainalrami-javafo-#{System.unique_integer([:positive])}")
     File.mkdir_p!(dir)
     input = Path.join(dir, "input.trf")
     output = Path.join(dir, "output.txt")

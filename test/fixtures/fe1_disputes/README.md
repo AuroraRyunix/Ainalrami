@@ -1,7 +1,7 @@
 # FE1 rules-interpretation disputes
 
-Positions where OpenPair disagrees with bbpPairings and the disagreement is
-**not** believed to be an OpenPair defect. FE1 category 3 — the endorsement
+Positions where Ainalrami disagrees with bbpPairings and the disagreement is
+**not** believed to be an Ainalrami defect. FE1 category 3 — the endorsement
 process explicitly provides for escalating these to the SPPC rather than
 "fixing" them, so they are kept as files rather than as a paragraph.
 
@@ -13,11 +13,11 @@ independent engine agreeing with us.
 
 Round 7, 10 players, from the 1,000,000-tournament small-field run
 (4-10 players, 15% arbiter byes). **The only case in this project's history
-where Gacrux sides with OpenPair against bbpPairings**, and the last
+where Gacrux sides with Ainalrami against bbpPairings**, and the last
 survivor of the 40 catalogued disagreements — the other 39 were one missing
 field in the bootstrap matching and are gone.
 
-    OpenPair:     [{3, 9}, {5, 1}, {7, nil}, {8, 2}]
+    Ainalrami:     [{3, 9}, {5, 1}, {7, nil}, {8, 2}]
     bbpPairings:  [{2, 9}, {3, nil}, {7, 5}, {8, 1}]
 
 The engines disagree about who takes the pairing-allocated bye: ours and

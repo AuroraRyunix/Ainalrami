@@ -104,7 +104,7 @@ BSN rank within S2 increase together, and the two lexicographic orders are
 identical.
 
 That is checked rather than argued. `tiebreak_order_test.exs` generates
-candidates with `OpenPair.Sequence` — which knows nothing about the engine —
+candidates with `Ainalrami.Sequence` — which knows nothing about the engine —
 and asserts the key increases strictly along Article 4.2's order, over a
 homogeneous bracket (all 24 orderings), an odd bracket where one player
 downfloats, and a heterogeneous bracket ordered on its MDPs (all 20). It also
@@ -130,7 +130,7 @@ breaches C2 (see `docs/dispute-seed735265.md`). But "not observed" is not
 "cannot happen", and this is now the only place in the engine where it
 could come from.
 
-`OpenPair.Sequence` implements Article 4's ordering itself, checked against
+`Ainalrami.Sequence` implements Article 4's ordering itself, checked against
 every worked example the article gives, so the oracle for closing this now
 exists. What does not exist is the differential test that would use it.
 
@@ -162,6 +162,6 @@ Two symptoms of asking it anyway, both hit immediately:
 
 **A valid test has to run per bracket**, comparing candidates within one
 bracket against a fixed set of incoming MDPs, which is where the regulations
-actually define an ordering. That means wiring `OpenPair.Sequence` into the
+actually define an ordering. That means wiring `Ainalrami.Sequence` into the
 bracket loop rather than around the round. That is the remaining work on
 this gap, and it is real work rather than a script.

@@ -44,7 +44,7 @@ leaves exactly four candidates: 5, 7, 8 and 9.
 
 | engine | pairing | bye to |
 |---|---|---|
-| OpenPair | `{5,1} {8,2} {3,9}` | **7** — eligible |
+| Ainalrami | `{5,1} {8,2} {3,9}` | **7** — eligible |
 | Gacrux (`pairingchecker.py -m dutch`, rules hardcoded to 2026-02-01) | `{5,1} {8,2} {3,9}` — identical, board for board | **7** |
 | bbpPairings 6.0.0 | `{7,5} {8,1} {2,9}` | **3** — *already byed in round 2* |
 
@@ -97,7 +97,7 @@ both times.** In its fifth-round example:
 > [C2])."
 
 In both cases the document takes the transposition that moves the PAB to an
-eligible player instead — which is structurally what OpenPair and Gacrux do
+eligible player instead — which is structurally what Ainalrami and Gacrux do
 here and what bbpPairings does not.
 
 So bbpPairings' output for this position is not a lower-quality reading of a
@@ -115,7 +115,7 @@ removal.
 Which is what makes the case worth filing rather than dismissing as a
 misreading of its intent. `tools/bye_probe.exs` builds the minimal version —
 three players, rank 1 already holding a `U`, ranks 2 and 3 both eligible —
-and bbpPairings pairs rank 1 and byes rank 3, exactly as OpenPair does. Its
+and bbpPairings pairs rank 1 and byes rank 3, exactly as Ainalrami does. Its
 `eligibleForBye` (`common.h:104-118`) disqualifies any unplayed game worth at
 least a win, which a pairing-allocated bye is at default point values, and
 nothing in this file changes those: the only configuration line present is
@@ -124,7 +124,7 @@ has no bearing on points.
 
 So this is not bbpPairings implementing a different rule. It is bbpPairings
 implementing the same rule and, in this position, reaching a pairing that
-breaks it while a fully legal alternative exists — the one OpenPair and
+breaks it while a fully legal alternative exists — the one Ainalrami and
 Gacrux both produce.
 
 ## Why it is worth escalating
@@ -142,7 +142,7 @@ Gacrux both produce.
 3. **It is the sole survivor.** Across ~4.3 million tournaments and ~195
    million individual pairings spanning field sizes 4–120, round counts
    6–10, arbiter byes, forfeits, `XXP` exclusions and `XXA` acceleration,
-   this is the only round on which OpenPair and bbpPairings differ at all.
+   this is the only round on which Ainalrami and bbpPairings differ at all.
    It is not a symptom of a general weakness.
 
 ## Why it is NOT simply "we are right"
@@ -157,8 +157,8 @@ artifact and has been withdrawn.**
 
 Each bracket's rungs are a SUM over the pairs it keeps plus the pairs
 reaching into the next score group, and the top rung's leading term is one
-per edge. In the first bracket where these two answers differ, OpenPair
-contributes one edge and bbpPairings two — OpenPair floats rank 7 onward
+per edge. In the first bracket where these two answers differ, Ainalrami
+contributes one edge and bbpPairings two — Ainalrami floats rank 7 onward
 where bbpPairings pairs 5 with 7. So every rung in that bracket differs by
 that accounting alone, including the top one, whose label names bye
 eligibility and whose difference here has nothing to do with bye
@@ -194,7 +194,7 @@ until re-run — see the note there.
 
        "pairs": [[5,1],[8,2],[3,9],[7,0]]
 
-   Board for board OpenPair's answer, bye included (`0` is the bye).
+   Board for board Ainalrami's answer, bye included (`0` is the bye).
 
 **All three preconditions are now closed.** This is a position paper.
 

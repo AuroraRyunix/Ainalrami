@@ -14,8 +14,8 @@
 > Identifiers appearing below that **no longer exist in `lib/`**:
 > `cascade_brackets/4`, `bracket_options/3`, `placeable_below/1`,
 > `within_bracket_weight/4`, `ordering_rungs/4`, `lex_scale/1`,
-> `solve_by_cardinality/2`, `repair_bye_count/3`, `OpenPair.Blossom`,
-> `deviation`, `spread`, and the `OPENPAIR_GLOBAL` environment variable.
+> `solve_by_cardinality/2`, `repair_bye_count/3`, `Ainalrami.Blossom`,
+> `deviation`, `spread`, and the `AINALRAMI_GLOBAL` environment variable.
 > `@peek_budget` is `:unbounded`, not 8.
 >
 > `docs/fide-criteria.md` is the maintained rules-to-code map. This file is
@@ -25,17 +25,17 @@
 
 - ~~Project scaffold~~ — mix.exs (escript config), `.formatter.exs`,
   `.gitignore`.
-- ~~TRF16/TRF06 file I/O~~ — `OpenPair.Trf`, ported from OpenPairings'
+- ~~TRF16/TRF06 file I/O~~ — `Ainalrami.Trf`, ported from OpenPairings'
   `PairingsEngine.Trf` (same author, pure module, no Phoenix/Ecto
   dependency to strip). Carries over two real bugs that project found and
   fixed against FIDE's actual archived specs (Annexure-B/2006,
   Annexure-C/2016): the `allow_dangling_playing_code` TRF06 tolerance, and
   `parse_games/1` not stopping at a genuinely blank round. 27 ported tests,
   all passing here too.
-- ~~Verbose logging infrastructure~~ — `OpenPair.Log`. Verbose is the
+- ~~Verbose logging infrastructure~~ — `Ainalrami.Log`. Verbose is the
   default (not opt-in), `-q`/`--quiet` suppresses it. `step/1`/`detail/1`
   to stdout, `warn/1`/`error/1` always to stderr regardless of quiet mode.
-- ~~CLI skeleton~~ — `OpenPair.CLI`, mirroring JaVaFo's real invocation
+- ~~CLI skeleton~~ — `Ainalrami.CLI`, mirroring JaVaFo's real invocation
   shape (`input.trf -p [output.trf]`, `-g`, `-c`). `-p` calls the real
   pairing engine now (round 1 or the bracket cascade, whichever applies),
   writing the same shape JaVaFo's own output file uses (count line, then
@@ -53,7 +53,7 @@ specifically from trusting a plausible-sounding but unverified rule
 description; don't repeat that here for something as central as the pairing
 logic itself.
 
-1. ~~**Roster split & round 1.**~~ **Done** — `OpenPair.Pairing.pair_round_one/1`.
+1. ~~**Roster split & round 1.**~~ **Done** — `Ainalrami.Pairing.pair_round_one/1`.
    Rank order, top-half-vs-bottom-half pairing, odd field's lowest rank
    gets the bye. Colour: Article 5.1's "drawing of lots" has no
    deterministic rule to replicate — confirmed empirically (not assumed)
@@ -64,8 +64,8 @@ logic itself.
    its own fixed, documented, spec-legal convention instead.
 
    **Verified against real `javafo.jar`, not just unit-tested against our
-   own expectations**: `test/open_pair/javafo_comparison_test.exs`
-   (`OpenPair.Test.Javafo`, gated `:javafo`, jar not vendored — see that
+   own expectations**: `test/ainalrami/javafo_comparison_test.exs`
+   (`Ainalrami.Test.Javafo`, gated `:javafo`, jar not vendored — see that
    module's doc) generates random rosters (2-60 players) and diffs pairing
    *composition* (colour-blind) against real JaVaFo output, in parallel.
    **20,000/20,000 (100%) matched in a clean run** (`PAIRING_FUZZ_COUNT=20000`,
@@ -85,8 +85,8 @@ logic itself.
    `javafo.jar`** (5991/6000 random round-1 outcomes; 99.75% on the 2,000
    the scoring was actually tuned against, so the larger set rules out
    overfitting) —
-   `OpenPair.Pairing.pair_later_round/1`. Forms score brackets (Art. 1.2:
-   score desc, TPN asc) and pairs each via `OpenPair.Matching`'s general
+   `Ainalrami.Pairing.pair_later_round/1`. Forms score brackets (Art. 1.2:
+   score desc, TPN asc) and pairs each via `Ainalrami.Matching`'s general
    (non-bipartite) maximum-weight matching-with-floats (memoized bitmask
    DP), scored by `pair_weight/3` and `float_weight/1`.
 
@@ -209,7 +209,7 @@ illegal rounds throughout.
 
 ### A third reference, and which rulebook this engine is actually chasing
 
-`OpenPair.Test.Gacrux` wraps Otto Milvang's `pairingchecker.py` (the
+`Ainalrami.Test.Gacrux` wraps Otto Milvang's `pairingchecker.py` (the
 pairing half of the FIDE Tie Break Server, gacrux.no) — a third
 independent Dutch implementation, actively maintained, and the tool
 FIDE/TEC itself uses to check pairing programs.
@@ -222,9 +222,9 @@ rounds, four engines on identical positions:
 | bbpPairings 6.0.0 vs Gacrux | **100.00%** |
 | JaVaFo 2.2 vs bbpPairings | 97.53% |
 | JaVaFo 2.2 vs Gacrux | 97.53% |
-| OpenPair vs JaVaFo | 89.51% |
-| OpenPair vs bbpPairings | 87.96% |
-| OpenPair vs Gacrux | 87.96% |
+| Ainalrami vs JaVaFo | 89.51% |
+| Ainalrami vs bbpPairings | 87.96% |
+| Ainalrami vs Gacrux | 87.96% |
 
 **There are two Dutch rulebooks in play, and this engine is chasing the
 older one.** Gacrux states them outright:
@@ -257,15 +257,15 @@ positions at whatever scale is asked. At **3352 rounds**:
 | | agreement |
 |---|---|
 | bbpPairings vs Gacrux | **100.00%** (3352/3352) |
-| OpenPair vs bbpPairings | 98.6% |
-| OpenPair vs Gacrux | 98.6% |
+| Ainalrami vs bbpPairings | 98.6% |
+| Ainalrami vs Gacrux | 98.6% |
 
 The bound on reference disagreement tightens from 0.9% to **0.09%** —
 about fifteen times smaller than this engine's own error, which makes
 them a usable ruler again.
 
 **And it settles what the remaining failures are.** Of the 47 rounds
-where OpenPair differed, **all 47 had the two references agreeing with
+where Ainalrami differed, **all 47 had the two references agreeing with
 each other**; not one was a case of the references splitting. There is no
 "legal-but-different, nobody is right" bucket to appeal to — every
 remaining disagreement is this engine being wrong, and majority-vote
@@ -275,7 +275,7 @@ Costs ~35x the two-way harness (Gacrux is Python, ~750ms a round against
 bbpPairings' ~21ms); 400x9 takes about 4.5 minutes parallelised.
 
 The number to steer by from here is the last one: **when all three
-references agree, OpenPair matches 89.87%** (284/316). Where they are
+references agree, Ainalrami matches 89.87%** (284/316). Where they are
 unanimous there is no tie to break and no rulebook ambiguity, so that
 ~10% is genuinely this engine's own gap, and it is the honest measure of
 what is left to fix. Everything outside it is a choice about which
@@ -284,7 +284,7 @@ rulebook to target, not a bug.
 ### Two things not to redo
 
 **Do not build a k-best matcher for the cascade's alternatives.** Before
-the lookahead, substituting `OpenPair.Matching`'s exhaustive candidate
+the lookahead, substituting `Ainalrami.Matching`'s exhaustive candidate
 list for `bracket_candidates/3`'s was worth ~2.9 points of exact rounds,
 and the plan was to close that with Chegireddy-Hamacher / Murty
 partitioning. It is now worth 0.59 points at 200x9 — 10 rounds in 1684,
@@ -326,7 +326,7 @@ all" — has now been acted on and is resolved; see below.**
 | 4-40 + 10% forfeits | 99.52% / 99.91% | 88.70% / 96.90% |
 
 Verified on a second, independent code path: the three-way harness has
-OpenPair matching **both** references on 1261/1261 rounds. And javafo
+Ainalrami matching **both** references on 1261/1261 rounds. And javafo
 stays at 96.26%, which is the control — it implements the 2022 rules, so
 an engine that agreed with all three at once would mean the harness was
 measuring nothing.
@@ -377,7 +377,7 @@ returns that lone player's own score directly, `n == 0` returns `nil`
 the same way the pre-existing `allowed_byes == 0` clause does. Verified
 against the saved repro (`crash_reports/seed4886-r5-p5.trf` — copied
 into `test/fixtures/bye_assignee_score/one-candidate-left.trf` as a real
-regression test, `test/open_pair/bye_assignee_score_test.exs`, confirmed
+regression test, `test/ainalrami/bye_assignee_score_test.exs`, confirmed
 to fail on pre-fix code and pass on the fix) and then at the same scale
 the bug was found at: **re-ran the identical 100,000×9 bye-rate
 overnight batch**. 0 raised exceptions (was 95), illegal rounds
@@ -387,7 +387,7 @@ pairing, not merely a legal one. Forfeit-axis batch, re-run identically,
 is unchanged (99.93%/99.98%/0 illegal both times) — confirms the fix
 didn't touch anything it shouldn't have.
 
-### ~~The remaining 5 `OpenPair: []` cases~~ **fixed** — all one missing rule
+### ~~The remaining 5 `Ainalrami: []` cases~~ **fixed** — all one missing rule
 
 **This section previously split these five into "4 degenerate fuzz
 artifacts" plus "1 confirmed-genuine bug", and got both halves wrong.**
@@ -436,7 +436,7 @@ to do.
 
 **Verified, not assumed:**
 - Real `bbpPairings.exe` on the saved `seed4385-r5-p4.trf`: exit 0,
-  `4 1` / `2 3`. OpenPair now returns `[{2,3},{4,1}]` — the same pairing,
+  `4 1` / `2 3`. Ainalrami now returns `[{2,3},{4,1}]` — the same pairing,
   where it used to return `[]`. `seed4886-r5-p5.trf` likewise matches
   (`{3, nil}`).
 - **Behaviour-neutral everywhere else**, which is the real risk of
@@ -447,7 +447,7 @@ to do.
   mismatching cases by seed and round (223/2582/2628/2738), not merely
   the same count. `seed223-r9-p23` is the already-documented
   bye-assignee gap below, untouched by this.
-- Regression cover: `test/open_pair/rounds_played_test.exs` +
+- Regression cover: `test/ainalrami/rounds_played_test.exs` +
   `test/fixtures/rounds_played/trailing-round-complete.trf`. Fails on
   pre-fix code, passes on the fix. A second test pins the `every`-not-
   `any` half — one player's pre-recorded bye must NOT advance the round —
@@ -573,7 +573,7 @@ matters.** Measured on the same machine, same configs, stash-and-compare:
 (Wall clock including the bbpPairings subprocess, so the engine-only
 factor is somewhat worse than 2x.) The 4-40 case is free because a
 bracket there could already see most of the field under the 8-player peek
-budget. `OPENPAIR_PEEK=<n>` still narrows the graph if a much larger
+budget. `AINALRAMI_PEEK=<n>` still narrows the graph if a much larger
 field ever needs it — at the cost of the gate becoming wrong again.
 
 ### C9's real gate needs a persistent whole-round matcher, not a bracket cascade
@@ -645,7 +645,7 @@ It also regresses the wider corpus (99.96%/99.96% → 99.92%/99.68% across
 the bye and forfeit samples), breaking two previously-correct cases
 (`seed207-r9-p14`, `seed242-r6-p10` from that run) that were re-verified
 independently correct against Gacrux too. **Ruled out that this was
-simply "peek isn't wide enough"**: re-ran with `OPENPAIR_PEEK=999`
+simply "peek isn't wide enough"**: re-ran with `AINALRAMI_PEEK=999`
 (effectively the whole remaining field loaded into every bracket's
 `combined`) — `seed223` stays fixed, `seed207`/`seed242` stay broken,
 unchanged from the narrow-peek result. So it isn't reach at all.
@@ -656,7 +656,7 @@ incrementally-updated matcher for the entire remaining field, built once
 repeatedly against the SAME instance as brackets are locked in
 (`finalizePair`), so a query late in the round reflects every decision
 already baked in earlier, not just what's currently "visible."
-`OpenPair.Pairing`'s `pair_bracket/5` is the opposite: a fresh,
+`Ainalrami.Pairing`'s `pair_bracket/5` is the opposite: a fresh,
 stateless `WeightedMatching.solve/2` call every time, scoped to whatever
 `combined` currently holds. A wider `combined` (more peek) makes the
 STATELESS solve see more players, but it's still re-derived from
@@ -664,13 +664,13 @@ scratch against this bracket's own local weight function every time —
 it can never reproduce a tentative match that only exists because of
 specific decisions locked in several brackets earlier. Confirmed this
 distinction is the actual cause, not a remaining edge case of "how wide"
-— see the `OPENPAIR_PEEK=999` result above.
+— see the `AINALRAMI_PEEK=999` result above.
 
 **What a real fix needs**: not a wider peek, not a stricter or looser
 `single_bye?` formula (three variants tried today — blanket disable,
 `rest == []`, wide-peek `partner_scores` — each one either regressed the
 broader corpus or failed to generalise past the one case it was tuned
-against). It needs `OpenPair.Matching`'s solve to become genuinely
+against). It needs `Ainalrami.Matching`'s solve to become genuinely
 incremental — persisting dual variables/blossom structure across bracket
 transitions the way `matching_computer` does, rather than a fresh
 `solve/2` per bracket — or equivalently, replacing the bracket-cascade
@@ -727,7 +727,7 @@ and at 99.93% the residual error is inside the ~0.3% bound on the
 references' own agreement rate, which is precisely where a two-way
 comparison stops being able to tell "we are wrong" from "the reference
 is wrong". Ran Gacrux over all 25 dumped cases: **25 agree with
-bbpPairings, 0 agree with OpenPair, 0 land on a third answer.**
+bbpPairings, 0 agree with Ainalrami, 0 land on a third answer.**
 
 Two consequences, one of them not obvious:
 
@@ -857,7 +857,7 @@ built bbpPairings from a fresh clone cleanly on the first try —
 `~/Desktop/02cloud/tools/mingw64/bin` on `PATH`, `mingw32-make -j4` in
 the bbpPairings checkout. The `DBG_C9` instrumentation was not kept
 (reverted with the source clone, which itself wasn't kept in this repo,
-matching `OpenPair.Test.Bbppairings`'s own not-vendored stance) — redo
+matching `Ainalrami.Test.Bbppairings`'s own not-vendored stance) — redo
 it the same way (an env-var-gated `fprintf` block right after the
 "Compute the new values for the next pairing bracket" comment in
 `dutch.cpp`, rebuild, `DBG_C9=1 ./bbpPairings.exe --dutch <file> -p out`)
@@ -897,7 +897,7 @@ not pair everyone either.
 
 **The repair fires zero times in normal running** — measured across plain
 fields, 8% and 15% bye rates and 10% forfeits. That is the right outcome
-and the wrong thing to leave on trust, so `OPENPAIR_FORCE_STRAND=1`
+and the wrong thing to leave on trust, so `AINALRAMI_FORCE_STRAND=1`
 restores the old wrong stop condition on purpose and
 `completion_repair_test.exs` asserts the engine still comes out legal
 under it, pairing each round twice to prove the fault actually bites.
@@ -912,12 +912,12 @@ either a hack or an advantage:
 |---|---|
 | bbpPairings | whole-field pre-pass proves a complete matching exists, throws `NoValidPairingException` if not (`dutch.cpp:828`). A CHECK — there is no repair anywhere in the file — then it trusts its incremental matcher to preserve completeness. |
 | Gacrux | precomputes per-level feasibility ("hamilton", `pairingdutch.py:300+`) and uses it to REJECT a bracket choice that would strand the rest. |
-| OpenPair | pairs first, then repairs if completeness was lost. |
+| Ainalrami | pairs first, then repairs if completeness was lost. |
 
 **Does ours produce legal rounds the others refuse?** No.
 `tools/refusals.exs` plays deep Swisses in small fields — where refusals
-actually happen — and asks OpenPair every round bbpPairings turns down.
-Over **118 refused rounds, OpenPair refused all 118**: never a case where
+actually happen — and asks Ainalrami every round bbpPairings turns down.
+Over **118 refused rounds, Ainalrami refused all 118**: never a case where
 it paired something bbpPairings could not, and never one where it emitted
 something illegal instead. The two agree exactly on whether a round is
 pairable at all, which is what should happen, since both answers come
@@ -1026,7 +1026,7 @@ ordinary case, and the engine went from getting four rounds in five right
 to getting 179 of 180. By round on the 4-40 sweep, r9 went 69.46% ->
 86.83% and r8 82.04% -> 91.62%.
 
-`OPENPAIR_GLOBAL=0` selects the per-bracket cascade. It also stays the
+`AINALRAMI_GLOBAL=0` selects the per-bracket cascade. It also stays the
 automatic fallback — `global_cascade/2` verifies its own result and
 returns `:infeasible` rather than emit an illegal round, and the
 backtracking search runs then. That matters, because the global path has
@@ -1156,7 +1156,7 @@ how much they cost:
 | per-bracket cascade (default) | **90.29%** | 97.21% |
 
 +29.6 points, and a dead heat — three rounds in 1689, still behind on
-pairs. It stays behind `OPENPAIR_GLOBAL=1` because "level with" is not a
+pairs. It stays behind `AINALRAMI_GLOBAL=1` because "level with" is not a
 reason to swap out the path every other measurement in this file was
 taken against.
 
@@ -1259,7 +1259,7 @@ cannot be describing a decomposition the engine never used.
 | reference scores better | 35 (21.3%) | 75 (44.9%) |
 | we score better | 10 (6.1%) | 9 (5.4%) |
 
-`OPENPAIR_GLOBAL=1 mix run adjudicate.exs <dump-dir>` (script in the
+`AINALRAMI_GLOBAL=1 mix run adjudicate.exs <dump-dir>` (script in the
 scratchpad; dumps come from `PAIRING_FUZZ_DUMP`).
 
 ### Four things this settled, three of them negative
@@ -1298,7 +1298,7 @@ rate, which is why nothing caught it; it should matter with
 `PAIRING_FUZZ_BYE_PCT` set.
 
 **4. The remaining failures are NOT the stages dropping pairs.**
-`OPENPAIR_TRACE=1` prints the kept-pair count after each of the eight
+`AINALRAMI_TRACE=1` prints the kept-pair count after each of the eight
 stages. On the traced cases the count never falls — the initial solve
 already produces the answer the round ends with, so the ladder is
 choosing it, not a refinement stage losing it.
@@ -1350,7 +1350,7 @@ yields different answers depending on what lies beyond it.
 So the completion rung is not "maximise edges in this graph". Whatever it
 is, it is not a property of the bracket graph alone, and that is the
 thing to work out next. Everything needed is in the fixture directory's
-README, including why OpenPair itself returns nothing for those two files
+README, including why Ainalrami itself returns nothing for those two files
 (an artefact of building scores from arbiter byes, not a second finding).
 
 **Acted on, and it is worth a small win.** `completion_rung/4` now drops
@@ -1360,7 +1360,7 @@ many pairs a bracket keeps. Global cascade, 200x9:
 
 | | rounds | pairs | illegal |
 |---|---|---|---|
-| `OPENPAIR_COMPLETION=edges` (the literal C++) | 90.11% | 96.82% | 0 |
+| `AINALRAMI_COMPLETION=edges` (the literal C++) | 90.11% | 96.82% | 0 |
 | eligibility only (now the default) | **90.29%** | 96.89% | 0 |
 
 Zero illegal rounds either way, so removing the explicit edge-count
@@ -1419,7 +1419,7 @@ replaced:
     players when that is the only way to finish the round.
 
 And one bug worth remembering because it was invisible: in
-`OpenPair.Matching`, prepending rather than appending a candidate before a
+`Ainalrami.Matching`, prepending rather than appending a candidate before a
 **stable** sort lets it overtake an equal-weight incumbent and silently
 inverts a tie-break. Ties are everywhere in this weight scheme. That
 one-character difference cost round 2 forty points while leaving every
@@ -1455,14 +1455,14 @@ field does not work at all.
 **Fixed by augmenting-path repair, then closed almost the rest of the
 way by adding blossom contraction to it.** When the cascade gives up, the
 greedy fallback's result now gets a general-graph maximum-matching pass
-applied to it (`OpenPair.Blossom`), which pairs up players it left over.
+applied to it (`Ainalrami.Blossom`), which pairs up players it left over.
 
 First pass — plain alternating-path BFS, no blossom handling — took
 illegal rounds at 30 rounds from **1477/2997 to 65/2997**, every round
 through 22 legal. The 65 that remained were not random misses: they were
 specifically the cases a blossom-blind search structurally cannot reach,
 where the only augmenting path runs through an odd cycle. Confirmed by
-building `OpenPair.Blossom` (a direct port of the standard O(V^3)
+building `Ainalrami.Blossom` (a direct port of the standard O(V^3)
 reference algorithm — see that module's doc) and swapping it in with no
 other change: **65/2997 -> 1/2997**, every round through 29 legal.
 blossom's own correctness was checked against a brute-force
@@ -1478,7 +1478,7 @@ this step, since the repair only ever runs on rounds the cascade failed.
 **The one remaining illegal round turned out to be a real bug, not a
 search-budget limit** — worth recording since the previous paragraph
 guessed budget with more confidence than the evidence supported. Tracing
-it (seed 39, 32-player field, round 30) found OpenPair leaving two
+it (seed 39, 32-player field, round 30) found Ainalrami leaving two
 players unpaired despite a full pairing existing, confirmed reachable at
 all by temporarily disabling colour compatibility entirely, which found
 one immediately.
@@ -1552,11 +1552,11 @@ merge can be attempted again. That is the actual blocker — not the
 matching algorithm, which the DP already covers at these sizes.
 
 **Update:** the matching algorithm itself is no longer a blocker even for
-sizes past the DP's reach. `OpenPair.WeightedMatching` is a from-source
+sizes past the DP's reach. `Ainalrami.WeightedMatching` is a from-source
 port of the actual Galil/Micali/Gabow primal-dual algorithm described
 above (read from bbpPairings' `src/matching/detail/{graph,rootblossom,
 parentblossom}.cpp`, not reconstructed from memory), verified against
-`OpenPair.Matching`'s independent subset-DP oracle across 900+ random
+`Ainalrami.Matching`'s independent subset-DP oracle across 900+ random
 graphs (`weighted_matching_test.exs`) including cases dense enough to
 require both blossom formation and blossom expansion. It is NOT wired
 into `Pairing` yet — that still waits on the natural-correspondence
@@ -1618,11 +1618,11 @@ to matter:
     exclusions stacking on top of near-exhausted rematch-free opponents).
     `repair_bye_count/3` was silently returning that still-illegal
     pairing instead of recognising it as unsolvable; it now raises
-    `OpenPair.Pairing.NoValidPairingError`, matching bbpPairings'
+    `Ainalrami.Pairing.NoValidPairingError`, matching bbpPairings'
     own `NoValidPairingException` (`dutch.cpp`'s `compatible`/
     `matchingIsComplete` never accept more byes than
     `rem(active_count, 2)` either — they throw instead).
-    `OpenPair.Generator` catches it and truncates the tournament at the
+    `Ainalrami.Generator` catches it and truncates the tournament at the
     last round that actually completed. Re-verified end to end via the
     generator itself: **0 illegal rounds across 800 generated
     tournaments (~5500 rounds) at mixed bye rates 0/5/8/15%.**
@@ -1690,7 +1690,7 @@ to matter:
       (current) — restores correctness (2000-history re-run: 51.7%, up
       from 10.7%) without reintroducing the unbounded-search hang, at the
       cost of being exponential in the WHOLE bracket size again (not half,
-      unlike revision 3) — see `OpenPair.Matching`'s moduledoc for the
+      unlike revision 3) — see `Ainalrami.Matching`'s moduledoc for the
       actual complexity trade-off and where this could still be slow. The
       SAME 2000-history run's remaining disagreements pointed at one more
       concrete gap: two engines can agree a player must float down two
@@ -1712,7 +1712,7 @@ to matter:
 
    Also fixed a real pre-existing bug the seed-3 investigation surfaced
    (revision 1): `colour_preference/1` and `assign_colour_with_history/1`
-   were matching atoms (`:white`/`:black`) against `OpenPair.Trf`'s actual
+   were matching atoms (`:white`/`:black`) against `Ainalrami.Trf`'s actual
    `"w"`/`"b"` string convention — colour history was *silently never
    applied* before this, every decision quietly falling through to the
    round-1 fixed convention.
@@ -1750,7 +1750,7 @@ to matter:
    independent oracle for the residual disagreement rate. The harness's
    own `illegality/2` remains the only independent legality check here.
 
-   ~~**RTG (`-g`)**~~ **done** — `OpenPair.Generator`. Random roster,
+   ~~**RTG (`-g`)**~~ **done** — `Ainalrami.Generator`. Random roster,
    played forward with this engine pairing each round, optional forfeits
    and arbiter-assigned byes. Seeded and reproducible, with the seed
    written into the generated file's own tournament name (bbpPairings
@@ -1763,7 +1763,7 @@ to matter:
 
    Both halves of FE1's auto-test apparatus now exist. What does NOT
    exist is a reason to run it: FE1 only asks for FPC/RTG when "Internal
-   engine: YES", endorsement for OpenPair is explicitly deferred below,
+   engine: YES", endorsement for Ainalrami is explicitly deferred below,
    and the bar is one difference per 500 tournaments against a current
    rate near 11% of rounds.
 7. **Team pairing.** Depends on OpenPairings' own team-tournament work
@@ -1776,7 +1776,7 @@ to matter:
 
 ## Cross-validation against bbpPairings
 
-**Done, and measured** — `OpenPair.Test.Bbppairings` +
+**Done, and measured** — `Ainalrami.Test.Bbppairings` +
 `bbppairings_comparison_test.exs`, the same methodology as the javafo
 harness (play a tournament forward, diff each round, advance on the
 REFERENCE engine's own answer). Uses OpenPairings' already-vendored
@@ -1815,7 +1815,7 @@ by reading the source:
 | **overall** | **86.32%** | **95.92%** |
 
 **0 illegal rounds** — independent confirmation of the legality fix two
-commits up: bbpPairings agreed OpenPair's structural-deadlock cases really
+commits up: bbpPairings agreed Ainalrami's structural-deadlock cases really
 were unpairable (its own exit code 1, on byte-identical input, for the
 exact case that motivated that fix).
 
@@ -1823,7 +1823,7 @@ Slightly lower than the javafo depth number (97.19% pairs / 88.93% rounds,
 albeit a different 300×9 sample) but the same shape — rounds 1-2 exact,
 gradual divergence at depth. One representative disagreement (seed 25,
 round 4, 5 players) was hand-traced against the bracket/downfloat/
-bye-eligibility rules: OpenPair's answer matches a direct reading of
+bye-eligibility rules: Ainalrami's answer matches a direct reading of
 those rules; bbpPairings' differs in a way consistent with its
 whole-field weighted matching trading bracket locality for some other
 criterion — not an obvious defect, and consistent with the
@@ -1835,7 +1835,7 @@ trace to genuine gaps versus legitimate rule variance, has NOT been done
 javafo depth work found float-history, the colour model, and the C1
 forfeit-rematch rule.
 
-Once OpenPair is wired back into OpenPairings as a selectable engine, this
+Once Ainalrami is wired back into OpenPairings as a selectable engine, this
 harness should run as a *third* comparison arm there too, not just
 standalone here.
 
@@ -1878,7 +1878,7 @@ pre-assigned bye in the position to manifest at all.
 | three-way split | 0 | — |
 
 `seed735265-r7-p10` is the dispute, and the first case in this project's
-history where Gacrux has sided with OpenPair against bbpPairings. Round
+history where Gacrux has sided with Ainalrami against bbpPairings. Round
 7, 10 players; the engines disagree about who takes the bye — ours and
 Gacrux's give it to rank 7, bbpPairings' to rank 3. Notably it is ALSO
 the only case the adjudicator scores `theirs_scores_better`, so our own
@@ -2087,7 +2087,7 @@ which bbpPairings had supposedly returned fifteen pairs with ranks up to
 33. That is not a pairing of that tournament at all, and the harness had
 already said so: `WARNING: 2 bbpPairings process error(s) — this run was
 likely resource-starved`. Re-run alone, bbpPairings gives `2 7 / 3 5 /
-4 6`, which is OpenPair's answer exactly. **A saturated box can
+4 6`, which is Ainalrami's answer exactly. **A saturated box can
 manufacture a phantom disagreement**, the harness flags it, and the flag
 is worth reading before chasing the case — the same 36-core box was
 running an unrelated job at 2800% CPU throughout.
@@ -2095,7 +2095,7 @@ running an unrelated job at 2800% CPU throughout.
 The three-way harness agrees with **both** references on both profiles —
 1000x9 over 4-40 (8,402 rounds) and 2000x9 over the small-fields+byes
 profile that carried the defect (11,879 rounds). bbpPairings vs Gacrux,
-OpenPair vs bbpPairings and OpenPair vs Gacrux are all 100.0% on both.
+Ainalrami vs bbpPairings and Ainalrami vs Gacrux are all 100.0% on both.
 
 `mix test` 86 passed (85 before, plus the new regression test).
 
@@ -2113,7 +2113,7 @@ exonerated rung.
 
 ## `XXP` and `XXA` (2026-08-16) — the extension lines that were being discarded
 
-`OpenPair.Trf` parsed exactly one extension line, `XXR`. Every other `XX*`
+`Ainalrami.Trf` parsed exactly one extension line, `XXR`. Every other `XX*`
 line fell through `parse_header_line/3`'s `nil -> acc` clause and was
 dropped without a word. For two of them that is not a tidiness issue:
 
@@ -2121,7 +2121,7 @@ dropped without a word. For two of them that is not a tidiness issue:
   meet" was ignored, and the engine then returned a complete, perfectly
   legal-LOOKING pairing that seated them together. Nothing downstream
   could detect it. This is why the sibling project, having just wired
-  OpenPair in as an optional engine, had to **refuse to pair** whenever
+  Ainalrami in as an optional engine, had to **refuse to pair** whenever
   the generated TRF carried any non-`XXR` `XX` line at all.
 - **`XXA`** (acceleration) — virtual points were ignored, so brackets
   formed on the wrong scores.
@@ -2178,7 +2178,7 @@ columns 5-8 — then walks `startIndex = 9; startIndex += 5` reading four
 characters at each stop, i.e. columns `10 + 5*(r-1)` for round `r`. That
 is the JaVaFo AUM's spec exactly. Verified end to end: an 8-player round 1
 with the top four accelerated by 1.0 pairs 1-5/2-6/3-7/4-8 unaccelerated
-and **1-3/2-4/5-7/6-8** accelerated, and bbpPairings and OpenPair produce
+and **1-3/2-4/5-7/6-8** accelerated, and bbpPairings and Ainalrami produce
 the same answer on the same file, colours included.
 
 **The sibling project's own `XXA` emitter is one column wide at every
@@ -2202,7 +2202,7 @@ and a missing exclusion does not.
 ### Results
 
 Both features are validated by the EXISTING oracle, because bbpPairings
-implements both: `OpenPair.Generator` and the comparison harness learned to
+implements both: `Ainalrami.Generator` and the comparison harness learned to
 emit the lines (`PAIRING_FUZZ_FORBIDDEN_PCT`, `PAIRING_FUZZ_ACCEL=baku`
 `|random`), the same file goes to both engines, and the diff is the same
 diff every other axis uses. The harness's legality check gained
@@ -2269,7 +2269,7 @@ decorative.
 ### How wrong the old behaviour actually was
 
 "The line was ignored" is easy to state and easy to under-weigh, so it was
-measured: same corpus, same file to bbpPairings, and OpenPair told nothing
+measured: same corpus, same file to bbpPairings, and Ainalrami told nothing
 about the extension lines — i.e. exactly what this engine did last week.
 
 | | compared rounds | differs from bbpPairings | seats a forbidden pair |
@@ -2303,11 +2303,11 @@ to look: it produced a complete, legal, well-formed pairing every time.
   reached only through its own flag, never through `XXA`, so it cannot
   make the two engines disagree here: both read the identical `XXA` lines
   out of the identical file. The generator follows the sibling's reading
-  because that is what OpenPair will actually be handed.
+  because that is what Ainalrami will actually be handed.
 
 ## Explicitly deferred / not being pursued yet
 
-- Any FIDE endorsement application for OpenPair itself. It's meant to stay
+- Any FIDE endorsement application for Ainalrami itself. It's meant to stay
   a non-default, non-homologated-tournament-only option inside
   OpenPairings, at least until (if ever) it's genuinely proven out — see
   the endorsement-risk discussion in OpenPairings' own project history.
@@ -2316,8 +2316,8 @@ to look: it produced a complete, legal, well-formed pairing every time.
   owning pairing correctness rather than inheriting JaVaFo's endorsement,
   with two-week/two-month mandatory fix windows attached.
 - ~~A license file / open-source release.~~ **Done (2026-08-16, `f984803`)** —
-  **Apache-2.0**, with a `NOTICE` naming `lib/open_pair/pairing.ex` and
-  `lib/open_pair/weighted_matching.ex` as derived from bbpPairings and
+  **Apache-2.0**, with a `NOTICE` naming `lib/ainalrami/pairing.ex` and
+  `lib/ainalrami/weighted_matching.ex` as derived from bbpPairings and
   recording the §4(b) changes. Not really a choice: bbpPairings is
   Apache-2.0 and those two files are ports of it, so the licence is
   inherited. The repo is public. This is no longer a submission blocker.
@@ -2404,7 +2404,7 @@ dispute where Gacrux sides with this engine. In FE1's units (1 difference
 per 500 tournaments allowed) that is **1 per ~4.3 million**, four orders of
 magnitude inside the bar.
 
-## Removed: the bye-count repair and OpenPair.Blossom (2026-08-17)
+## Removed: the bye-count repair and Ainalrami.Blossom (2026-08-17)
 
 Recorded because deleting a tested 233-line matcher deserves an explanation,
 and because git is the recovery path if this reasoning is ever found wrong.
@@ -2414,7 +2414,7 @@ and because git is the recovery path if this reasoning is ever found wrong.
 after `check_completion/3` has passed** on exactly those pairs and that
 leftover — bye count, C2 eligibility and the C5 bye score. `bye_legal?/3`
 restated two of those three tests over the same set, so it was true whenever
-it was reached, so the repair branch could not execute. `OpenPair.Blossom`'s
+it was reached, so the repair branch could not execute. `Ainalrami.Blossom`'s
 only non-test caller was inside it.
 
 The sweep found this as "a predicate implied by its own parent". Unifying
@@ -2430,7 +2430,7 @@ Two further reasons not to keep it as insurance:
   itself produce an illegal round is not insurance.
 - **The project's own principle.** "Insurance nothing has exercised is a
   guess" (TODO.md, on `repair_completion/3`, which IS fault-injected via
-  `OPENPAIR_FORCE_STRAND=1`). That standard was applied to one repair path
+  `AINALRAMI_FORCE_STRAND=1`). That standard was applied to one repair path
   and not to this one.
 
 `repair_completion/3` — the whole-field maximum-weight matching inside
@@ -2439,7 +2439,7 @@ It is reached, it is tested, and it is fault-injected.
 
 Removed: ~152 lines from `pairing.ex` (`repair_bye_count/3`, `bye_legal?/3`,
 `to_pairs/2`, `add_reverse_edges/1`, `bye_ranks/1`, the stamping helpers),
-`lib/open_pair/blossom.ex` (233 lines) and `test/open_pair/blossom_test.exs`.
+`lib/ainalrami/blossom.ex` (233 lines) and `test/ainalrami/blossom_test.exs`.
 Validated after removal on four axes (rounds 6/8/9, byes, forfeits, `XXP`,
 `XXA`): 100.00% of rounds and pairs, zero illegal.
 
@@ -2458,7 +2458,7 @@ Validated after removal on four axes (rounds 6/8/9, byes, forfeits, `XXP`,
   blank history, so a tie stayed a tie); it could only MISATTRIBUTE one, by
   reporting a round genuinely decided on a float rung as tying there and
   differing further down. `explain_round/3` had no test of any kind until
-  `test/open_pair/explain_round_test.exs`, which is how this survived; both
+  `test/ainalrami/explain_round_test.exs`, which is how this survived; both
   of its cases fail on the pre-fix code.
 
   **The adjudication tables above were produced with the blank history and
@@ -2470,7 +2470,7 @@ Validated after removal on four axes (rounds 6/8/9, byes, forfeits, `XXP`,
   above. Re-running needs a fresh large fuzz, since the dumps were never
   kept.
 - **`seed735265-r7-p10`** — the one surviving disagreement, and the only
-  case in this project's history where Gacrux backs OpenPair against
+  case in this project's history where Gacrux backs Ainalrami against
   bbpPairings. FE1 category 3 (rules-interpretation dispute), which FE1
   explicitly provides for escalating to the SPPC rather than "fixing".
   Needs a written-up position before it can be escalated.

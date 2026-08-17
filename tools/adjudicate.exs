@@ -1,6 +1,6 @@
-# Scores both engines' answers with OpenPair's own C1-C21 ladder and
+# Scores both engines' answers with Ainalrami's own C1-C21 ladder and
 # reports, per case, the first bracket where they differ and which rung
-# decided it. See `OpenPair.Pairing.explain_round/3`.
+# decided it. See `Ainalrami.Pairing.explain_round/3`.
 #
 # Classifying a disagreement says WHAT differs; this says WHO IS RIGHT by
 # our own rules, which is the part that tells you where to look:
@@ -18,10 +18,10 @@
 #     PAIRING_FUZZ_ROUNDS=9 mix test --only bbppairings
 #   mix run tools/adjudicate.exs /tmp/dump
 #
-# Add OPENPAIR_GLOBAL=1 to both to adjudicate the global cascade instead
+# Add AINALRAMI_GLOBAL=1 to both to adjudicate the global cascade instead
 # (which is the path whose ladder this scorer actually shares). Set
 # VERBOSE_STEM=seedN-rM-pP to dump one case rung by rung, and
-# OPENPAIR_TRACE=1 with tools/trace_one.exs to watch a single case move
+# AINALRAMI_TRACE=1 with tools/trace_one.exs to watch a single case move
 # through the eight refinement stages.
 
 [dir | rest] = System.argv()
@@ -80,14 +80,14 @@ results =
     text = File.read!(path)
     trf = File.read!(Path.join(dir, stem <> ".trf"))
 
-    ours = text |> String.split("\n") |> Enum.find(&String.starts_with?(&1, "OpenPair:")) |> Adj.parse_pairs()
+    ours = text |> String.split("\n") |> Enum.find(&String.starts_with?(&1, "Ainalrami:")) |> Adj.parse_pairs()
     theirs = text |> String.split("\n") |> Enum.find(&String.starts_with?(&1, "bbpPairings:")) |> Adj.parse_pairs()
 
-    %{players: players} = OpenPair.Trf.parse(trf)
+    %{players: players} = Ainalrami.Trf.parse(trf)
     rounds = 9
 
-    o = OpenPair.Pairing.explain_round(players, ours, expected_rounds: rounds)
-    t = OpenPair.Pairing.explain_round(players, theirs, expected_rounds: rounds)
+    o = Ainalrami.Pairing.explain_round(players, ours, expected_rounds: rounds)
+    t = Ainalrami.Pairing.explain_round(players, theirs, expected_rounds: rounds)
 
     # Self-test: the reconstruction must account for every pair exactly
     # once. If it does not, the per-bracket verdicts below describe a

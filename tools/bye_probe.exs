@@ -47,7 +47,7 @@ players = [
 ]
 
 trf =
-  OpenPair.Trf.serialize(%{
+  Ainalrami.Trf.serialize(%{
     tournament: %{name: "Bye probe", number_of_players: 3, number_of_rounds: 5},
     players: players
   })
@@ -66,4 +66,4 @@ if code == 0 do
   IO.puts("bbpPairings says:\n" <> File.read!(out))
 end
 
-IO.puts("OpenPair says: #{inspect(OpenPair.Pairing.pair_next_round(players, expected_rounds: 5))}")
+IO.puts("Ainalrami says: #{inspect(Ainalrami.Pairing.pair_next_round(players, expected_rounds: 5))}")

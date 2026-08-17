@@ -59,11 +59,11 @@ cross-bracket edges the way this port assumes, or something outside the
 bracket constrains it.
 
 This matters: 47 of the global cascade's 167 disagreements are flagged on
-exactly this rung by `tools/adjudicate.exs`, and `OPENPAIR_TRACE=1` shows
+exactly this rung by `tools/adjudicate.exs`, and `AINALRAMI_TRACE=1` shows
 the initial solve already producing the answer, so it is the ladder
 deciding and not a refinement stage.
 
-**Caveat on these two files.** OpenPair returns no pairing at all for
+**Caveat on these two files.** Ainalrami returns no pairing at all for
 them, which is a defect of the fixture rather than a second finding: the
 scores are built from arbiter-assigned `H`/`Z` byes, which do not count
 as participation, so every player's game count exceeds their played
@@ -101,7 +101,7 @@ these are not equal.
 
 ### What this rules out
 
-**Not the refinement stages.** `OPENPAIR_TRACE=1` shows the initial solve
+**Not the refinement stages.** `AINALRAMI_TRACE=1` shows the initial solve
 already producing the answer the round ends with; the kept-pair count
 never falls across the eight stages.
 

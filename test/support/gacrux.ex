@@ -1,9 +1,9 @@
-defmodule OpenPair.Test.Gacrux do
+defmodule Ainalrami.Test.Gacrux do
   @moduledoc """
   Thin wrapper for invoking Otto Milvang's `pairingchecker.py` (the pairing
   half of the FIDE Tie Break Server, gacrux.no) locally — the THIRD
   independent Dutch implementation this project compares against, after
-  `OpenPair.Test.Javafo` and `OpenPair.Test.Bbppairings`.
+  `Ainalrami.Test.Javafo` and `Ainalrami.Test.Bbppairings`.
 
   Worth having for two reasons the other two cannot cover.
 
@@ -47,13 +47,13 @@ defmodule OpenPair.Test.Gacrux do
   Runs the pairing mode (`-p -dT -m dutch`) on `trf_text` and returns:
 
     * `{:ok, pairs}` — `[{white_rank, black_rank | nil}]`, the same
-      convention the other two wrappers and `OpenPair.Pairing` all use
+      convention the other two wrappers and `Ainalrami.Pairing` all use
     * `{:no_valid_pairing, output}` — it produced no pairs at all, which
       is how it reports a round with no legal completion
     * `{:error, {code, output}}` — anything else
   """
   def pair(trf_text) do
-    dir = Path.join(System.tmp_dir!(), "openpair-gacrux-#{System.unique_integer([:positive])}")
+    dir = Path.join(System.tmp_dir!(), "ainalrami-gacrux-#{System.unique_integer([:positive])}")
     File.mkdir_p!(dir)
     input = Path.join(dir, "input.trf")
     output = Path.join(dir, "output.txt")
@@ -81,7 +81,7 @@ defmodule OpenPair.Test.Gacrux do
   defp classify([], out), do: {:no_valid_pairing, out}
   defp classify(pairs, _out), do: {:ok, pairs}
 
-  # See `OpenPair.Test.Javafo`'s identical helper for why this retries
+  # See `Ainalrami.Test.Javafo`'s identical helper for why this retries
   # instead of a plain `File.rm_rf!/1` — same Windows transient-handle
   # cause, same fix.
   defp remove_dir(dir, attempts_left \\ 5)

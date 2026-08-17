@@ -54,8 +54,8 @@ end
 results =
   Enum.flat_map(1..count, fn seed ->
     n = 4 + rem(seed * 13, 37)
-    {text, _} = OpenPair.Generator.generate(players: n, rounds: rounds - 1, seed: seed)
-    %{players: players} = OpenPair.Trf.parse(text)
+    {text, _} = Ainalrami.Generator.generate(players: n, rounds: rounds - 1, seed: seed)
+    %{players: players} = Ainalrami.Trf.parse(text)
 
     path = Path.join(System.tmp_dir!(), "cp_#{seed}.trf")
     out = Path.join(System.tmp_dir!(), "cp_#{seed}_out.txt")
@@ -76,7 +76,7 @@ results =
 
         ours =
           try do
-            OpenPair.Pairing.pair_next_round(players, expected_rounds: rounds)
+            Ainalrami.Pairing.pair_next_round(players, expected_rounds: rounds)
           rescue
             _ -> []
           end

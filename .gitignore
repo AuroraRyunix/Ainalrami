@@ -11,7 +11,7 @@ erl_crash.dump
 .lexical/
 
 # escript build artifact
-/openpair
+/ainalrami
 
 # scratch dumps from large fuzz/comparison runs (thousands of .trf/.txt
 # files, not meant to be tracked) — see overnight_run/run.sh. Covers

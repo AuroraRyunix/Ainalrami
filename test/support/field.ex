@@ -1,4 +1,4 @@
-defmodule OpenPair.Test.Field do
+defmodule Ainalrami.Test.Field do
   @moduledoc """
   Which players a round is actually supposed to pair.
 
@@ -10,8 +10,8 @@ defmodule OpenPair.Test.Field do
   ## It did not, and the moduledoc used to claim it did
 
   This module previously derived the answer itself, opening with: "computed
-  INDEPENDENTLY of `OpenPair.Pairing`, on purpose … this deliberately
-  re-implements the rule rather than calling `OpenPair.Pairing`'s own
+  INDEPENDENTLY of `Ainalrami.Pairing`, on purpose … this deliberately
+  re-implements the rule rather than calling `Ainalrami.Pairing`'s own
   (private) `rounds_played/1` … if they ever disagree, that disagreement is a
   finding".
 
@@ -31,7 +31,7 @@ defmodule OpenPair.Test.Field do
   the same TRF**. bbpPairings decides which players a round seats by its own
   `playedRounds` and `evenUpMatchHistories`, compiled from C++ this project
   did not write, and the harnesses already run it on every round — the
-  information was there all along. If OpenPair seats a different set of
+  information was there all along. If Ainalrami seats a different set of
   players than the reference did, that is now a real finding rather than a
   tautology.
 
@@ -83,7 +83,7 @@ defmodule OpenPair.Test.Field do
   The ranks bbpPairings seated for this round, as a MapSet — the reference's
   own answer to "who is active", taken from the pairing it produced.
 
-  `pairs` is `[{white_rank, black_rank | nil}]` as `OpenPair.Test.Bbppairings`
+  `pairs` is `[{white_rank, black_rank | nil}]` as `Ainalrami.Test.Bbppairings`
   returns it; a `nil` black is the pairing-allocated bye, and that player is
   active too.
   """
@@ -99,7 +99,7 @@ defmodule OpenPair.Test.Field do
   @doc """
   The players the engine's OWN rule says to seat.
 
-  Not independent of `OpenPair.Pairing` — see the moduledoc. Use
+  Not independent of `Ainalrami.Pairing` — see the moduledoc. Use
   `from_reference/1` wherever a bbpPairings result is available.
   """
   def derive(players) do

@@ -1,6 +1,6 @@
 # bbpPairings 6.0.0 allocates a second pairing-allocated bye, violating C.04.3 [C2]
 
-**Reporter:** OpenPairings / OpenPair project
+**Reporter:** OpenPairings / Ainalrami project
 **Program:** BBP Pairings v6.0.0 (Built Feb 1 2026 17:39:15) —
 <https://github.com/BieremaBoyzProgramming/bbpPairings>
 **Rules:** FIDE Handbook C.04.3, FIDE (Dutch) System, effective 1 February
@@ -105,7 +105,7 @@ $ python3 pairingchecker.py -p -m dutch -i seed735265-r7-p10.trf -f TRF -n 7
   "pairs": [[5,1],[8,2],[3,9],[7,0]]
 ```
 
-**OpenPair** (github.com/AuroraRyunix/openpair): `{5,1} {8,2} {3,9}`, bye to
+**Ainalrami** (github.com/AuroraRyunix/ainalrami): `{5,1} {8,2} {3,9}`, bye to
 7 — identical, board for board.
 
 That pairing seats all seven active players, contains no rematch, and gives
@@ -131,7 +131,7 @@ So the rule is implemented and is not being reached on this path.
 
 Save the file above with CRLF line endings and run the command in "Observed
 behaviour". The engine that found it is at
-<https://github.com/AuroraRyunix/openpair>; this position is
+<https://github.com/AuroraRyunix/ainalrami>; this position is
 `test/fixtures/fe1_disputes/seed735265-r7-p10.trf` there, with
 `tools/dispute_dump.exs` printing the decoded position and eligibility, and
 `tools/bye_probe.exs` building the minimal control case.
