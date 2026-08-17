@@ -664,14 +664,26 @@ defmodule Ainalrami.Trf do
   # The key is only added to players that actually have one, so a file with
   # no `XXA` at all parses to the identical map it did before.
   defp attach_accelerations(%{accelerations: accelerations, acceleration_ranges: ranges} = result) do
-    # `250` ranges are expanded first and `XXA` rows laid over them, which
-    # is the order bbpPairings reaches the same state in: both write into
-    # the same per-player vector, and `XXA` names one player explicitly
-    # where `250` paints a block. A file carrying both is exotic; a file
-    # carrying either alone — the only shapes seen in practice — is
-    # unaffected by the layering.
+    # `250` ranges are expanded first, then `XXA` rows are APPENDED to
+    # them rather than laid over them.
+    #
+    # Appending looks odd and is what the reference does:
+    # `readPlayerAccelerationsXxa` (`trf.cpp:487-514`) calls `push_back` on
+    # the player's acceleration vector, so an `XXA` line lands after
+    # whatever a `250` already filled in — round 3 onwards, not round 1.
+    # This engine's own `parse_xxa/2` already appends when two `XXA` lines
+    # name the same player, so the two are consistent.
+    #
+    # Overwriting instead put `XXA`'s values at rounds 1-2 and produced a
+    # different bracket from bbpPairings on the same bytes. A file carrying
+    # both forms is exotic — `XXA` is JaVaFo's spelling and `250` is
+    # bbpPairings' — but "exotic" is not a reason to diverge silently.
     expanded = Enum.reduce(ranges, %{}, &expand_acceleration_range/2)
-    merged = Map.merge(expanded, accelerations)
+
+    merged =
+      Map.merge(expanded, accelerations, fn _rank, from_250, from_xxa ->
+        from_250 ++ from_xxa
+      end)
 
     players =
       if merged == %{} do

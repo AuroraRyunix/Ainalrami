@@ -121,6 +121,48 @@ defmodule Ainalrami.ExtensionLinesTest do
       assert first[:accelerations] == [0.0, 1.0, 1.0]
     end
 
+    test "two 250 lines layer, the later one winning the rounds it names" do
+      # Disjoint ranges simply concatenate; an overlapping later line
+      # overwrites only the rounds it covers and leaves the rest alone,
+      # which is `readAccelerations250`'s resize-then-fill.
+      disjoint =
+        eight_player_roster() <>
+          line_250("1.0", "1", "1", "1", "4") <> line_250("0.5", "2", "3", "1", "4")
+
+      assert accel_of(disjoint, 1) == [1.0, 0.5, 0.5]
+
+      overlapping =
+        eight_player_roster() <>
+          line_250("1.0", "1", "3", "1", "4") <> line_250("0.5", "2", "2", "1", "4")
+
+      assert accel_of(overlapping, 1) == [1.0, 0.5, 1.0]
+    end
+
+    test "an XXA line APPENDS to what a 250 already filled in" do
+      # Which looks wrong and is what the reference does:
+      # `readPlayerAccelerationsXxa` (`trf.cpp:487-514`) calls `push_back`,
+      # so `XXA` lands AFTER the rounds a `250` already covered — here at
+      # rounds 3 and 4, not 1 and 2.
+      #
+      # Overwriting instead put XXA's values at rounds 1-2 and produced a
+      # different bracket from bbpPairings on identical bytes. A file
+      # carrying both forms is exotic, since XXA is JaVaFo's spelling and
+      # 250 is bbpPairings'; that is not a reason to diverge silently.
+      both =
+        eight_player_roster() <>
+          line_250("1.0", "1", "2", "1", "4") <> "XXA    1  0.5  0.5\r\n"
+
+      assert accel_of(both, 1) == [1.0, 1.0, 0.5, 0.5]
+    end
+
+    defp accel_of(text, rank) do
+      text
+      |> Trf.parse()
+      |> Map.fetch!(:players)
+      |> Enum.find(&(&1[:rank] == rank))
+      |> Map.fetch!(:accelerations)
+    end
+
     test "a malformed 250 raises rather than being skipped" do
       bad = [
         # too short to hold its own fields
