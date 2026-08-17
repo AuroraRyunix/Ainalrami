@@ -2356,6 +2356,33 @@ what the existing ones hold CONSTANT, not what they vary.
 
 `PAIRING_FUZZ_ROUNDS` is now a first-class axis: run even and odd.
 
+### The even-round axis, measured (2026-08-17)
+
+Run on the fix, varying the parameter the whole previous corpus held
+constant. **1,800,000 tournaments / 12,276,248 rounds / 102,985,278
+individual pairings.**
+
+| axis | rounds | tournaments | agreement | illegal |
+|---|---|---|---|---|
+| 15% byes, 4-40 | **8** | 250,000 | 100.00% | 0 |
+| 15% byes, 4-40 | **6** | 250,000 | 100.00% | 0 |
+| 15% byes, 4-40 | **10** | 150,000 | 100.00% | 0 |
+| plain, 4-40 | **8** | 200,000 | 100.00% | 0 |
+| 15% byes, 4-10 | **8** | 600,000 | 100.00% | 0 |
+| 15% byes, 4-40 (control) | 9 | 150,000 | 100.00% | 0 |
+| 15% byes, 4-40 (control) | 7 | 200,000 | 100.00% | 0 |
+
+**Zero disagreements on any axis, even or odd.** The odd controls are the
+point: had 7 and 9 also moved, the fix would have been wrong in a way the
+2,000-tournament local run could not show. They did not.
+
+Combined with the run earlier the same day, the engine now stands at
+**~4.3M tournaments and ~195M individual pairings against bbpPairings, with
+exactly one disagreement** — `seed735265-r7-p10`, the rules-interpretation
+dispute where Gacrux sides with this engine. In FE1's units (1 difference
+per 500 tournaments allowed) that is **1 per ~4.3 million**, four orders of
+magnitude inside the bar.
+
 ## Open
 
 
@@ -2396,11 +2423,8 @@ what the existing ones hold CONSTANT, not what they vary.
 - ~~**The 2 wrong-bye-count / non-partition illegal cases**~~ **closed** by
   the 2026-08-17 run above: the original configuration re-run over 250,000
   tournaments / 2,099,071 rounds produced zero illegal rounds.
-- **Even-round validation at scale.** The `ROUNDS=8` measurement above was
-  2,000 tournaments on a laptop, enough to prove the bug and its fix but not
-  to stand beside the odd-round corpus. The even-round axes deserve a run of
-  the same order as the table above before any claim of "100.00% on every
-  axis" is repeated.
+- ~~**Even-round validation at scale.**~~ **Done** — 1,800,000 tournaments
+  across rounds 6/7/8/9/10, zero disagreements, table above.
 
 Reproducing any dumped case is now cheap: `PAIRING_FUZZ_SEED_FROM` starts
 the seed range anywhere, and every seed is independent, so
