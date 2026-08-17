@@ -61,6 +61,55 @@ Run directly against the binary rather than taken from the harness:
     2 9
     3 0
 
+## The rules say bbpPairings' answer is illegal, not merely worse
+
+Settled against the primary source: **Mario Held, *Mastering the Dutch*, "A
+tournament example developed with C.04.3 FIDE (Dutch) Swiss Rules, version
+2026", FIDE Technical Commission**, published at `tec.fide.com`
+(`Mastering_the_Dutch_2026.pdf`, ver. 2606191500, 72pp).
+
+Three things in that document decide this case.
+
+**C2 is an absolute criterion, and it is the PAB rule.** The document
+enumerates the absolutes as C1 (players who already met), C2 (the PAB rule)
+and C3 (clashing absolute colour preferences), with C4 the completion
+criterion and C6–C21 the quality criteria. On the choice of PAB-assignee it
+states the requirement directly — the assignee must be a player who
+
+> "did not receive a previous PAB, a forfeit win, or a Full-Point Bye ([C2])"
+
+and restates it when working an example as excluding "players who earned
+full points **without playing** — i.e., PAB, forfeits, FPBs".
+
+**A candidate violating an absolute criterion is discarded, not ranked.**
+
+> "A candidate that complies with all the (relevant) absolute criteria … is
+> said to be legal and can be evaluated for quality. A candidate that is not
+> legal can only be immediately discarded."
+
+**And the document works this exact situation twice, calling it illegal
+both times.** In its fifth-round example:
+
+> "The natural candidates would allocate the PAB to player #15 and this is
+> illegal ([C2])"
+
+> "The natural pairing (13-10, 15-PAB) is not legal (as before, it violates
+> [C2])."
+
+In both cases the document takes the transposition that moves the PAB to an
+eligible player instead — which is structurally what OpenPair and Gacrux do
+here and what bbpPairings does not.
+
+So bbpPairings' output for this position is not a lower-quality reading of a
+tie-break. Under C.04.3 (2026) it is an illegal candidate that should have
+been discarded, and a legal alternative exists.
+
+Note also what C2 does **not** cover: it excludes full points earned
+*without playing*. An ordinary win — including TRF16's letter spelling `W` —
+is a played game and never costs a player their eligibility. This engine had
+`W` in its disqualifying list until 2026-08-17; the document confirms the
+removal.
+
 ## bbpPairings honours this rule in general
 
 Which is what makes the case worth filing rather than dismissing as a
@@ -130,12 +179,15 @@ until re-run — see the note there.
 
 1. ~~**Resolve the internal inconsistency.**~~ **Done** — it was the
    diagnostic, not the engine. See above.
-2. **Hand-trace the bye decision against C.04 §C**, from the Handbook text,
-   naming the criterion each engine is applying and where they diverge. The
-   adjudicator's rung label is a lead, not a citation.
+2. ~~**Hand-trace the bye decision against the Handbook text.**~~ **Done** —
+   see "The rules say bbpPairings' answer is illegal" above. The criterion is
+   C2, it is absolute, and the primary source works the same situation twice
+   and calls it illegal.
 3. **Confirm Gacrux's rules edition.** It selects the 2026 rules by
    default; the run that produced this agreement should be re-done with the
    edition pinned explicitly and recorded.
+
+One precondition remains, and it is small. Everything else is in hand.
 
 Only then is this a position paper. Right now it is a well-evidenced
 observation with one loose thread, and the loose thread is ours.

@@ -14,6 +14,28 @@ Source: **FIDE Handbook C.04.3, "FIDE (Dutch) System", effective 1 February
 2026** (<https://handbook.fide.com/chapter/C0403202602>), plus the
 definitions it inherits from C.04.1 Basic Rules for Swiss Systems.
 
+Worked companion, added 2026-08-17: **Mario Held, *Mastering the Dutch*** — a
+72-page tournament example developed with C.04.3 version 2026, published by
+the FIDE Technical Commission
+(<https://tec.fide.com/wp-content/uploads/2026/07/Mastering_the_Dutch_2026.pdf>).
+It confirms two rules this engine had derived from bbpPairings' source and
+from measurement rather than from the rules text:
+
+* **C1, C2, C3 are the absolute criteria**, and C2 is the PAB rule — the
+  assignee must be a player who "did not receive a previous PAB, a forfeit
+  win, or a Full-Point Bye". A candidate breaching an absolute criterion
+  "can only be immediately discarded", so this is legality, not quality. C2
+  excludes full points earned *without playing*, which is why an ordinary
+  win — including TRF16's letter spelling `W` — never costs eligibility, and
+  why `W` was removed from `@bye_disqualifying_results`.
+* **A topscorer holds strictly more than half the score available so far.**
+  Its footnote 27: "in a nine-round tournament the maximum score before the
+  last round is eight points. So, a topscorer is a player who has 4.5 points
+  or more." That is `points > played_rounds / 2` — an exact half, strict
+  comparison, against the tournament's played rounds rather than a player's
+  own game count. It confirms both halves of the `final_round_topscorers?/2`
+  fix independently of bbpPairings.
+
 Written down here because this project's rule is that anything touching a
 FIDE rule needs the handbook text in hand rather than a paraphrase, and
 because the numbering itself is new: the February 2026 revision introduced
