@@ -20,27 +20,77 @@ second with:
       PAIRING_FUZZ_BYE_PCT=15 PAIRING_FUZZ_ROUNDS=9 \
       PAIRING_FUZZ_DUMP=repro mix test --only bbppairings
 
+## The position
+
+Ten players, six rounds played, pairing round 7 of 9. Ranks 4, 6 and 10 hold
+arbiter-assigned half-point byes for this round, so seven players are active
+and one of them must take the pairing-allocated bye.
+
+| rank | pts | bye-eligible | history |
+|---|---|---|---|
+| 1 | 2.5 | **no** (`U` r3) | 6w0 10b= –U –H 7w0 –H |
+| 2 | 2.0 | **no** (`U` r6) | 7b= 5w0 10w0 –Z 3b= –U |
+| 3 | 1.5 | **no** (`U` r2) | 8w0 –U 5b0 –Z 2w= 6b0 |
+| 5 | 4.5 | yes | 10w= 2b1 3w1 8b1 4w= 9b= |
+| 7 | 3.0 | yes | 2w= –H 4b0 9w0 1b1 10b1 |
+| 8 | 4.0 | yes | 3b1 6b1 –H 5w0 –H 4b1 |
+| 9 | 3.5 | yes | 4w0 –H –H 7b1 10w1 5w= |
+
+Three of the seven — ranks 1, 2 and 3 — have **already taken a
+pairing-allocated bye**, so C.04's absolute criterion barring a second one
+leaves exactly four candidates: 5, 7, 8 and 9.
+
 ## What each engine produces
 
-| engine | pairing |
-|---|---|
-| OpenPair | `{3,9} {5,1} {7,–} {8,2}` |
-| Gacrux (`pairingchecker.py -m dutch`, 2026 rules) | same as OpenPair |
-| bbpPairings 6.0.0 | `{2,9} {3,–} {7,5} {8,1}` |
+| engine | pairing | bye to |
+|---|---|---|
+| OpenPair | `{5,1} {8,2} {3,9}` | **7** — eligible |
+| Gacrux (`pairingchecker.py -m dutch`, 2026 rules) | same as OpenPair | **7** |
+| bbpPairings 6.0.0 | `{7,5} {8,1} {2,9}` | **3** — *already byed in round 2* |
 
-The engines agree on nothing structural except the number of boards. The
-substantive difference is **who takes the pairing-allocated bye**: rank 7 on
-OpenPair's and Gacrux's reading, rank 3 on bbpPairings'.
+Both readings seat all seven players, and neither contains a rematch. The
+substantive difference is who takes the bye — and bbpPairings' choice gives
+a **second** pairing-allocated bye to rank 3.
+
+Run directly against the binary rather than taken from the harness:
+
+    bbpPairings.exe --dutch seed735265-r7-p10.trf -p out.txt   # exit 0
+    4
+    7 5
+    8 1
+    2 9
+    3 0
+
+## bbpPairings honours this rule in general
+
+Which is what makes the case worth filing rather than dismissing as a
+misreading of its intent. `tools/bye_probe.exs` builds the minimal version —
+three players, rank 1 already holding a `U`, ranks 2 and 3 both eligible —
+and bbpPairings pairs rank 1 and byes rank 3, exactly as OpenPair does. Its
+`eligibleForBye` (`common.h:104-118`) disqualifies any unplayed game worth at
+least a win, which a pairing-allocated bye is at default point values, and
+nothing in this file changes those: the only configuration line present is
+`152 W`, which sets the round-one colour convention (`trf.cpp:1179-1198`) and
+has no bearing on points.
+
+So this is not bbpPairings implementing a different rule. It is bbpPairings
+implementing the same rule and, in this position, reaching a pairing that
+breaks it while a fully legal alternative exists — the one OpenPair and
+Gacrux both produce.
 
 ## Why it is worth escalating
 
-1. **A second independent implementation agrees with the candidate.** Gacrux
+1. **The reference's own answer appears to violate an absolute criterion**,
+   in a position where a legal alternative exists and two other engines find
+   it. That is a stronger claim than a tie-break preference, and it is
+   checkable in one command by anyone assessing the case.
+2. **A second independent implementation agrees with the candidate.** Gacrux
    is Otto Milvang's pairing checker, the tool FIDE/TEC itself uses, and it
    is not derived from this project or from bbpPairings. In every other
    disagreement this project has catalogued — 40 of them, across millions of
    tournaments — Gacrux has sided with bbpPairings. This is the only case
    where it has not.
-2. **It is the sole survivor.** Across ~4.3 million tournaments and ~195
+3. **It is the sole survivor.** Across ~4.3 million tournaments and ~195
    million individual pairings spanning field sizes 4–120, round counts
    6–10, arbiter byes, forfeits, `XXP` exclusions and `XXA` acceleration,
    this is the only round on which OpenPair and bbpPairings differ at all.
@@ -51,7 +101,8 @@ OpenPair's and Gacrux's reading, rank 3 on bbpPairings'.
 Stated plainly because the FE1 process deserves it, and because omitting it
 would be the kind of argument that gets found out.
 
-**Our own criteria ladder prefers bbpPairings' answer.** Scoring both
+**Our own criteria ladder prefers bbpPairings' answer**, and given the table
+above that is now actively suspicious rather than merely awkward. Scoring both
 pairings with `OpenPair.Pairing.explain_round/3` — the same C1–C21 ladder
 the engine pairs by — classifies this case as `theirs_scores_better`, with
 the first differing rung `C2/C4/C5 bye-eligibility`. So the engine produces
@@ -66,11 +117,16 @@ correction could not have reached it.
 
 ## What has to happen before submission
 
-1. **Resolve the internal inconsistency.** Either the search is not reaching
-   the pairing the ladder prefers, or the ladder misprices this position.
-   Both are findings; neither is settled. Until it is, "our engine and
-   Gacrux agree" is a weaker claim than it looks, because our engine is not
-   agreeing with our own criteria.
+1. **Resolve the internal inconsistency, which now has a concrete lead.**
+   The adjudicator reports bbpPairings scoring better on the
+   `C2/C4/C5 bye-eligibility` rung. But OpenPair's answer pairs all three
+   already-byed players and byes an eligible one, while bbpPairings' byes an
+   already-byed player — on the rung's own stated preference ("pairing
+   someone who may NOT take the bye is preferred"), OpenPair's answer should
+   score better, not worse. Either that rung is computed wrongly in
+   `explain_round/3` or it does not mean what its label says. Until this is
+   settled the adjudicator's verdict on this case carries no weight, in
+   either direction.
 2. **Hand-trace the bye decision against C.04 §C**, from the Handbook text,
    naming the criterion each engine is applying and where they diverge. The
    adjudicator's rung label is a lead, not a citation.
