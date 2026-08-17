@@ -79,7 +79,14 @@ defmodule OpenPair.Matching do
   # that floats player 10 instead. With one candidate per count, the
   # cascade could only fall back to a strictly worse ONE-pair matching,
   # and did.
-  @candidates_per_count 6
+  # One per floater count, which is exactly what `max_weight_matchings/3`'s
+  # doc promises. This was 6 -- several candidates AT the same count -- for
+  # the per-bracket cascade's alternative search, which is deleted. Nothing
+  # has read a second candidate since: `max_weight_matching/3` takes the
+  # maximum and is this module's only caller, and the module itself is now
+  # the brute-force oracle for `WeightedMatching`. Keeping 6 multiplied the
+  # DP's retained state sixfold to produce alternatives nobody looked at.
+  @candidates_per_count 1
 
   # Above this bracket size the DP is already expensive enough that
   # multiplying its state by @candidates_per_count is not worth it; large

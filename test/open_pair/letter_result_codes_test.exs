@@ -107,6 +107,37 @@ defmodule OpenPair.LetterResultCodesTest do
     end
   end
 
+  describe "Trf.result_codes/0" do
+    test "the published code table is complete and self-consistent" do
+      # Public, with no caller inside this repo — it exists for the sibling
+      # app, which means nothing here pinned its shape and it could have been
+      # renamed or thinned without anything noticing. Pinned now.
+      codes = Trf.result_codes()
+
+      assert codes == %{
+               win: "1",
+               draw: "=",
+               loss: "0",
+               forfeit_win: "+",
+               forfeit_loss: "-",
+               half_point_bye: "H",
+               full_point_bye: "F",
+               pairing_allocated_bye: "U",
+               zero_point_bye: "Z"
+             }
+
+      # Every published code must be one `points_for/1` actually scores, and
+      # every one must be distinct — a duplicate would silently collapse two
+      # outcomes for any caller building a file from this table.
+      values = Map.values(codes)
+      assert length(Enum.uniq(values)) == length(values)
+
+      for {name, code} <- codes do
+        assert Trf.points_for(code) in [0.0, 0.5, 1.0], "#{name} (#{code}) is unscored"
+      end
+    end
+  end
+
   defp player(rank, points, games) do
     %{
       name: "P#{rank}",
