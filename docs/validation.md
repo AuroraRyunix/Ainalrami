@@ -178,7 +178,34 @@ were found *by* fixing the instrument rather than by the instrument:
   stronger implementation is the expected result, not a finding.
 - **Every axis pinned `ROUNDS=9`**, as above.
 - **The harness never compared colours.** Colour agreement was simply not
-  measured until `colour_mismatches/3` was added.
+  measured until `colour_mismatches/5` was added — 4.3 million tournaments
+  and 195 million pairings had validated who plays whom and never once
+  checked Article 5. Turning it on immediately found a missing 5.2.4 and
+  then the 5.2.5 dispute below.
+
+### Colour is measured separately, and split by cause
+
+Colour differences are counted apart from pairing differences, because
+they fail for different reasons: a colour difference on an otherwise
+identical round is not the same finding as a different round.
+
+They are then split again, into the known
+[Article 5.2.5 dispute](dispute-initial-colour.md) and **unexplained**.
+Without that split the dispute's volume — hundreds of boards per few
+hundred bye-heavy tournaments — would bury a real colour regression
+completely.
+
+A board is filed under the dispute when 5.2.5 is what decides it (neither
+player holds any colour preference) **and this engine's answer is the one
+the article gives**. That deliberately tests our own conformance rather
+than matching a model of bbpPairings' internals: an earlier version did
+the latter and mis-filed a genuine case, because predicting the
+references' numbering means implementing a rule this project rejects —
+twice, and in a test.
+
+The axes without byes are the control that makes the rest meaningful:
+plain, forfeit, `XXP` and Baku runs report **zero** colour differences,
+so this is not a general disagreement about Article 5.
 
 The adjudication tables in [engineering-log.md](engineering-log.md) were
 produced with the blank float history and have **not** been re-run. They

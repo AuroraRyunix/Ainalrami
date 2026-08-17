@@ -378,11 +378,27 @@ defmodule Ainalrami.Trf do
     |> Kernel.++([
       header(:time_control, t[:time_control]),
       header(:number_of_rounds, t[:number_of_rounds]),
+      initial_colour_line(t[:initial_colour]),
       round_dates_line(t[:round_dates]),
       header(:generator, t[:generator])
     ])
     |> Enum.reject(&(&1 in [nil, false]))
   end
+
+  # Article 5.1's drawing of lots. Parsed since 2026-08-17 but never
+  # written until now, so `serialize/2` silently dropped it and a
+  # round-trip lost the draw — and a file with no round one played has
+  # nothing to infer it back from, which real bbpPairings treats as fatal
+  # rather than guessable ("Please configure the initial piece colors",
+  # exit 3). Round one is exactly when the field decides every board.
+  #
+  # FIXED WIDTH, unlike every other header here: `trf.cpp:1181` rejects
+  # the line outright unless it is exactly five characters, so this is
+  # built directly rather than through `header/2`, whose trailing trim
+  # would be harmless but whose lowercase value would not.
+  defp initial_colour_line(nil), do: nil
+  defp initial_colour_line(colour) when colour in ["w", "W"], do: "152 W"
+  defp initial_colour_line(colour) when colour in ["b", "B"], do: "152 B"
 
   defp header(_field, value) when value in [nil, ""], do: nil
   defp header(field, value), do: String.trim_trailing("#{@header_codes[field]} #{value}")

@@ -284,7 +284,9 @@ defmodule Ainalrami.BbppairingsComparisonTest do
             bbppairings: Enum.sort(bbp_pairs)
           })
           |> Map.merge(pair_agreement(ainalrami_pairs, bbp_pairs))
-          |> Map.put(:colour_mismatches, colour_mismatches(ainalrami_pairs, bbp_pairs, players))
+          |> Map.merge(
+            colour_mismatches(ainalrami_pairs, bbp_pairs, active, players, {seed, round})
+          )
           |> Map.put(:illegal, illegality(ainalrami_pairs, active, players, forbidden))
 
         next_players = apply_round(players, bbp_pairs, simulate_results(bbp_pairs))
@@ -327,51 +329,100 @@ defmodule Ainalrami.BbppairingsComparisonTest do
   # position by hand. Counted separately from pairing agreement, because the
   # two fail for different reasons and a colour difference on an otherwise
   # identical round is not the same finding as a different round.
-  defp colour_mismatches({:raised, _}, _bbp_pairs, _players), do: 0
+  defp colour_mismatches({:raised, _}, _bbp, _active, _players, _where),
+    do: %{colour_mismatches: 0, colour_disputed: 0}
 
-  defp colour_mismatches(ainalrami_pairs, bbp_pairs, players) do
+  defp colour_mismatches(ainalrami_pairs, bbp_pairs, active, players, {seed, round}) do
     theirs = MapSet.new(bbp_pairs)
 
-    # `COLOUR_DEBUG=1` prints each disagreeing board with both players'
-    # colour histories, which is what deciding WHICH of Article 5.2's five
-    # steps applies actually requires. The counts alone say there is a
-    # problem; these say which rule.
+    reversed =
+      Enum.filter(ainalrami_pairs, fn
+        {_w, nil} ->
+          false
+
+        {w, b} = pair ->
+          # Only a pair both engines formed can disagree about colour; a pair
+          # only we formed is a pairing difference, already counted.
+          MapSet.member?(theirs, {b, w}) and not MapSet.member?(theirs, pair)
+      end)
+
+    # Split the disagreements into the one we have a diagnosis for and
+    # everything else. Without this the known dispute's volume — nearly two
+    # thousand boards per six hundred bye-heavy tournaments — would bury a
+    # genuine colour regression completely, which is the whole reason a
+    # count on its own is a weak instrument.
+    {disputed, unexplained} =
+      Enum.split_with(reversed, &decided_by_article_5_2_5?(&1, players))
+
     if System.get_env("COLOUR_DEBUG") do
-      reversed =
-        Enum.filter(ainalrami_pairs, fn
-          {_w, nil} ->
-            false
-
-          {w, b} = pair ->
-            MapSet.member?(theirs, {b, w}) and not MapSet.member?(theirs, pair)
-        end)
-
-      for {w, b} <- reversed do
+      for {w, b} <- unexplained do
         IO.puts("
-colour disagreement: we say #{w} White, bbpPairings says #{b} White")
+seed #{seed} round #{round}: UNEXPLAINED — we say #{w} White, bbpPairings says #{b} White")
 
+        # Deciding WHICH of Article 5.2's five steps applies needs both
+        # players' full colour history, unplayed rounds included: 5.2.3
+        # walks the two histories back in step, and a round nobody played
+        # is not a round where the colours agreed.
         for rank <- [w, b] do
           p = Enum.find(players, &(&1.rank == rank))
 
           history =
-            p.games
-            |> Enum.filter(&(&1.result in ~w(1 = 0)))
-            |> Enum.map_join("", & &1.colour)
+            p.games |> Enum.map_join(" ", fn g -> "#{g.colour || "-"}#{g.result}" end)
 
-          IO.puts("  ##{rank} colours=#{history}")
+          IO.puts("  ##{rank} pts=#{p.points} games=[#{history}]")
         end
       end
     end
 
-    Enum.count(ainalrami_pairs, fn
-      {_w, nil} ->
-        false
+    %{colour_mismatches: length(unexplained), colour_disputed: length(disputed)}
+  end
 
-      {w, b} = pair ->
-        # Only a pair both engines formed can disagree about colour; a pair
-        # only we formed is a pairing difference, already counted.
-        MapSet.member?(theirs, {b, w}) and not MapSet.member?(theirs, pair)
-    end)
+  # Is this board one that Article 5.2.5 decides, and did we apply it?
+  #
+  # 5.2.5 is the last resort, reached only when neither player holds a
+  # colour preference at all — which per Article 1.7.4 means neither has
+  # ever played a game with a colour. It hands the initial colour to the
+  # higher ranked player on an odd TPN.
+  #
+  # C.04.2 Article 2 fixes a TPN for the tournament and provides nothing
+  # that renumbers it around players who are not paired in a round. Both
+  # reference implementations renumber anyway, so every board 5.2.5 decides
+  # on a field where somebody has sat out is expected to differ — see
+  # `docs/dispute-initial-colour.md`.
+  #
+  # Deliberately phrased as "did WE follow the article", not "does their
+  # answer match a model of their internals". An earlier version did the
+  # latter and mis-filed a real case, because guessing at bbpPairings'
+  # numbering is a second implementation of a rule this project does not
+  # believe in. What matters is that our own answer is the article's; if it
+  # is, the difference is the known dispute whatever they did.
+  defp decided_by_article_5_2_5?({white, black}, players) do
+    by_rank = Map.new(players, &{&1.rank, &1})
+    a = Map.get(by_rank, white)
+    b = Map.get(by_rank, black)
+
+    if a && b && no_colour_preference?(a) && no_colour_preference?(b) do
+      # Article 1.2's order: score first, then TPN ascending.
+      {top, bottom} =
+        if {-a.points, a.rank} < {-b.points, b.rank}, do: {a, b}, else: {b, a}
+
+      initial_white? = String.downcase(initial_colour()) == "w"
+      top_takes_initial? = rem(top.rank, 2) == 1
+
+      expected_white = if top_takes_initial? == initial_white?, do: top.rank, else: bottom.rank
+
+      white == expected_white
+    else
+      false
+    end
+  end
+
+  # Article 1.7.4: a player with no games has no colour preference. "Games"
+  # here means games that carried a colour — a player whose every round so
+  # far was a bye has a history, but not a colour history, and nothing for
+  # 5.2.1-5.2.3 to work from.
+  defp no_colour_preference?(player) do
+    Enum.all?(player.games, &is_nil(&1.colour))
   end
 
   defp summarise({:raised, _} = raised), do: raised
@@ -583,19 +634,31 @@ colour disagreement: we say #{w} White, bbpPairings says #{b} White")
 
   defp report(comparisons, errors, exhausted, rounds) do
     colour_bad = comparisons |> Enum.map(&Map.get(&1, :colour_mismatches, 0)) |> Enum.sum()
+    colour_disputed = comparisons |> Enum.map(&Map.get(&1, :colour_disputed, 0)) |> Enum.sum()
+
+    if colour_disputed > 0 do
+      IO.puts("
+  colours: #{colour_disputed} board(s) differ by the Article 5.2.5 dispute
+     (TPN parity vs. position among the players being paired -- expected,
+     see docs/dispute-initial-colour.md; this engine follows C.04.2 Art. 2).")
+    end
 
     if colour_bad > 0 do
       IO.puts(
         "
-  !! #{colour_bad} pair(s) agreed on WHO plays whom but disagreed on who is WHITE." <>
+  !! #{colour_bad} pair(s) agreed on WHO plays whom but disagreed on who is WHITE," <>
           "
-     Article 5 is a real conformance surface and this harness was blind to it" <>
+     and are NOT explained by the known 5.2.5 dispute. Article 5 is a real" <>
           "
-     until 2026-08-17 -- `normalize/1` sorts each pair's ranks before comparing."
+     conformance surface and this harness was blind to it until 2026-08-17 --" <>
+          "
+     `normalize/1` sorts each pair's ranks before comparing. Re-run with" <>
+          "
+     COLOUR_DEBUG=1 to print each unexplained board."
       )
     else
       IO.puts("
-  colours: every commonly-formed pair agreed on who is White.")
+  colours: no unexplained disagreement about who is White.")
     end
 
     IO.puts("\nbbpPairings comparison, #{rounds} round(s) per tournament:\n")

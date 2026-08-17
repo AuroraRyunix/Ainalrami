@@ -13,9 +13,10 @@ still ship. It reads and writes TRF16, mirrors JaVaFo's command-line
 shape, and is verified against two independent reference implementations.
 
 **Status: beta.** The engine is functionally complete and reproduces
-bbpPairings 6.0.0 exactly across 4.3 million generated tournaments. Two
-conformance questions remain open (Articles 4.3 and 5.2.5) and are
-documented rather than hidden — see [What is not settled](#what-is-not-settled).
+bbpPairings 6.0.0 exactly across 4.3 million generated tournaments. One
+conformance question remains open (Article 4.3) and one is settled against
+both reference engines (Article 5.2.5); both are documented rather than
+hidden — see [What is not settled](#what-is-not-settled).
 
 ---
 
@@ -171,16 +172,39 @@ account of where it could still be wrong:
   the engine's tie-break key and tested; **4.3's exchange order is not**.
   Those candidates are all *considered* — the matcher searches every
   matching — but tied ones have no generation-order ranking.
-- **Article 5.2.5 — the initial-colour parity.** The article applies it to
-  the higher-ranked player's TPN; bbpPairings applies it to a per-round
-  standing index renumbered around invalid players. These differ, and the
-  remaining colour mismatches against bbpPairings trace to exactly this.
-  **Not being "fixed" toward bbpPairings**, which would trade a conformant
-  implementation for an agreeing one.
+Article 4.3 has never produced a measured disagreement. "Not observed" is
+not "cannot happen", and it is the only place left in the pairing itself
+where one could come from.
 
-Neither has produced a measured pairing disagreement. "Not observed" is
-not "cannot happen", and these are the only two places left where one
-could come from.
+### A second dispute, settled from the handbook
+
+**Article 5.2.5 — which number the parity is taken on.** The article gives
+the initial colour to the higher-ranked player when their **TPN** is odd,
+and C.04.2 Article 2 fixes a TPN for the tournament: it moves only for a
+ranking-data correction (barred after round four) or the closing of the
+participant list. Nothing renumbers it around players sitting a round out.
+
+Both references renumber anyway — bbpPairings around anyone not paired
+this round, Gacrux around players who have never played. On a full field
+all three agree; they diverge the moment someone takes a bye. This engine
+follows the article, and is **not** changing to match: the two references
+do not even agree with each other, so there is no single behaviour to
+match.
+
+Measured over 200 seven-round tournaments — note the axes without byes,
+which are the control:
+
+| axis | boards differing |
+|---|---|
+| plain, forfeits, `XXP`, Baku | **0** |
+| 15% arbiter byes, `152 W` | 670 |
+| 15% arbiter byes, `152 B` | 1175 |
+
+Colour is allocated *after* the pairing, so this cannot move a player to a
+different board: every axis above still reports 100.00% pairing agreement
+and zero illegal rounds. Full argument, with the handbook text and a
+reproducible probe, in
+[docs/dispute-initial-colour.md](docs/dispute-initial-colour.md).
 
 ## Documentation
 

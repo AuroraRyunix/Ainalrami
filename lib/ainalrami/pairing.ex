@@ -101,7 +101,12 @@ defmodule Ainalrami.Pairing do
     # a required argument, and stashed rather than threaded through the
     # cascade, matching how the search budget is already carried.
     Process.put(@expected_rounds_key, opts[:expected_rounds])
-    Process.put(@initial_colour_key, opts[:initial_colour] || "w")
+
+    Process.put(
+      @initial_colour_key,
+      opts[:initial_colour] || infer_initial_colour(players) || "w"
+    )
+
     Process.put(@forbidden_key, forbidden_map(opts[:forbidden_pairs]))
 
     try do
@@ -210,7 +215,12 @@ defmodule Ainalrami.Pairing do
   """
   def explain_round(players, pairs, opts \\ []) do
     Process.put(@expected_rounds_key, opts[:expected_rounds])
-    Process.put(@initial_colour_key, opts[:initial_colour] || "w")
+
+    Process.put(
+      @initial_colour_key,
+      opts[:initial_colour] || infer_initial_colour(players) || "w"
+    )
+
     Process.put(@forbidden_key, forbidden_map(opts[:forbidden_pairs]))
 
     try do
@@ -515,19 +525,58 @@ defmodule Ainalrami.Pairing do
     if bye, do: pairs ++ [{bye.rank, nil}], else: pairs
   end
 
+  # Article 5.1 leaves the initial colour to a drawing of lots taken before
+  # round one, and TRF's `152` is where that draw is recorded. When a file
+  # omits it, the draw is NOT unknown and must not be guessed at: round
+  # one's own colours ARE the record of it, and reconstructing the draw from
+  # them is reading the data rather than assuming a convention.
+  #
+  # Assuming White cost 1954 disagreeing boards per 600 bye-heavy
+  # tournaments and none at all without byes, which is the signature of
+  # exactly this: the assumption only breaks when the players who would have
+  # revealed the draw sat round one out.
+  #
+  # This is 5.2.5 run backwards, and it uses 5.2.5's own number — the
+  # player's TPN — rather than their position among whoever happened to
+  # play. A player with an odd TPN held the initial colour, so their colour
+  # IS the draw; an even TPN held its opposite, so invert. Applying it to a
+  # renumbered position instead would make the inference disagree with the
+  # allocation it is inverting, on exactly the fields where somebody sat a
+  # round out.
+  #
+  # Returns nil when the file records no colours at all — before round one
+  # there is genuinely nothing to infer from, which real bbpPairings treats
+  # as fatal rather than guessable.
+  defp infer_initial_colour(players) do
+    ranked = Enum.sort_by(players, & &1.rank)
+
+    first_coloured =
+      ranked
+      |> Enum.flat_map(fn p ->
+        p.games |> Enum.with_index() |> Enum.filter(&(elem(&1, 0).colour != nil))
+      end)
+      |> Enum.map(&elem(&1, 1))
+      |> Enum.min(fn -> nil end)
+
+    if first_coloured do
+      Enum.find_value(ranked, fn p ->
+        case Enum.at(p.games, first_coloured) do
+          %{colour: c} when c in ["w", "b"] ->
+            if rem(p.rank, 2) == 1, do: c, else: invert(c)
+
+          _ ->
+            nil
+        end
+      end)
+    end
+  end
+
   # `top` is always the better-ranked (lower rank number) of the pair, since
   # both halves are traversed in ascending rank order before zipping.
-  #
-  # Our fixed initial-colour convention is White — an odd rank for the
-  # better-ranked player gets White (the initial colour), an even rank gets
-  # Black (the opposite). If this convention ever needs to be the other way
-  # round, flip the branches here directly rather than reintroducing a
-  # switchable constant — with only one convention ever in use, that
-  # abstraction was dead code the compiler rightly flagged.
   defp assign_colour_round_one(top, bottom) do
-    # 5.2.5, with the initial colour taken from the file's `152` field rather
-    # than assumed. `top` holds the initial colour on an odd TPN and the
-    # opposite on an even one; White is the default when the file is silent.
+    # 5.2.5: `top` holds the initial colour on an odd TPN and the opposite on
+    # an even one. The initial colour comes from the file's `152` field, or
+    # is reconstructed by `infer_initial_colour/1` when the file is silent.
     initial_white? = Process.get(@initial_colour_key, "w") == "w"
     top_takes_initial? = rem(top.rank, 2) == 1
 

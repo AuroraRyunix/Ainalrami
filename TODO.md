@@ -28,15 +28,17 @@ disagreement could come from.
       not around the round — real work, not a script. Reasoning in full in
       [docs/conformance-c0403-2026.md](docs/conformance-c0403-2026.md).
 
-- [ ] **Article 5.2.5 — which number the parity applies to.** The article
-      says the higher-ranked player's TPN. bbpPairings applies it to
-      `rankIndex`, a per-round standing position renumbered around invalid
-      players. The remaining colour mismatches trace to exactly this.
+- [x] ~~**Article 5.2.5 — which number the parity applies to.**~~
+      **Settled 2026-08-17, in this engine's favour, from the handbook.**
+      C.04.2 Article 2 fixes a TPN for the tournament; nothing renumbers
+      it around players sitting a round out. Both references renumber
+      anyway, and differently from each other, so there was never a
+      single "agreeing" behaviour to adopt.
 
-      **Do not close this by matching bbpPairings.** Doing so trades a
-      conformant implementation for an agreeing one. Gacrux is the
-      tiebreaker to consult — it is a third implementation of the same
-      2026 rules and enumerates literally.
+      Now a filed dispute rather than an open question:
+      [docs/dispute-initial-colour.md](docs/dispute-initial-colour.md).
+      Gacrux did not break the tie — it renumbers too. What broke it was
+      reading C.04.2, which nobody had done.
 
 ## Harness
 
@@ -67,6 +69,12 @@ million tournaments (see [docs/validation.md](docs/validation.md)).
 - [ ] **File the bbpPairings C2 report.**
       [docs/bbppairings-c2-bug-report.md](docs/bbppairings-c2-bug-report.md)
       is written and submittable; it has not been submitted.
+- [ ] **Decide what to do with the 5.2.5 dispute.**
+      [docs/dispute-initial-colour.md](docs/dispute-initial-colour.md) is
+      written. It is the stronger of the two cases — it rests on a
+      definition quoted verbatim from C.04.2 rather than on an argument
+      about one position — and it affects two reference implementations at
+      once, which is worth weighing before raising it.
 
 ## Deferred, deliberately
 

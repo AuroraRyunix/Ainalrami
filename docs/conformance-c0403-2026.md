@@ -89,7 +89,7 @@ divergence in mechanism, not in outcome.
 | 5.2.2 | Grant the stronger preference; if both absolute, the wider colour difference | `absolute?`/`strong?` comparison | exact |
 | 5.2.3 | Alternate to the most recent round in which one had White and the other Black | walks both colour histories back in step | exact |
 | 5.2.4 | Grant the higher-ranked player's preference | ranked per Article 1.2: `{-points, rank}` | exact — see note 4 |
-| 5.2.5 | Otherwise: the higher-ranked player takes the initial colour if their TPN is odd, the opposite if even | `assign_colour_round_one/2` on `rem(top.rank, 2)` against the `152` header | **open — see note 5** |
+| 5.2.5 | Otherwise: the higher-ranked player takes the initial colour if their TPN is odd, the opposite if even | `assign_colour_round_one/2` on `rem(top.rank, 2)` against the `152` header | exact — see note 5 |
 
 **4 — 5.2.4 ranks by Article 1.2, not by starting rank.** "Higher ranked"
 throughout C.04.3 means the 1.2 order — score first, then TPN ascending —
@@ -97,24 +97,29 @@ not the initial seeding. The comparison is on the tuple `{-points, rank}`
 so a higher score outranks a lower TPN, which is the article's order and
 not the file's.
 
-**5 — 5.2.5 is the one open conformance question in the engine.** The
-article applies the parity test to the higher-ranked player's **TPN**
-(their pairing number, fixed for the tournament). bbpPairings applies it
-to `rankIndex`, a per-round standing position that is renumbered around
-players who are not valid for the current round.
+**5 — 5.2.5's parity is taken on the TPN, and the TPN is fixed.** The
+article defers the term to C.04.2 Article 2, which assigns a TPN from the
+initial ranking and moves it for exactly two reasons: a correction to the
+ranking data (barred after round four) and the closing of the participant
+list after late entries. Nothing renumbers TPNs around players who are not
+paired in a given round.
 
-These are different numbers whenever anyone has been withdrawn or is
-otherwise not being paired, and the residual colour mismatches against
-bbpPairings trace to exactly this. This engine follows the article.
+Both reference implementations renumber anyway — bbpPairings around anyone
+not valid for the current round, Gacrux around players who have never
+participated. On a complete field all three agree, because position and
+TPN coincide; they diverge the moment someone sits out.
 
-**That gap is deliberately not being closed by matching bbpPairings**,
-which would trade a conformant implementation for an agreeing one. It
-needs Gacrux — a third implementation of the same rules, enumerating
-literally — as the tiebreaker. Recorded in [../TODO.md](../TODO.md).
+This engine follows the article, and **that is deliberate and is not going
+to be changed to match**. The case is set out with the handbook text, a
+reproducible probe and the measured scale in
+[dispute-initial-colour.md](dispute-initial-colour.md). Gacrux does not
+break the tie here: it renumbers too, differently again from bbpPairings,
+so there is no version of "agree with the references" to implement.
 
 Note that colour never affects *who plays whom*: it is decided after the
 pairing, so a divergence here cannot produce a different set of boards,
-only a different side allocation on one of them.
+only a different side allocation on one of them. Every axis measured for
+this dispute reports 100.00% pairing agreement and zero illegal rounds.
 
 ## Known structural divergence
 
