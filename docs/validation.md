@@ -276,6 +276,44 @@ implemented: at 20% forbidden-pair density it seated a forbidden pair in
 **27.72%** of rounds, and Baku acceleration paired **66.12%** of rounds on
 the wrong scores.
 
+## Performance
+
+Correctness has never been the constraint here; field size is. Measured on
+one round of a real 209-player tournament, cut down to size:
+
+| players | one round |
+|---|---|
+| 40 | 0.19 s |
+| 80 | 2.1 s |
+| 120 | 8.3 s |
+| 160 | 24 s |
+| 209 | 81 s |
+
+That is roughly **O(n⁴)**, and it is not a surprise: `NOTICE` records the
+trade explicitly. `Ainalrami.WeightedMatching` omits bbpPairings'
+incremental caches (`minOuterEdges`, per-blossom
+`minOuterEdgeResistance`) and rescans instead, which gave up the O(n³)
+bound in exchange for a smaller and more directly verifiable translation.
+Each delta step costs O(V²) to find the minimum resistance, a grow step
+runs O(V) of them, and an augmentation runs O(V) grow steps.
+
+**What it means in practice.** Club and national events — up to ~150
+players — pair in seconds. A 200-player open takes about a minute and a
+half a round, which an arbiter would notice but tolerate. Beyond that it
+degrades fast: the curve puts 300 players at several minutes and 400 at
+tens of minutes, which is not usable for a large open.
+
+Closing it means implementing the caches that were traded away. That is a
+real piece of work on the most delicate module in the engine, and it is
+the largest outstanding item — see [../TODO.md](../TODO.md).
+
+One constant-factor improvement is already in: `min_outer_outer/1` was
+re-running a recursive blossom walk once per *pair* of blossoms rather
+than once per blossom, and materialising every vertex pair before reducing
+them. Fixing both took 209 players from 90 s to 81 s — worth having, and a
+useful demonstration that the remaining cost is asymptotic rather than
+sloppy.
+
 ## Not covered
 
 Stated so the claim's boundary is explicit:

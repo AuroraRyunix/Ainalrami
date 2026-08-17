@@ -44,6 +44,31 @@ disagreement could come from.
       Gacrux did not break the tie — it renumbers too. What broke it was
       reading C.04.2, which nobody had done.
 
+## Performance — the largest outstanding item
+
+- [ ] **`WeightedMatching` is roughly O(n⁴) in the field size.** One round
+      takes 0.19 s at 40 players, 8.3 s at 120, and **81 s at 209**. Club
+      and national events pair in seconds; a 200-player open takes a minute
+      and a half a round; 300+ is not usable.
+
+      Not a defect so much as a bill coming due. `NOTICE` records the
+      trade: the module omits bbpPairings' incremental caches
+      (`minOuterEdges`, per-blossom `minOuterEdgeResistance`) and rescans,
+      giving up the O(n³) bound for a smaller and more verifiable
+      translation. Each delta step is O(V²), a grow step runs O(V) of them,
+      an augmentation runs O(V) grow steps.
+
+      Closing it means implementing those caches — real work on the most
+      delicate module in the engine, and the one place where a subtle error
+      would produce wrong pairings rather than an obvious failure. Worth
+      doing before any large open uses this, and worth doing carefully:
+      `weighted_matching_test.exs` checks against a DP oracle on small
+      graphs, which is the safety net to lean on.
+
+      A constant-factor win is already in (`min_outer_outer/1` no longer
+      re-walks blossoms per pair; 90 s → 81 s at 209 players). The rest is
+      asymptotic.
+
 ## Harness
 
 The corpus is large but not wide. Each of these is a dimension it holds

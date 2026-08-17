@@ -50,4 +50,19 @@ end
 
 exclude_tags = [:three_way | exclude_tags]
 
+# The interop fixture is a 209-player tournament, and this engine's matcher
+# is roughly O(n^4) in the field size (see `docs/validation.md`'s
+# "Performance"): one round of it takes about eighty seconds, and the file
+# has five to replay. That turned `mix test` from eleven seconds into nine
+# minutes, which is the sort of thing that stops people running it.
+#
+# Excluded by default and run on demand:
+#
+#     mix test --only interop
+#
+# The cheap half of that file's coverage — that it parses at all, with its
+# bare carriage returns — is deliberately NOT tagged, so a fresh `mix test`
+# still catches the regression it was written for.
+exclude_tags = [:interop | exclude_tags]
+
 ExUnit.start(exclude: exclude_tags)

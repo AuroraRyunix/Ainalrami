@@ -463,24 +463,37 @@ defmodule Ainalrami.WeightedMatching do
     end
   end
 
+  # Two things here are about cost, not meaning, and the answer is
+  # identical either way.
+  #
+  # `blossom_vertices/2` is a recursive walk of a blossom's children. A
+  # comprehension re-evaluates its generators for every combination of the
+  # ones before them, so writing `v0 <- blossom_vertices(state, b0)` inside
+  # the `b1` loop ran that walk once per PAIR of blossoms rather than once
+  # per blossom — O(B^2) tree walks per call. Hoisted into a map.
+  #
+  # And the pair list was materialised in full before being reduced, which
+  # allocates O(V^2) tuples on every delta step. Folding directly keeps the
+  # same traversal without building it.
+  #
+  # This is the hot path: `min_outer_outer/1` runs once per grow step and
+  # a grow step runs O(V) times per augmentation. Pairing 209 players went
+  # from 90s to the figure quoted in `docs/validation.md`.
   defp min_outer_outer(state) do
     outer_blossoms = top_blossoms(state) |> Enum.filter(&(Map.get(state.label, &1) == :outer))
+    vertices = Map.new(outer_blossoms, &{&1, blossom_vertices(state, &1)})
 
-    pairs =
-      for b0 <- outer_blossoms,
-          b1 <- outer_blossoms,
-          b0 < b1,
-          v0 <- blossom_vertices(state, b0),
-          v1 <- blossom_vertices(state, b1),
-          do: {v0, v1}
-
-    Enum.reduce(pairs, {nil, nil}, fn {v0, v1}, {best, best_pair} ->
-      case resistance(state, v0, v1) do
-        nil -> {best, best_pair}
-        r when best == nil or r < best -> {r, {v0, v1}}
-        _ -> {best, best_pair}
-      end
-    end)
+    for b0 <- outer_blossoms, b1 <- outer_blossoms, b0 < b1, reduce: {nil, nil} do
+      acc ->
+        for v0 <- Map.fetch!(vertices, b0), v1 <- Map.fetch!(vertices, b1), reduce: acc do
+          {best, best_pair} ->
+            case resistance(state, v0, v1) do
+              nil -> {best, best_pair}
+              r when best == nil or r < best -> {r, {v0, v1}}
+              _ -> {best, best_pair}
+            end
+        end
+    end
   end
 
   defp min_inner_blossom_dual(state) do

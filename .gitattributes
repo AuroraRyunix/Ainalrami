@@ -8,3 +8,10 @@
 *.md text eol=lf
 *.yml text eol=lf
 *.yaml text eol=lf
+
+# EXCEPT the interop fixtures, whose exact bytes are the point. The
+# bbpPairings-generated TRF there uses a BARE carriage return as its line
+# terminator — 212 of them, no newlines at all — which is precisely the
+# shape this engine could not read until 2026-08-18. Normalising it to LF
+# would leave a fixture that passes for the wrong reason.
+test/fixtures/interop/** -text
