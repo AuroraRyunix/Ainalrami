@@ -45,7 +45,7 @@ leaves exactly four candidates: 5, 7, 8 and 9.
 | engine | pairing | bye to |
 |---|---|---|
 | OpenPair | `{5,1} {8,2} {3,9}` | **7** — eligible |
-| Gacrux (`pairingchecker.py -m dutch`, 2026 rules) | same as OpenPair | **7** |
+| Gacrux (`pairingchecker.py -m dutch`, rules hardcoded to 2026-02-01) | `{5,1} {8,2} {3,9}` — identical, board for board | **7** |
 | bbpPairings 6.0.0 | `{7,5} {8,1} {2,9}` | **3** — *already byed in round 2* |
 
 Both readings seat all seven players, and neither contains a rematch. The
@@ -183,11 +183,22 @@ until re-run — see the note there.
    see "The rules say bbpPairings' answer is illegal" above. The criterion is
    C2, it is absolute, and the primary source works the same situation twice
    and calls it illegal.
-3. **Confirm Gacrux's rules edition.** It selects the 2026 rules by
-   default; the run that produced this agreement should be re-done with the
-   edition pinned explicitly and recorded.
+3. ~~**Confirm Gacrux's rules edition.**~~ **Done, 2026-08-17.** It is not a
+   default that could be overridden: `pairingdutch.py:72` assigns
+   `self.rules = self.DUTCH_RULES[1]` unconditionally, and `DUTCH_RULES[1]`
+   is `"2026-02-01"` — the only edition it runs.
 
-One precondition remains, and it is small. Everything else is in hand.
+   The agreement was also re-run rather than cited. Against this exact file:
+
+       python3 pairingchecker.py -p -m dutch -i dispute.trf -f TRF -n 7
+
+       "pairs": [[5,1],[8,2],[3,9],[7,0]]
+
+   Board for board OpenPair's answer, bye included (`0` is the bye).
+
+**All three preconditions are now closed.** This is a position paper.
+
+What remains is the older text, kept for the record:
 
 Only then is this a position paper. Right now it is a well-evidenced
 observation with one loose thread, and the loose thread is ours.
