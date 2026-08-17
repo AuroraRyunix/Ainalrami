@@ -80,6 +80,42 @@ which is what `bye_assignee_score/2`'s bootstrap matching establishes. It is
 the same shape bbpPairings uses. Recorded here because it is a deliberate
 divergence in mechanism, not in outcome.
 
+## Colour allocation (Article 5)
+
+| article | rule | implementation | verdict |
+|---|---|---|---|
+| 5.1 | The initial colour is decided by lot, then alternates down the initial ranking | TRF header `152`, read by `Ainalrami.Trf`; `assign_colour_round_one/2` alternates on parity of rank | exact |
+| 5.2.1 | Grant both preferences where they differ | first clause of the `preference` ladder | exact |
+| 5.2.2 | Grant the stronger preference; if both absolute, the wider colour difference | `absolute?`/`strong?` comparison | exact |
+| 5.2.3 | Alternate to the most recent round in which one had White and the other Black | walks both colour histories back in step | exact |
+| 5.2.4 | Grant the higher-ranked player's preference | ranked per Article 1.2: `{-points, rank}` | exact — see note 4 |
+| 5.2.5 | Otherwise: the higher-ranked player takes the initial colour if their TPN is odd, the opposite if even | `assign_colour_round_one/2` on `rem(top.rank, 2)` against the `152` header | **open — see note 5** |
+
+**4 — 5.2.4 ranks by Article 1.2, not by starting rank.** "Higher ranked"
+throughout C.04.3 means the 1.2 order — score first, then TPN ascending —
+not the initial seeding. The comparison is on the tuple `{-points, rank}`
+so a higher score outranks a lower TPN, which is the article's order and
+not the file's.
+
+**5 — 5.2.5 is the one open conformance question in the engine.** The
+article applies the parity test to the higher-ranked player's **TPN**
+(their pairing number, fixed for the tournament). bbpPairings applies it
+to `rankIndex`, a per-round standing position that is renumbered around
+players who are not valid for the current round.
+
+These are different numbers whenever anyone has been withdrawn or is
+otherwise not being paired, and the residual colour mismatches against
+bbpPairings trace to exactly this. This engine follows the article.
+
+**That gap is deliberately not being closed by matching bbpPairings**,
+which would trade a conformant implementation for an agreeing one. It
+needs Gacrux — a third implementation of the same rules, enumerating
+literally — as the tiebreaker. Recorded in [../TODO.md](../TODO.md).
+
+Note that colour never affects *who plays whom*: it is decided after the
+pairing, so a divergence here cannot produce a different set of boards,
+only a different side allocation on one of them.
+
 ## Known structural divergence
 
 Articles 3.5–3.8 and 4 describe pairing a bracket by **generating candidates

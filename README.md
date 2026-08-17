@@ -1,257 +1,152 @@
 # Ainalrami
 
-A FIDE Dutch-system Swiss pairing engine, written in Elixir.
+A FIDE Dutch-system Swiss pairing engine, written in Elixir. No JVM, no
+external binary, no runtime dependencies.
 
-Ainalrami is the sibling project to
-[OpenPairings](https://github.com/AuroraRyunix/openpairings) (the Elixir/
-Phoenix tournament manager), which today wraps FIDE's own reference
-implementation, [JaVaFo](https://www.rrweb.org/javafo/), for every Swiss
-pairing decision. Ainalrami's goal is to become an **optional second pairing
-engine** inside that app — JaVaFo stays the default, especially for
-FIDE-rated/homologated tournaments, where OpenPairings' whole endorsement
-story rests on the same "uses JaVaFo, thru JaVaFo" pattern Vega, Swiss
-Manager and TournamentService already use. Ainalrami is for everything else:
-tournaments that don't need that precedent, experimentation with pairing
-variants JaVaFo doesn't expose (acceleration systems beyond Baku, alternate
-tiebreak orderings), and a third independent data point for cross-checking
-pairing correctness alongside JaVaFo and
-[bbpPairings](https://github.com/BieremaBoyzProgramming/bbpPairings).
+> **Ainalrami** — ν¹ Sagittarii A, from the Arabic *Ain al Rami*, "the eye
+> of the archer". A pairing engine's whole value is aiming exactly where
+> the regulations point, rather than somewhere reasonable nearby.
 
-**Status: beta — the Dutch-system engine is functionally complete and
-ready to test, measured at depth against both real JaVaFo output and real
-bbpPairings output, not just our own unit tests. Not yet wired into
-OpenPairings as a selectable engine.**
+Ainalrami implements **C.04.3, the FIDE (Dutch) System, effective
+1 February 2026** — the current rules, not the 2022 edition most engines
+still ship. It reads and writes TRF16, mirrors JaVaFo's command-line
+shape, and is verified against two independent reference implementations.
 
-- **Round 1**: 100% match against `javafo.jar` on a clean 20,000-random-roster
-  run (`Ainalrami.Pairing.pair_round_one/1`, colour-blind composition diff —
-  see `test/ainalrami/javafo_comparison_test.exs`).
-- **Round 2+**: `Ainalrami.Pairing.pair_later_round/1` — `global_cascade/2`,
-  a stage-for-stage port of bbpPairings' bracket algorithm (eight
-  matchings per bracket, not one). There is no second pairing path: the
-  per-bracket cascade that used to back it up was deleted once it stopped
-  being reached at all. Every scoring term was measured against real
-  reference output rather than derived from the spec; [TODO.md](TODO.md)
-  has the full table, including changes that looked obviously correct and
-  measured *worse*, kept as negative results rather than quietly dropped.
-- **Depth, against bbpPairings 6.0.0** — the current headline, and the
-  reference to steer by, since bbpPairings and Gacrux both implement the
-  2026 rules and agree with each other 100% over 3352 rounds while JaVaFo
-  (2022 rules) differs from both on 2.47%:
+**Status: beta.** The engine is functionally complete and reproduces
+bbpPairings 6.0.0 exactly across 4.3 million generated tournaments. Two
+conformance questions remain open (Articles 4.3 and 5.2.5) and are
+documented rather than hidden — see [What is not settled](#what-is-not-settled).
 
-  Current, from the 2026-08-17 runs — **4.3 million tournaments, ~195
-  million individual pairings, one disagreement in the whole corpus**:
+---
 
-  | axis | tournaments | exact rounds | individual pairs | illegal |
-  |---|---|---|---|---|
-  | plain, 4-40 | 120,000 | **100.00%** | **100.00%** | 0 |
-  | plain, 4-10 | 500,000 | **100.00%** | **100.00%** | 0 |
-  | 15% arbiter byes, 4-40 | 250,000 | **100.00%** | **100.00%** | 0 |
-  | 15% arbiter byes, 4-10 | 1,200,000 | **100.00%** (1 disagreement) | **100.00%** | 0 |
-  | 10% forfeits, 4-40 | 120,000 | **100.00%** | **100.00%** | 0 |
-  | 20% forbidden (`XXP`) | 120,000 | **100.00%** | **100.00%** | 0 |
-  | Baku acceleration (`XXA`) | 120,000 | **100.00%** | **100.00%** | 0 |
-  | byes + forfeits + `XXP` + `XXA` | 120,000 | **100.00%** | **100.00%** | 0 |
-  | 60-120 players | 600 | **100.00%** | **100.00%** | 0 |
-  | **even round counts** (6, 8, 10) | 850,000 | **100.00%** | **100.00%** | 0 |
-  | odd-round controls (7, 9) | 350,000 | **100.00%** | **100.00%** | 0 |
+## Where it stands
 
-  The one disagreement is `seed735265-r7-p10`, where Gacrux — a third
-  independent implementation — sides with this engine against bbpPairings.
-  It is filed as a rules-interpretation dispute, not a defect.
+Measured against **bbpPairings 6.0.0**, which implements the same 2026
+rules — **4.3 million tournaments, ~195 million individual pairings, one
+disagreement in the entire corpus**:
 
-  **The even-round rows are not padding.** Every axis measured before
-  2026-08-17 used nine rounds, whose final round is paired with eight
-  played — and the final-round top-scorer threshold compares against half
-  that, so a version that floored the half was identical to a correct one
-  whenever the count was even. A real bug lived through 2.5 million
-  tournaments and surfaced in 2,000 at eight rounds. When adding an axis,
-  ask what the existing ones hold CONSTANT.
+| axis | tournaments | exact rounds | individual pairs | illegal |
+|---|---|---|---|---|
+| plain | 620,000 | **100.00%** | **100.00%** | 0 |
+| arbiter byes (15%) | 1,450,000 | **100.00%** (1 dispute) | **100.00%** | 0 |
+| forfeits (10%) | 120,000 | **100.00%** | **100.00%** | 0 |
+| forbidden pairs (`XXP`, 20%) | 120,000 | **100.00%** | **100.00%** | 0 |
+| Baku acceleration (`XXA`) | 120,000 | **100.00%** | **100.00%** | 0 |
+| all four combined | 120,000 | **100.00%** | **100.00%** | 0 |
+| even round counts (6, 8, 10) | 850,000 | **100.00%** | **100.00%** | 0 |
+| odd-round controls (7, 9) | 350,000 | **100.00%** | **100.00%** | 0 |
+| 60–120 players | 600 | **100.00%** | **100.00%** | 0 |
 
-  Both the bye and forfeit rows above are 100,000-tournament overnight
-  runs, not the earlier 300-tournament samples — same shape in both
-  (99.6% -> 99.97%+ byes, 99.5% -> 99.93% forfeits), but at two orders of
-  magnitude more rounds the confidence interval on "how rare is the
-  remaining gap" is far tighter. The bye row is a second, POST-FIX
-  overnight run — see **Legality** below for what the first one at this
-  scale found (102 illegal rounds, not the 0 every smaller sample had
-  shown) and what fixing it moved: 95 fewer illegal rounds, and exact-
-  round matches up by exactly 95, so every one of them now produces
-  bbpPairings' own correct answer, not merely a legal one. The forfeit
-  run is unchanged between the two passes (99.93%/99.98%/0 both times),
-  confirming the fix didn't touch anything it shouldn't have.
+FIDE's FE1 endorsement allows one difference per 500 tournaments. This is
+one per 4.3 million — four orders of magnitude inside the bar.
 
-  On plain tournaments the engine reproduces bbpPairings **exactly** —
-  every board of every round, at every field size tested. Confirmed on a
-  second code path: the three-way harness matches both references on
-  1261/1261 rounds. Arbiter byes and forfeits are the only axes still
-  short of exact, and both are inside half a percent.
+The single disagreement is `seed735265-r7-p10`, and it is **not a defect
+here**: bbpPairings awards a second pairing-allocated bye to a player who
+already has one, which absolute criterion C2 forbids. Gacrux — a third,
+independent implementation — pairs it the way this engine does. Written up
+in [docs/dispute-seed735265.md](docs/dispute-seed735265.md), with a
+submittable report in
+[docs/bbppairings-c2-bug-report.md](docs/bbppairings-c2-bug-report.md).
 
-  Against JaVaFo the engine measures 96.26%, and it SHOULD not be 100% —
-  JaVaFo implements the superseded 2022 rules and differs from both 2026
-  references by about the same margin. That gap is the useful control: an
-  engine agreeing with all three at once would mean the harness was
-  measuring nothing.
+Against **JaVaFo** the engine measures 96.26%, and it *should not* be
+100%: JaVaFo implements the superseded 2022 rules and differs from both
+2026 references by roughly the same margin. That gap is the control. An
+engine agreeing with all three at once would mean the harness was
+measuring nothing.
 
-  TODO.md has the whole account of how it got here, including the
-  measurements that failed.
-- **Legality, independent of javafo**: every player paired exactly once,
-  no rematches, and exactly one pairing-allocated bye in an odd active
-  field (none in an even one) — 0 illegal rounds on every sample up to
-  ~5,500 rounds (the hardest stress test, 30 rounds/32-40 players, and
-  800 arbiter-assigned-bye-heavy generated tournaments). When no legal
-  pairing can exist at all — a genuine structural deadlock, not a search
-  failure — the engine is supposed to raise
-  `Ainalrami.Pairing.NoValidPairingError` rather than emit a best-effort
-  illegal result, matching bbpPairings' own `NoValidPairingException`.
+Full methodology, per-axis detail and the reasoning behind each number:
+[docs/validation.md](docs/validation.md).
 
-  **That held up to ~5,500 rounds; it did not hold at 839,776 — and a
-  100x-bigger sample is now the standing bar, not ~5,500.** The first
-  100,000-tournament bye-rate run found **102 illegal rounds (0.012%)**:
-  95 raised `ArgumentError` instead of either pairing correctly or
-  raising the intended `NoValidPairingError`, 5 returned the wrong bye
-  count, 2 returned a non-partition. The `ArgumentError` cases all
-  reproduced on tiny fields (4-5 players) and shared one cause:
-  `bye_assignee_score/2` built its bootstrap-matching edge list over
-  `0..(n-2)`, and when exactly one player was left needing a bye
-  (`n == 1`) that range was `0..-1` — Elixir's default step for a
-  descending range walks `0, -1`, and `elem(arr, -1)` is an invalid
-  index. **Fixed** with an `n <= 1` short-circuit, pinned down with a
-  real regression test (`test/ainalrami/bye_assignee_score_test.exs`,
-  fails on pre-fix code, passes on the fix), and confirmed at the same
-  scale the bug was found at: re-running the identical 100,000-tournament
-  batch now shows **0 raised exceptions and 7 illegal rounds**, down from
-  102. (All 7 are closed today — see below.)
+## Install
 
-  **Five of those 7 are now fixed too, and were all one missing rule** —
-  `rounds_played/1` had only half of bbpPairings' round-number logic. It
-  correctly refused to let one player's pre-recorded bye drag the round
-  forward (`trf.cpp:339-342`), but was missing `evenUpMatchHistories`
-  (`trf.cpp:646-684`): when EVERY player already holds a game for the
-  trailing column, that column is a round already fully decided, so it
-  counts as played and the round to pair is the one after it. Which is
-  why bbpPairings pairs these files and this engine returned nothing —
-  it was trying to pair a round that was already over. Fixed, with
-  regression cover both ways (`test/ainalrami/rounds_played_test.exs`),
-  and verified behaviour-neutral elsewhere: a 33,601-round bye-heavy
-  batch run on each side of the change gives byte-identical results,
-  down to the same four mismatching seeds. **The remaining 2
-  (wrong-bye-count / non-partition) are closed**: the C9-gate rewrite
-  covered them, confirmed on 2026-08-17 by re-running that exact
-  configuration over 250,000 tournaments / 2,099,071 rounds with zero
-  illegal rounds.
+```bash
+git clone https://github.com/AuroraRyunix/Ainalrami
+```
 
-  TODO.md keeps the full account, including the part worth repeating
-  here: four of these five had been dismissed as degenerate fuzz
-  artifacts and the fifth filed as the one "confirmed-genuine" bug, on
-  the strength of a claim ("nobody pre-byed") that was simply false of
-  its own fixture. The moral for this README stands either way: "0
-  illegal rounds" was true at every sample size tested until it was
-  tested at 100x the previous scale, which is the actual argument for
-  testing at 100x the previous scale — repeatedly, not once.
-- **Three engines, not two** — `three_way_comparison_test.exs` runs
-  bbpPairings, Gacrux and Ainalrami on identical positions. Over 3352
-  rounds the two references agreed with each other on **every one**, which
-  bounds their true disagreement at ~0.09% and makes them a usable ruler
-  for an engine at 98.6%. It also shows there is no ambiguity left to hide
-  behind: of the 47 rounds where Ainalrami differed, all 47 had the
-  references agreeing, so every remaining disagreement is Ainalrami being
-  wrong rather than a rules-interpretation tie.
-- **How the remaining gap is worked on**: diagnostics rather than
-  guesswork, all in the repo. `failure_taxonomy_test.exs` classifies
-  every disagreement by the first bracket where the engines part company
-  and why; `tools/adjudicate.exs` then scores BOTH answers with Ainalrami's
-  own C1-C21 ladder, so each case comes back as "our search failed", "our
-  ladder is wrong", or "the criteria genuinely tie". That pair of tools is
-  what found the defects worth 90.29% -> 98.69%.
-- **bbpPairings is run directly, not just read as source** —
-  `test/support/bbppairings.ex` + `bbppairings_comparison_test.exs`.
-  bbpPairings independently confirmed Ainalrami's structural-deadlock
-  cases really are unpairable (its own exit code 1 on byte-identical
-  input). See TODO.md's "Cross-validation against bbpPairings" for the
-  full round-by-round table.
+Then `mix deps.get && mix escript.build`, which produces a standalone
+`ainalrami` executable. Requires Elixir `~> 1.17`.
 
-The CLI's `-p` mode calls the real pairing engine for both cases now,
-writing output in JaVaFo's own text shape.
+As a dependency:
+
+```elixir
+{:ainalrami, github: "AuroraRyunix/Ainalrami"}
+```
 
 ## Command-line interface
 
-Deliberately mirrors JaVaFo's own invocation shape — confirmed against
-OpenPairings' real `System.cmd` call
-(`java -jar javafo.jar input.trf -p output.txt`), not guessed — so a caller
-that already knows how to drive JaVaFo only has to swap the executable name:
+Deliberately mirrors JaVaFo's invocation shape, so a caller that already
+drives JaVaFo only has to swap the executable name:
 
 ```bash
-ainalrami input.trf -p output.trf   # pair the next round
-ainalrami input.trf -p              # same, but the pairing prints to stdout
-ainalrami -g output.trf             # Random Tournament Generator
-ainalrami input.trf -c              # Pairings Checker: replay and diff every round
+ainalrami input.trf -p output.trf
 ```
 
-`-g` and `-c` mirror JaVaFo's own RTG/FPC modes (used for FIDE's FE1
-endorsement auto-test — see OpenPairings' `docs/fide-endorsement.md`).
+| invocation | mode |
+|---|---|
+| `ainalrami input.trf -p output.trf` | pair the next round |
+| `ainalrami input.trf -p` | same, printed to stdout |
+| `ainalrami -g output.trf` | Random Tournament Generator |
+| `ainalrami input.trf -c` | Pairings Checker: replay and diff every round |
 
-`-c` replays a completed tournament round by round, re-pairing each round
-from the state that preceded it and diffing against the pairing the file
-records. It exits 0 when every round matches and 1 otherwise. Differences
-in COLOUR are reported but never counted as errors — Article 5.1 leaves
-the first colour to a drawing of lots, so this engine's convention is its
-own and legitimately differs from JaVaFo's.
+`-g` and `-c` mirror JaVaFo's own RTG/FPC modes, used for FIDE's FE1
+endorsement auto-test.
 
-**A checker is not an independent verifier of the rules.** It re-runs the
-same engine and calls that the correct answer, exactly as bbpPairings'
-own `-c` does (`tournament/checker.cpp` clears the matches, replays, and
-calls `computeMatching`). A reported difference means "this engine would
-have paired it differently", not "the file is illegal" — the file may
-hold a perfectly legal pairing this engine simply wouldn't choose.
+**`-g`** generates a random tournament and plays it forward, pairing every
+round with this engine. Every run is reproducible from its seed, and the
+seed is written into the generated file's tournament name, so a file
+always reproduces itself:
 
-`-g` generates a random tournament and plays it forward, pairing each
-round with this engine. It takes no input file — it creates a tournament
-rather than reading one — and writes to stdout when given no output path:
-
-```
-ainalrami -g out.trf --seed=42 --players=30 --rounds=9 --forfeit-pct=10 --bye-pct=5 \
-  --forbidden-pct=10 --acceleration=baku
+```bash
+ainalrami -g out.trf --seed=42 --players=30 --rounds=9 --forfeit-pct=10 --bye-pct=5 --forbidden-pct=10 --acceleration=baku
 ```
 
-Every run is reproducible from its seed, and the seed is written into the
-generated file's own tournament name, so a file always reproduces itself.
 `--rounds` is capped at `players - 1`, past which a Swiss has no legal
-opponents left; it can also stop earlier still, if some round along the
-way turns out to have no legal pairing at all (a real, if rare,
-possibility for a small field deep into a Swiss — see
-`Ainalrami.Pairing.NoValidPairingError`).
+opponents left. It can stop earlier still if some round turns out to have
+no legal pairing at all — a real, if rare, possibility for a small field
+deep into a Swiss (`Ainalrami.Pairing.NoValidPairingError`).
+
+**`-c`** replays a completed tournament round by round, re-pairing each
+from the state that preceded it and diffing against what the file records.
+Exits 0 when every round matches, 1 otherwise. Colour differences are
+reported but never counted as errors: Article 5.1 leaves the first colour
+to a drawing of lots, so this engine's convention is its own.
+
+> **A checker is not an independent verifier of the rules.** It re-runs the
+> same engine and calls that the correct answer — exactly as bbpPairings'
+> own `-c` does. A reported difference means "this engine would have paired
+> it differently", not "the file is illegal".
 
 The two modes are each other's test: `-g` output fed to `-c` checks clean
-by construction, since the generator pairs with the same engine the
-checker replays. That round-trip is covered for plain tournaments and for
-ones carrying forfeits and arbiter-assigned byes.
+by construction.
 
-### TRF extension lines
+### Verbose by default
 
-Beyond TRF16 proper, Ainalrami reads three of JaVaFo's `XX` extension
-codes, in both directions (`Ainalrami.Trf` parses and serializes all
-three):
+Unlike JaVaFo, which prints almost nothing beyond the result, Ainalrami
+traces each step it takes. Pass `-q`/`--quiet` to suppress it. The intent
+is that *"why did board 3 downfloat instead of board 5"* should be
+answerable by reading the run's own output.
+
+## TRF extension lines
+
+Beyond TRF16 proper, Ainalrami reads and writes three of JaVaFo's `XX`
+extension codes:
 
 | line | meaning |
 |---|---|
-| `XXR n` | number of rounds, JaVaFo's spelling of TRF16's `142` |
-| `XXP a b [c ...]` | a mutually-forbidden GROUP — no two of these players may ever meet |
+| `XXR n` | number of rounds — JaVaFo's spelling of TRF16's `142` |
+| `XXP a b [c …]` | a mutually-forbidden **group**: no two of these players may ever meet |
 | `XXA` | per-player acceleration ("virtual points"), round by round |
 
-`XXP` is an absolute criterion of exactly the standing of the no-rematch
-rule, which is also how bbpPairings expresses it: `compatible`
-(`dutch.cpp:39-68`) tests one `forbiddenPairs` set, and the no-rematch rule
-is inserted into that same set. One line names a group, not just a pair, so
-`XXP 4 9 17` forbids all three of 4-9, 4-17 and 9-17.
+`XXP` carries exactly the standing of the no-rematch rule, which is how
+bbpPairings expresses it too — one `forbiddenPairs` set, with no-rematch
+inserted into it. One line names a group, not a pair, so `XXP 4 9 17`
+forbids all three of 4–9, 4–17 and 9–17.
 
-`XXA` is a **fixed-column** line and the columns are load-bearing: `XXA` at
-column 1, the starting rank right-aligned in columns 5-8, then each round's
-`pp.p` right-aligned at column `10 + 5*(r-1)`. A line one column wide at
-any field is rejected outright by real bbpPairings (`Invalid line`, exit
-3), and free-form `XXA` crashes real JaVaFo with a bare
-`NullPointerException`. The full round-by-round record matters even for
-rounds that pay nothing, because the float history is derived from the
-scores as they stood at the time — virtual points included.
+`XXA` is **fixed-column** and the columns are load-bearing: `XXA` at
+column 1, starting rank right-aligned in columns 5–8, each round's `pp.p`
+right-aligned at column `10 + 5*(r-1)`. A line one column off is rejected
+outright by real bbpPairings (`Invalid line`, exit 3), and free-form `XXA`
+crashes real JaVaFo with a bare `NullPointerException`.
 
 A malformed `XXP` or `XXA` raises rather than being skipped. `XXR` is the
 exception and can afford to be: a missing round count has a fallback,
@@ -259,60 +154,86 @@ while a dropped exclusion produces a complete, perfectly legal-*looking*
 pairing that seats two players an arbiter said must never meet, with
 nothing downstream able to detect it.
 
-Both are validated by the same oracle as everything else, because
-bbpPairings implements both and reads the same file: **1,789,554 rounds
-and 8,536,147 individual pairs carrying at least one extension line,
-100.00% agreement, zero illegal rounds** across eleven axes (`XXP` at
-10/25/30%, Baku and random `XXA`, and combinations of both with byes and
-forfeits, on 4-40, 4-10, 60-120 and 13-round fields). Every
-previously-measured axis is byte-identical after the change — the same
-numerators and denominators, not merely the same percentages. TODO.md's
-"`XXP` and `XXA`" section has the full table, plus what the old
-line-dropping behaviour actually cost: at 20% forbidden-pair density it
-seated a forbidden pair in **27.72%** of rounds, and Baku acceleration
-paired **66.12%** of rounds on the wrong scores.
+Both are validated by the same oracle as everything else: **1,789,554
+rounds carrying at least one extension line, 100.00% agreement, zero
+illegal rounds** across eleven axes.
 
-### Verbose by default
+## What is not settled
 
-Unlike JaVaFo, which prints almost nothing beyond the paired result,
-Ainalrami prints a step-by-step trace of what it's doing by default. Pass
-`-q`/`--quiet` to suppress it. See `Ainalrami.Log`'s moduledoc for the
-reasoning — the intent is that "why did board 3 downfloat instead of board
-5" should be answerable by reading the run's own output.
+Documented rather than hidden, because an engine claiming 100% owes an
+account of where it could still be wrong:
+
+- **Article 4.3 — exchange ordering.** The regulations pair a bracket by
+  generating candidates in a defined sequence and taking the best, with
+  "generated earlier" as the final tie-break. This engine instead solves a
+  maximum-weight matching, which reaches the same optimum without
+  enumerating. Article 4.2's transposition order is proven equivalent to
+  the engine's tie-break key and tested; **4.3's exchange order is not**.
+  Those candidates are all *considered* — the matcher searches every
+  matching — but tied ones have no generation-order ranking.
+- **Article 5.2.5 — the initial-colour parity.** The article applies it to
+  the higher-ranked player's TPN; bbpPairings applies it to a per-round
+  standing index renumbered around invalid players. These differ, and the
+  remaining colour mismatches against bbpPairings trace to exactly this.
+  **Not being "fixed" toward bbpPairings**, which would trade a conformant
+  implementation for an agreeing one.
+
+Neither has produced a measured pairing disagreement. "Not observed" is
+not "cannot happen", and these are the only two places left where one
+could come from.
+
+## Documentation
+
+| document | what it is |
+|---|---|
+| [docs/architecture.md](docs/architecture.md) | how the engine is put together, module by module |
+| [docs/validation.md](docs/validation.md) | the measurement record and how it was produced |
+| [docs/conformance-c0403-2026.md](docs/conformance-c0403-2026.md) | article-by-article verification against the 2026 rules text |
+| [docs/fide-criteria.md](docs/fide-criteria.md) | the maintained rules-to-code map (C1–C21) |
+| [docs/dispute-seed735265.md](docs/dispute-seed735265.md) | the one disagreement, argued from the regulations |
+| [docs/bbppairings-c2-bug-report.md](docs/bbppairings-c2-bug-report.md) | that dispute as a submittable upstream report |
+| [docs/engineering-log.md](docs/engineering-log.md) | the dated build history, including what measured worse |
+| [TODO.md](TODO.md) | open work |
 
 ## Development
 
 ```bash
-mix deps.get
 mix test
-mix format
-mix escript.build   # produces a standalone `ainalrami` executable
 ```
 
-Requires Elixir `~> 1.17`, no runtime dependencies (no JVM, no external
-binary) — matches OpenPairings' own standalone-binary story
-(`docs/binaries.md` there), just without needing Burrito to get there.
+133 tests. Comparison tests against JaVaFo and Gacrux are tagged and
+excluded by default — neither is vendored, and both must be supplied
+locally. See [docs/validation.md](docs/validation.md) for how to point the
+harness at them and how to run the large fuzz axes.
+
+## Relationship to OpenPairings
+
+Ainalrami is the sibling project to
+[OpenPairings](https://github.com/AuroraRyunix/openpairings), an
+Elixir/Phoenix tournament manager, where it is available as an **optional
+second pairing engine**. JaVaFo stays the default there, particularly for
+FIDE-rated tournaments, whose endorsement story rests on the same "uses
+JaVaFo, thru JaVaFo" pattern Vega, Swiss Manager and TournamentService
+already use.
+
+Ainalrami is for everything else: tournaments that need no such precedent,
+experimentation with pairing variants JaVaFo doesn't expose, and an
+independent data point for cross-checking pairing correctness.
 
 ## License
 
-[Apache License 2.0](LICENSE).
+[Apache License 2.0](LICENSE) — deliberately the same licence as
+[bbpPairings](https://github.com/BieremaBoyzProgramming/bbpPairings),
+because parts of this engine are derived from it. `Ainalrami.Pairing`'s
+bracket cascade is a stage-for-stage port of `dutch.cpp`, and
+`Ainalrami.WeightedMatching`'s control flow was read directly from
+bbpPairings' matching sources while writing the Elixir equivalent.
 
-Deliberately the same licence as [bbpPairings](
-https://github.com/BieremaBoyzProgramming/bbpPairings), because parts of
-this engine are derived from it: `Ainalrami.Pairing`'s bracket cascade is a
-stage-for-stage port of `dutch.cpp`, and `Ainalrami.WeightedMatching`'s
-control flow was read directly from bbpPairings' own matching sources
-while writing the Elixir equivalent. No bbpPairings code is reproduced
-here — it is C++ and this is Elixir — but the algorithm and structure are
-theirs, the originating file and line numbers are cited inline throughout,
-and matching their licence is the cleanest way to honour that rather than
-leaving it ambiguous.
+No bbpPairings code is reproduced here — it is C++ and this is Elixir —
+but the algorithm and structure are theirs, originating file and line
+numbers are cited inline throughout, and matching their licence is the
+cleanest way to honour that rather than leaving it ambiguous.
+[NOTICE](NOTICE) spells out exactly which files are derived and what
+changed.
 
-[NOTICE](NOTICE) spells out exactly which files are derived, what changed
-relative to bbpPairings (section 4(b)), and which parts are not derived
-from it at all — `Trf` implements FIDE's published TRF16 spec, `Blossom`
-is an independent implementation of a classic algorithm, and the CLI,
-generator and logging are original.
-
-JaVaFo is © Roberto Ricca, is not open source, and is not bundled here —
-see [Development](#development).
+JaVaFo is © Roberto Ricca, is not open source, and is not bundled here.

@@ -212,7 +212,7 @@ defmodule Ainalrami.WeightedMatching do
   #
   # Blossom ids are integers (vertices are `0..n-1`, blossoms are allocated
   # above that), so sorting gives a total order that is stable, cheap, and
-  # tied to the problem rather than to the runtime. TODO.md's argument that
+  # tied to the problem rather than to the runtime. docs/engineering-log.md's argument that
   # the refinement stages leave no ties to break is an empirical observation
   # over one corpus, not an invariant — and an invariant is what a pairing
   # engine's determinism should rest on.

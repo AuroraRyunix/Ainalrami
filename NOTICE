@@ -41,13 +41,14 @@ minOuterEdgeResistance) and rescans instead, trading the O(n^3) bound for
 a smaller and more directly verifiable translation. Ainalrami.Pairing
 differs in its peek/window handling and in several places where a
 non-literal reading is argued in the code comments rather than copied.
-Individual deviations are documented at their call sites and in TODO.md.
+Individual deviations are documented at their call sites and in
+docs/engineering-log.md.
 
 The following parts of Ainalrami are NOT derived from BBP Pairings:
 lib/ainalrami/trf.ex implements FIDE's published TRF16 specification
 (C.04 Annex 2) and was adapted from the author's own OpenPairings
-project; lib/ainalrami/blossom.ex is an independent implementation of
-Edmonds' Blossom algorithm; lib/ainalrami/cli.ex, generator.ex,
+project; lib/ainalrami/sequence.ex implements Article 4 of C.04.3 (2026)
+directly from the regulations; lib/ainalrami/cli.ex, generator.ex,
 matching.ex and log.ex are original work.
 
 --------------------------------------------------------------------------

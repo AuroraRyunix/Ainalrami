@@ -4,7 +4,7 @@ defmodule Ainalrami.BbppairingsComparisonTest do
   `bbpPairings.exe` (Bierema Boyz Programming's independent, Apache-2.0
   Dutch-system implementation) over a whole tournament, every round —
   the second reference this project has always meant to check against
-  (see TODO.md's "Cross-validation against bbpPairings"), distinct from
+  (see docs/engineering-log.md's "Cross-validation against bbpPairings"), distinct from
   the earlier use of its SOURCE to port `Ainalrami.WeightedMatching`. That
   was a code-fidelity check; this is a pairing-output comparison, on a
   binary Ainalrami has never actually run against before.
@@ -63,7 +63,7 @@ defmodule Ainalrami.BbppairingsComparisonTest do
   alone), so seed *n* generates the same tournament whether it is reached
   first or 735,264 tournaments in. Without this, revisiting one dumped
   disagreement meant re-running everything before it — which is why the
-  cases catalogued in TODO.md were adjudicated once, from dumps, and never
+  cases catalogued in docs/engineering-log.md were adjudicated once, from dumps, and never
   re-checked when the adjudicator itself changed. The seed, round and
   player count in a dump's filename are all that is needed; the rest of the
   configuration has to match what produced it.

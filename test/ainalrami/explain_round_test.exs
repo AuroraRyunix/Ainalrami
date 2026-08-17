@@ -2,7 +2,7 @@ defmodule Ainalrami.ExplainRoundTest do
   @moduledoc """
   `Ainalrami.Pairing.explain_round/3` — the diagnostic behind
   `tools/adjudicate.exs`, and the tool every "ours scores better" / "theirs
-  scores better" verdict in TODO.md was produced with.
+  scores better" verdict in docs/engineering-log.md was produced with.
 
   It had no test at all until this file, which is exactly how it came to
   skip `with_float_history/2`. The real path (`pair_later_round/1`) stamps

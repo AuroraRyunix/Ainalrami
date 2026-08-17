@@ -172,7 +172,7 @@ bracket`, which is the honest answer.
 So there is no longer a known inconsistency between this engine and its own
 ladder on this position. What there is instead is a diagnostic that could
 not compare these two answers at all, and said something confident anyway.
-Every verdict in TODO.md produced by that path deserves the same scepticism
+Every verdict in engineering-log.md produced by that path deserves the same scepticism
 until re-run — see the note there.
 
 ## What has to happen before submission

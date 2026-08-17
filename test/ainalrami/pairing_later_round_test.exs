@@ -91,7 +91,7 @@ defmodule Ainalrami.PairingLaterRoundTest do
     # 3,4,5,6 — 3 is the only 1.0-scorer left, so it's ranked first;
     # prefs 3:b, 4:w, 5:b, 6:w): pairing is NOT restricted to a bipartite
     # "better half vs worse half" split (confirmed wrong at real-`javafo.jar`
-    # scale — see TODO.md), so 3v4 is a legal candidate pairing even
+    # scale — see docs/engineering-log.md), so 3v4 is a legal candidate pairing even
     # though both are nominally in the "same half" — and it's the
     # colour-optimal choice (3v4 and 5v6 both grant each player's
     # preference; 3v5+4v6 would clash on both).

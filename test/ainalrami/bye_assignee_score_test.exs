@@ -1,7 +1,7 @@
 defmodule Ainalrami.ByeAssigneeScoreTest do
   @moduledoc """
   Regression cover for a crash found by a 100,000-tournament overnight
-  run (`PAIRING_FUZZ_BYE_PCT=15` — see TODO.md's account, and
+  run (`PAIRING_FUZZ_BYE_PCT=15` — see docs/engineering-log.md's account, and
   `crash_reports/seed4886-r5-p5.trf`, the original repro this fixture is
   copied from).
 
@@ -55,7 +55,7 @@ defmodule Ainalrami.ByeAssigneeScoreTest do
   # comment for the missing third field this covers.
   #
   # Copied from `/root/triage/seed940641-r4-p5.trf`, one of the 40 residual
-  # disagreements catalogued in TODO.md. Five players, round 4, score
+  # disagreements catalogued in docs/engineering-log.md. Five players, round 4, score
   # groups 2.0 = {3,4,5}, 1.5 = {1}, 1.0 = {2}. The bootstrap matching has
   # a genuine three-way tie on eligibility and score — leaving out 4 or 5
   # scores identically, and `{1-5, 2-3}` ties them both — and only the

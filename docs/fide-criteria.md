@@ -115,7 +115,7 @@ anything. One line names a GROUP, not a pair: `XXP 4 9 17` forbids 4-9,
 
 Acceleration (`XXA`) is the mirror image — not a criterion at all, but a
 change to the score every criterion reads. See `with_acceleration/2` in
-`Ainalrami.Pairing`, and TODO.md's "`XXP` and `XXA`" section for why that is
+`Ainalrami.Pairing`, and engineering-log.md's "`XXP` and `XXA`" section for why that is
 the port rather than a shortcut.
 
 ## Quality criteria — in descending priority
@@ -166,7 +166,7 @@ bbpPairings' `computeEdgeWeight` does the same inversion.
    What the earlier attempts missed: C8 asks whether the FOLLOWING
    bracket can satisfy C1-C7, and no scoring of a bracket that cannot SEE
    the following bracket can answer that. The fix was visibility, not a
-   better measure — see `@peek_budget` and TODO.md. The old approximation
+   better measure — see `@peek_budget` and engineering-log.md. The old approximation
    (a per-player "can this player be placed below" bit) is
    strictly weaker: C1/C3 feasibility for one player, not C1-C7
    compliance for a bracket.
@@ -220,7 +220,7 @@ bbpPairings' `computeEdgeWeight` does the same inversion.
    | per-bracket cascade (still the default) | **90.29%** | 97.21% |
 
    So the missing 30 points really were the refinement, as predicted, and
-   a further correction to the completion rung (see TODO.md, and
+   a further correction to the completion rung (see engineering-log.md, and
    `test/fixtures/open_questions/`) brings it level with the default on
    exact rounds. It remains 0.3 behind on pairs.
 
@@ -315,7 +315,7 @@ bbpPairings' `computeEdgeWeight` does the same inversion.
    inside the top score group" — which is exactly what resolves those
    ties in bbpPairings' favour. Without it the gate was decided by
    whichever tied matching came back, and it came back FALSE often enough
-   to kill C9 in the first bracket of small fields. See TODO.md; it closed
+   to kill C9 in the first bracket of small fields. See engineering-log.md; it closed
    39 of the 40 catalogued residual disagreements.
 
 4. ~~**C12 may count colour preferences bbpPairings ignores.**~~
@@ -344,7 +344,7 @@ bbpPairings' `computeEdgeWeight` does the same inversion.
    is wrong.
 
    **That held a second time, on the same rung.** The 40 residual cases
-   catalogued in TODO.md surfaced at C12 (19) and C13 (3), with the rest
+   catalogued in engineering-log.md surfaced at C12 (19) and C13 (3), with the rest
    tying outright — and C9 was reported as 0 vs 0, "not differing", which
    reads like evidence that the rung is irrelevant and is not. A rung
    switched OFF on both sides scores zero on both sides, and that is

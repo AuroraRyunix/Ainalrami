@@ -4,7 +4,7 @@ defmodule Ainalrami.Test.Bbppairings do
   Programming's independent, Apache-2.0-licensed Dutch-system
   implementation) locally, purely for comparison-testing Ainalrami's own
   pairing output against it — the second, genuinely independent reference
-  this project has always meant to check against (see TODO.md's
+  this project has always meant to check against (see docs/engineering-log.md's
   "Cross-validation against bbpPairings"), as opposed to the earlier use
   of its SOURCE to port `Ainalrami.WeightedMatching`.
 

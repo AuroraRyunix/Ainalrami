@@ -23,7 +23,7 @@ end
 defmodule Ainalrami.Pairing do
   @moduledoc """
   The actual Dutch-system pairing algorithm. Implemented incrementally —
-  see TODO.md for the staged plan and its documented simplifications
+  see docs/engineering-log.md for the staged plan and its documented simplifications
   (`pair_next_round/1`'s doc lists exactly which parts of the real FIDE
   procedure aren't faithfully implemented yet).
 
@@ -579,12 +579,12 @@ defmodule Ainalrami.Pairing do
   Against **javafo.jar** it measures ~96%, and that gap is the control
   rather than an error: javafo implements the 2022 rules, so an engine
   agreeing with all three at once would mean the comparison was measuring
-  nothing. See TODO.md for the measured history.
+  nothing. See docs/engineering-log.md for the measured history.
 
   ## Do not "simplify" the scoring terms without re-measuring
 
   Several plausible-sounding changes have each been measured WORSE and
-  reverted (see TODO.md): a bipartite S1-vs-S2 restriction (10.7%), a
+  reverted (see docs/engineering-log.md): a bipartite S1-vs-S2 restriction (10.7%), a
   whole-bracket natural-correspondence deviation metric (64.95%),
   subordinating the float protections to the pair criteria (-7 points), and
   emitting the next-bracket lookahead as real cross-bracket pairs
@@ -661,7 +661,7 @@ defmodule Ainalrami.Pairing do
           # a `bye_legal?/3` that restated two of those three tests over the
           # same set — provably true whenever it was reached, so its repair
           # branch, and with it every use of `Ainalrami.Blossom`, could not
-          # run. Both are gone; see TODO.md.
+          # run. Both are gone; see docs/engineering-log.md.
           pairs ++ Enum.map(leftover, &{&1.rank, nil})
 
         :infeasible ->
@@ -723,7 +723,7 @@ defmodule Ainalrami.Pairing do
   #
   # Found via `crash_reports/seed4385-r5-p4.trf`, where all four players
   # carry a round-5 bye: this engine returned `{:ok, []}` (nobody active
-  # for round 5) where bbpPairings pairs round 6 cleanly. TODO.md had
+  # for round 5) where bbpPairings pairs round 6 cleanly. docs/engineering-log.md had
   # recorded the four sibling cases as degenerate fuzz artifacts and this
   # one as an unexplained genuine bug; they are all this single rule.
   defp rounds_played(players) do
@@ -1033,7 +1033,7 @@ defmodule Ainalrami.Pairing do
   # ## What it measures, and why it is still not the default
   #
   # 200 tournaments x 9 rounds against bbpPairings, same harness the other
-  # figures in TODO.md come from:
+  # figures in docs/engineering-log.md come from:
   #
   #     this cascade, before the stages     60.51% rounds / 93.6% pairs
   #     this cascade, stages ported         90.11% rounds / 96.82% pairs
@@ -1470,7 +1470,7 @@ defmodule Ainalrami.Pairing do
   # `per_count_limit/1` already use: a big bracket has more ways to pair,
   # so it needs less help.
   #
-  # Note what this does NOT contradict: TODO.md's "do not read the
+  # Note what this does NOT contradict: docs/engineering-log.md's "do not read the
   # lookahead as a licence to pair across brackets" still holds, and is
   # still enforced — `collect_bracket/1` keeps a pair only when both ends
   # are below `nsgb`. Seeing further and finalising further are different
@@ -1499,7 +1499,7 @@ defmodule Ainalrami.Pairing do
   # those tentative matches, and could not be evaluated correctly while
   # the graph stopped a few groups down.
   #
-  # A wide peek ALONE was measured earlier and changed nothing (TODO.md:
+  # A wide peek ALONE was measured earlier and changed nothing (docs/engineering-log.md:
   # `AINALRAMI_PEEK=999` left the disputed cases exactly as they were),
   # which is consistent: without the gate reading the wider matching, the
   # extra vertices had nothing to say. The two halves only work together.
@@ -1558,7 +1558,7 @@ defmodule Ainalrami.Pairing do
     # The cost is real and was the reason this used to be bracket-sized:
     # a field-wide span inflates the bignums the matcher compares, eight
     # re-solves per bracket over. Measured rather than assumed — see the
-    # timing note in TODO.md.
+    # timing note in docs/engineering-log.md.
     {places, place_span} = score_places(combined)
     count_span = m + 1
 
@@ -2407,7 +2407,7 @@ defmodule Ainalrami.Pairing do
         # would let an MDP that was flagged matched but ended up paired
         # into the NEXT score group be written out as a finalised pair
         # while its partner also carried forward. bbpPairings never
-        # finalises a cross-bracket pair (see TODO.md); this makes that
+        # finalises a cross-bracket pair (see docs/engineering-log.md); this makes that
         # invariant explicit rather than relying on it.
         if i < st.nsgb and p != i and p < st.nsgb and MapSet.member?(st.matched, i) do
           if i < p,
@@ -2438,7 +2438,7 @@ defmodule Ainalrami.Pairing do
     # is graph-only lookahead that bbpPairings has no analogue for — its
     # window IS bracket-plus-next-group — and an earlier attempt that used
     # the full peek window here fixed one traced case and broke two others
-    # (TODO.md), which is what a too-wide scan looks like: players who are
+    # (docs/engineering-log.md), which is what a too-wide scan looks like: players who are
     # nowhere near this decision clearing its gate.
     partner_scores =
       for i <- 0..(st.m - 1)//1,
@@ -2476,7 +2476,7 @@ defmodule Ainalrami.Pairing do
     n = length(field)
 
     # Found by a 100,000-tournament overnight run (PAIRING_FUZZ_BYE_PCT=15
-    # — see TODO.md): with n <= 1 there is at most one candidate, so
+    # — see docs/engineering-log.md): with n <= 1 there is at most one candidate, so
     # there's no pair to build an edge list over at all. The general path
     # below builds it as `0..(n - 2)`, which for n == 1 is `0..-1` —
     # Elixir's default step for a descending range walks `0, -1`, and
@@ -2851,7 +2851,7 @@ defmodule Ainalrami.Pairing do
 
   # The four float-history criteria of bbpPairings' `computeEdgeWeight`,
   # ranked immediately below every colour criterion and above the
-  # bracket-ordering ones. These are what TODO.md item 4 predicted would
+  # bracket-ordering ones. These are what docs/engineering-log.md item 4 predicted would
   # first bite in round 3: `float_direction/4` looks one and two rounds
   # back, and two rounds back doesn't exist until round 3.
   #
@@ -2972,7 +2972,7 @@ defmodule Ainalrami.Pairing do
         # (seed 39, 32-player field): Ainalrami left two players unpaired
         # despite a full pairing existing, confirmed reachable by
         # disabling colour compatibility entirely first, and this
-        # one-line fix alone was enough to reach it (see TODO.md).
+        # one-line fix alone was enough to reach it (see docs/engineering-log.md).
         # Not `length(a.games)`: that is this player's own game count, and a
         # player holding a pre-recorded bye for the round being paired has one
         # more of those than the tournament has played rounds.

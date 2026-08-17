@@ -2,7 +2,7 @@ defmodule Ainalrami.RoundsPlayedTest do
   @moduledoc """
   Regression cover for the last of the illegal rounds left over from the
   100,000-tournament overnight run (`PAIRING_FUZZ_BYE_PCT=15` — see
-  TODO.md, and `crash_reports/seed4385-r5-p4.trf`, the repro this fixture
+  docs/engineering-log.md, and `crash_reports/seed4385-r5-p4.trf`, the repro this fixture
   is copied from).
 
   `rounds_played/1` implemented only half of bbpPairings' rule. The half
@@ -28,7 +28,7 @@ defmodule Ainalrami.RoundsPlayedTest do
   and returns `4 1` / `2 3`, which is what this test asserts Ainalrami now
   produces too — not merely "returns something non-empty".
 
-  Worth stating plainly because TODO.md recorded it the other way round:
+  Worth stating plainly because docs/engineering-log.md recorded it the other way round:
   this case was filed as the ONE confirmed-genuine remaining bug, with
   four sibling cases dismissed as degenerate fuzz artifacts on the
   grounds that their whole field was pre-byed. That grouping was

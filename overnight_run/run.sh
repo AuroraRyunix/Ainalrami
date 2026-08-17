@@ -1,22 +1,31 @@
 #!/usr/bin/bash
+# Long-running validation batches against bbpPairings.
+#
+# Run from anywhere; paths are resolved relative to the repo, not to
+# whoever's home directory this was last run from.
+#
+#   ./overnight_run/run.sh
+#
+# See docs/validation.md for the full axis list and what each knob does.
 set -o pipefail
-cd "C:/Users/AuraFlight/Desktop/02cloud/VPS projects/ainalrami"
-LOG="overnight_run/summary.log"
 
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT" || exit 1
+
+LOG="overnight_run/summary.log"
 echo "=== started $(date) ===" > "$LOG"
 
-echo "--- bye batch: 100000 tournaments, 9 rounds, 15% bye rate ---" | tee -a "$LOG"
-PAIRING_FUZZ_DUMP="C:/Users/AuraFlight/Desktop/02cloud/VPS projects/ainalrami/overnight_run/bye" \
-PAIRING_FUZZ_COUNT=100000 PAIRING_FUZZ_ROUNDS=9 PAIRING_FUZZ_BYE_PCT=15 \
-  mix test --only bbppairings > overnight_run/bye.log 2>&1
-echo "bye batch finished $(date), exit=$?" | tee -a "$LOG"
-tail -30 overnight_run/bye.log >> "$LOG"
+run_axis() {
+  local name="$1"
+  shift
+  echo "--- $name ---" | tee -a "$LOG"
+  env PAIRING_FUZZ_DUMP="$ROOT/overnight_run/$name" "$@" \
+    mix test --only bbppairings > "overnight_run/$name.log" 2>&1
+  echo "$name finished $(date), exit=$?" | tee -a "$LOG"
+  tail -30 "overnight_run/$name.log" >> "$LOG"
+}
 
-echo "--- forfeit batch: 100000 tournaments, 9 rounds, 10% forfeit rate ---" | tee -a "$LOG"
-PAIRING_FUZZ_DUMP="C:/Users/AuraFlight/Desktop/02cloud/VPS projects/ainalrami/overnight_run/forfeit" \
-PAIRING_FUZZ_COUNT=100000 PAIRING_FUZZ_ROUNDS=9 PAIRING_FUZZ_FORFEIT_PCT=10 \
-  mix test --only bbppairings > overnight_run/forfeit.log 2>&1
-echo "forfeit batch finished $(date), exit=$?" | tee -a "$LOG"
-tail -30 overnight_run/forfeit.log >> "$LOG"
+run_axis bye     PAIRING_FUZZ_COUNT=100000 PAIRING_FUZZ_ROUNDS=9 PAIRING_FUZZ_BYE_PCT=15
+run_axis forfeit PAIRING_FUZZ_COUNT=100000 PAIRING_FUZZ_ROUNDS=9 PAIRING_FUZZ_FORFEIT_PCT=10
 
 echo "=== all done $(date) ===" | tee -a "$LOG"
