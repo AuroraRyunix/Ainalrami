@@ -175,6 +175,19 @@ defmodule OpenPair.Pairing do
 
   ## What it cannot see
 
+  **Rungs are only comparable between two answers when the bracket's
+  `edge_count` matches.** Each bracket's rungs are a sum over the pairs it
+  keeps plus the pairs reaching into the next score group, and the top rung
+  counts one per edge. Where one answer pairs a player inside a bracket and
+  the other floats them onward, the two windows hold different numbers of
+  edges and EVERY rung differs by that accounting alone — including the top
+  one, whose label names bye eligibility and whose difference in that case
+  has nothing to do with bye eligibility. This misled a real adjudication:
+  `seed735265-r7-p10` was recorded as `theirs_scores_better` on
+  "C2/C4/C5 bye-eligibility" when the two answers simply placed one and two
+  edges in the compared bracket. `edge_count` is reported per bracket so a
+  caller can tell the two apart.
+
   It scores only the pairs a bracket KEEPS, so the two C8 rungs — which
   grade what a pairing leaves reachable in the brackets BELOW — are always
   zero here. C8 outranks every colour and float criterion, so a verdict of
@@ -352,6 +365,15 @@ defmodule OpenPair.Pairing do
        pairs: edges,
        floats: Enum.map(floated, & &1.rank),
        rungs: rungs,
+       # How many edges this bracket's rungs were summed over. Every rung
+       # here is a SUM over `kept ++ cross`, and the leading term of the top
+       # rung is one per edge -- so when two answers put different numbers of
+       # edges in the same bracket's window, every rung differs for that
+       # reason alone and none of the differences are criterial. Two answers
+       # are only comparable rung by rung when this number matches; the
+       # adjudicator reads it to say so rather than reporting a verdict it
+       # cannot support. See `explain_round/3`'s "What it cannot see".
+       edge_count: length(edges) + length(cross_edges),
        order: Enum.map(bracket, & &1.rank),
        lex: transposition_key(bracket, group, partner)
      }, floated}
@@ -674,7 +696,17 @@ defmodule OpenPair.Pairing do
       end
 
       ineligible = bye_ranks(result) |> Enum.reject(&eligible_for_bye?(Map.fetch!(by_rank, &1)))
-      ordered_ranks = Enum.sort_by(Map.keys(stamped_by_rank), &(&1 not in ineligible))
+      # `Map.keys/1` is unordered and `sort_by/2` is stable, so within the
+      # eligible group the augmenting search visited vertices in map order —
+      # and `Blossom`'s own doc is explicit that search order decides which
+      # vertex ends up unmatched. Rank is the tie-break the rest of this
+      # module uses; using it here makes the choice the engine's rather than
+      # the runtime's.
+      ordered_ranks =
+        stamped_by_rank
+        |> Map.keys()
+        |> Enum.sort()
+        |> Enum.sort_by(&(&1 not in ineligible))
 
       repaired =
         ordered_ranks

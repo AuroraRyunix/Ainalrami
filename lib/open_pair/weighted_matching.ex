@@ -197,8 +197,25 @@ defmodule OpenPair.WeightedMatching do
 
   # Every currently top-level blossom id — vertices not absorbed into a
   # larger blossom, plus every non-trivial blossom with no parent.
+  #
+  # SORTED, and that is not cosmetic. `Map.values/1` returns Erlang's
+  # internal order, which changes shape at the 32-key flatmap-to-hashmap
+  # transition, and every consumer here breaks ties with a strict `<` —
+  # first encountered wins. `min_free_or_zero_to_outer/1`, `min_outer_edge/2`,
+  # `outer_vertices/1`, `min_outer_outer/1` and `grow/1`'s `Enum.find` for a
+  # zero-dual outer vertex all inherit whatever order this returns. So when
+  # several maximum-weight matchings tie, which one came back was decided by
+  # map internals: reproducible for identical input, but not canonical, and
+  # free to change with the field size or an Erlang release.
+  #
+  # Blossom ids are integers (vertices are `0..n-1`, blossoms are allocated
+  # above that), so sorting gives a total order that is stable, cheap, and
+  # tied to the problem rather than to the runtime. TODO.md's argument that
+  # the refinement stages leave no ties to break is an empirical observation
+  # over one corpus, not an invariant — and an invariant is what a pairing
+  # engine's determinism should rest on.
   defp top_blossoms(state) do
-    state.in_blossom |> Map.values() |> Enum.uniq()
+    state.in_blossom |> Map.values() |> Enum.uniq() |> Enum.sort()
   end
 
   defp matched?(state, b), do: Map.has_key?(state.blossom_match, b)

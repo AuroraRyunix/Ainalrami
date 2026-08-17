@@ -101,32 +101,35 @@ Gacrux both produce.
 Stated plainly because the FE1 process deserves it, and because omitting it
 would be the kind of argument that gets found out.
 
-**Our own criteria ladder prefers bbpPairings' answer**, and given the table
-above that is now actively suspicious rather than merely awkward. Scoring both
-pairings with `OpenPair.Pairing.explain_round/3` — the same C1–C21 ladder
-the engine pairs by — classifies this case as `theirs_scores_better`, with
-the first differing rung `C2/C4/C5 bye-eligibility`. So the engine produces
-one answer while its own scoring function prefers the other. That is a real
-inconsistency inside this implementation, independent of who is right about
-the rules, and it needs an explanation before the case is filed.
+This section previously read "our own criteria ladder prefers bbpPairings'
+answer", on the strength of an adjudicator verdict of `theirs_scores_better`
+at the rung labelled `C2/C4/C5 bye-eligibility`. **That verdict was an
+artifact and has been withdrawn.**
 
-Re-checked after `explain_round/3` was corrected to stamp float history
-(which had left C14–C21 blank on both sides of every verdict): the
-classification is unchanged. The deciding rung sits above C14, so the
-correction could not have reached it.
+Each bracket's rungs are a SUM over the pairs it keeps plus the pairs
+reaching into the next score group, and the top rung's leading term is one
+per edge. In the first bracket where these two answers differ, OpenPair
+contributes one edge and bbpPairings two — OpenPair floats rank 7 onward
+where bbpPairings pairs 5 with 7. So every rung in that bracket differs by
+that accounting alone, including the top one, whose label names bye
+eligibility and whose difference here has nothing to do with bye
+eligibility.
+
+`explain_round/3` now reports an `edge_count` per bracket and the
+adjudicator refuses to name a deciding rung when the two do not match. The
+same case re-adjudicated returns `incomparable: 1 vs 2 edges in this
+bracket`, which is the honest answer.
+
+So there is no longer a known inconsistency between this engine and its own
+ladder on this position. What there is instead is a diagnostic that could
+not compare these two answers at all, and said something confident anyway.
+Every verdict in TODO.md produced by that path deserves the same scepticism
+until re-run — see the note there.
 
 ## What has to happen before submission
 
-1. **Resolve the internal inconsistency, which now has a concrete lead.**
-   The adjudicator reports bbpPairings scoring better on the
-   `C2/C4/C5 bye-eligibility` rung. But OpenPair's answer pairs all three
-   already-byed players and byes an eligible one, while bbpPairings' byes an
-   already-byed player — on the rung's own stated preference ("pairing
-   someone who may NOT take the bye is preferred"), OpenPair's answer should
-   score better, not worse. Either that rung is computed wrongly in
-   `explain_round/3` or it does not mean what its label says. Until this is
-   settled the adjudicator's verdict on this case carries no weight, in
-   either direction.
+1. ~~**Resolve the internal inconsistency.**~~ **Done** — it was the
+   diagnostic, not the engine. See above.
 2. **Hand-trace the bye decision against C.04 §C**, from the Handbook text,
    naming the criterion each engine is applying and where they diverge. The
    adjudicator's rung label is a lead, not a citation.

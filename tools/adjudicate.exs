@@ -48,9 +48,20 @@ defmodule Adj do
     |> Enum.find_value(fn {o, t} ->
       cond do
         Enum.sort(o.pairs) != Enum.sort(t.pairs) or Enum.sort(o.floats) != Enum.sort(t.floats) ->
+          # Rungs are sums over this bracket's edges, so they can only be
+          # compared when both answers contribute the same NUMBER of edges.
+          # Where they do not, every rung differs for that reason and none of
+          # the differences are criterial -- reporting one as the deciding
+          # criterion is how `seed735265-r7-p10` came to be filed under
+          # "C2/C4/C5 bye-eligibility" by an accounting difference.
           rung =
-            Enum.zip(o.rungs, t.rungs)
-            |> Enum.find(fn {{_l, ov}, {_l2, tv}} -> ov != tv end)
+            if Map.get(o, :edge_count) == Map.get(t, :edge_count) do
+              Enum.zip(o.rungs, t.rungs)
+              |> Enum.find(fn {{_l, ov}, {_l2, tv}} -> ov != tv end)
+            else
+              {{"incomparable: #{Map.get(o, :edge_count)} vs #{Map.get(t, :edge_count)} edges in this bracket",
+                :incomparable}, {"", :incomparable}}
+            end
 
           {:ok, o.group, rung, o, t}
 
@@ -112,6 +123,12 @@ results =
 
         {:ok, group, {{label, ov}, {_l, tv}}, _o, _t} ->
           cond do
+            # The two answers put different numbers of edges in this
+            # bracket's window, so every rung differs by that accounting and
+            # none of it is criterial. Its own verdict, not folded into
+            # "ours" -- which is where it landed at first, turning one
+            # misreport into another.
+            ov == :incomparable -> {:incomparable, group, label}
             tv > ov -> {:theirs_scores_better, group, label}
             true -> {:ours_scores_better, group, label}
           end
