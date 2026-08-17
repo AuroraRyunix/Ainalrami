@@ -1,5 +1,26 @@
 # TODO / Roadmap
 
+> **Read this as a HISTORY, not as a map of the code.**
+>
+> Most of this file is a dated record of what was measured and why — which
+> is its value, and why entries are corrected in place rather than deleted.
+> But it means older entries name functions, flags and constants that have
+> since been removed, and reading one cold has already caused real damage:
+> the four score-weighted float criteria were recorded here as "implemented,
+> measured worse, reverted" long after they went live as C18-C21, so anyone
+> tidying the ladder on the strength of that entry would have deleted
+> working code.
+>
+> Identifiers appearing below that **no longer exist in `lib/`**:
+> `cascade_brackets/4`, `bracket_options/3`, `placeable_below/1`,
+> `within_bracket_weight/4`, `ordering_rungs/4`, `lex_scale/1`,
+> `solve_by_cardinality/2`, `repair_bye_count/3`, `OpenPair.Blossom`,
+> `deviation`, `spread`, and the `OPENPAIR_GLOBAL` environment variable.
+> `@peek_budget` is `:unbounded`, not 8.
+>
+> `docs/fide-criteria.md` is the maintained rules-to-code map. This file is
+> the argument for how the code got there.
+
 ## Done
 
 - ~~Project scaffold~~ — mix.exs (escript config), `.formatter.exs`,

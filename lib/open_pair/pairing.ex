@@ -244,7 +244,7 @@ defmodule OpenPair.Pairing do
         next_group = Enum.at(groups, i + 1, [])
 
         {report, floated} =
-          explain_bracket(mdps ++ group, group, next_group, partner, ctx, single_bye?)
+          explain_bracket(mdps ++ group, group, next_group, field, partner, ctx, single_bye?)
 
         {[report | acc], floated, next_single_bye?(ctx, next_group, floated, partner, points)}
       end)
@@ -293,7 +293,7 @@ defmodule OpenPair.Pairing do
     end)
   end
 
-  defp explain_bracket(bracket, group, next_group, partner, ctx, single_bye?) do
+  defp explain_bracket(bracket, group, next_group, field, partner, ctx, single_bye?) do
     ranks = MapSet.new(bracket, & &1.rank)
     score = hd(group).points
 
@@ -334,8 +334,19 @@ defmodule OpenPair.Pairing do
       end)
       |> Enum.uniq()
 
-    {places, place_span} = score_places(bracket ++ next_group)
-    count_span = length(bracket) + length(next_group) + 1
+    # Sized over the WHOLE FIELD, exactly as the engine sizes it
+    # (`pair_bracket/6`: `score_places(combined)`, `count_span = m + 1`).
+    #
+    # This used `bracket ++ next_group`, which broke comparability twice
+    # over. Against the engine: rung values that depend on `places` -- C7,
+    # C8, C18-C21 -- sat on a different radix here than in the weights they
+    # are supposed to explain, so an `explain_round` number could never be
+    # held against an engine weight. And between two ANSWERS: the bracket
+    # composition depends on which players each answer floats, so two reports
+    # of the same position were scaled differently from each other, which is
+    # the thing an adjudicator does nothing but compare.
+    {places, place_span} = score_places(field)
+    count_span = length(field) + 1
 
     bands = %{
       places: places,
