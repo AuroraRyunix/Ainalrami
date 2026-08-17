@@ -186,24 +186,42 @@ not meant to be. What is independent is the **order**, which comes from
 `Ainalrami.Sequence` — a module that knows nothing about criteria, weights
 or legality — and the order is the entire question 4.3 raises.
 
+### Heterogeneous brackets, added 2026-08-18
+
+A bracket carrying moved-down players pairs in two stages (3.4): the
+MDP-Pairing seats the MDPs against residents, and the leftover residents
+form a remainder paired as a homogeneous bracket of its own. 3.7 exhausts
+the remainder's sequence **before** altering the MDP-Pairing, so the
+MDP-Pairing is the outer loop.
+
+That was carried as the uncovered residue of this gap. It is covered now,
+and the trick is simply to make the heterogeneous bracket the **last**
+one: nothing below it means no candidate can reach an edge into a lower
+group, every candidate contributes the same edges, and the rung vectors
+are commensurable after all.
+
+The position is one MDP plus seven residents, with round one arranged so
+the remainder's *natural* pairing is illegal — two of its three identity
+pairs are rematches. The engine returns the first candidate the sequence
+reaches: the MDP keeps the first resident 4.2 offers, and it is the
+remainder that moves, to its own first legal transposition. Had the two
+loops been nested the other way round, the engine would have changed the
+MDP's opponent instead, and the test says so explicitly rather than
+leaving it to be inferred from the result.
+
 ### What remains of it
 
-The positions above are **homogeneous**: one score group, no MDPs, nothing
-floating. That is deliberate, for the reason in "Why that test is harder
-than it looks" below — a candidate that floats a different player changes
-the bracket structure and makes the rung vectors incommensurable, so the
-comparison has to hold the bracket fixed.
+Nothing structural that has been identified. The comparison holds the
+bracket fixed and requires it to be last, so a bracket in the MIDDLE of a
+round — one that both inherits MDPs and floats players onward — is still
+compared only through the corpus rather than by enumeration. That is a
+limit of the method rather than a known divergence, and closing it needs a
+way to compare candidates that float different players, which the rules
+do not define (see below).
 
-So what is established is that the engine follows 4.3's generation order
-**when a bracket's candidates are directly comparable**. A heterogeneous
-bracket, where 3.7.2 alters the MDP-Pairing once the remainder is
-exhausted, is not covered by a differential test and remains the honest
-residue of this gap. `Ainalrami.Sequence.mdp_sets/2` implements 4.4.2's
-ordering and is the oracle for closing it.
-
-Neither case has ever produced a measured disagreement with bbpPairings —
-4.3M tournaments, one disagreement, and that one is a case where
-bbpPairings breaches C2 (see `dispute-seed735265.md`).
+4.3 has never produced a measured disagreement with bbpPairings — 4.3M
+tournaments, one disagreement, and that one is a case where bbpPairings
+breaches C2 (see `dispute-seed735265.md`).
 
 ### Why that test is harder than it looks
 

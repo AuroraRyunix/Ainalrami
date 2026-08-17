@@ -176,24 +176,26 @@ illegal rounds** across eleven axes.
 Documented rather than hidden, because an engine claiming 100% owes an
 account of where it could still be wrong:
 
-- **Article 4.3 in a heterogeneous bracket.** The regulations pair a
-  bracket by generating candidates in a defined sequence and taking the
-  best, with "generated earlier" as the final tie-break. This engine solves
-  a maximum-weight matching instead, reaching the same optimum without
-  enumerating.
+- **Article 4 for a bracket in the middle of a round.** The regulations
+  pair a bracket by generating candidates in a defined sequence and taking
+  the best, with "generated earlier" as the final tie-break. This engine
+  solves a maximum-weight matching instead, reaching the same optimum
+  without enumerating.
 
-  4.2's transposition order is proven identical to the engine's tie-break
-  key. **4.3's exchange order is now tested too** — on a position built so
-  that exchanges are the only route to a legal pairing, and over forty
-  random single-score brackets enumerated in full Article 4 order. The
-  engine returns the earliest-generated best candidate every time.
+  Most of this is now settled. 4.2's transposition order is proven
+  identical to the engine's tie-break key; 4.3's exchange order is tested
+  on a position where exchanges are the only route to a legal pairing and
+  over forty random brackets enumerated in full Article 4 order; and 3.7's
+  two-stage **heterogeneous** case — MDP-Pairing outside, remainder inside
+  — is tested too. The engine returns the earliest-generated best candidate
+  every time.
 
-  What remains uncovered is a **heterogeneous** bracket, where moved-down
-  players are present and 3.7.2 alters the MDP-Pairing. Candidates there
-  float different players, which changes the bracket structure and makes
-  their scores incommensurable, so the differential test cannot simply be
-  pointed at them. `Ainalrami.Sequence.mdp_sets/2` is the oracle for
-  closing it.
+  Each of those holds the bracket fixed by making it the **last** one, so
+  no candidate reaches an edge into a lower group and the scores stay
+  comparable. A bracket that both inherits moved-down players *and* floats
+  players onward is therefore still checked only through the corpus. That
+  is a limit of the method, not a known divergence: comparing candidates
+  that float different players needs an ordering the rules do not define.
 
 This has never produced a measured disagreement. "Not observed" is not
 "cannot happen", and it is the only place left in the pairing itself where

@@ -11,23 +11,25 @@ disagreement in 4.3M tournaments, and both are real anyway: "not observed"
 is not "cannot happen", and these are the only two places left where a
 disagreement could come from.
 
-- [ ] **Article 4.3 in a HETEROGENEOUS bracket.** Mostly closed on
-      2026-08-17 by `exchange_order_test.exs`, which walks Article 4's
+- [x] ~~**Article 4.3, including the heterogeneous case.**~~ **Closed
+      2026-08-17/18** by `exchange_order_test.exs`, which walks Article 4's
       sequence with `Ainalrami.Sequence` and confirms the engine returns
-      the earliest-generated best candidate — on a position where exchanges
-      are the only route to a legal pairing, and over forty random
-      single-score brackets.
+      the earliest-generated best candidate: on a position where exchanges
+      are the only route to a legal pairing, over forty random single-score
+      brackets, and on a heterogeneous bracket where 3.7 alters the
+      remainder before the MDP-Pairing.
 
-      Those positions are all **homogeneous**, and that is not an oversight:
-      candidates that float different players produce different bracket
-      structures, whose rung vectors are not commensurable, so the
-      comparison has to hold the bracket fixed. A bracket carrying
-      moved-down players, where 3.7.2 alters the MDP-Pairing once the
-      remainder is exhausted, is the residue.
+      The trick for the heterogeneous case was making the bracket the
+      **last** one. Nothing below it means no candidate reaches an edge
+      into a lower group, so every candidate contributes the same edges and
+      the rung vectors are commensurable — which is what the earlier
+      "incommensurable structures" objection was really about.
 
-      `Sequence.mdp_sets/2` implements 4.4.2's ordering and is the oracle.
-      The hard part is not the ordering but constructing positions where a
-      heterogeneous bracket's candidates stay comparable — see
+- [ ] **A bracket in the MIDDLE of a round**, inheriting moved-down players
+      *and* floating players onward, is still compared only through the
+      corpus. Not a known divergence — a limit of the method. Closing it
+      needs a way to compare candidates that float different players, and
+      the regulations define no ordering over those; see
       [docs/conformance-c0403-2026.md](docs/conformance-c0403-2026.md).
 
 - [x] ~~**Article 5.2.5 — which number the parity applies to.**~~

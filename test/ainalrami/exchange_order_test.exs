@@ -23,9 +23,15 @@ defmodule Ainalrami.ExchangeOrderTest do
   round-pairings float different players and so produce incommensurable
   bracket structures. See `docs/conformance-c0403-2026.md`.
 
-  So every position here is **one homogeneous bracket containing the whole
-  field**, where the entire round is a single bracket's decision, every
-  candidate pairs everyone, and nothing floats.
+  So every position here makes the bracket under test the **last** one,
+  with nothing below it. No candidate can then reach an edge into a lower
+  group, every candidate contributes the same edges, and the rung vectors
+  are commensurable.
+
+  Most positions are a single homogeneous bracket holding the whole field.
+  The last describe block is **heterogeneous** — one moved-down player plus
+  seven residents — which is where 3.7.2 alters the MDP-Pairing and which
+  was carried as the uncovered residue of this gap until 2026-08-18.
 
   ## Keeping the oracle honest
 
@@ -205,6 +211,70 @@ defmodule Ainalrami.ExchangeOrderTest do
     end
   end
 
+  describe "a HETEROGENEOUS bracket, where 3.7.2 alters the MDP-Pairing" do
+    # The residue the homogeneous cases deliberately leave. A bracket
+    # carrying moved-down players pairs in two stages (3.4): the
+    # MDP-Pairing seats the MDPs against residents, and the leftover
+    # residents form a remainder paired as a homogeneous bracket of its
+    # own. 3.7 alters the REMAINDER first and only then the MDP-Pairing,
+    # so the MDP-Pairing is the outer loop of the sequence.
+    #
+    # It is testable here for one reason: this bracket is the LAST one.
+    # Nothing sits below it, so no candidate can reach an edge into a next
+    # group, every candidate contributes the same four edges, and the rung
+    # vectors are commensurable — the condition that makes a per-bracket
+    # comparison meaningful at all.
+    test "the engine returns the first candidate the sequence reaches" do
+      players = heterogeneous_field()
+
+      assert no_absolute_colour_clash(players)
+
+      [_top, bracket] = Pairing.explain_round(players, pair_raw(players), expected_rounds: 5)
+
+      assert bracket.mdps == [1], "one moved-down player"
+      assert bracket.residents == [2, 3, 4, 5, 6, 7, 8]
+      assert bracket.floats == [], "nothing below, so nothing floats out"
+
+      first_legal =
+        [1]
+        |> heterogeneous_candidates([2, 3, 4, 5, 6, 7, 8])
+        |> Enum.find(&legal?(&1, players))
+
+      assert first_legal
+
+      assert normalise(pair_raw(players)) == normalise(first_legal),
+             """
+             the engine's answer is not the first candidate Article 4 generates
+             for a heterogeneous bracket.
+
+               engine:   #{inspect(normalise(pair_raw(players)))}
+               article:  #{inspect(normalise(first_legal))}
+             """
+    end
+
+    test "and the remainder is altered before the MDP-Pairing, per 3.7" do
+      # Pinned so the ORDER of the two loops is explicit rather than
+      # implied by the result. The MDP takes resident 2 — the first
+      # transposition of S2 — and it is the REMAINDER that has to move,
+      # because 3v6 and 4v7 are both rematches. Had the loops been nested
+      # the other way, the sequence would have reached "give the MDP a
+      # different opponent" before "re-order the remainder", and the
+      # engine's answer would pair 1 with somebody other than 2.
+      players = heterogeneous_field()
+      pairs = normalise(pair_raw(players))
+
+      assert [1, 2] in pairs, "the MDP keeps the first resident 4.2 offers"
+
+      met = met_map(players)
+      assert 6 in Map.fetch!(met, 3), "3v6 is a rematch, so the remainder must move"
+      assert 7 in Map.fetch!(met, 4), "and so is 4v7"
+
+      # Which makes [7, 6, 8] the first legal ordering of the remainder's
+      # own S2, giving 3v7, 4v6, 5v8.
+      assert [3, 7] in pairs and [4, 6] in pairs and [5, 8] in pairs
+    end
+  end
+
   describe "when a transposition already works, exchanges are never reached" do
     test "an unobstructed bracket takes the identity pairing" do
       # The control. Nobody has met anybody, so S1[i] vs S2[i] is legal and
@@ -217,6 +287,65 @@ defmodule Ainalrami.ExchangeOrderTest do
 
       assert ours == normalise(Enum.zip([1, 2, 3, 4], [5, 6, 7, 8]))
     end
+  end
+
+  ## ---------- the position for the heterogeneous case ----------
+
+  # Eight players, one round played, arranged so the field falls into
+  # exactly TWO score groups and the lower one is the last bracket.
+  #
+  # Player 1 takes a full-point bye and stands alone on 1.0, so they
+  # downfloat as the sole MDP. Players 2-7 draw in three pairs and player 8
+  # takes a half-point bye, putting all seven on 0.5. One MDP plus seven
+  # residents is eight, so the bracket pairs completely and floats nobody.
+  #
+  # The round-one pairs are chosen so that the remainder's NATURAL pairing
+  # is illegal: 3 has met 6 and 4 has met 7, which is what forces the
+  # sequence past its first candidate and makes the test say something.
+  defp heterogeneous_field do
+    [
+      player(1, 1.0, [bye("F")]),
+      player(2, 0.5, [played(5, "w")]),
+      player(3, 0.5, [played(6, "w")]),
+      player(4, 0.5, [played(7, "w")]),
+      player(5, 0.5, [played(2, "b")]),
+      player(6, 0.5, [played(3, "b")]),
+      player(7, 0.5, [played(4, "b")]),
+      player(8, 0.5, [bye("H")])
+    ]
+  end
+
+  defp played(opponent, colour),
+    do: %{opponent_rank: opponent, colour: colour, result: "="}
+
+  defp bye(code), do: %{opponent_rank: nil, colour: nil, result: code}
+
+  defp pair_raw(players) do
+    Pairing.pair_next_round(players, expected_rounds: 5, initial_colour: "w")
+  end
+
+  # Article 3.4 and 3.7 for a bracket carrying moved-down players: the
+  # MDP-Pairing seats the MDPs against residents, the leftover residents
+  # form the remainder, and 3.7 exhausts the remainder's own sequence
+  # before altering the MDP-Pairing. So MDP-Pairing is the OUTER loop.
+  defp heterogeneous_candidates(mdps, residents) do
+    n = length(mdps)
+
+    for ordering <- Sequence.transpositions(residents, n),
+        opponents = Enum.take(ordering, n),
+        remainder = residents -- opponents,
+        remainder_pairing <- homogeneous_candidates(remainder) do
+      Enum.zip(mdps, opponents) ++ remainder_pairing
+    end
+  end
+
+  # A homogeneous sub-bracket's own sequence: split in half per 3.2, then
+  # transpositions and exchanges exactly as `candidates_in_article_4_order/2`.
+  defp homogeneous_candidates(members) do
+    sorted = Enum.sort(members)
+    {s1, s2} = Enum.split(sorted, div(length(sorted), 2))
+
+    candidates_in_article_4_order(s1, s2)
   end
 
   ## ---------- the sequence, per Article 4 ----------
@@ -351,14 +480,22 @@ defmodule Ainalrami.ExchangeOrderTest do
   # ±1, or the same colour in the two latest rounds played. C3 forbids two
   # players with the SAME absolute preference from meeting, so if nobody
   # holds one, C3 cannot make any pair illegal and C1 stands alone.
+  #
+  # Only PLAYED games count (1.7.4 via `points_for`-style results): a bye
+  # carries no colour and cannot create or break a run. Written to hold for
+  # short histories too — a player with one game or none has a colour
+  # difference of at most one and no repeated pair, so they never hold an
+  # absolute preference.
   defp no_absolute_colour_clash(players) do
     Enum.all?(players, fn p ->
-      colours = Enum.map(p.games, & &1.colour)
+      colours =
+        p.games |> Enum.filter(&(&1.result in ~w(1 = 0))) |> Enum.map(& &1.colour)
+
       whites = Enum.count(colours, &(&1 == "w"))
       diff = whites - (length(colours) - whites)
       last_two = colours |> Enum.reverse() |> Enum.take(2)
 
-      abs(diff) <= 1 and match?([a, b] when a != b, last_two)
+      abs(diff) <= 1 and not match?([x, x], last_two)
     end)
   end
 
