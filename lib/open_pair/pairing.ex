@@ -3022,8 +3022,16 @@ defmodule OpenPair.Pairing do
         {b.rank, a.rank}
 
       nil ->
-        # assign_colour_round_one/2 expects {better_ranked, worse_ranked}.
-        {top, bottom} = if a.rank < b.rank, do: {a, b}, else: {b, a}
+        # Neither player has a colour preference, so 5.2.1-5.2.4 cannot apply
+        # and 5.2.5 decides on the higher ranked player's TPN parity.
+        #
+        # "Higher ranked" is Article 1.2 -- SCORE first, then TPN ascending.
+        # This compared TPN alone, the same defect 5.2.4 carried one article
+        # up: any pair straddling a score group got the parity rule applied to
+        # the wrong player. Reachable wherever a player has no PLAYED games at
+        # all, which arbiter byes produce routinely -- and which is exactly
+        # where the residual colour disagreements clustered.
+        {top, bottom} = order_by_placement(a, b)
         assign_colour_round_one(top, bottom)
     end
   end
