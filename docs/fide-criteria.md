@@ -1,5 +1,15 @@
 # FIDE (Dutch) System criteria — primary source, and what this engine does
 
+> **Checked 2026-08-17.** Every function named below was verified to exist.
+> A previous version of this file mapped articles onto `cascade_brackets/4`,
+> `placeable_below/1`, `downfloater_scores/1`, `bracket_options/3`,
+> `within_bracket_weight/4`, `spans.locality`, `spans.score_paired` and an
+> `OPENPAIR_GLOBAL` environment variable — **none of which exist in `lib/`**.
+> They were real once and were deleted with the per-bracket cascade; this
+> file was not updated. A rules-to-code map naming functions the code does
+> not have is worse than no map, because it gets read as authority. If you
+> delete something named here, edit here.
+
 Source: **FIDE Handbook C.04.3, "FIDE (Dutch) System", effective 1 February
 2026** (<https://handbook.fide.com/chapter/C0403202602>), plus the
 definitions it inherits from C.04.1 Basic Rules for Swiss Systems.
@@ -63,8 +73,8 @@ remaining disagreement is this engine being wrong. Re-run it with
 | C1 | Two participants shall not play against each other more than once. | `legal_pair?/2` |
 | C2 | A participant who has already received a pairing-allocated bye, or has already scored in one single round without playing as many points as rewarded for a win, shall not receive the pairing-allocated bye. | `eligible_for_bye?/1`, plus a near-absolute penalty in `float_weight/4` |
 | C3 | Non-topscorers with the same absolute colour preference shall not meet. | `colour_compatible?/2` with `final_round_topscorers?/2` as the carve-out |
-| C4 | *(Completion Criterion)* A pairing complying with all the absolute criteria shall always exist for all players not yet paired. | the `cascade_brackets/4` backtracking search; `NoValidPairingError` when genuinely impossible |
-| C5 | *(PAB Criterion)* Minimise the score of the assignee of the pairing-allocated-bye. | `bye_assignee_score/2` — a whole-field pre-pass fixing the bye's score, enforced in `cascade_brackets/4`'s base case |
+| C4 | *(Completion Criterion)* A pairing complying with all the absolute criteria shall always exist for all players not yet paired. | `check_completion/3` on the cascade's final state, with `repair_completion/3` as the whole-field fallback; `NoValidPairingError` when genuinely impossible |
+| C5 | *(PAB Criterion)* Minimise the score of the assignee of the pairing-allocated-bye. | `bye_assignee_score/2` — a whole-field pre-pass fixing the bye's score, enforced by `bye_score_ok?/1` inside `check_completion/3` |
 
 ### The arbiter's own absolute criterion
 
@@ -92,9 +102,9 @@ Verbatim from §2.4, with this engine's implementation beside each.
 
 | | text | this engine |
 |---|---|---|
-| C6 | Minimise the number of downfloaters *(equivalent to: maximise the number of pairs)*. | `spans.locality` |
-| C7 | Minimise the scores (taken in descending order) of the downfloaters. | `downfloater_scores/1` at candidate level, plus `spans.score_paired` per pair |
-| C8 | Choose the set of downfloaters so that in the following bracket every criterion from C1 to C7 is complied with. | real C8 rungs over real next-bracket edges, with `@peek_budget` deciding how far down the bracket can actually see. `OPENPAIR_GLOBAL=0` falls back to `placeable_below/1`, a weak approximation — see gaps |
+| C6 | Minimise the number of downfloaters *(equivalent to: maximise the number of pairs)*. | the `"C6 pairs in bracket"` rung, `edge_rungs/6` |
+| C7 | Minimise the scores (taken in descending order) of the downfloaters. | the `"C7 scores paired"` rung, graded by score group via `bands.places` |
+| C8 | Choose the set of downfloaters so that in the following bracket every criterion from C1 to C7 is complied with. | the two `"C8 … next bracket"` rungs, over edges reaching the immediately following score group only (`reach == 1`) |
 | C9 | Minimise the number of unplayed games of the assignee of the pairing-allocated-bye. *(Applies to brackets downfloating exactly one player receiving the bye.)* | `unplayed_ranks/2`, gated on `single_bye?`. Both halves of the parenthetical are enforced: the previous bracket's tentative matching supplies "the float does not run deeper than one group", and an EVEN number of players below the bracket supplies "and that one receives the bye" — an even remainder pairs among itself, leaving the lone floater nobody to meet. Getting this gate right is worth more than any other single fix measured: see the gaps section |
 | C10 | Minimise the number of topscorers or topscorers' opponents who get a colour difference higher than +2 or lower than -2. | `colour_criteria/2` bit 1 — **not restricted to topscorers** |
 | C11 | Minimise the number of topscorers or topscorers' opponents who get the same colour three times in a row. | `colour_criteria/2` bit 2 — **not restricted to topscorers** |
@@ -134,8 +144,8 @@ bbpPairings' `computeEdgeWeight` does the same inversion.
    What the earlier attempts missed: C8 asks whether the FOLLOWING
    bracket can satisfy C1-C7, and no scoring of a bracket that cannot SEE
    the following bracket can answer that. The fix was visibility, not a
-   better measure — see `@peek_budget` and TODO.md. `placeable_below/1`
-   (the old approximation, still used when `OPENPAIR_GLOBAL=0`) is
+   better measure — see `@peek_budget` and TODO.md. The old approximation
+   (a per-player "can this player be placed below" bit) is
    strictly weaker: C1/C3 feasibility for one player, not C1-C7
    compliance for a bracket.
 
@@ -164,15 +174,15 @@ bbpPairings' `computeEdgeWeight` does the same inversion.
 
    Reverted, twice. The remaining hypothesis is structural rather than
    about scoring: choosing between one double-float and two single-floats
-   needs three brackets in view at once, and `bracket_options/3` peeks
+   needs three brackets in view at once, and the old per-bracket cascade peeked
    exactly one ahead by construction. Widening that lookahead is not a
    one-line change either, because the peeked bracket deliberately
-   contributes no edges — it survives only as `placeable_below/1`'s
+   contributes no edges — it survived only as that placeability bit's
    per-player bit (see `pair_weight/4`), so a second peeked bracket would
    merely make that bit MORE permissive, which is the wrong direction.
 
    **The structural hypothesis was then tested directly, and it holds.**
-   `global_cascade/2` (behind `OPENPAIR_GLOBAL=1`) is bbpPairings'
+   `global_cascade/2` (now the only path; there is no flag) is bbpPairings'
    architecture ported stage for stage: the graph is the current bracket
    plus the whole next score group, and each bracket is solved up to eight
    times, every solve answering one question and freezing the answer
@@ -323,7 +333,7 @@ bbpPairings' `computeEdgeWeight` does the same inversion.
    before believing the first rung that does differ.
 
 5. **`deviation` and `spread` are not FIDE criteria.** They sit mid-ladder
-   in `within_bracket_weight/4` and do the work the handbook assigns to a
+   in the deleted per-bracket weight function and did the work the handbook assigns to a
    different mechanism entirely — §3's transposition and exchange
    procedure, which picks among pairings that are already equal on every
    criterion by taking the smallest transposition of the natural order.

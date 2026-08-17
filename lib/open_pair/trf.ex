@@ -34,9 +34,12 @@ defmodule OpenPair.Trf do
 
   ## The `XX*` extension lines
 
-  Three of JaVaFo's own `XX` extension codes are read and written:
+  Three of JaVaFo's own `XX` extension codes are read; two of them are written:
 
-    * `XXR n` — the round count (see `parse_xxr/2`).
+    * `XXR n` — the round count (see `parse_xxr/2`). READ ONLY: `serialize/1`
+      emits the round count as the standard `142` header instead, so a file
+      that came in with `XXR` goes out with `142`. The value round-trips;
+      the spelling does not.
     * `XXP a b [c ...]` — a mutually-forbidden GROUP of players
       (see `parse_xxp/2`), surfaced as `tournament[:forbidden_pairs]`.
     * `XXA` — per-player acceleration/virtual points, round by round

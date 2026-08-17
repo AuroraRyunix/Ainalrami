@@ -163,7 +163,9 @@ defmodule OpenPair.WeightedMatching do
   end
 
   defp to_matching(state) do
-    Enum.reduce(state.mate, %{}, fn {v, m}, acc -> Map.put(acc, v, m) end)
+    # `state.mate` is already `%{vertex => partner}`; this used to rebuild it
+    # key by key, which is an identity copy with extra steps.
+    state.mate
   end
 
   # ---------------------------------------------------------- one stage

@@ -1048,23 +1048,14 @@ defmodule OpenPair.Pairing do
   # tolerance costs nothing and removes the question.
   defp same_score?(a, b), do: abs(a - b) < 0.001
 
-  defp result_points(result) do
-    case result do
-      "1" -> 1.0
-      "+" -> 1.0
-      "F" -> 1.0
-      "U" -> 1.0
-      # TRF16's letter spelling of a played win. `Trf.parse/1` normalises it
-      # away, so this only fires for a caller that builds player maps by hand
-      # — but it returned 0.0 there, which silently corrupted `score_before/3`
-      # and therefore every float criterion C14-C21 for that player.
-      "W" -> 1.0
-      "=" -> 0.5
-      "H" -> 0.5
-      "D" -> 0.5
-      _ -> 0.0
-    end
-  end
+  # Delegates rather than restating. This was a second copy of the same
+  # mapping, and the duplication cost something concrete: adding TRF16's
+  # letter result codes meant editing BOTH tables, separately, on the same
+  # day -- exactly the drift `Trf.points_for/1` existing at all is supposed
+  # to prevent. `Pairing` aliases nothing from `Trf` by design (the engine
+  # runs on plain maps and does not require a parsed file), so this is the
+  # one call rather than a module-wide alias.
+  defp result_points(result), do: OpenPair.Trf.points_for(result)
 
   defp float_of(player, rounds_back) do
     player |> Map.get(:floats, %{}) |> Map.get(rounds_back, :none)
