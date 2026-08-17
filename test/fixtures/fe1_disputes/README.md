@@ -23,17 +23,34 @@ field in the bootstrap matching and are gone.
 The engines disagree about who takes the pairing-allocated bye: ours and
 Gacrux's give it to rank 7, bbpPairings' to rank 3.
 
-**It is also the only case the adjudicator scores `theirs_scores_better`**,
-which is the interesting part — our own C1-C21 ladder prefers bbpPairings'
-answer while our engine (and Gacrux) produce the other one. Either the
-ladder or the search is wrong about this position even though the OUTPUT
-may be right, so "Gacrux agrees with us" is not on its own enough to file.
+The adjudicator scores it **`incomparable: 1 vs 2 edges in this bracket`**.
 
-Re-checked after `explain_round/3` was fixed to stamp float history (it
-previously scored C14-C21 blank on both sides of every verdict): the
-classification is **unchanged**, `theirs_scores_better` on `C2/C4/C5
-bye-eligibility`. That rung sits above C14-C21, so the fix could not have
-reached it — worth recording so nobody re-runs it expecting a change.
+That verdict has moved twice, and the history is the point:
+
+1. It was first scored `theirs_scores_better` on `C2/C4/C5
+   bye-eligibility` — read as our own ladder preferring bbpPairings'
+   answer while our engine and Gacrux produced the other one, which would
+   have meant the ladder or the search was wrong here even if the output
+   was right.
+2. Re-checked after `explain_round/3` was fixed to stamp float history
+   (it had scored C14-C21 blank on both sides of every verdict it ever
+   printed): **unchanged**, as expected — that rung sits above C14-C21,
+   so the fix could not reach it.
+3. Then the verdict itself turned out to be an accounting artifact. Rungs
+   SUM over edges, and the two answers contribute a different number of
+   edges to this bracket — one against two. A larger sum was being read
+   as a better score when it was really just a longer sum. Fixed by
+   adding an `edge_count` to `explain_round/3` and a distinct
+   `incomparable` verdict rather than folding the case into either side.
+
+So the ladder does **not** prefer bbpPairings' answer. It declines to
+compare them, which is the honest result: the two pairings decompose the
+bracket differently, and rung vectors over different decompositions are
+not commensurable.
+
+That removes the one piece of evidence against filing this. What is left
+is a C2 breach visible in the position itself, argued from the
+regulations in [`../../../docs/dispute-seed735265.md`](../../../docs/dispute-seed735265.md).
 
 Reproduce from scratch, ~1 second:
 
