@@ -71,6 +71,13 @@ defmodule Ainalrami.Generator do
 
     forfeit_pct = Keyword.get(opts, :forfeit_pct, 0)
     bye_pct = Keyword.get(opts, :requested_bye_pct, 0)
+
+    # Article 5.1's drawing of lots. It was always White here, implicitly:
+    # nothing was passed to the engine, which defaulted, and nothing was
+    # written to the file, which left a reader to infer it back. Now it is
+    # an option AND is recorded, so a generated tournament states the draw
+    # it was actually paired under instead of leaving it to be reconstructed.
+    initial_colour = opts |> Keyword.get(:initial_colour, "w") |> String.downcase()
     forbidden = forbidden_pairs(players, Keyword.get(opts, :forbidden_pct, 0))
     accelerations = accelerations(players, rounds, Keyword.get(opts, :acceleration))
 
@@ -90,7 +97,7 @@ defmodule Ainalrami.Generator do
           next =
             current
             |> grant_requested_byes(bye_pct)
-            |> play_one_round(rounds, forfeit_pct, forbidden)
+            |> play_one_round(rounds, forfeit_pct, forbidden, initial_colour)
 
           {:cont, {next, round_no}}
         rescue
@@ -109,6 +116,7 @@ defmodule Ainalrami.Generator do
           # changed the final-round pairing — see `Ainalrami.Trf`'s
           # `parse_xxr/2`.
           number_of_rounds: played_rounds,
+          initial_colour: initial_colour,
           forbidden_pairs: forbidden
         },
         players: final
@@ -222,11 +230,12 @@ defmodule Ainalrami.Generator do
     end)
   end
 
-  defp play_one_round(players, total_rounds, forfeit_pct, forbidden) do
+  defp play_one_round(players, total_rounds, forfeit_pct, forbidden, initial_colour) do
     pairs =
       Pairing.pair_next_round(players,
         expected_rounds: total_rounds,
-        forbidden_pairs: forbidden
+        forbidden_pairs: forbidden,
+        initial_colour: initial_colour
       )
 
     by_rank = Enum.reduce(pairs, %{}, &record_game(&1, &2, forfeit_pct))

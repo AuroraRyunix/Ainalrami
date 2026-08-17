@@ -98,8 +98,12 @@ seed is written into the generated file's tournament name, so a file
 always reproduces itself:
 
 ```bash
-ainalrami -g out.trf --seed=42 --players=30 --rounds=9 --forfeit-pct=10 --bye-pct=5 --forbidden-pct=10 --acceleration=baku
+ainalrami -g out.trf --seed=42 --players=30 --rounds=9 --forfeit-pct=10 --bye-pct=5 --forbidden-pct=10 --acceleration=baku --initial-colour=b
 ```
+
+`--initial-colour` is Article 5.1's drawing of lots, and it is written into
+the file as `152`. It defaults to White — which is what the generator
+always used, implicitly, before the option existed.
 
 `--rounds` is capped at `players - 1`, past which a Swiss has no legal
 opponents left. It can stop earlier still if some round turns out to have

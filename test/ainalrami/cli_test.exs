@@ -230,6 +230,103 @@ defmodule Ainalrami.CLITest do
       assert parsed.tournament[:name] =~ "seed=1234"
     end
 
+    test "records the drawing of lots it actually paired under" do
+      # Article 5.1's initial colour was always White here, implicitly: the
+      # generator passed nothing to the engine, which defaulted, and wrote
+      # nothing to the file, which left a reader to reconstruct it from
+      # round one. Now it is stated, so the file says what it was paired
+      # under rather than requiring the inference to be right.
+      for {flag, code, first_colour} <- [{"w", "w", "w"}, {"b", "b", "b"}] do
+        path =
+          Path.join(
+            System.tmp_dir!(),
+            "ainalrami-draw-#{flag}-#{System.unique_integer([:positive])}.trf"
+          )
+
+        on_exit(fn -> File.rm(path) end)
+
+        {_out, 0} =
+          run_capturing(fn ->
+            CLI.run([
+              "-g",
+              path,
+              "--seed=5",
+              "--players=10",
+              "--rounds=4",
+              "--initial-colour=#{flag}",
+              "-q"
+            ])
+          end)
+
+        text = File.read!(path)
+        assert text =~ "152 #{String.upcase(code)}"
+
+        parsed = Trf.parse(text)
+        assert parsed.tournament[:initial_colour] == code
+
+        # And it is not merely written: the draw decides colours, so the
+        # top board's higher-ranked player holds the drawn colour in round
+        # one (TPN 1 is odd, so 5.2.5 gives it to them).
+        first = Enum.find(parsed.players, &(&1.rank == 1))
+        assert hd(first.games).colour == first_colour
+      end
+    end
+
+    test "the two draws produce mirror-image colours and both check clean" do
+      paths =
+        for flag <- ["w", "b"] do
+          path =
+            Path.join(
+              System.tmp_dir!(),
+              "ainalrami-mirror-#{flag}-#{System.unique_integer([:positive])}.trf"
+            )
+
+          on_exit(fn -> File.rm(path) end)
+
+          {_out, 0} =
+            run_capturing(fn ->
+              CLI.run([
+                "-g",
+                path,
+                "--seed=11",
+                "--players=12",
+                "--rounds=4",
+                "--initial-colour=#{flag}",
+                "-q"
+              ])
+            end)
+
+          # `-c` replays every round against the engine. It has to pass for
+          # BOTH draws: the checker re-derives the initial colour from the
+          # file, so a draw that is written but not read back correctly
+          # would fail here rather than silently.
+          {_, check_code} = run_capturing(fn -> CLI.run([path, "-c", "-q"]) end)
+          assert check_code == 0, "#{flag} draw must check clean"
+
+          path
+        end
+
+      [white_draw, black_draw] = Enum.map(paths, &Trf.parse(File.read!(&1)))
+
+      colours = fn parsed ->
+        for p <- parsed.players, into: %{}, do: {p.rank, hd(p.games).colour}
+      end
+
+      w = colours.(white_draw)
+      b = colours.(black_draw)
+
+      assert Map.keys(w) == Map.keys(b), "same field either way"
+
+      # Round one is the same set of boards with every colour inverted —
+      # the draw decides sides, never who plays whom.
+      assert Enum.all?(Map.keys(w), fn rank ->
+               case {Map.fetch!(w, rank), Map.fetch!(b, rank)} do
+                 {nil, nil} -> true
+                 {x, y} -> x != y
+               end
+             end)
+    end
+
     test "the same seed generates the same tournament" do
       {first, 7} = Ainalrami.Generator.generate(seed: 7, players: 12, rounds: 4)
       {second, 7} = Ainalrami.Generator.generate(seed: 7, players: 12, rounds: 4)

@@ -55,6 +55,25 @@ defmodule Ainalrami.CLI do
     end)
   end
 
+  # Article 5.1's drawing of lots, for `-g`. Accepts either spelling of
+  # each colour and defaults to White, which is what the generator always
+  # used implicitly before the option existed.
+  defp initial_colour_option(flags) do
+    Enum.find_value(flags, "w", fn
+      "--initial-colour=" <> value -> normalise_colour(value)
+      "--initial-color=" <> value -> normalise_colour(value)
+      _ -> nil
+    end)
+  end
+
+  defp normalise_colour(value) do
+    case String.downcase(value) do
+      v when v in ["w", "white"] -> "w"
+      v when v in ["b", "black"] -> "b"
+      _ -> nil
+    end
+  end
+
   # `--key=value` options, used only by `-g`. Anything unrecognised is left
   # for the mode to reject rather than silently ignored.
   defp option(flags, key) do
@@ -100,7 +119,8 @@ defmodule Ainalrami.CLI do
         forfeit_pct: option(flags, "forfeit-pct"),
         requested_bye_pct: option(flags, "bye-pct"),
         forbidden_pct: option(flags, "forbidden-pct"),
-        acceleration: acceleration_option(flags)
+        acceleration: acceleration_option(flags),
+        initial_colour: initial_colour_option(flags)
       ]
       |> Enum.reject(fn {_key, value} -> is_nil(value) end)
 
