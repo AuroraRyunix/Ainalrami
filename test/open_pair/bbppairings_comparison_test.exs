@@ -240,11 +240,6 @@ defmodule OpenPair.BbppairingsComparisonTest do
 
   defp play_round(players, seed, round, total_rounds, player_count, forbidden) do
     players = assign_requested_byes(players)
-    # `OpenPair.Test.Field.active/1`, NOT `length(games) < round` — the
-    # latter misses the completed-trailing-column rule and reports rounds
-    # as illegal that agree with bbpPairings byte for byte. See that
-    # module's moduledoc.
-    active = OpenPair.Test.Field.active(players)
     trf = build_trf(players, total_rounds, forbidden)
 
     base = %{
@@ -271,6 +266,14 @@ defmodule OpenPair.BbppairingsComparisonTest do
 
       {:ok, bbp_pairs} ->
         openpair_pairs = safely_pair(players, total_rounds, forbidden)
+
+        # The active set comes from bbpPairings' OWN pairing, not from a rule
+        # this project wrote. It used to come from `Test.Field.active/1`,
+        # which was character-for-character `Pairing.rounds_played/1` — so the
+        # legality check shared its central assumption with the engine it was
+        # checking and could not have caught a wrong round number. See
+        # `OpenPair.Test.Field`'s moduledoc.
+        active = OpenPair.Test.Field.from_reference(bbp_pairs)
 
         measurement =
           Map.merge(base, %{
@@ -358,9 +361,12 @@ defmodule OpenPair.BbppairingsComparisonTest do
         {w, b} -> MapSet.member?(forbidden_set, {min(w, b), max(w, b)})
       end)
 
+    # `active` is a MapSet of ranks taken from bbpPairings' own pairing, so
+    # both of these now compare against the reference's answer rather than
+    # against a restatement of the engine's own rule.
     cond do
-      byes != rem(length(active), 2) -> :bad_bye_count
-      Enum.sort(seated) != Enum.sort(Enum.map(active, & &1.rank)) -> :not_a_partition
+      byes != rem(MapSet.size(active), 2) -> :bad_bye_count
+      MapSet.new(seated) != active -> :not_a_partition
       rematch? -> :rematch
       repeat_bye? -> :repeat_bye
       forbidden_pair? -> :forbidden_pair

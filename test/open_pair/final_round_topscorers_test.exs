@@ -72,6 +72,41 @@ defmodule OpenPair.FinalRoundTopscorersTest do
     player(rank, 3.5, games)
   end
 
+  describe "the C10/C11 rungs, which exist only on this path" do
+    # `bracket_edge_weight/8` only creates an edge where `colour_compatible?/2`
+    # holds, and that already rejects a same-absolute-colour clash — so
+    # outside the final-round exception, C10 and C11 are constant across every
+    # candidate matching and nothing can distinguish them. They had no test at
+    # all, because reaching them needs `expected_rounds`, the last round, AND
+    # top scorers, which no fuzz axis sets up deliberately.
+
+    test "the exception is confined to the final round" do
+      # Same position, same points, one round earlier: the clash is absolute
+      # and no exception applies, so the position is unpairable. This is what
+      # makes the rung conditional rather than free.
+      assert_raise Pairing.NoValidPairingError, fn ->
+        Pairing.pair_next_round(field(4.0), expected_rounds: 9)
+      end
+    end
+
+    test "without a round count, the exception never fires at all" do
+      # `:expected_rounds` is optional, and `final_round_topscorers?/2`
+      # answers false when it is absent — a caller who does not say how long
+      # the tournament is cannot be in its last round.
+      assert_raise Pairing.NoValidPairingError, fn ->
+        Pairing.pair_next_round(field(4.0))
+      end
+    end
+
+    test "a non-top-scorer pair is still refused in the final round" do
+      # Both on 1.0 of 7 played. The round is right, the clash is right, and
+      # they are simply not top scorers — so C10/C11 do not open the gate.
+      assert_raise Pairing.NoValidPairingError, fn ->
+        Pairing.pair_next_round(field(1.0), expected_rounds: 8)
+      end
+    end
+  end
+
   defp player(rank, points, games) do
     %{
       name: "P#{rank}",

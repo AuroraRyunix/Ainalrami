@@ -60,7 +60,7 @@ defmodule OpenPair.WeightedMatching do
 
   Following bbpPairings exactly: every edge weight is doubled internally
   so dual variables stay integral through the `>> 1` divisions the
-  four-way minimum needs. `solve/3` takes plain integer weights and
+  four-way minimum needs. `solve/2` takes plain integer weights and
   doubles them itself.
   """
 
@@ -85,45 +85,6 @@ defmodule OpenPair.WeightedMatching do
     |> augment_until_done()
     |> resolve_all_matching()
     |> to_matching()
-  end
-
-  @doc """
-  The best matching for EACH achievable number of PAIRS, as
-  `%{pair_count => %{vertex => partner}}`.
-
-  This is not extra work — it is the same single solve, observed at every
-  step. The primal-dual method reaches a maximum-weight matching by
-  augmenting one pair at a time, and its defining property is that the
-  matching after `k` augmentations is already a maximum-weight matching
-  among all matchings of `k` pairs. So snapshotting each stage yields the
-  optimum at every cardinality for the price of the one run that was
-  happening anyway.
-
-  `OpenPair.Pairing` needs exactly this: with float costs folded into the
-  edge weights, "best matching with k pairs" IS "best candidate leaving
-  n - 2k players floating", which is what its bracket cascade backtracks
-  over. `OpenPair.Matching`'s subset DP gave it away for free by
-  enumerating every subset; approximating it by re-solving with players
-  forcibly removed was measurably worse.
-
-  Each snapshot is resolved on a COPY, so the augmentation continues from
-  the unresolved state and is unaffected.
-  """
-  def solve_by_cardinality(n, _edges) when n <= 1, do: %{0 => %{}}
-
-  def solve_by_cardinality(n, edges) do
-    n |> build_state(edges) |> collect_cardinalities(%{0 => %{}})
-  end
-
-  defp collect_cardinalities(state, acc) do
-    case augment_once(state) do
-      {:ok, next} ->
-        matching = next |> resolve_all_matching() |> to_matching()
-        collect_cardinalities(next, Map.put(acc, div(map_size(matching), 2), matching))
-
-      :done ->
-        acc
-    end
   end
 
   defp build_state(n, edges) do
@@ -283,7 +244,7 @@ defmodule OpenPair.WeightedMatching do
     {min_outer_outer, outer_pair} = min_outer_outer(state)
     {min_inner_blossom, inner_blossom_id} = min_inner_blossom_dual(state)
 
-    delta =
+    candidates =
       [
         min_outer,
         min_free_outer,
@@ -291,7 +252,35 @@ defmodule OpenPair.WeightedMatching do
         (min_inner_blossom && div(min_inner_blossom, 2)) || nil
       ]
       |> Enum.reject(&is_nil/1)
-      |> Enum.min()
+
+    # `augment_once/1` checks `min_outer_dual/1` before the FIRST call, but
+    # `grow/1` re-enters itself (`{:grow, state} -> grow(state)` below) and
+    # nothing rechecks it there. With no outer vertex left, `min_outer` is nil
+    # and every other candidate can be nil too: `Enum.min([])` raised
+    # `Enum.EmptyError`, and `min_outer - delta` below raised `ArithmeticError`
+    # on nil. The step and stage budgets catch loops, not this.
+    #
+    # No matching this engine produces is known to reach it — it is guarded
+    # rather than reproduced. An exhausted search is the same answer
+    # `augment_once/1`'s own precheck gives: stop, and let the caller see the
+    # matching as it stands.
+    if candidates == [] or is_nil(min_outer) do
+      {:done, state}
+    else
+      grow_with_delta(state, min_outer, min_free_outer, free_outer_vertex, min_outer_outer,
+        outer_pair: outer_pair,
+        min_inner_blossom: min_inner_blossom,
+        inner_blossom_id: inner_blossom_id,
+        delta: Enum.min(candidates)
+      )
+    end
+  end
+
+  defp grow_with_delta(state, min_outer, min_free_outer, free_outer_vertex, min_outer_outer, opts) do
+    outer_pair = opts[:outer_pair]
+    min_inner_blossom = opts[:min_inner_blossom]
+    inner_blossom_id = opts[:inner_blossom_id]
+    delta = opts[:delta]
 
     state = apply_delta(state, delta)
 

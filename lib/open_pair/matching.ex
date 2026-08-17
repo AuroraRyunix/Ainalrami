@@ -37,9 +37,13 @@ defmodule OpenPair.Matching do
   never be paired (an absolute-criterion violation, e.g. a rematch).
   `float_weight_fun.(player)` returns the (typically deeply negative)
   weight of leaving `player` unmatched instead — see
-  `OpenPair.Pairing.pair_bracket/1` for how the caller makes floating
-  always cost less than any legal pairing, with a same-sized bracket's
-  worse-ranked players floating first as a tie-break.
+  the note below for how a caller makes floating
+  always cost less than any legal pairing.
+
+  **`OpenPair.Pairing` no longer calls this module.** It pairs through
+  `OpenPair.WeightedMatching.solve/2`; this subset-DP survives as the
+  brute-force oracle `weighted_matching_test.exs` checks that solver
+  against, which is the only thing that still uses it.
 
   Returns `{pairs, floaters}` for the maximum-total-weight matching:
   `pairs` is `[{a, b}, ...]`, `floaters` is the unmatched players.

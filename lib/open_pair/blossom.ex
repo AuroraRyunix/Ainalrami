@@ -1,10 +1,18 @@
 defmodule OpenPair.Blossom do
   @moduledoc """
   Edmonds' Blossom algorithm — general-graph maximum matching via
-  augmenting paths. Used by `OpenPair.Pairing`'s bye-count repair pass,
-  the last-resort step that runs only after the bracket cascade has
-  already failed to find a legal completion and fallen back to a greedy
-  pairing that may have handed out too many byes.
+  augmenting paths. Reached from `OpenPair.Pairing`'s bye-count repair
+  pass.
+
+  **That pass is currently unreachable in production**, so nothing here
+  runs outside its own tests: `repair_bye_count/3`'s guard `bye_legal?/3`
+  checks bye count and C2 eligibility over exactly the set that
+  `check_completion/3` has already checked for both, plus C5 — a proper
+  subset, so the repair branch never fires. There is also no "greedy
+  fallback" for it to follow; the per-bracket cascade that had one was
+  deleted. Kept, tested and labelled rather than removed, because the
+  guard it backs is cheap and the day `check_completion/3` is relaxed is
+  the day this matters.
 
   A plain alternating-path search (breadth-first from an unmatched
   vertex, stepping a non-matching edge then a matching edge) finds every

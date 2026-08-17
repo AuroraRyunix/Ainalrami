@@ -8,7 +8,7 @@ defmodule OpenPair.Pairing.NoValidPairingError do
   (`swisssystems/dutch.cpp`'s `matchingIsComplete`/`compatible`): it
   computes ONE matching over the whole field and throws rather than ever
   emitting more byes than `rem(active_count, 2)`. `OpenPair.Pairing`
-  matches that: `repair_bye_count/3`'s last-resort pass
+  matches that: `global_cascade/2`'s `:infeasible` result
   (`OpenPair.Blossom`, verified to find a TRUE maximum matching
   regardless of starting point) only reaches this if the true maximum
   itself still leaves too many players unmatched — proof no legal
@@ -470,56 +470,89 @@ defmodule OpenPair.Pairing do
   @doc """
   Pairs a round from existing score/game history.
 
+  `opts` are the same as `pair_next_round/2`'s: `:expected_rounds` (the
+  tournament's total, which the final-round colour exception needs) and
+  `:forbidden_pairs` (groups of mutually-forbidden starting ranks, from a
+  TRF's `XXP` lines). Prefer `pair_next_round/2`, which also handles the
+  round-one case; this is the later-round path on its own.
+
   Forms score brackets (Article 1.2: ranked by score, then TPN ascending)
-  in descending order and pairs bracket by bracket, floating players down
-  to merge with the next bracket when a bracket can't be fully paired
-  (Articles 1.3.3/3.2/3.3 — a "heterogeneous" bracket, floaters ranked
-  ahead of the new bracket's own residents per their higher score, which
-  falls out of re-sorting the merged group by Article 1.2 directly).
+  in descending order and pairs them in one continuous solve. Every
+  unfinalised player in the field is a vertex in every bracket's matching;
+  weights are bracket-flavoured, so a pair two or more score groups away
+  scores only the completion rung and C9 — which is exactly the weight
+  bbpPairings leaves on its own out-of-window edges. Players a bracket
+  cannot pair float down and merge with the next one (Articles
+  1.3.3/3.2/3.3), ranked ahead of that bracket's residents by their higher
+  score, which falls out of re-sorting by Article 1.2 directly.
 
-  Pairing within a bracket is a general (non-bipartite) maximum-weight
-  matching over that bracket (`OpenPair.Matching`), scored by
-  `pair_weight/4` and `float_weight/3`. The criteria and their priority
-  order are ported from bbpPairings' `computeEdgeWeight`
-  (`swisssystems/dutch.cpp`): four colour criteria, then four
-  float-history criteria, then MDP displacement and rank spread.
+  The matcher is `OpenPair.WeightedMatching.solve/2` — a Galil/Micali/Gabow
+  primal-dual maximum-weight general matching. The criteria and their
+  priority order are ported from bbpPairings' `computeEdgeWeight`
+  (`swisssystems/dutch.cpp`) and packed into one integer per edge by
+  `edge_rungs/6`: completion and bye eligibility, C6/C7 (pairs and scores
+  within the bracket), C8 (the same one bracket down), C9 (the bye
+  assignee's unplayed games), C10-C13 (colour), C14-C17 (float history) and
+  C18-C21 (score-weighted float history).
 
-  **97.15% of individual pairs and 88.93% of whole rounds match real
-  `javafo.jar`** over 300 nine-round tournaments of 10-40 players, and
-  94.05% / 76.96% with a tenth of games forfeited — see TODO.md for the
-  measured history of how each term got there, and the per-round
-  breakdown (round 1 is exact, round 9 is 91.54% of pairs).
+  ## Accuracy
 
-  **Known simplifications versus the full FIDE procedure**:
+  Against **bbpPairings 6.0.0**, which implements the same 2026 rules this
+  engine targets: **100.00% of rounds and of individual pairs** across
+  roughly 4.3 million tournaments and 195 million pairings, over axes
+  varying field size (4-120), round count (6-10), arbiter byes, forfeits,
+  `XXP` exclusions and `XXA` acceleration. One disagreement in that whole
+  corpus, `seed735265-r7-p10`, where Gacrux — a third independent
+  implementation — sides with this engine.
 
-    * The bracket-ordering terms (MDP displacement, rank spread) stand in
-      for FIDE's own transposition/exchange search (Articles 3.3-3.5) and
-      for the three lowest criteria of bbpPairings' own list.
-    * The four SCORE-WEIGHTED float criteria (bbpPairings weights each
-      float criterion by which score group it affects) aren't implemented,
-      only the four unweighted ones.
-    * The cascade approximates a global matching. bbpPairings runs one
-      over the whole field before pairing anything, to prove a legal round
-      exists; this searches bracket by bracket with backtracking and a
-      bounded budget, falling back to a best-effort answer past it.
+  Against **javafo.jar** it measures ~96%, and that gap is the control
+  rather than an error: javafo implements the 2022 rules, so an engine
+  agreeing with all three at once would mean the comparison was measuring
+  nothing. See TODO.md for the measured history.
 
-  **Do not "simplify" the scoring terms without re-measuring.** Five
-  separate plausible-sounding changes here have each been measured WORSE
-  and reverted (see TODO.md): a bipartite S1-vs-S2 restriction (10.7%), a
+  ## Do not "simplify" the scoring terms without re-measuring
+
+  Several plausible-sounding changes have each been measured WORSE and
+  reverted (see TODO.md): a bipartite S1-vs-S2 restriction (10.7%), a
   whole-bracket natural-correspondence deviation metric (64.95%),
-  subordinating the float protections to the pair criteria (-7 points),
-  ordering the cascade's alternatives by weight rather than by floater
-  count (-40 points on round 2), and prepending rather than appending in
-  `OpenPair.Matching`'s candidate list, which silently inverted a
-  tie-break for the same -40. The terms below are empirical, not derived.
+  subordinating the float protections to the pair criteria (-7 points), and
+  emitting the next-bracket lookahead as real cross-bracket pairs
+  (86.40% -> 43.82% of rounds). The terms are empirical, not derived.
+
+  Two of the criteria are invisible outside the final round by
+  construction: `bracket_edge_weight/8` only creates an edge where
+  `colour_compatible?/2` holds, which already rejects a same-absolute-colour
+  clash, so the C10/C11 rungs are constant across candidate matchings except
+  where `final_round_topscorers?/2` admits such a pair.
   """
-  def pair_later_round(players) do
+  def pair_later_round(players, opts \\ []) do
+    # Public, and it sets none of the process-dictionary state the rules read
+    # — so calling it directly used to ignore every `XXP` line and never fire
+    # the final-round colour exception, silently producing a pairing that
+    # looks entirely legal. That is the exact failure the whole forbidden-pair
+    # feature exists to prevent, reachable by anyone following the docs.
+    #
+    # `pair_next_round/2` sets both before delegating here, and re-setting
+    # them from the same keyword list is idempotent, so this costs that path
+    # nothing while making the direct one safe.
+    Process.put(@expected_rounds_key, opts[:expected_rounds] || Process.get(@expected_rounds_key))
+
+    Process.put(
+      @forbidden_key,
+      (opts[:forbidden_pairs] && forbidden_map(opts[:forbidden_pairs])) ||
+        Process.get(@forbidden_key)
+    )
+
+    do_pair_later_round(players)
+  end
+
+  defp do_pair_later_round(players) do
     played = rounds_played(players)
     Process.put(@played_key, played)
 
     field =
       players
-      # Float history first, over the WHOLE roster: `float_direction/3`
+      # Float history first, over the WHOLE roster: `float_direction/4`
       # compares against the opponent's score at the time, and that
       # opponent may be sitting this round out. It runs BEFORE
       # `with_acceleration/2` on purpose — `score_before/3` reconstructs a
@@ -622,7 +655,7 @@ defmodule OpenPair.Pairing do
     if bye_legal?(result, by_rank, allowed_byes) do
       result
     else
-      # Colour stats are normally stamped inside `bracket_options/2`;
+      # Colour stats are normally stamped inside `collect_bracket/1`;
       # this path never went through it.
       stamped_by_rank =
         Map.new(by_rank, fn {r, p} -> {r, Map.put(p, :colour_stats, colour_stats(p))} end)
@@ -676,6 +709,8 @@ defmodule OpenPair.Pairing do
   end
 
   defp to_pairs(matching, active) do
+    by_rank = Map.new(active, &{&1.rank, &1})
+
     {pairs, _seen} =
       Enum.reduce(Enum.sort_by(active, & &1.rank), {[], MapSet.new()}, fn player, {acc, seen} ->
         cond do
@@ -683,7 +718,15 @@ defmodule OpenPair.Pairing do
             {acc, seen}
 
           partner = Map.get(matching, player.rank) ->
-            {acc ++ [{player.rank, partner}],
+            # Article 5.2, not rank order. This built every pair as
+            # `{player.rank, partner}` with the lower-ranked player always
+            # White — no colour history, no preference strength, none of
+            # `choose_colour/2`. Every other pair-producing site in this
+            # module calls `assign_colour_with_history/1`; this one is only
+            # masked by being unreachable (see `repair_bye_count/3`), and a
+            # relaxation upstream would have it emitting a whole round with
+            # colours decided by seeding alone.
+            {acc ++ [assign_colour_with_history({player, Map.fetch!(by_rank, partner)})],
              seen |> MapSet.put(player.rank) |> MapSet.put(partner)}
 
           true ->
@@ -827,7 +870,7 @@ defmodule OpenPair.Pairing do
   end
 
   # Stamp each player's float direction for the last two rounds, once per
-  # round rather than per candidate pair — `float_direction/3` needs every
+  # round rather than per candidate pair — `float_direction/4` needs every
   # player (it compares against the OPPONENT's score at the time), which
   # `pair_weight/4` doesn't have and shouldn't need.
   defp with_float_history(players, played) do
@@ -904,11 +947,74 @@ defmodule OpenPair.Pairing do
   # `XXA` line carry the full round-by-round record rather than just the
   # current round's value.
   defp score_before(player, rounds_back, played) do
+    from = max(played - rounds_back, 0)
+
+    # A SLICE of the played rounds, not everything from `from` onwards.
+    # `scoreWithAcceleration` (tournament.h:335-359) winds back exactly
+    # `roundsBack` steps from `playedRounds`, so a game recorded for a round
+    # beyond that — a pre-recorded bye for the round being paired — is never
+    # one of the subtractions. It is handled once, in the base, by
+    # `reconciled_points/2`.
+    #
+    # Dropping to the end instead happened to agree while the base was the
+    # raw total: the future round was included there and subtracted here, and
+    # the two cancelled. Reconciling the base without narrowing this
+    # subtracted it twice — measured at 88.19% of rounds against 100.00%,
+    # which is what caught it.
     player.games
-    |> Enum.drop(max(played - rounds_back, 0))
-    |> Enum.reduce(player.points, fn game, score -> score - result_points(game.result) end)
+    |> Enum.slice(from, played - from)
+    |> Enum.reduce(reconciled_points(player, played), fn game, score ->
+      score - result_points(game.result)
+    end)
     |> Kernel.+(acceleration_at(player, played - rounds_back))
   end
+
+  # The player's total as a base to wind BACK from, reconciled against the
+  # games they actually hold.
+  #
+  # This used `player.points` raw, which is the TRF's own columns 81-84 and
+  # not derived from the games at all. Where the two disagree — an arbiter's
+  # point adjustment, a total that already includes the acceleration, a
+  # pre-recorded bye for the round being paired that has already been
+  # credited — every reconstructed historic score was wrong by that much, and
+  # therefore every float criterion C14-C21 for that player, silently.
+  #
+  # bbpPairings does not trust the field either. `trf.cpp:885-925` sums the
+  # matches and, when the stored total disagrees, tries subtracting the
+  # acceleration and then the points of a round beyond `playedRounds`,
+  # keeping whichever reconciles. That is what this ports. When nothing
+  # reconciles the file is simply inconsistent, and the stored value is kept
+  # — bbpPairings' own final fallback, and the conservative one, since the
+  # arbiter's recorded total is the authority on a hand-adjusted score.
+  defp reconciled_points(player, played) do
+    played_sum =
+      player.games
+      |> Enum.take(played)
+      |> Enum.reduce(0.0, fn game, sum -> sum + result_points(game.result) end)
+
+    future_sum =
+      player.games
+      |> Enum.drop(played)
+      |> Enum.reduce(0.0, fn game, sum -> sum + result_points(game.result) end)
+
+    acceleration = acceleration_at(player, played)
+
+    Enum.find(
+      [
+        player.points,
+        player.points - acceleration,
+        player.points - future_sum,
+        player.points - acceleration - future_sum
+      ],
+      player.points,
+      &same_score?(&1, played_sum)
+    )
+  end
+
+  # Scores are halves, so they are exact in binary floating point and could be
+  # compared directly — but they arrive via subtraction chains, and a
+  # tolerance costs nothing and removes the question.
+  defp same_score?(a, b), do: abs(a - b) < 0.001
 
   defp result_points(result) do
     case result do
@@ -1233,7 +1339,7 @@ defmodule OpenPair.Pairing do
   end
 
   # Everything the ladder needs that is genuinely round-wide. The spans
-  # themselves are per bracket — see `pair_bracket/4`.
+  # themselves are per bracket — see `pair_bracket/6`.
   defp global_context(field) do
     bye_score = Process.get(@bye_score_key)
 
@@ -1270,10 +1376,6 @@ defmodule OpenPair.Pairing do
       [] -> {[], []}
       [first | rest] -> bracket_loop(first, 0, rest, ctx, [])
     end
-  end
-
-  defp bracket_loop(by_index, _sgb, [], _ctx, pairs) when length(by_index) <= 1 do
-    {pairs, by_index}
   end
 
   # The FIRST bracket's C9 flag is not a bracket property at all — it is
@@ -1755,7 +1857,6 @@ defmodule OpenPair.Pairing do
 
   defp base_edge_weights(arr, m, sgb, nsgb, ctx, bands, single_bye?) do
     reach = reach_table(arr, m, nsgb)
-    bands = Map.put(bands, :max_reach, reach |> Map.values() |> Enum.max(fn -> 0 end))
 
     Enum.reduce(0..(m - 2), %{}, fn i, acc ->
       a = elem(arr, i)
@@ -2403,7 +2504,11 @@ defmodule OpenPair.Pairing do
   end
 
   # A current-bracket player who was not paired here IS a downfloater.
-  defp mark_float(player, true), do: Map.put(player, :already_floated, true)
+  # `mark_float(player, true)` used to stamp `:already_floated`, which was
+  # `float_weight/1`'s heavy re-float penalty. That function is gone with the
+  # per-bracket cascade, and nothing has read the key since — it cost an
+  # allocation per carried player to record something no rule consults.
+  defp mark_float(player, true), do: player
   defp mark_float(player, false), do: player
   # Returns `{bye assignee score | nil, isSingleDownfloaterTheByeAssignee}`.
   # The two come from the SAME bootstrap whole-field matching in
@@ -2419,10 +2524,7 @@ defmodule OpenPair.Pairing do
       brackets
       |> List.flatten()
       |> Enum.sort_by(&{-&1.points, &1.rank})
-      |> Enum.with_index()
-      |> Enum.map(fn {p, i} ->
-        p |> Map.put(:bracket_pos, i) |> Map.put(:colour_stats, colour_stats(p))
-      end)
+      |> Enum.map(&Map.put(&1, :colour_stats, colour_stats(&1)))
 
     n = length(field)
 
@@ -2803,7 +2905,7 @@ defmodule OpenPair.Pairing do
   # The four float-history criteria of bbpPairings' `computeEdgeWeight`,
   # ranked immediately below every colour criterion and above the
   # bracket-ordering ones. These are what TODO.md item 4 predicted would
-  # first bite in round 3: `float_direction/3` looks one and two rounds
+  # first bite in round 3: `float_direction/4` looks one and two rounds
   # back, and two rounds back doesn't exist until round 3.
   #
   # All four are phrased so that HIGHER is better, since the matcher

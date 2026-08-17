@@ -38,14 +38,34 @@ OpenPairings as a selectable engine.**
   2026 rules and agree with each other 100% over 3352 rounds while JaVaFo
   (2022 rules) differs from both on 2.47%:
 
-  | field | exact rounds | individual pairs | illegal |
-  |---|---|---|---|
-  | 4-40, 500x9 | **100.00%** (4197/4197) | **100.00%** (49802/49802) | 0 |
-  | 60-80, 20x9 | **100.00%** | **100.00%** | 0 |
-  | 90-120, 8x9 | **100.00%** | **100.00%** | 0 |
-  | 4-40 + 8% arbiter byes | 99.76% | 99.94% | 0 |
-  | 4-40 + 15% arbiter byes, 100,000x9 | **99.99%** (839660/839776) | **100.00%** (8484342/8484704) | 7 |
-  | 4-40 + 10% forfeits, 100,000x9 | **99.93%** (838793/839417) | **99.98%** (9934140/9936166) | 0 |
+  Current, from the 2026-08-17 runs — **4.3 million tournaments, ~195
+  million individual pairings, one disagreement in the whole corpus**:
+
+  | axis | tournaments | exact rounds | individual pairs | illegal |
+  |---|---|---|---|---|
+  | plain, 4-40 | 120,000 | **100.00%** | **100.00%** | 0 |
+  | plain, 4-10 | 500,000 | **100.00%** | **100.00%** | 0 |
+  | 15% arbiter byes, 4-40 | 250,000 | **100.00%** | **100.00%** | 0 |
+  | 15% arbiter byes, 4-10 | 1,200,000 | **100.00%** (1 disagreement) | **100.00%** | 0 |
+  | 10% forfeits, 4-40 | 120,000 | **100.00%** | **100.00%** | 0 |
+  | 20% forbidden (`XXP`) | 120,000 | **100.00%** | **100.00%** | 0 |
+  | Baku acceleration (`XXA`) | 120,000 | **100.00%** | **100.00%** | 0 |
+  | byes + forfeits + `XXP` + `XXA` | 120,000 | **100.00%** | **100.00%** | 0 |
+  | 60-120 players | 600 | **100.00%** | **100.00%** | 0 |
+  | **even round counts** (6, 8, 10) | 850,000 | **100.00%** | **100.00%** | 0 |
+  | odd-round controls (7, 9) | 350,000 | **100.00%** | **100.00%** | 0 |
+
+  The one disagreement is `seed735265-r7-p10`, where Gacrux — a third
+  independent implementation — sides with this engine against bbpPairings.
+  It is filed as a rules-interpretation dispute, not a defect.
+
+  **The even-round rows are not padding.** Every axis measured before
+  2026-08-17 used nine rounds, whose final round is paired with eight
+  played — and the final-round top-scorer threshold compares against half
+  that, so a version that floored the half was identical to a correct one
+  whenever the count was even. A real bug lived through 2.5 million
+  tournaments and surfaced in 2,000 at eight rounds. When adding an axis,
+  ask what the existing ones hold CONSTANT.
 
   Both the bye and forfeit rows above are 100,000-tournament overnight
   runs, not the earlier 300-tournament samples — same shape in both
@@ -100,7 +120,7 @@ OpenPairings as a selectable engine.**
   fails on pre-fix code, passes on the fix), and confirmed at the same
   scale the bug was found at: re-running the identical 100,000-tournament
   batch now shows **0 raised exceptions and 7 illegal rounds**, down from
-  102.
+  102. (All 7 are closed today — see below.)
 
   **Five of those 7 are now fixed too, and were all one missing rule** —
   `rounds_played/1` had only half of bbpPairings' round-number logic. It
@@ -114,8 +134,11 @@ OpenPairings as a selectable engine.**
   regression cover both ways (`test/open_pair/rounds_played_test.exs`),
   and verified behaviour-neutral elsewhere: a 33,601-round bye-heavy
   batch run on each side of the change gives byte-identical results,
-  down to the same four mismatching seeds. The remaining 2
-  (wrong-bye-count / non-partition) are still open.
+  down to the same four mismatching seeds. **The remaining 2
+  (wrong-bye-count / non-partition) are closed**: the C9-gate rewrite
+  covered them, confirmed on 2026-08-17 by re-running that exact
+  configuration over 250,000 tournaments / 2,099,071 rounds with zero
+  illegal rounds.
 
   TODO.md keeps the full account, including the part worth repeating
   here: four of these five had been dismissed as degenerate fuzz
