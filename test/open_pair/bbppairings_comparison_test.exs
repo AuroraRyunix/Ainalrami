@@ -284,7 +284,7 @@ defmodule OpenPair.BbppairingsComparisonTest do
             bbppairings: Enum.sort(bbp_pairs)
           })
           |> Map.merge(pair_agreement(openpair_pairs, bbp_pairs))
-          |> Map.put(:colour_mismatches, colour_mismatches(openpair_pairs, bbp_pairs))
+          |> Map.put(:colour_mismatches, colour_mismatches(openpair_pairs, bbp_pairs, players))
           |> Map.put(:illegal, illegality(openpair_pairs, active, players, forbidden))
 
         next_players = apply_round(players, bbp_pairs, simulate_results(bbp_pairs))
@@ -326,10 +326,41 @@ defmodule OpenPair.BbppairingsComparisonTest do
   # position by hand. Counted separately from pairing agreement, because the
   # two fail for different reasons and a colour difference on an otherwise
   # identical round is not the same finding as a different round.
-  defp colour_mismatches({:raised, _}, _bbp_pairs), do: 0
+  defp colour_mismatches({:raised, _}, _bbp_pairs, _players), do: 0
 
-  defp colour_mismatches(openpair_pairs, bbp_pairs) do
+  defp colour_mismatches(openpair_pairs, bbp_pairs, players) do
     theirs = MapSet.new(bbp_pairs)
+
+    # `COLOUR_DEBUG=1` prints each disagreeing board with both players'
+    # colour histories, which is what deciding WHICH of Article 5.2's five
+    # steps applies actually requires. The counts alone say there is a
+    # problem; these say which rule.
+    if System.get_env("COLOUR_DEBUG") do
+      reversed =
+        Enum.filter(openpair_pairs, fn
+          {_w, nil} ->
+            false
+
+          {w, b} = pair ->
+            MapSet.member?(theirs, {b, w}) and not MapSet.member?(theirs, pair)
+        end)
+
+      for {w, b} <- reversed do
+        IO.puts("
+colour disagreement: we say #{w} White, bbpPairings says #{b} White")
+
+        for rank <- [w, b] do
+          p = Enum.find(players, &(&1.rank == rank))
+
+          history =
+            p.games
+            |> Enum.filter(&(&1.result in ~w(1 = 0)))
+            |> Enum.map_join("", & &1.colour)
+
+          IO.puts("  ##{rank} colours=#{history}")
+        end
+      end
+    end
 
     Enum.count(openpair_pairs, fn
       {_w, nil} ->

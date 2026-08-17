@@ -3085,7 +3085,15 @@ defmodule OpenPair.Pairing do
             #  is non-nil here: the first clause of this cond
             # already handled a missing or differing preference, so both hold
             # the same one and only who is higher ranked is left to decide.
-            if player.rank < opponent.rank,
+            # "Higher ranked" is Article 1.2 -- SCORE first, then TPN
+            # ascending -- not TPN alone. A bracket routinely holds players on
+            # different scores (every moved-down player is one), and comparing
+            # TPN there hands the preference to the wrong player. Caught by the
+            # first colour-aware fuzz run: both disagreeing boards had
+            # identical colour histories, so 5.2.4 was deciding, and in each
+            # the engine preferred the lower TPN where bbpPairings preferred
+            # the higher score.
+            if {-player.points, player.rank} < {-opponent.points, opponent.rank},
               do: p.preference,
               else: invert(o.preference)
         end
