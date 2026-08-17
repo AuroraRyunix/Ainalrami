@@ -50,8 +50,19 @@ million tournaments (see [docs/validation.md](docs/validation.md)).
 
 - [ ] TRF `260` / `250` — round-limited forbidden pairs and acceleration
 - [ ] Team tournaments
-- [ ] Late entrants — players with no games in the early rounds, which
-      touches float history, `rounds_played/1` and score reconciliation
+- [x] ~~Late entrants~~ **not a distinct axis either** (2026-08-17). A
+      blank early round is indistinguishable from a zero-point bye
+      everywhere the engine looks — same points, same
+      `participated_in_pairing?/1`, same float direction under 1.4.3, same
+      C2 eligibility — so a generated axis would re-run the arbiter-bye
+      axis under another name. That is a consequence of four rules
+      agreeing, so it is pinned in `late_entrant_test.exs` (with a
+      half-point bye as the control) rather than merely concluded.
+
+      What is genuinely not modelled is C.04.2 **2.5**: TPNs are
+      provisional until the participant list closes, so a real late entry
+      can renumber the field. This engine takes TPNs as given and never
+      assigns them, so that belongs to the caller.
 - [x] ~~Files where `142` disagrees with `XXR`~~ **done 2026-08-17.** They
       are the same field; disagreement is now refused rather than silently
       resolved, because every implementation resolved it differently and
