@@ -190,7 +190,18 @@ defmodule Ainalrami.CLI do
   defp pairing_opts(tournament) do
     [
       expected_rounds: tournament[:number_of_rounds],
-      forbidden_pairs: tournament[:forbidden_pairs]
+      forbidden_pairs: tournament[:forbidden_pairs],
+      # Article 5.1's drawing of lots. `Trf` has read `152` since
+      # 2026-08-17 but the CLI never forwarded it, so `-p` and `-c` fell
+      # back to inferring the draw from round one — which works for a file
+      # that HAS a round one and is simply wrong for a fresh roster, where
+      # there is nothing to infer from and the engine defaults to White.
+      #
+      # So an arbiter who drew Black, recorded it, and asked for round one
+      # got White pairings from a file that said otherwise. `nil` here is
+      # harmless: the engine falls through to inference and then to White,
+      # exactly as before.
+      initial_colour: tournament[:initial_colour]
     ]
   end
 

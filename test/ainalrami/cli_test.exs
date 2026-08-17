@@ -207,6 +207,81 @@ defmodule Ainalrami.CLITest do
     assert out =~ "invalid TRF file"
   end
 
+  describe "-p and the drawing of lots" do
+    # `Trf` has read `152` since 2026-08-17, but `pairing_opts/1` never
+    # forwarded it, so the CLI fell back to inferring the draw from round
+    # one. That works for a file that HAS a round one and is simply wrong
+    # for a fresh roster, where there is nothing to infer from and the
+    # engine defaults to White.
+    #
+    # The visible consequence: an arbiter who drew Black, recorded it, and
+    # asked for round one got White pairings out of a file that said
+    # otherwise. Round one is exactly when every board turns on the draw,
+    # since nobody holds a colour preference yet.
+    test "an explicit 152 decides round one's colours" do
+      white = pair_roster("w")
+      black = pair_roster("b")
+
+      assert Enum.map(white, &Enum.sort/1) == Enum.map(black, &Enum.sort/1),
+             "the draw decides sides, never who plays whom"
+
+      refute white == black, "a Black draw must not pair identically to a White one"
+
+      for {[w1, _], [w2, _]} <- Enum.zip(white, black) do
+        refute w1 == w2, "every board must flip when the draw flips"
+      end
+    end
+
+    defp pair_roster(colour) do
+      players =
+        for r <- 1..8 do
+          %{
+            rank: r,
+            name: "P#{r}",
+            sex: "",
+            title: "",
+            fide_rating: 2400 - r * 10,
+            federation: "",
+            fide_number: nil,
+            birth_date: "",
+            points: 0.0,
+            games: []
+          }
+        end
+
+      path =
+        Path.join(
+          System.tmp_dir!(),
+          "ainalrami-draw-p-#{colour}-#{System.unique_integer([:positive])}.trf"
+        )
+
+      on_exit(fn -> File.rm(path) end)
+
+      File.write!(
+        path,
+        Trf.serialize(%{
+          tournament: %{
+            name: "Draw",
+            type: "swiss",
+            number_of_rounds: 5,
+            initial_colour: colour
+          },
+          players: players
+        })
+      )
+
+      {out, 0} = run_capturing(fn -> CLI.run([path, "-p", "-q"]) end)
+
+      out
+      |> String.split(~r/\r?\n/)
+      |> Enum.reject(&(String.trim(&1) == ""))
+      |> tl()
+      |> Enum.map(fn line ->
+        line |> String.trim() |> String.split(~r/\s+/) |> Enum.map(&String.to_integer/1)
+      end)
+    end
+  end
+
   describe "-g (Random Tournament Generator)" do
     test "writes a parseable TRF that records its own seed" do
       path =
