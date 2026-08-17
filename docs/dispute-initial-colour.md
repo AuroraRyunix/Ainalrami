@@ -48,25 +48,45 @@ not being paired in a particular round.**
 
 | | number whose parity decides |
 |---|---|
-| **Ainalrami** | the TPN, per C.04.2 Art. 2 |
-| **bbpPairings 6.0.0** | the player's position among those being paired this round |
-| **Gacrux** | the player's position among those paired now or previously (`rfp or rip`) |
+| **Ainalrami** | the TPN, exactly as the file gives it |
+| **bbpPairings 6.0.0** | a numbering that skips players who have never participated |
+| **Gacrux** | the same |
 
-The three agree whenever the field is complete, because position and TPN
-are then the same number. They diverge the moment anyone sits out — and
-both references are **measured** doing so in the table below, not merely
-read.
+The two references agree with each other. That was not obvious — Gacrux's
+condition is written `rfp or rip` (ready for pairing now, **or** paired at
+some point before) while bbpPairings has no such clause in sight — so it
+was measured both ways round with `tools/rip_probe.exs`:
 
-One distinction is source-derived and has *not* been measured: Gacrux's
-condition is `rfp or rip` — ready for pairing now, **or** paired at some
-point before — so it appears to renumber only around players who have
-never participated at all, where bbpPairings renumbers around anyone not
-valid for the current round. If that reading is right, the two references
-would part company in later rounds, when a player who has already played
-sits one out, and Gacrux would then agree with this engine. In round one
-the distinction cannot show, since nobody has played yet, which is where
-the measurement below is taken. Worth testing before the difference is
-relied on.
+- when the absent player **has already played**, all three engines agree,
+  and nobody renumbers;
+- when the absent player has **never played**, both references renumber
+  and this engine does not.
+
+The three therefore agree whenever the field is complete, because the two
+numberings coincide, and diverge only once somebody has been registered
+without ever being paired.
+
+### The references' reading is not unreasonable
+
+Worth saying plainly, because it changes what this dispute is. Skipping a
+player who has never participated is a defensible reading of C.04.2 2.5:
+
+> Due to late entries, the TPNs given at the start of the tournament are
+> provisional. The definitive TPNs are given only when the List of
+> Participants is closed…
+
+A player who never turned up is arguably not on that list, so arguably
+holds no definitive TPN. That is a real argument and this document does
+not dismiss it.
+
+What decides it the other way is 2.4, which says a late entry is *"given
+an appropriate TPN and paired only when they actually arrive."* The TPN
+exists before the arrival; it is the pairing that waits. A registered
+player who has not yet played therefore holds a TPN, and 5.2.5 asks for
+the parity of a TPN.
+
+That is why this is filed as a rules-interpretation dispute rather than as
+a defect report against two engines.
 
 ## The evidence
 
@@ -111,6 +131,18 @@ tiebreaker in this project — it is the third implementation of the same
 [`dispute-seed735265.md`](dispute-seed735265.md). Here it does not: it
 answers 2, with bbpPairings. Both references renumber; only the engine
 following the handbook's own definition of a TPN answers 7.
+
+`tools/rip_probe.exs` isolates the same split in round TWO, where it is
+sharper still, because there the two candidate rules can be told apart:
+
+```
+absent player has already played   ->  ours 7, bbp 7, gacrux 7   (agree)
+absent player has never played     ->  ours 3, bbp 2, gacrux 2   (differ)
+```
+
+Both references draw the line in the same place, and it is the line
+between "has participated" and "has not", not between "is playing this
+round" and "is not".
 
 Reproduce:
 

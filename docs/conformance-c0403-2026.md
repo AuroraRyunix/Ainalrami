@@ -104,17 +104,24 @@ ranking data (barred after round four) and the closing of the participant
 list after late entries. Nothing renumbers TPNs around players who are not
 paired in a given round.
 
-Both reference implementations renumber anyway — bbpPairings around anyone
-not valid for the current round, Gacrux around players who have never
-participated. On a complete field all three agree, because position and
-TPN coincide; they diverge the moment someone sits out.
+Both reference implementations renumber anyway, and — measured both ways
+round with `tools/rip_probe.exs` — they draw the same line: they skip
+players who have **never participated**, and not players who have played
+and are merely absent this round. On a complete field all three engines
+agree, because the two numberings coincide; they diverge once somebody has
+been registered without ever being paired.
 
 This engine follows the article, and **that is deliberate and is not going
-to be changed to match**. The case is set out with the handbook text, a
-reproducible probe and the measured scale in
-[dispute-initial-colour.md](dispute-initial-colour.md). Gacrux does not
-break the tie here: it renumbers too, differently again from bbpPairings,
-so there is no version of "agree with the references" to implement.
+to be changed to match**. Gacrux does not break the tie here, as it does
+in `dispute-seed735265.md`: it renumbers with bbpPairings.
+
+The references' reading is not unreasonable — 2.5 makes TPNs provisional
+until the participant list closes, and a player who never turned up is
+arguably not on it. What decides it the other way is 2.4: a late entry is
+*"given an appropriate TPN and paired only when they actually arrive"*, so
+the TPN exists before the arrival and it is the pairing that waits. The
+full argument, the handbook text and the measured scale are in
+[dispute-initial-colour.md](dispute-initial-colour.md).
 
 Note that colour never affects *who plays whom*: it is decided after the
 pairing, so a divergence here cannot produce a different set of boards,

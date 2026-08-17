@@ -209,12 +209,17 @@ and C.04.2 Article 2 fixes a TPN for the tournament: it moves only for a
 ranking-data correction (barred after round four) or the closing of the
 participant list. Nothing renumbers it around players sitting a round out.
 
-Both references renumber anyway — bbpPairings around anyone not paired
-this round, Gacrux around players who have never played. On a full field
-all three agree; they diverge the moment someone takes a bye. This engine
-follows the article, and is **not** changing to match: the two references
-do not even agree with each other, so there is no single behaviour to
-match.
+Both references renumber anyway, skipping players who have never
+participated — measured, and they agree with each other, so Gacrux does
+not break this tie the way it breaks the other one. On a full field all
+three engines agree; they diverge once somebody has been registered
+without ever being paired.
+
+Their reading is not unreasonable: 2.5 makes TPNs provisional until the
+participant list closes. What decides it the other way is 2.4 — a late
+entry is *"given an appropriate TPN and paired only when they actually
+arrive"*, so the TPN exists first and the pairing waits. This engine
+follows the article.
 
 Measured over 200 seven-round tournaments — note the axes without byes,
 which are the control:
