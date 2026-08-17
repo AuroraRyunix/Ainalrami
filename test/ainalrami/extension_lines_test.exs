@@ -31,6 +31,49 @@ defmodule Ainalrami.ExtensionLinesTest do
     {players, tournament}
   end
 
+  describe "XXR and 142 are the same field" do
+    # `142` is TRF16's round count and `XXR` is JaVaFo's spelling of it. A
+    # file that has passed through both toolchains can carry each, and two
+    # copies of the same number are perfectly ordinary.
+    #
+    # Two DIFFERENT numbers are not, and are refused. Every implementation
+    # silently picks one and they do not agree on which: this engine used
+    # to prefer `142` wherever it appeared, bbpPairings takes whichever
+    # line comes last. The round count feeds the final-round exception in
+    # `colour_compatible?/2` and the topscorer threshold, so the two pair
+    # different final rounds from identical bytes — and the loser is a
+    # complete, perfectly legal-looking round, which nothing downstream can
+    # detect.
+    defp roster do
+      """
+      012 Round counts\r
+      062 4\r
+      001    1 m  gm Alpha                            2400 BEL     1000001 1990/01/01  0.0    1\r
+      001    2 m  gm Beta                             2300 BEL     1000002 1990/01/01  0.0    2\r
+      001    3 m  gm Gamma                            2200 BEL     1000003 1990/01/01  0.0    3\r
+      001    4 m  gm Delta                            2100 BEL     1000004 1990/01/01  0.0    4\r
+      """
+    end
+
+    test "either spelling alone sets the round count" do
+      assert Trf.parse(roster() <> "142 9\r\n").tournament[:number_of_rounds] == 9
+      assert Trf.parse(roster() <> "XXR 5\r\n").tournament[:number_of_rounds] == 5
+    end
+
+    test "both spellings agreeing is fine" do
+      assert Trf.parse(roster() <> "142 5\r\nXXR 5\r\n").tournament[:number_of_rounds] == 5
+      assert Trf.parse(roster() <> "XXR 5\r\n142 5\r\n").tournament[:number_of_rounds] == 5
+    end
+
+    test "both spellings disagreeing is refused, in either order" do
+      for text <- ["142 9\r\nXXR 5\r\n", "XXR 5\r\n142 9\r\n"] do
+        assert_raise Trf.ValidationError, ~r/two different round counts/, fn ->
+          Trf.parse(roster() <> text)
+        end
+      end
+    end
+  end
+
   describe "XXP forbidden pairings" do
     @fixture "test/fixtures/forbidden_pairs/only-legal-pairing.trf"
 

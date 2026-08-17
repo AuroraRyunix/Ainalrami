@@ -478,7 +478,32 @@ defmodule Ainalrami.TrfTest do
       assert parsed.tournament[:number_of_rounds] == 9
     end
 
-    test "an explicit 142 wins over XXR" do
+    test "142 and XXR agreeing is ordinary" do
+      text =
+        Ainalrami.Trf.serialize(%{
+          tournament: %{name: "XXR Test", type: "swiss", number_of_rounds: 5},
+          players: [
+            %{rank: 1, name: "A", fide_rating: 2000, points: 0.0, games: []},
+            %{rank: 2, name: "B", fide_rating: 1900, points: 0.0, games: []}
+          ]
+        }) <> "XXR 5\r\n"
+
+      assert Ainalrami.Trf.parse(text).tournament[:number_of_rounds] == 5
+    end
+
+    # This used to assert `142` silently won, which was deliberate and
+    # documented — and wrong. Every implementation picks a winner and they
+    # do not agree on which: bbpPairings takes whichever line comes LAST
+    # (`trf.cpp:1117-1124` assigns `expectedRounds` from either prefix), so
+    # `142 5` plus `XXR 9` was read here as 5 and there as 9.
+    #
+    # The round count feeds the final-round exception in
+    # `colour_compatible?/2` and the topscorer threshold, so the loser of
+    # that silent choice is a complete, perfectly legal-LOOKING final round
+    # paired under the wrong rules, which nothing downstream can detect.
+    # Same argument as `XXP`: a self-contradictory file has no correct
+    # pairing, only two plausible ones, so it is refused.
+    test "142 and XXR disagreeing is refused rather than silently resolved" do
       text =
         Ainalrami.Trf.serialize(%{
           tournament: %{name: "XXR Test", type: "swiss", number_of_rounds: 5},
@@ -488,7 +513,9 @@ defmodule Ainalrami.TrfTest do
           ]
         }) <> "XXR 9\r\n"
 
-      assert Ainalrami.Trf.parse(text).tournament[:number_of_rounds] == 5
+      assert_raise Ainalrami.Trf.ValidationError, ~r/two different round counts/, fn ->
+        Ainalrami.Trf.parse(text)
+      end
     end
 
     test "a malformed XXR is ignored rather than failing the parse" do

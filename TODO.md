@@ -50,9 +50,17 @@ million tournaments (see [docs/validation.md](docs/validation.md)).
 
 - [ ] TRF `260` / `250` — round-limited forbidden pairs and acceleration
 - [ ] Team tournaments
-- [ ] Unrated players
-- [ ] Late entrants
-- [ ] Files where `rounds_count` disagrees with `XXR`
+- [ ] Late entrants — players with no games in the early rounds, which
+      touches float history, `rounds_played/1` and score reconciliation
+- [x] ~~Files where `142` disagrees with `XXR`~~ **done 2026-08-17.** They
+      are the same field; disagreement is now refused rather than silently
+      resolved, because every implementation resolved it differently and
+      the loser is a wrong final round nothing downstream can detect.
+- [x] ~~Unrated players~~ **not an axis.** `fide_rating` never reaches
+      `Ainalrami.Pairing` at all — the Dutch system runs on TPN, score and
+      colour history, and the initial ranking is given in the file rather
+      than derived. Checked rather than assumed; recorded so it is not
+      re-proposed.
 
 ## Diagnostics
 

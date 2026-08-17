@@ -36,8 +36,11 @@ defmodule Ainalrami.Trf do
 
   Three of JaVaFo's own `XX` extension codes are read; two of them are written:
 
-    * `XXR n` — the round count (see `parse_xxr/2`). READ ONLY: `serialize/1`
-      emits the round count as the standard `142` header instead, so a file
+    * `XXR n` — the round count (see `parse_xxr/2`), which is the same field
+      as TRF16's `142`. A file may carry both spellings, but they must
+      AGREE: two different counts are refused rather than silently resolved,
+      since every implementation resolves them differently. READ ONLY:
+      `serialize/1` emits the count as the standard `142` header, so a file
       that came in with `XXR` goes out with `142`. The value round-trips;
       the spelling does not.
     * `XXP a b [c ...]` — a mutually-forbidden GROUP of players
@@ -57,9 +60,10 @@ defmodule Ainalrami.Trf do
   For the same reason, a MALFORMED `XXP`/`XXA` line raises
   `Ainalrami.Trf.ValidationError` rather than being skipped — see
   `parse_xxp/2`. bbpPairings does the same (`InvalidLineException`, exit
-  code 3); `parse_xxr/2`'s shrug is the exception, and it can afford one
-  because a missing round count has a fallback and a missing exclusion
-  does not.
+  code 3); a MALFORMED `XXR` is the exception, and can afford to be
+  ignored, because a missing round count has a fallback and a missing
+  exclusion does not. A CONTRADICTED round count is a different thing
+  again and does raise — see `check_round_count_agreement!/2`.
   """
 
   alias Ainalrami.Trf.ValidationError
@@ -681,11 +685,40 @@ defmodule Ainalrami.Trf do
   defp parse_xxr(acc, line) do
     case line |> String.slice(3..-1//1) |> String.trim() |> Integer.parse() do
       {rounds, _rest} ->
+        check_round_count_agreement!(acc.tournament[:number_of_rounds], rounds)
         update_in(acc.tournament, fn t -> Map.put_new(t, :number_of_rounds, rounds) end)
 
       :error ->
         acc
     end
+  end
+
+  # A file may carry both spellings — `142` is TRF16's, `XXR` is JaVaFo's,
+  # and a file that has passed through both toolchains can hold each. Two
+  # copies of the same number are fine; two DIFFERENT numbers are not, and
+  # this refuses rather than picking one.
+  #
+  # Picking one is what every implementation does and they do not agree:
+  # this engine preferred `142` regardless of position, bbpPairings takes
+  # whichever line comes LAST (`trf.cpp:1117-1124` assigns
+  # `expectedRounds` from either prefix, so the later assignment wins). On
+  # `142 9` followed by `XXR 5` the two therefore pair different final
+  # rounds from the same bytes.
+  #
+  # It has to be a refusal for the reason `parse_xxp/2` raises: the round
+  # count feeds the final-round exception in `colour_compatible?/2` and the
+  # topscorer threshold in `final_round_topscorers?/2`, so the wrong value
+  # yields a complete, perfectly legal-LOOKING round that applies the
+  # last-round rules to the wrong round — with nothing downstream able to
+  # tell. A self-contradictory file has no correct pairing, only two
+  # plausible ones.
+  defp check_round_count_agreement!(nil, _rounds), do: :ok
+  defp check_round_count_agreement!(same, same), do: :ok
+
+  defp check_round_count_agreement!(existing, rounds) do
+    raise ValidationError,
+          "the file gives two different round counts (#{existing} and #{rounds}); " <>
+            "`142` and `XXR` are the same field and must agree"
   end
 
   # `XXP a b [c ...]` — a mutually-forbidden GROUP of players, JaVaFo's own
@@ -820,12 +853,16 @@ defmodule Ainalrami.Trf do
       f when f in [:start_date, :end_date] ->
         put_in(acc.tournament[f], String.replace(value, "/", "-"))
 
+      :number_of_rounds ->
+        rounds = parse_int(value) || 0
+        check_round_count_agreement!(acc.tournament[:number_of_rounds], rounds)
+        put_in(acc.tournament[:number_of_rounds], rounds)
+
       f
       when f in [
              :number_of_players,
              :number_of_rated_players,
-             :number_of_teams,
-             :number_of_rounds
+             :number_of_teams
            ] ->
         put_in(acc.tournament[f], parse_int(value) || 0)
 
