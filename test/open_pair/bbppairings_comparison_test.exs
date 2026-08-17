@@ -40,6 +40,18 @@ defmodule OpenPair.BbppairingsComparisonTest do
   `PAIRING_FUZZ_ROUNDS`, `PAIRING_FUZZ_MIN_PLAYERS`/`_MAX_PLAYERS`,
   `PAIRING_FUZZ_BYE_PCT`, `PAIRING_FUZZ_FORFEIT_PCT`, `PAIRING_FUZZ_DUMP`.
 
+  **Vary `PAIRING_FUZZ_ROUNDS`, and run an EVEN value.** Every axis measured
+  on this project until 2026-08-17 used `ROUNDS=9`, whose final round is
+  paired with 8 rounds played. `final_round_topscorers?/2` compares against
+  half the played-round count, so a threshold that floors that half is
+  identical to an exact one whenever the count is even — the bug lived
+  through 2.5 million tournaments because every one of them held this
+  parameter at the same odd value. At `ROUNDS=8` it surfaced in 2,000.
+  Six-, eight- and ten-round Swisses are ordinary events.
+
+  The general lesson, worth applying to any new axis: ask what the existing
+  axes hold CONSTANT, not what they vary. Corpus size bought nothing here.
+
   `PAIRING_FUZZ_SEED_FROM` (default 1) moves where the seed range starts,
   so a dumped case can be reproduced on its own:
 

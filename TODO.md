@@ -1547,8 +1547,21 @@ scrambling a merged bracket causes.
 Rounds 7-9 sit at 89-92% of pairs. Known gaps, in the order most likely
 to matter:
 
-  - ~~The four SCORE-WEIGHTED float criteria~~ — **implemented, measured
-    WORSE, reverted.** `dutch.cpp` 385-460 weights each float criterion
+  - ~~The four SCORE-WEIGHTED float criteria~~ — **THIS ENTRY IS OUT OF
+    DATE AND DANGEROUS. They are LIVE**: `float_score_criteria/3`
+    (`pairing.ex:2660`), wired at `:1845`, scored as the C18-C21 rungs at
+    `:1881-1884`, and listed as implemented in `docs/fide-criteria.md`.
+    Anyone reading the paragraph below before touching the ladder would
+    conclude those four rungs are absent and could "restore" a regression by
+    deleting working code. What follows describes the FIRST attempt, made
+    against the per-bracket cascade, and its own closing sentence — "worth
+    retrying only if the cascade is ever replaced by a global matching" — is
+    exactly what then happened. The retry succeeded and this entry was never
+    updated. Kept only because the reasoning about WHY it failed the first
+    time is the useful part.
+
+    The original entry, as written: **implemented, measured WORSE,
+    reverted.** `dutch.cpp` 385-460 weights each float criterion
     by which score group it affects, ranked below the four unweighted
     ones. Ported faithfully (positional weights per score group, lowest
     group at index 0, sum-safe base) it measured **93.40%** against
@@ -1694,7 +1707,9 @@ to matter:
    "Depth" above. The prediction in this item held exactly: the criteria
    cannot bind before round 3, and round 3 was the measured cliff
    (91.36% → 99.39% of pairs). Four levels ported from `dutch.cpp`'s
-   `getFloat`; the four SCORE-WEIGHTED variants are still open.
+   `getFloat`. (The four SCORE-WEIGHTED variants were listed here as "still
+   open" long after they landed — they are live as C18-C21, see the
+   correction above.)
 5. ~~**Colour allocation & floater history refinement**~~ **Done** —
    Article 5.2's full preference-strength computation is ported
    (`colour_stats/1` from `computePlayerData`, `choose_colour/2` from
@@ -2286,7 +2301,63 @@ to look: it produced a complete, legal, well-formed pairing every time.
   Apache-2.0 and those two files are ports of it, so the licence is
   inherited. The repo is public. This is no longer a submission blocker.
 
+## The 2.55M-tournament run, and the blind spot it did not have (2026-08-17)
+
+Ran the whole validation corpus again on the 36-core box, on a fresh clone,
+nine axes, **2,510,600 tournaments / ~11.2M rounds / ~92M individual pairings**:
+
+| axis | tournaments | rounds | agreement | illegal |
+|---|---|---|---|---|
+| 15% byes, 4-40 | 250,000 | 2,099,071 | 100.00% | 0 |
+| 15% byes, 4-10 | 1,200,000 | — | 100.00% | 0 |
+| 20% forbidden (`XXP`), 4-40 | 120,000 | — | 100.00% | 0 |
+| Baku (`XXA`), 4-40 | 120,000 | 1,014,963 | 100.00% | 0 |
+| byes + forfeits + `XXP` + `XXA` | 120,000 | 1,000,527 | 100.00% | 0 |
+| plain, 4-10 | 500,000 | 2,994,942 | 100.00% | 0 |
+| plain, 4-40 | 120,000 | 1,011,700 | 100.00% | 0 |
+| 10% forfeits, 4-40 | 120,000 | 1,007,116 | 100.00% | 0 |
+| 60-120 players | 600 | 5,400 | 100.00% | 0 |
+
+**One disagreement in the entire corpus**, and it is `seed735265-r7-p10` —
+the already-catalogued FE1 rules-interpretation dispute where Gacrux sides
+with this engine. Adjudicated again with the float-history fix in place:
+`theirs_scores_better` on `C2/C4/C5 bye-eligibility`, unchanged.
+
+**The 2 wrong-bye-count / non-partition illegal rounds are closed.** The
+first axis re-ran the exact configuration that produced them (seeds
+1..250,000 at `PAIRING_FUZZ_BYE_PCT=15`, covering the original 1..100,000)
+and found zero illegal rounds in 2,099,071. The C9-gate rewrite closed them;
+nothing further to chase.
+
+### And yet the corpus could not see a real bug
+
+**Every axis above ran `PAIRING_FUZZ_ROUNDS=9`. Every axis this project has
+ever measured ran `ROUNDS=9`.** The final round is then paired with 8 rounds
+played, and `div(8, 2) == 8 / 2`. So a threshold that floors a half-point is
+invisible: it can only differ when the played-round count is ODD, i.e. when
+the tournament has an EVEN number of rounds.
+
+`final_round_topscorers?/2` had exactly that. Re-measured at `ROUNDS=8`
+(7 played at the final round), 2,000 tournaments, 12% byes:
+
+| | exact rounds | individual pairs |
+|---|---|---|
+| before | 15051/15060 = **99.94%** | 155831/155862 = 99.98% |
+| after | **15060/15060 = 100.00%** | **155862/155862 = 100.00%** |
+
+Nine wrong rounds that 2.55M tournaments at `ROUNDS=9` could not produce.
+Six-, eight- and ten-round Swisses are ordinary events; this was never an
+exotic corner.
+
+**Lesson worth keeping**: corpus SIZE bought nothing here. The axes varied
+field size, bye rate, forfeit rate and extension lines, and held the one
+parameter fixed that this bug was a function of. When adding an axis, ask
+what the existing ones hold CONSTANT, not what they vary.
+
+`PAIRING_FUZZ_ROUNDS` is now a first-class axis: run even and odd.
+
 ## Open
+
 
 - ~~**`explain_round/3` never stamps float history.**~~ **Fixed.** The real
   path calls `with_float_history/2` before `with_acceleration/2`, over the
@@ -2322,13 +2393,14 @@ to look: it produced a complete, legal, well-formed pairing every time.
   is **unchanged** (`theirs_scores_better`, first differing rung `C2/C4/C5
   bye-eligibility`). That rung outranks C14–C21, so the fix could not have
   reached it — recorded so nobody re-runs it expecting a change.
-- **The 2 wrong-bye-count / non-partition illegal cases** from the original
-  100,000-tournament bye run (line 442). Every axis has measured zero
-  illegal rounds since the C9-gate rewrite, across ≈26M pairings, so these
-  are almost certainly closed by it — but no repro was ever saved, so that
-  has never been checked against the actual positions. Settling it means
-  re-running the original configuration (100,000 × 9 at
-  `PAIRING_FUZZ_BYE_PCT=15`), which is a server job, not a local one.
+- ~~**The 2 wrong-bye-count / non-partition illegal cases**~~ **closed** by
+  the 2026-08-17 run above: the original configuration re-run over 250,000
+  tournaments / 2,099,071 rounds produced zero illegal rounds.
+- **Even-round validation at scale.** The `ROUNDS=8` measurement above was
+  2,000 tournaments on a laptop, enough to prove the bug and its fix but not
+  to stand beside the odd-round corpus. The even-round axes deserve a run of
+  the same order as the table above before any claim of "100.00% on every
+  axis" is repeated.
 
 Reproducing any dumped case is now cheap: `PAIRING_FUZZ_SEED_FROM` starts
 the seed range anywhere, and every seed is independent, so

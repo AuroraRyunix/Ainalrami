@@ -68,6 +68,16 @@ defmodule OpenPair.Pairing do
   # tournament-level context, and threading one through purely for a rule
   # that is usually absent would touch every weight function on the way.
   @forbidden_key :openpair_forbidden_pairs
+  # The TOURNAMENT's played-round count, stashed for the same reason as the
+  # keys above. `final_round_topscorers?/2` used `length(a.games)` — that
+  # player's own game count — which is the precise indexing bug this module
+  # was deliberately converted away from everywhere else (see
+  # `float_direction/4`, where it was worth +10 points on the bye axis). A
+  # player carrying a pre-recorded bye for the round being paired has one
+  # game MORE than the tournament has played, so the final-round exception
+  # could fire a round early for them; a late entrant has fewer, so it could
+  # fail to fire when it should.
+  @played_key :openpair_played_rounds
 
   @doc """
   Pairs the next round, dispatching to `pair_round_one/1` when no game
@@ -111,6 +121,7 @@ defmodule OpenPair.Pairing do
       end
     after
       Process.delete(@expected_rounds_key)
+      Process.delete(@played_key)
       Process.delete(@forbidden_key)
     end
   end
@@ -183,6 +194,7 @@ defmodule OpenPair.Pairing do
 
     try do
       played = rounds_played(players)
+      Process.put(@played_key, played)
 
       field =
         players
@@ -227,6 +239,7 @@ defmodule OpenPair.Pairing do
       |> Enum.reverse()
     after
       Process.delete(@expected_rounds_key)
+      Process.delete(@played_key)
       Process.delete(@forbidden_key)
       Process.delete(@bye_score_key)
       Process.delete(@first_single_bye_key)
@@ -502,6 +515,7 @@ defmodule OpenPair.Pairing do
   """
   def pair_later_round(players) do
     played = rounds_played(players)
+    Process.put(@played_key, played)
 
     field =
       players
@@ -902,8 +916,14 @@ defmodule OpenPair.Pairing do
       "+" -> 1.0
       "F" -> 1.0
       "U" -> 1.0
+      # TRF16's letter spelling of a played win. `Trf.parse/1` normalises it
+      # away, so this only fires for a caller that builds player maps by hand
+      # — but it returned 0.0 there, which silently corrupted `score_before/3`
+      # and therefore every float criterion C14-C21 for that player.
+      "W" -> 1.0
       "=" -> 0.5
       "H" -> 0.5
+      "D" -> 0.5
       _ -> 0.0
     end
   end
@@ -2904,8 +2924,19 @@ defmodule OpenPair.Pairing do
         # despite a full pairing existing, confirmed reachable by
         # disabling colour compatibility entirely first, and this
         # one-line fix alone was enough to reach it (see TODO.md).
-        played_rounds = length(a.games)
-        threshold = div(played_rounds, 2)
+        # Not `length(a.games)`: that is this player's own game count, and a
+        # player holding a pre-recorded bye for the round being paired has one
+        # more of those than the tournament has played rounds.
+        played_rounds = Process.get(@played_key, length(a.games))
+
+        # `>> 1` in bbpPairings is a shift on DOUBLED point units, so it is an
+        # exact half, not a floor. `div/2` here rounded it down: at
+        # playedRounds 7 the real threshold is 3.5 and this used 3, admitting
+        # a player on exactly 3.5 as a topscorer where the reference requires
+        # strictly more than half. Kept as a float and compared with `>`, so
+        # 3.5 > 3.5 is false — which is what `(points * 2) > playedRounds`
+        # gives in the reference's own units.
+        threshold = played_rounds / 2
 
         played_rounds >= expected_rounds - 1 and
           (a.points > threshold or b.points > threshold)
@@ -2913,27 +2944,36 @@ defmodule OpenPair.Pairing do
   end
 
   # Absolute criterion C2: nobody receives a second pairing-allocated bye.
-  # bbpPairings' `eligibleForBye` (common.h:104) disqualifies a player who
-  # has ANY unplayed game either worth at least a win, or that was a
+  # bbpPairings' `eligibleForBye` (common.h:104-118) disqualifies a player who
+  # has an UNPLAYED game that is either worth at least a win, or was a
   # pairing-allocated bye:
   #
   #     U   pairing-allocated bye        both limbs
   #     F   full-point bye (arbiter)     worth a win
   #     +   forfeit win                  worth a win
-  #     W   unplayed win                 worth a win
   #
   # and leaves eligible the ones worth less: `H` (half-point bye), `Z`
-  # (zero-point bye), `D` (unplayed draw), `L` (unplayed loss).
+  # (zero-point bye), `-` (forfeit loss).
   #
-  # `W` was missing here. The fuzz harness never generates it — it only
-  # produces `H`/`Z` byes and `+`/`-` forfeits — so no measurement would
-  # have caught it, but a real TRF can carry one and it would have let a
-  # player take a second full point without playing.
+  # **`W` was here and should not have been**, on the reading that it is an
+  # "unplayed win". It is not. bbpPairings gates the whole rule on
+  # `!match.gameWasPlayed` (common.h:111) and sets that false for exactly
+  # `+ - H F U Z` and space (trf.cpp:278-286) — `W`, `D` and `L` are absent
+  # from that list, so they are PLAYED games, scored through the same
+  # WIN/DRAW/LOSS branch as `1`, `=` and `0` (trf.cpp:252-270). They are
+  # letter spellings of an ordinary result, and an ordinary win has never
+  # disqualified anybody from a bye.
+  #
+  # Unreachable through this repo's own parser either way, since `Trf.parse/1`
+  # normalises `W` to `1` before the engine sees it — but reachable from a
+  # caller that hands in player maps directly, which is exactly how the
+  # sibling Phoenix app uses this engine. There it would have barred a player
+  # from a bye for the crime of having won a game.
   #
   # Enforced as a hard requirement on the cascade's final state rather
   # than scored, so the search has to find a legal bye assignee or report
   # that none exists.
-  @bye_disqualifying_results ~w(U F + W)
+  @bye_disqualifying_results ~w(U F +)
 
   defp eligible_for_bye?(player) do
     not Enum.any?(player.games, &(&1.result in @bye_disqualifying_results))

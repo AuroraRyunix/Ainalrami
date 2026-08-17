@@ -128,8 +128,8 @@ defmodule OpenPair.Trf do
   forfeit win (`+`) all pay a full point, a half-point bye (`H`) pays a
   half, and a zero-point bye (`Z`) or forfeit loss (`-`) pays nothing.
   """
-  def points_for(result) when result in ~w(1 + F U), do: 1.0
-  def points_for(result) when result in ~w(= H), do: 0.5
+  def points_for(result) when result in ~w(1 + F U W), do: 1.0
+  def points_for(result) when result in ~w(= H D), do: 0.5
   def points_for(_result), do: 0.0
 
   @doc """
@@ -842,9 +842,31 @@ defmodule OpenPair.Trf do
     %{
       opponent_rank: if(id_raw in ["", "0000"], do: nil, else: parse_int(id_raw)),
       colour: if(colour in ["", "-"], do: nil, else: colour),
-      result: if(result == "", do: nil, else: result)
+      result: normalize_result(result)
     }
   end
+
+  # "W", "D" and "L" are TRF16's letter spellings of "1", "=" and "0", and are
+  # normalised to those on the way in, so one code means one thing everywhere
+  # downstream: the validation tables above, `points_for/1`, the engine's own
+  # `result_points/1`, and every criterion that reads a result.
+  #
+  # They are NOT "unplayed" results, which is what this file assumed by
+  # omitting them. Checked against bbpPairings' own reader rather than
+  # inferred: it sets `gameWasPlayed = false` for exactly "+", "-", "H", "F",
+  # "U", "Z" and space (`trf.cpp:278-286`) — W/D/L are absent, so they are
+  # played games against a real opponent — and it scores them through the
+  # same WIN/DRAW/LOSS branch as "1"/"="/"0" (`trf.cpp:252-270`). Omitting
+  # them meant `parse/1` raised `ValidationError` on a legal TRF16 file.
+  #
+  # A blank result column is also legal and means a loss, but this parser
+  # already maps a blank to `nil` above; that is a separate question from a
+  # code it fails to recognise, and is left alone deliberately.
+  defp normalize_result("W"), do: "1"
+  defp normalize_result("D"), do: "="
+  defp normalize_result("L"), do: "0"
+  defp normalize_result(""), do: nil
+  defp normalize_result(result), do: result
 
   defp parse_team_line(line, slot \\ 1, ranks \\ []) do
     cols = team_player_cols(slot)
