@@ -85,15 +85,23 @@ million tournaments (see [docs/validation.md](docs/validation.md)).
 
 ## Diagnostics
 
-- [ ] **Re-run the adjudication tables.** Those in the engineering log were
-      produced while `explain_round/3` stamped no float history, so C14–C21
-      scored a constant on both sides. The bug is fixed and covered by
-      `explain_round_test.exs`; the tables are not re-run.
+- [x] ~~**Re-run the adjudication tables.**~~ **Cannot be, and no longer
+      needs to be** (checked 2026-08-18). They were produced while
+      `explain_round/3` stamped no float history, so C14–C21 scored a
+      constant on both sides of every verdict — which could misattribute a
+      disagreement but never invent one.
 
-      They are not wrong about *whether* the engines differed — that comes
-      from the harness, not the scorer — but the "first differing rung"
-      column is only trustworthy where the winning rung outranks C14.
-      Needs a fresh large fuzz, since the original dumps were never kept.
+      Re-running them is impossible: they catalogue 40 disagreements, 39 of
+      which were one missing field in the bootstrap matching and no longer
+      occur at all. There is no position left to re-score. The single
+      survivor, `seed735265-r7-p10`, IS kept as a fixture and HAS been
+      re-adjudicated with the fixed instrument — twice, in fact, since the
+      `edge_count` guard later changed its verdict from
+      `theirs_scores_better` to `incomparable`.
+
+      So the tables stand as history, with the caveat already recorded
+      beside them. Nothing to do beyond not trusting their "first differing
+      rung" column below C14.
 
 ## Upstream
 

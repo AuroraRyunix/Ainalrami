@@ -52,13 +52,21 @@ not being paired in a particular round.**
 | **bbpPairings 6.0.0** | the player's position among those being paired this round |
 | **Gacrux** | the player's position among those paired now or previously (`rfp or rip`) |
 
-Gacrux's variant is the narrower of the two: it renumbers only around
-players who have never participated at all, which is at least reaching for
-the late-entry case of 2.5. bbpPairings renumbers around anyone not valid
-for the current round, which no reading of Article 2 supports.
-
 The three agree whenever the field is complete, because position and TPN
-are then the same number. They diverge the moment anyone sits out.
+are then the same number. They diverge the moment anyone sits out — and
+both references are **measured** doing so in the table below, not merely
+read.
+
+One distinction is source-derived and has *not* been measured: Gacrux's
+condition is `rfp or rip` — ready for pairing now, **or** paired at some
+point before — so it appears to renumber only around players who have
+never participated at all, where bbpPairings renumbers around anyone not
+valid for the current round. If that reading is right, the two references
+would part company in later rounds, when a player who has already played
+sits one out, and Gacrux would then agree with this engine. In round one
+the distinction cannot show, since nobody has played yet, which is where
+the measurement below is taken. Worth testing before the difference is
+relied on.
 
 ## The evidence
 
@@ -81,25 +89,37 @@ produce the alternation down the ranking that Article 5 describes:
 
 Now let TPNs 1 and 3 take a bye. The players being paired are
 2, 4, 5, 6, 7, 8, 9, 10 — positions 1..8. Position and TPN now disagree
-for TPN 2 (position 1) and agree for 4, 5 and 6 (positions 2, 3, 4):
+for TPN 2 (position 1) and agree for 4, 5 and 6 (positions 2, 3, 4).
+
+All three engines on that field, with Gacrux run rather than read:
 
 ```
- board |    ours     |  bbpPairings   | top TPN | parity | agree?
-     1 | 7 W, 2 B    | 2 W, 7 B       |       2 |  even  | NO
-     2 | 8 W, 4 B    | 8 W, 4 B       |       4 |  even  | yes
-     3 | 5 W, 9 B    | 5 W, 9 B       |       5 |  odd   | yes
-     4 | 10 W, 6 B   | 10 W, 6 B      |       6 |  even  | yes
+ board  | top TPN | parity | ours  | bbp   | gacrux | who follows 5.2.5?
+ 2v7    |       2 |  even  |     7 |     2 |      2 | ours
+ 4v8    |       4 |  even  |     8 |     8 |      8 | ours bbp gacrux
+ 5v9    |       5 |  odd   |     5 |     5 |      5 | ours bbp gacrux
+ 6v10   |       6 |  even  |    10 |    10 |     10 | ours bbp gacrux
 ```
 
 **Exactly one board differs, and it is exactly the board whose TPN parity
 and position parity disagree.** That is not a coincidence compatible with
 several explanations; it is the signature of this one.
 
+It also settles the Gacrux question empirically. Gacrux is normally the
+tiebreaker in this project — it is the third implementation of the same
+2026 rules, and it is what backs this engine against bbpPairings in
+[`dispute-seed735265.md`](dispute-seed735265.md). Here it does not: it
+answers 2, with bbpPairings. Both references renumber; only the engine
+following the handbook's own definition of a TPN answers 7.
+
 Reproduce:
 
 ```bash
 mix run tools/round_one_colours.exs 10 1,3
 ```
+
+(with `GACRUX_DIR` set, and under `MIX_ENV=test` so the reference adapters
+are compiled — without it the Gacrux column is simply blank.)
 
 ## Scale
 
