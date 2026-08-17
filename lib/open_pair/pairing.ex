@@ -3062,9 +3062,32 @@ defmodule OpenPair.Pairing do
 
       true ->
         case first_colour_difference(player, opponent) do
-          {nil, _} -> nil
-          {_, nil} -> nil
-          {_players_colour, opponents_colour} -> opponents_colour
+          {players_colour, opponents_colour}
+          when not is_nil(players_colour) and not is_nil(opponents_colour) ->
+            opponents_colour
+
+          # 5.2.3 could not separate them: the two have identical colour
+          # histories, so there is no "most recent time in which one player
+          # had White and the other Black".
+          #
+          # 5.2.4 decides next -- "grant the colour preference of the higher
+          # ranked player" -- and this used to skip it, falling straight to
+          # 5.2.5's odd-TPN rule. Both players hold the same preference here
+          # (the branch above rules out any other case), so the higher ranked
+          # of the two takes it and the other gets the opposite.
+          #
+          # Only reachable when two players' colour histories match exactly,
+          # which ordinary Swiss play makes uncommon -- different opponents
+          # give different colours -- and which no random corpus produced in
+          # 195 million pairings. It was found by building a position that
+          # forces it: see `tools/forced_exchange.exs`.
+          _ ->
+            #  is non-nil here: the first clause of this cond
+            # already handled a missing or differing preference, so both hold
+            # the same one and only who is higher ranked is left to decide.
+            if player.rank < opponent.rank,
+              do: p.preference,
+              else: invert(o.preference)
         end
     end
   end

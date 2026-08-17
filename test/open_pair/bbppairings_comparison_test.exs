@@ -141,6 +141,7 @@ defmodule OpenPair.BbppairingsComparisonTest do
           bbppairings: nil,
           trf: "",
           illegal: :raised,
+          colour_mismatches: 0,
           pairs_matched: 0,
           pairs_total: 0
         }
@@ -261,7 +262,8 @@ defmodule OpenPair.BbppairingsComparisonTest do
            match?: true,
            openpair: nil,
            bbppairings: [],
-           illegal: nil
+           illegal: nil,
+           colour_mismatches: 0
          })}
 
       {:ok, bbp_pairs} ->
@@ -282,6 +284,7 @@ defmodule OpenPair.BbppairingsComparisonTest do
             bbppairings: Enum.sort(bbp_pairs)
           })
           |> Map.merge(pair_agreement(openpair_pairs, bbp_pairs))
+          |> Map.put(:colour_mismatches, colour_mismatches(openpair_pairs, bbp_pairs))
           |> Map.put(:illegal, illegality(openpair_pairs, active, players, forbidden))
 
         next_players = apply_round(players, bbp_pairs, simulate_results(bbp_pairs))
@@ -294,6 +297,7 @@ defmodule OpenPair.BbppairingsComparisonTest do
            match?: false,
            illegal: nil,
            openpair: nil,
+           colour_mismatches: 0,
            bbppairings: {:error, code, out}
          })}
     end
@@ -312,6 +316,31 @@ defmodule OpenPair.BbppairingsComparisonTest do
 
   defp pairings_match?(openpair_pairs, bbp_pairs),
     do: normalize(openpair_pairs) == normalize(bbp_pairs)
+
+  # WHO IS WHITE, which `normalize/1` deliberately throws away.
+  #
+  # Every rate this harness has ever reported is colour-blind: it sorts each
+  # pair's two ranks before comparing, so 4.3 million tournaments and 195
+  # million pairings validated who plays whom and never once checked Article
+  # 5. A missing 5.2.4 survived all of it, and was found only by building a
+  # position by hand. Counted separately from pairing agreement, because the
+  # two fail for different reasons and a colour difference on an otherwise
+  # identical round is not the same finding as a different round.
+  defp colour_mismatches({:raised, _}, _bbp_pairs), do: 0
+
+  defp colour_mismatches(openpair_pairs, bbp_pairs) do
+    theirs = MapSet.new(bbp_pairs)
+
+    Enum.count(openpair_pairs, fn
+      {_w, nil} ->
+        false
+
+      {w, b} = pair ->
+        # Only a pair both engines formed can disagree about colour; a pair
+        # only we formed is a pairing difference, already counted.
+        MapSet.member?(theirs, {b, w}) and not MapSet.member?(theirs, pair)
+    end)
+  end
 
   defp summarise({:raised, _} = raised), do: raised
   defp summarise(pairs), do: Enum.sort(pairs)
@@ -521,6 +550,22 @@ defmodule OpenPair.BbppairingsComparisonTest do
   end
 
   defp report(comparisons, errors, exhausted, rounds) do
+    colour_bad = comparisons |> Enum.map(&Map.get(&1, :colour_mismatches, 0)) |> Enum.sum()
+
+    if colour_bad > 0 do
+      IO.puts(
+        "
+  !! #{colour_bad} pair(s) agreed on WHO plays whom but disagreed on who is WHITE." <>
+          "
+     Article 5 is a real conformance surface and this harness was blind to it" <>
+          "
+     until 2026-08-17 -- `normalize/1` sorts each pair's ranks before comparing."
+      )
+    else
+      IO.puts("
+  colours: every commonly-formed pair agreed on who is White.")
+    end
+
     IO.puts("\nbbpPairings comparison, #{rounds} round(s) per tournament:\n")
     IO.puts("  round | exact rounds |    rate | individual pairs |    rate | refused | illegal")
 

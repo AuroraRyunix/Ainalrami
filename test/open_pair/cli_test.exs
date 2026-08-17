@@ -176,7 +176,19 @@ defmodule OpenPair.CLITest do
     assert out =~ "pairing round 2"
     # Round-1 winners A(1) and B(2) bracket together; round-1 losers C(3)
     # and D(4) bracket together — see sample_trf_with_history/0's doc.
-    assert out =~ "2\r\n1 2\r\n3 4\r\n"
+    #
+    # B(2) takes White on board 1, and this asserted the opposite until
+    # 2026-08-17. Both A and B played White in round 1, so both hold a strong
+    # preference for Black and their colour histories are identical: 5.2.1
+    # cannot grant both, 5.2.2 cannot separate two equally strong
+    # preferences, and 5.2.3 has no round in which one had White and the
+    # other Black. C.04.3 5.2.4 decides — "grant the colour preference of the
+    # higher ranked player" — so A(1) gets Black.
+    #
+    # `choose_colour/2` skipped 5.2.4 and fell through to 5.2.5's odd-TPN
+    # rule, which handed A the initial colour instead. Confirmed against
+    # bbpPairings on this exact position: it answers `2 1`.
+    assert out =~ "2\r\n2 1\r\n3 4\r\n"
   end
 
   test "-p on a missing file exits 1 with a clear error" do
@@ -310,7 +322,7 @@ defmodule OpenPair.CLITest do
     assert code == 0
     refute out =~ "Loading"
     refute out =~ "players,"
-    assert out =~ "2\r\n1 2\r\n3 4\r\n"
+    assert out =~ "2\r\n2 1\r\n3 4\r\n"
   end
 
   describe "-c (Pairings Checker)" do
