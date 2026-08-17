@@ -13,9 +13,10 @@ still ship. It reads and writes TRF16, mirrors JaVaFo's command-line
 shape, and is verified against two independent reference implementations.
 
 **Status: beta.** The engine is functionally complete and reproduces
-bbpPairings 6.0.0 exactly across 4.3 million generated tournaments. One
-conformance question remains open (Article 4.3) and one is settled against
-both reference engines (Article 5.2.5); both are documented rather than
+bbpPairings 6.0.0 exactly across 4.3 million generated tournaments.
+Article 4's candidate ordering is verified against the regulations
+directly, and one point of Article 5 is settled *against* both reference
+engines, from the handbook's own text. Both are documented rather than
 hidden — see [What is not settled](#what-is-not-settled).
 
 ---

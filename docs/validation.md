@@ -42,6 +42,23 @@ measuring nothing.
 **4.3 million tournaments, ~195 million individual pairings, one
 disagreement**, from the 2026-08-17 runs on a 36-core machine.
 
+> **This corpus predates the 2026-08-18 changes and has not been re-run at
+> that scale.** What changed since: `152` is written as well as read, the
+> initial colour is inferred when a file omits it, the CLI forwards the
+> drawing of lots, `260`/`250` are implemented, and `forbidden_map/2` took
+> a round argument.
+>
+> None of them touches a path this corpus exercises — the harness writes
+> its own `152` and passes the colour explicitly, so the inference never
+> fires; it emits `XXP`/`XXA` and never `260`/`250`; and `forbidden_map`'s
+> behaviour for a plain group list is unchanged. The claim is nevertheless
+> that the *engine* was re-validated, not that the corpus was: **5,000
+> tournaments / 35,525 rounds / 354,804 pairings after the changes, at
+> 100.00% with zero illegal rounds and zero unexplained colour
+> differences**, across the combined-axis and even-round configurations.
+>
+> Re-running the full corpus is a machine-hours job, not a code change.
+
 | axis | tournaments | exact rounds | individual pairs | illegal |
 |---|---|---|---|---|
 | plain, 4–40 players | 120,000 | 100.00% | 100.00% | 0 |
