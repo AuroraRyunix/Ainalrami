@@ -405,7 +405,30 @@ defmodule OpenPair.Pairing do
   # `within_bracket_weight/4` is load-bearing rather than decorative:
   # maximising rank distance is what produces the S1-vs-S2 halving in the
   # first place, and removing it measured 90.29% -> 42.21% of rounds.
-  defp transposition_key(bracket, group, partner) do
+  @doc """
+  Article 4.2's transposition order for one bracket, as a comparable key.
+
+  Returns, for each S1 member in Article 1.2 order, the INDEX in S2 of the
+  player they face (or `length(s2)` when they are unpaired). Smaller wins,
+  compared lexicographically.
+
+  **This is 4.2.2's ordering exactly, not an approximation of it.** The
+  article sorts transpositions by "the lexicographic value of their first N1
+  BSN(s)" — the BSNs of the players facing S1[0], S1[1], … S2 is sorted by
+  Article 1.2 and BSNs are assigned in that same order (4.1.1), so a member's
+  index in S2 and their BSN rank within S2 increase together. Lexicographic
+  comparison over indices therefore induces the identical order as
+  lexicographic comparison over BSNs. `sequence_test.exs` checks this against
+  `OpenPair.Sequence.transpositions/2` rather than leaving it as an argument.
+
+  What it does NOT cover is Article 4.3. Once every transposition of a given
+  S1/S2 has been tried, the regulations *exchange* players between the two
+  subgroups and start the sequence again, reaching candidates no transposition
+  can. Those candidates are still considered here — the matcher searches every
+  matching — but ties among them are not ranked by generation order, and that
+  is the whole of the remaining divergence from 3.8.1.
+  """
+  def transposition_key(bracket, group, partner) do
     score = hd(group).points
     {mdps, residents} = Enum.split_with(bracket, &(&1.points > score))
 

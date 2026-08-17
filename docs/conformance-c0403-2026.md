@@ -90,16 +90,45 @@ under 3.8.1 with "generated earlier in the sequence" as the final tie-break.
 This engine instead solves each bracket as a maximum-weight matching whose
 edge weights pack C1–C21 in priority order, which reaches the same optimum
 without enumerating candidates. The two agree on which pairing is *best*;
-they differ in how ties below every criterion are broken, since 3.8.1's last
-resort is generation order and this engine's is `transposition_key/3`'s
-lexicographic key over S2 indices.
+the question has been how they break a tie below every criterion, since
+3.8.1's last resort is generation order and this engine's is
+`transposition_key/3`.
 
-That approximation is the largest remaining gap between this implementation
-and the letter of the regulations. It has never produced a measured
-disagreement with bbpPairings — 4.3M tournaments, one disagreement, and that
-one is a case where bbpPairings breaches C2 (see
-`docs/dispute-seed735265.md`) — but "not observed" is not "cannot happen",
-and this is the place it would come from.
+**Measured 2026-08-17, and the gap is far narrower than it was carried as.**
+
+`transposition_key/3` is **not an approximation of 4.2 — it is 4.2**. The
+article sorts transpositions by "the lexicographic value of their first N1
+BSN(s)"; the key is the S2 *index* of each S1 member's opponent. S2 is sorted
+by Article 1.2 and BSNs are assigned in that same order (4.1.1), so index and
+BSN rank within S2 increase together, and the two lexicographic orders are
+identical.
+
+That is checked rather than argued. `tiebreak_order_test.exs` generates
+candidates with `OpenPair.Sequence` — which knows nothing about the engine —
+and asserts the key increases strictly along Article 4.2's order, over a
+homogeneous bracket (all 24 orderings), an odd bracket where one player
+downfloats, and a heterogeneous bracket ordered on its MDPs (all 20). It also
+checks the identity pairing S1[i]-vs-S2[i], the candidate 3.3.1 builds before
+any alteration, sorts first.
+
+### What remains
+
+Only Article 4.3. Once every transposition of a given S1/S2 is exhausted, the
+regulations *exchange* players between the subgroups and restart the sequence,
+reaching candidates no transposition can — with S1 fixed, no transposition can
+ever pair two S1 members with each other, and an exchange can.
+
+Those candidates are still *considered* here: the matcher searches every
+matching, so none is unreachable. What is missing is a generation-order
+ranking **among tied candidates that differ by an exchange**. That is the
+entire remaining divergence from 3.8.1, and it is a good deal smaller than
+"the tie-break is approximate".
+
+It has never produced a measured disagreement with bbpPairings — 4.3M
+tournaments, one disagreement, and that one is a case where bbpPairings
+breaches C2 (see `docs/dispute-seed735265.md`). But "not observed" is not
+"cannot happen", and this is now the only place in the engine where it
+could come from.
 
 `OpenPair.Sequence` implements Article 4's ordering itself, checked against
 every worked example the article gives, so the oracle for closing this now
