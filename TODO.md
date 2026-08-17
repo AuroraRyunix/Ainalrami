@@ -11,21 +11,23 @@ disagreement in 4.3M tournaments, and both are real anyway: "not observed"
 is not "cannot happen", and these are the only two places left where a
 disagreement could come from.
 
-- [ ] **Article 4.3 — exchange ordering.** 4.2's transposition order is
-      proven identical to `transposition_key/3` and tested. 4.3's exchange
-      order has no equivalent ranking: those candidates are all considered
-      by the matcher, but tied ones are not ordered by generation.
+- [ ] **Article 4.3 in a HETEROGENEOUS bracket.** Mostly closed on
+      2026-08-17 by `exchange_order_test.exs`, which walks Article 4's
+      sequence with `Ainalrami.Sequence` and confirms the engine returns
+      the earliest-generated best candidate — on a position where exchanges
+      are the only route to a legal pairing, and over forty random
+      single-score brackets.
 
-      `Ainalrami.Sequence` already implements Article 4's ordering and is
-      checked against the article's own worked examples, so the oracle
-      exists. What does not exist is the differential test using it.
+      Those positions are all **homogeneous**, and that is not an oversight:
+      candidates that float different players produce different bracket
+      structures, whose rung vectors are not commensurable, so the
+      comparison has to hold the bracket fixed. A bracket carrying
+      moved-down players, where 3.7.2 alters the MDP-Pairing once the
+      remainder is exhausted, is the residue.
 
-      **It has to run per bracket.** The round-level version was built and
-      thrown away: the ladder is defined per bracket, bracket composition
-      depends on which players a pairing floats, so two round-pairings
-      produce different bracket structures whose rung vectors are not
-      commensurable. That means wiring `Sequence` into the bracket loop,
-      not around the round — real work, not a script. Reasoning in full in
+      `Sequence.mdp_sets/2` implements 4.4.2's ordering and is the oracle.
+      The hard part is not the ordering but constructing positions where a
+      heterogeneous bracket's candidates stay comparable — see
       [docs/conformance-c0403-2026.md](docs/conformance-c0403-2026.md).
 
 - [x] ~~**Article 5.2.5 — which number the parity applies to.**~~

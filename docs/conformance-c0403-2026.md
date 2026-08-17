@@ -152,28 +152,58 @@ downfloats, and a heterogeneous bracket ordered on its MDPs (all 20). It also
 checks the identity pairing S1[i]-vs-S2[i], the candidate 3.3.1 builds before
 any alteration, sorts first.
 
-### What remains
+### Article 4.3, measured 2026-08-17
 
-Only Article 4.3. Once every transposition of a given S1/S2 is exhausted, the
-regulations *exchange* players between the subgroups and restart the sequence,
-reaching candidates no transposition can — with S1 fixed, no transposition can
-ever pair two S1 members with each other, and an exchange can.
+Once every transposition of a given S1/S2 is exhausted, the regulations
+*exchange* players between the subgroups and restart the sequence, reaching
+candidates no transposition can — with S1 fixed, no transposition can ever
+pair two S1 members with each other, and an exchange can.
 
-Those candidates are still *considered* here: the matcher searches every
-matching, so none is unreachable. What is missing is a generation-order
-ranking **among tied candidates that differ by an exchange**. That is the
-entire remaining divergence from 3.8.1, and it is a good deal smaller than
-"the tie-break is approximate".
+Those candidates were always *considered* here, since the matcher searches
+every matching. What had never been checked is whether the engine picks the
+same one **among candidates that tie**, where 3.8.1's last resort is
+generation order.
 
-It has never produced a measured disagreement with bbpPairings — 4.3M
-tournaments, one disagreement, and that one is a case where bbpPairings
-breaches C2 (see `docs/dispute-seed735265.md`). But "not observed" is not
-"cannot happen", and this is now the only place in the engine where it
-could come from.
+It does, on every position tested. `exchange_order_test.exs`:
 
-`Ainalrami.Sequence` implements Article 4's ordering itself, checked against
-every worked example the article gives, so the oracle for closing this now
-exists. What does not exist is the differential test that would use it.
+- **A position where 4.3 is the sole decider.** Eight players on one score,
+  every one of the sixteen S1×S2 pairs already played and no intra-half pair
+  played — so no transposition can produce a legal candidate at all, and
+  only an exchange reaches one. The engine returns exactly the first
+  candidate Article 4's sequence generates: the size-2 exchange
+  `{1,2,5,6}/{3,4,7,8}`, whose identity pairing is already legal. The
+  sixteen size-1 exchanges that precede it are pinned as correctly passed
+  over — none can yield a legal candidate, because only intra-half pairs are
+  legal and that needs S1 and S2 to hold equal numbers from each half.
+- **Forty randomly generated single-score brackets**, each enumerated in
+  full Article 4 order (up to ~1680 candidates for eight players), scored
+  with the engine's own ladder. In every one the engine's answer is the
+  earliest-generated candidate among those tying for the best rung vector,
+  which is 3.8.1 stated literally.
+
+The scoring half is the engine's own ladder and is not independent; it is
+not meant to be. What is independent is the **order**, which comes from
+`Ainalrami.Sequence` — a module that knows nothing about criteria, weights
+or legality — and the order is the entire question 4.3 raises.
+
+### What remains of it
+
+The positions above are **homogeneous**: one score group, no MDPs, nothing
+floating. That is deliberate, for the reason in "Why that test is harder
+than it looks" below — a candidate that floats a different player changes
+the bracket structure and makes the rung vectors incommensurable, so the
+comparison has to hold the bracket fixed.
+
+So what is established is that the engine follows 4.3's generation order
+**when a bracket's candidates are directly comparable**. A heterogeneous
+bracket, where 3.7.2 alters the MDP-Pairing once the remainder is
+exhausted, is not covered by a differential test and remains the honest
+residue of this gap. `Ainalrami.Sequence.mdp_sets/2` implements 4.4.2's
+ordering and is the oracle for closing it.
+
+Neither case has ever produced a measured disagreement with bbpPairings —
+4.3M tournaments, one disagreement, and that one is a case where
+bbpPairings breaches C2 (see `dispute-seed735265.md`).
 
 ### Why that test is harder than it looks
 

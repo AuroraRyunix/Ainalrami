@@ -164,17 +164,28 @@ illegal rounds** across eleven axes.
 Documented rather than hidden, because an engine claiming 100% owes an
 account of where it could still be wrong:
 
-- **Article 4.3 — exchange ordering.** The regulations pair a bracket by
-  generating candidates in a defined sequence and taking the best, with
-  "generated earlier" as the final tie-break. This engine instead solves a
-  maximum-weight matching, which reaches the same optimum without
-  enumerating. Article 4.2's transposition order is proven equivalent to
-  the engine's tie-break key and tested; **4.3's exchange order is not**.
-  Those candidates are all *considered* — the matcher searches every
-  matching — but tied ones have no generation-order ranking.
-Article 4.3 has never produced a measured disagreement. "Not observed" is
-not "cannot happen", and it is the only place left in the pairing itself
-where one could come from.
+- **Article 4.3 in a heterogeneous bracket.** The regulations pair a
+  bracket by generating candidates in a defined sequence and taking the
+  best, with "generated earlier" as the final tie-break. This engine solves
+  a maximum-weight matching instead, reaching the same optimum without
+  enumerating.
+
+  4.2's transposition order is proven identical to the engine's tie-break
+  key. **4.3's exchange order is now tested too** — on a position built so
+  that exchanges are the only route to a legal pairing, and over forty
+  random single-score brackets enumerated in full Article 4 order. The
+  engine returns the earliest-generated best candidate every time.
+
+  What remains uncovered is a **heterogeneous** bracket, where moved-down
+  players are present and 3.7.2 alters the MDP-Pairing. Candidates there
+  float different players, which changes the bracket structure and makes
+  their scores incommensurable, so the differential test cannot simply be
+  pointed at them. `Ainalrami.Sequence.mdp_sets/2` is the oracle for
+  closing it.
+
+This has never produced a measured disagreement. "Not observed" is not
+"cannot happen", and it is the only place left in the pairing itself where
+one could come from.
 
 ### A second dispute, settled from the handbook
 
