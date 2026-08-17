@@ -306,7 +306,8 @@ defmodule OpenPair.BbppairingsComparisonTest do
   defp safely_pair(players, total_rounds, forbidden) do
     Pairing.pair_next_round(players,
       expected_rounds: total_rounds,
-      forbidden_pairs: forbidden
+      forbidden_pairs: forbidden,
+      initial_colour: String.downcase(initial_colour())
     )
   rescue
     e -> {:raised, e}
@@ -704,6 +705,14 @@ colour disagreement: we say #{w} White, bbpPairings says #{b} White")
       bbpPairings: #{inspect(m.bbppairings)}
     """
   end
+
+  # C.04.3 5.1's initial colour. `PAIRING_FUZZ_INITIAL_COLOUR=B` runs the
+  # corpus with Black drawn instead, which no axis did before 2026-08-17: the
+  # line was hardcoded `152 W`, so 5.2.5's "give them the initial-colour"
+  # branch was only ever exercised one way round -- and the engine's own
+  # hardcoded assumption of White agreed with it by accident rather than by
+  # reading the field.
+  defp initial_colour, do: System.get_env("PAIRING_FUZZ_INITIAL_COLOUR", "W")
 
   defp env_int(name, default) do
     name |> System.get_env(to_string(default)) |> String.to_integer()

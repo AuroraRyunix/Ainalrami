@@ -100,6 +100,16 @@ defmodule OpenPair.Trf do
     # reader.
     number_of_rounds: "142",
     round_dates: "132",
+    # TRF-2026's initial-piece-colour field: the colour drawn by lot before
+    # round 1 (C.04.3 5.1), which 5.2.5 hands to the higher ranked player of
+    # a pair when neither holds a preference. Parsed as `"w"`/`"b"` into
+    # `tournament[:initial_colour]`.
+    #
+    # It was not read at all until 2026-08-17: the engine assumed White
+    # unconditionally, so a file specifying Black was paired with every
+    # no-preference colour inverted, and no test could see it because the
+    # harness only ever wrote `152 W`.
+    initial_colour: "152",
     generator: "182"
   }
 
@@ -780,6 +790,13 @@ defmodule OpenPair.Trf do
 
       :round_dates ->
         acc
+
+      :initial_colour ->
+        case String.downcase(value) do
+          "w" -> put_in(acc.tournament[:initial_colour], "w")
+          "b" -> put_in(acc.tournament[:initial_colour], "b")
+          _ -> acc
+        end
 
       :deputy_arbiter ->
         update_in(acc.tournament.deputy_arbiters, &(&1 ++ [value]))

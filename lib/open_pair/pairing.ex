@@ -78,6 +78,11 @@ defmodule OpenPair.Pairing do
   # could fire a round early for them; a late entrant has fewer, so it could
   # fail to fire when it should.
   @played_key :openpair_played_rounds
+  # C.04.3 5.1's initial colour -- the one drawn by lot before round 1, which
+  # 5.2.5 gives to the higher ranked player of a pair when neither holds a
+  # preference. Defaults to White, which is what this engine assumed
+  # unconditionally until the TRF's `152` field was read at all.
+  @initial_colour_key :openpair_initial_colour
 
   @doc """
   Pairs the next round, dispatching to `pair_round_one/1` when no game
@@ -96,6 +101,7 @@ defmodule OpenPair.Pairing do
     # a required argument, and stashed rather than threaded through the
     # cascade, matching how the search budget is already carried.
     Process.put(@expected_rounds_key, opts[:expected_rounds])
+    Process.put(@initial_colour_key, opts[:initial_colour] || "w")
     Process.put(@forbidden_key, forbidden_map(opts[:forbidden_pairs]))
 
     try do
@@ -121,6 +127,7 @@ defmodule OpenPair.Pairing do
       end
     after
       Process.delete(@expected_rounds_key)
+      Process.delete(@initial_colour_key)
       Process.delete(@played_key)
       Process.delete(@forbidden_key)
     end
@@ -203,6 +210,7 @@ defmodule OpenPair.Pairing do
   """
   def explain_round(players, pairs, opts \\ []) do
     Process.put(@expected_rounds_key, opts[:expected_rounds])
+    Process.put(@initial_colour_key, opts[:initial_colour] || "w")
     Process.put(@forbidden_key, forbidden_map(opts[:forbidden_pairs]))
 
     try do
@@ -252,6 +260,7 @@ defmodule OpenPair.Pairing do
       |> Enum.reverse()
     after
       Process.delete(@expected_rounds_key)
+      Process.delete(@initial_colour_key)
       Process.delete(@played_key)
       Process.delete(@forbidden_key)
       Process.delete(@bye_score_key)
@@ -516,7 +525,13 @@ defmodule OpenPair.Pairing do
   # switchable constant — with only one convention ever in use, that
   # abstraction was dead code the compiler rightly flagged.
   defp assign_colour_round_one(top, bottom) do
-    if rem(top.rank, 2) == 1 do
+    # 5.2.5, with the initial colour taken from the file's `152` field rather
+    # than assumed. `top` holds the initial colour on an odd TPN and the
+    # opposite on an even one; White is the default when the file is silent.
+    initial_white? = Process.get(@initial_colour_key, "w") == "w"
+    top_takes_initial? = rem(top.rank, 2) == 1
+
+    if top_takes_initial? == initial_white? do
       {top.rank, bottom.rank}
     else
       {bottom.rank, top.rank}
