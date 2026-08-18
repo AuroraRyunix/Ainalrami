@@ -12,7 +12,10 @@
 mode = System.argv() |> Enum.at(0, "verify")
 path = "matching_baseline.bin"
 
-graphs =
+# Two tiers. The small one is where blossom formation and expansion are
+# easy to hit by chance; the large one is where a scale-dependent error
+# would hide, and is the size the engine actually runs at.
+small =
   for seed <- 1..400 do
     :rand.seed(:exsss, {seed, seed * 7919, seed * 104_729})
     n = Enum.random(2..26)
@@ -26,6 +29,23 @@ graphs =
 
     {seed, n, edges}
   end
+
+large =
+  for seed <- 1001..1060 do
+    :rand.seed(:exsss, {seed, seed * 7919, seed * 104_729})
+    n = Enum.random(40..90)
+    scale = Enum.random([1, 1_000_000_000])
+    density = Enum.random([40, 70, 100])
+
+    edges =
+      for i <- 0..(n - 2), j <- (i + 1)..(n - 1), :rand.uniform(100) <= density do
+        {i, j, :rand.uniform(50) * scale}
+      end
+
+    {seed, n, edges}
+  end
+
+graphs = small ++ large
 
 results =
   Enum.map(graphs, fn {seed, n, edges} ->
