@@ -20,3 +20,4 @@ erl_crash.dump
 /overnight_run/bye*/
 /overnight_run/forfeit*/
 /overnight_run/*.log
+/matching_baseline.bin

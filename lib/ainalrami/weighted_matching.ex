@@ -88,16 +88,27 @@ defmodule Ainalrami.WeightedMatching do
   end
 
   defp build_state(n, edges) do
+    # Adjacency, not a flat `{u, v} => w` map. `resistance/3` is the
+    # innermost operation in the whole algorithm -- the delta scans call it
+    # once per vertex pair, every step -- and a tuple key means allocating
+    # and hashing a two-tuple on each of those. Nesting lets the scans
+    # fetch one vertex's row once and then do plain single-key lookups
+    # against it.
     weights =
       Enum.reduce(edges, %{}, fn {i, j, w}, acc ->
         if w > 0 do
-          acc |> Map.put({i, j}, 2 * w) |> Map.put({j, i}, 2 * w)
+          acc
+          |> Map.update(i, %{j => 2 * w}, &Map.put(&1, j, 2 * w))
+          |> Map.update(j, %{i => 2 * w}, &Map.put(&1, i, 2 * w))
         else
           acc
         end
       end)
 
-    max_w = weights |> Map.values() |> Enum.max(fn -> 0 end)
+    max_w =
+      Enum.reduce(edges, 0, fn {_i, _j, w}, acc ->
+        if w > 0, do: max(acc, 2 * w), else: acc
+      end)
 
     state = %{
       n: n,
@@ -412,28 +423,51 @@ defmodule Ainalrami.WeightedMatching do
 
   # resistance(u, v) = dual[u] + dual[v] - weight(u, v); nil if no edge.
   defp resistance(state, u, v) do
-    case Map.get(state.weight, {u, v}) do
-      nil -> nil
-      w -> dual_of(state, u) + dual_of(state, v) - w
+    case state.weight do
+      %{^u => row} ->
+        case row do
+          %{^v => w} -> dual_of(state, u) + dual_of(state, v) - w
+          _ -> nil
+        end
+
+      _ ->
+        nil
     end
   end
 
+  # Hoisted rather than restructured: the traversal and the answer are
+  # exactly what the straightforward nested `resistance/3` loop gave. What
+  # moved is the repeated work — each outer vertex's dual is looked up once
+  # for the whole scan instead of once per candidate, and each candidate's
+  # adjacency row and dual once instead of once per outer vertex.
   defp min_free_or_zero_to_outer(state) do
-    outer_vertices = outer_vertices(state)
+    duals = state.dual
+    outer_with_duals = Enum.map(outer_vertices(state), &{&1, Map.fetch!(duals, &1)})
 
     non_outer_blossoms =
       top_blossoms(state) |> Enum.filter(&(Map.get(state.label, &1) in [:free, :zero]))
 
     non_outer_blossoms
     |> Enum.flat_map(&blossom_vertices(state, &1))
-    |> Enum.reduce({nil, nil}, fn v, {best, best_v} ->
-      Enum.reduce(outer_vertices, {best, best_v}, fn ov, {best, best_v} ->
-        case resistance(state, v, ov) do
-          nil -> {best, best_v}
-          r when best == nil or r < best -> {r, v}
-          _ -> {best, best_v}
-        end
-      end)
+    |> Enum.reduce({nil, nil}, fn v, acc ->
+      case state.weight do
+        %{^v => row} ->
+          dual_v = Map.fetch!(duals, v)
+
+          Enum.reduce(outer_with_duals, acc, fn {ov, dual_ov}, {best, best_v} ->
+            case row do
+              %{^ov => w} ->
+                r = dual_v + dual_ov - w
+                if best == nil or r < best, do: {r, v}, else: {best, best_v}
+
+              _ ->
+                {best, best_v}
+            end
+          end)
+
+        _ ->
+          acc
+      end
     end)
   end
 
@@ -483,14 +517,34 @@ defmodule Ainalrami.WeightedMatching do
     outer_blossoms = top_blossoms(state) |> Enum.filter(&(Map.get(state.label, &1) == :outer))
     vertices = Map.new(outer_blossoms, &{&1, blossom_vertices(state, &1)})
 
+    duals = state.dual
+
     for b0 <- outer_blossoms, b1 <- outer_blossoms, b0 < b1, reduce: {nil, nil} do
       acc ->
-        for v0 <- Map.fetch!(vertices, b0), v1 <- Map.fetch!(vertices, b1), reduce: acc do
-          {best, best_pair} ->
-            case resistance(state, v0, v1) do
-              nil -> {best, best_pair}
-              r when best == nil or r < best -> {r, {v0, v1}}
-              _ -> {best, best_pair}
+        # Same hoisting as `min_free_or_zero_to_outer/1`: b1's vertices
+        # carry their duals for the whole of b0's loop, and each v0 fetches
+        # its adjacency row and dual once.
+        right = Enum.map(Map.fetch!(vertices, b1), &{&1, Map.fetch!(duals, &1)})
+
+        for v0 <- Map.fetch!(vertices, b0), reduce: acc do
+          inner ->
+            case state.weight do
+              %{^v0 => row} ->
+                dual_v0 = Map.fetch!(duals, v0)
+
+                Enum.reduce(right, inner, fn {v1, dual_v1}, {best, best_pair} ->
+                  case row do
+                    %{^v1 => w} ->
+                      r = dual_v0 + dual_v1 - w
+                      if best == nil or r < best, do: {r, {v0, v1}}, else: {best, best_pair}
+
+                    _ ->
+                      {best, best_pair}
+                  end
+                end)
+
+              _ ->
+                inner
             end
         end
     end
