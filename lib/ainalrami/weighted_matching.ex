@@ -249,8 +249,20 @@ defmodule Ainalrami.WeightedMatching do
   end
 
   defp init_labels(state) do
+    # The set of top-level blossoms is exactly the previous stage's label
+    # KEYS: `form_blossom/3` and `expand_blossom/2` keep that key set
+    # current, so it survives the boundary even though the label VALUES do
+    # not. Re-deriving it from `in_blossom` -- as this used to, with a
+    # `Map.values |> Enum.uniq` over every vertex -- was a full O(V) walk
+    # per stage for information already in hand. The very first stage has
+    # no labels yet and falls back to `in_blossom`.
+    top =
+      if map_size(state.label) == 0,
+        do: state.in_blossom |> Map.values() |> Enum.uniq(),
+        else: Map.keys(state.label)
+
     label =
-      Enum.reduce(top_blossoms(state), %{}, fn b, acc ->
+      Enum.reduce(top, %{}, fn b, acc ->
         cond do
           matched?(state, b) -> Map.put(acc, b, :free)
           dual_of(state, base_vertex(state, b)) > 0 -> Map.put(acc, b, :outer)
@@ -286,7 +298,17 @@ defmodule Ainalrami.WeightedMatching do
   # over one corpus, not an invariant — and an invariant is what a pairing
   # engine's determinism should rest on.
   defp top_blossoms(state) do
-    state.in_blossom |> Map.values() |> Enum.uniq() |> Enum.sort()
+    # The label map's keys ARE the top-level blossoms: `init_labels/1`
+    # populates it for every one at a stage boundary, `form_blossom/3` adds
+    # the new blossom and removes its children, `expand_blossom/2` does the
+    # reverse. Reading it is O(top-level count); deriving the same set from
+    # `in_blossom` -- as this used to -- was O(V) per call plus a sort, and
+    # this is called four thousand times per solve on a 209-player field.
+    #
+    # Still SORTED, for the reason the comment above gives: several
+    # consumers take the first strict minimum, and Erlang's map order is
+    # not stable across the 32-key flatmap-to-hashmap transition.
+    state.label |> Map.keys() |> Enum.sort()
   end
 
   defp matched?(state, b), do: Map.has_key?(state.blossom_match, b)
@@ -552,21 +574,105 @@ defmodule Ainalrami.WeightedMatching do
     # the outer set is only the unmatched ones. It starts at the whole
     # field and shrinks towards nothing as the matching fills in, which is
     # precisely the shape that makes iterating all V vertices wasteful.
-    Enum.reduce(0..(state.n - 1)//1, state, &offer_vertex(&2, &1))
+    # Only the outer vertices are walked at all -- everything a non-outer
+    # vertex needs is delivered TO it by an outer neighbour's offer.
+    state.label
+    |> Enum.filter(fn {_b, l} -> l == :outer end)
+    |> Enum.flat_map(fn {b, _} -> blossom_vertices(state, b) end)
+    |> Enum.reduce(state, &settle_outer_vertex(&2, &1))
   end
 
-  # Fold a set of just-changed vertices back in. Two directions, and both
-  # are needed: the changed vertices need their own entries rebuilt, and
-  # every OTHER vertex needs them offered, since a vertex that has just
-  # become outer is a new candidate for everyone it neighbours.
+  # Fold a set of just-changed vertices back in, doing exactly what each
+  # one's NEW label requires and no more.
   #
-  # Offering after recomputing is safe in either order — an offer only ever
-  # takes a minimum against what is already there, and a freshly recomputed
-  # entry already accounts for the offer.
+  # This used to recompute every changed vertex's own entry and then offer
+  # every changed vertex to its neighbours — two full walks of each
+  # adjacency row, and half of them for nothing: a vertex that has just
+  # become INNER is neither a cache subject nor a candidate for anyone, so
+  # offering it walked two hundred neighbours to hit `_ -> state` every
+  # time. `offer_vertex/2` was 62% of a solve, from 35,000 calls.
+  #
+  # Now:
+  #
+  #   * newly INNER — delete its entries. No walk.
+  #   * newly OUTER — ONE walk of its row that computes its own best cross
+  #     edge and offers it to every neighbour in the same pass. The two
+  #     jobs read the same neighbours with the same duals; fusing them is
+  #     free.
+  #   * newly FREE or ZERO (only after an expansion) — recompute its
+  #     `best_outer`, which does need a walk, since its neighbours' outer
+  #     status is what it depends on. Nothing to offer: it is not outer.
+  #
+  # Same maps as before, reached with roughly a third of the row visits.
   defp refresh_caches(state, changed) do
-    state = Enum.reduce(changed, state, &recompute_vertex(&2, &1))
+    Enum.reduce(changed, state, fn v, state ->
+      case Map.get(state.label, Map.fetch!(state.in_blossom, v)) do
+        :inner ->
+          %{
+            state
+            | best_outer: Map.delete(state.best_outer, v),
+              best_cross: Map.delete(state.best_cross, v)
+          }
 
-    Enum.reduce(changed, state, &offer_vertex(&2, &1))
+        :outer ->
+          settle_outer_vertex(state, v)
+
+        _ ->
+          recompute_vertex(state, v)
+      end
+    end)
+  end
+
+  # For a vertex that is (now) outer: its own best cross edge and its offer
+  # to every neighbour, in one pass over its adjacency row.
+  defp settle_outer_vertex(state, v) do
+    blossom = Map.fetch!(state.in_blossom, v)
+    best_outer = Map.delete(state.best_outer, v)
+
+    case Map.get(state.weight, v) do
+      nil ->
+        %{state | best_outer: best_outer, best_cross: Map.delete(state.best_cross, v)}
+
+      row ->
+        # Everything the loop reads is pulled out of `state` ONCE, and the two
+        # caches are threaded through the reduce as bare maps. Writing
+        # `%{state | ...}` inside the loop -- as this did -- rebuilds the whole
+        # nine-field state map on every neighbour visited, and that rebuild
+        # measured at four times the cost of the work it wrapped. It is the
+        # single largest constant factor in the module.
+        dual_v = Map.fetch!(state.dual, v)
+        duals = state.dual
+        labels = state.label
+        in_blossom = state.in_blossom
+        cross_shift = state.shift_cross
+        outer_shift = state.shift_outer
+
+        {best_cross, best_outer, own_best} =
+          Enum.reduce(row, {state.best_cross, best_outer, nil}, fn {u, w}, {bc, bo, own} ->
+            u_blossom = Map.fetch!(in_blossom, u)
+            r = dual_v + Map.fetch!(duals, u) - w
+
+            case Map.get(labels, u_blossom) do
+              :outer when u_blossom != blossom ->
+                # A cross edge, both ways round: a candidate for v's own
+                # entry AND v is a candidate for u's.
+                own = if own == nil or r < elem(own, 0), do: {r, u}, else: own
+                {offer(bc, u, stored(r, cross_shift), v), bo, own}
+
+              label when label in [:free, :zero] ->
+                {bc, offer(bo, u, stored(r, outer_shift), v), own}
+
+              _ ->
+                {bc, bo, own}
+            end
+          end)
+
+        %{
+          state
+          | best_cross: put_best(best_cross, v, bias(own_best, cross_shift)),
+            best_outer: best_outer
+        }
+    end
   end
 
   defp recompute_vertex(state, v) do
@@ -620,39 +726,6 @@ defmodule Ainalrami.WeightedMatching do
         best
       end
     end)
-  end
-
-  # `v` may have just become outer; offer it to everything it neighbours.
-  defp offer_vertex(state, v) do
-    blossom = Map.fetch!(state.in_blossom, v)
-
-    if Map.get(state.label, blossom) != :outer do
-      state
-    else
-      case Map.get(state.weight, v) do
-        nil ->
-          state
-
-        row ->
-          dual_v = Map.fetch!(state.dual, v)
-
-          Enum.reduce(row, state, fn {u, w}, state ->
-            u_blossom = Map.fetch!(state.in_blossom, u)
-            r = dual_v + Map.fetch!(state.dual, u) - w
-
-            case Map.get(state.label, u_blossom) do
-              :outer when u_blossom != blossom ->
-                %{state | best_cross: offer(state.best_cross, u, stored(r, state.shift_cross), v)}
-
-              label when label in [:free, :zero] ->
-                %{state | best_outer: offer(state.best_outer, u, stored(r, state.shift_outer), v)}
-
-              _ ->
-                state
-            end
-          end)
-      end
-    end
   end
 
   defp offer(cache, u, r, v) do
@@ -1006,7 +1079,12 @@ defmodule Ainalrami.WeightedMatching do
         blossom_match: blossom_match,
         connectors: connectors,
         dual: Map.put(state.dual, new_id, 0),
-        label: Map.put(state.label, new_id, :outer),
+        # The children stop being top-level, so their labels go. This
+        # keeps `state.label`'s KEY SET equal to the top-level blossom set,
+        # which `top_blossoms/1` now relies on — see its comment. Before
+        # this the stale child entries were harmless only because
+        # `top_blossoms/1` was derived from `in_blossom` instead.
+        label: Enum.reduce(cycle, Map.put(state.label, new_id, :outer), &Map.delete(&2, &1)),
         next_blossom_id: new_id + 1
     }
   end
