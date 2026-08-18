@@ -276,60 +276,6 @@ implemented: at 20% forbidden-pair density it seated a forbidden pair in
 **27.72%** of rounds, and Baku acceleration paired **66.12%** of rounds on
 the wrong scores.
 
-## Performance
-
-Correctness has never been the constraint here; field size is. Measured on
-one round of a real 209-player tournament, cut down to size:
-
-| players | one round | (before 2026-08-18) |
-|---|---|---|
-| 40 | 0.11 s | 0.19 s |
-| 80 | 1.3 s | 2.1 s |
-| 120 | 4.9 s | 8.3 s |
-| 160 | 13 s | 24 s |
-| 209 | **47 s** | 90 s |
-
-That is roughly **O(n⁴)**, and it is not a surprise: `NOTICE` records the
-trade explicitly. `Ainalrami.WeightedMatching` omits bbpPairings'
-incremental caches (`minOuterEdges`, per-blossom
-`minOuterEdgeResistance`) and rescans instead, which gave up the O(n³)
-bound in exchange for a smaller and more directly verifiable translation.
-Each delta step costs O(V²) to find the minimum resistance, a grow step
-runs O(V) of them, and an augmentation runs O(V) grow steps.
-
-**What it means in practice.** Club and national events — up to ~150
-players — pair in seconds. A 200-player open takes about a minute and a
-half a round, which an arbiter would notice but tolerate. Beyond that it
-degrades fast: the curve puts 300 players at several minutes and 400 at
-tens of minutes, which is not usable for a large open.
-
-Closing it means implementing the caches that were traded away. That is a
-real piece of work on the most delicate module in the engine, and it is
-the largest outstanding item — see [../TODO.md](../TODO.md).
-
-The constant factor has been worked on, twice, for a combined **1.9×**
-across the whole curve:
-
-- `min_outer_outer/1` was re-running a recursive blossom walk once per
-  *pair* of blossoms rather than once per blossom, materialising every
-  vertex pair before reducing them, and rebuilding one side's dual list
-  for every pair.
-- The weight map is adjacency (`%{u => %{v => w}}`) rather than flat
-  (`%{{u, v} => w}`), so the innermost operation in the algorithm no
-  longer allocates and hashes a two-tuple, and each scan reads a vertex's
-  row and dual once instead of once per candidate.
-
-Both preserve the **iteration order** deliberately. Each scan takes the
-first strict minimum, so visiting the same pairs in a different sequence
-would resolve ties to a different edge and quietly change which pairing
-comes out — which is why these hoist rather than restructure. Proven, not
-assumed: `tools/matching_baseline.exs` replays `solve/2` over 400 random
-graphs spanning small weights and the large packed integers
-`Ainalrami.Pairing` produces, and every matching is identical across both
-changes.
-
-What is left is asymptotic, and only the caches remove it.
-
 ## Not covered
 
 Stated so the claim's boundary is explicit:
@@ -351,3 +297,91 @@ Stated so the claim's boundary is explicit:
 - **Team tournaments, unrated players, late entrants**, and files where
   `rounds_count` disagrees with `XXR`. The harness generates none of
   these; see [TODO.md](../TODO.md).
+
+## Performance
+
+Correctness has never been the constraint here; field size is. One round
+of a real 209-player tournament, cut down to size:
+
+| players | one round | before 2026-08-18 |
+|---|---|---|
+| 40 | 0.15 s | 0.19 s |
+| 80 | 1.2 s | 2.1 s |
+| 120 | 4.4 s | 8.3 s |
+| 160 | 13 s | 24 s |
+| 209 | **38 s** | 90 s |
+
+**2.4× overall, and the growth rate barely moved** — still somewhere
+between n³ and n⁴. That is worth saying plainly, because the work was
+undertaken to change the exponent and mostly did not. What it bought was
+a large constant factor, three times over.
+
+### What was done
+
+**The delta scans are maintained rather than recomputed.** Finding the
+least-resistance edge from the tree to a free vertex, and between two
+outer blossoms, were 84% of a solve between them and rescanned every
+relevant vertex pair on every step. They are now two per-vertex caches,
+updated when the tree grows, when a blossom forms and when one expands.
+`Ainalrami.WeightedMatching`'s "delta-scan caches" section sets out what
+makes that sound: **within a stage the outer set only ever grows**, so a
+cached entry can never go stale by pointing at something that stopped
+being outer.
+
+**Edge weights are divided by their greatest common divisor first.** This
+turned out to matter more than the caches. `Ainalrami.Pairing` packs
+C1–C21 into a single integer by giving each criterion its own band, and on
+a 209-player field that produces weights of **103 digits** — so every
+`dual + dual − weight`, the innermost operation in the algorithm, was
+arbitrary-precision arithmetic. In one real solve, 21,221 edges carried
+just **five distinct weights sharing a ninety-digit common factor**.
+Dividing it out leaves values that fit in 64 bits. Exact rather than
+approximate: every matching's total scales by 1/g, so the argmax cannot
+move, and `solve/2` returns pairs rather than any weight.
+
+**Two hoisting passes** removed repeated work from the scans while they
+still existed: a recursive blossom walk running once per *pair* of
+blossoms instead of once per blossom, and a flat `{u, v}` weight map
+replaced by adjacency, so the innermost lookup stopped allocating a tuple.
+
+### Why it is not more
+
+Profiling the finished version on a real solve: the scans that were the
+whole problem are down to 10% of the time, and cache *maintenance* is the
+other 90% — 46% rebuilding at stage boundaries, 44% refreshing after
+structural changes. The work moved rather than vanished. Getting past that
+needs the maintenance itself to be incremental across stages, which the
+labels being recomputed wholesale by `init_labels/1` currently prevents.
+
+### How it is verified
+
+This is the most delicate module in the engine, and the one place a subtle
+error yields a wrong pairing rather than an obvious failure. Three
+independent checks:
+
+- **`tools/matching_baseline.exs`** replays `solve/2` over 460 random
+  graphs — 400 small, where blossoms are easy to hit by chance, and 60 at
+  40–90 vertices — across three densities and both weight scales. Every
+  one is checked for **total weight** and matched count, not byte
+  identity: 460/460 optimal.
+- **Byte identity is deliberately not required.** 86% of delta steps have
+  a *tied* minimum, so a cache that finds any minimum takes a different
+  path through the search almost every step; 38 of the 460 land on a
+  different matching of the same weight, which is correct when the optimum
+  is not unique.
+- **That this is safe was measured before the caches were written.**
+  Inverting the tie-break of the old linear scans left the engine agreeing
+  with bbpPairings on 1358/1358 rounds — so the pairing is determined by
+  the weights, not by the order equal-slack edges happen to be visited in.
+- **The corpus**, which is the check that actually matters: 100.00% of
+  rounds and pairs across plain, bye, combined and even-round axes with
+  the caches in place, zero illegal.
+
+### What it means in practice
+
+Club and national events — up to ~150 players — pair in seconds. A
+200-player open is now about **forty seconds a round** rather than a
+minute and a half. Three hundred players remains impractical, and closing
+that gap is a different piece of work from this one: see
+[../TODO.md](../TODO.md).
+

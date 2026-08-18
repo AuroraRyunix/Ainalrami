@@ -97,10 +97,21 @@ reach pairings no bipartite split can express.
 confirmed from bbpPairings' own source as what it uses, and needed when
 the problem is the whole field at once rather than one bracket.
 
-It **deliberately omits** bbpPairings' incremental caches (`minOuterEdges`,
-per-blossom `minOuterEdgeResistance`) and rescans instead, trading the
-O(n³) bound for a smaller and more directly verifiable translation. That
-trade is stated in [NOTICE](../NOTICE) as a §4(b) change.
+It originally **omitted** bbpPairings' incremental caches
+(`minOuterEdges`, per-blossom `minOuterEdgeResistance`) and rescanned
+instead, trading the O(n³) bound for a smaller and more directly
+verifiable translation. That was fine while brackets were small and became
+the engine's binding constraint once a 209-player field took ninety
+seconds a round.
+
+It now maintains equivalent caches — per vertex rather than per blossom —
+and divides every edge weight by the greatest common divisor of all of
+them before solving, which matters because `Ainalrami.Pairing`'s packed
+criteria produce weights of about a hundred digits and made the innermost
+operation in the algorithm arbitrary-precision arithmetic. Both are stated
+in [NOTICE](../NOTICE) as §4(b) changes, and the measurements, the
+reasoning that makes the caches sound, and what the work did *not* achieve
+are in [validation.md](validation.md#performance).
 
 ### `Ainalrami.Sequence`
 

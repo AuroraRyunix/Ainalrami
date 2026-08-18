@@ -15,18 +15,31 @@ defmodule Ainalrami.WeightedMatching do
   since a wrong result here is a legal-looking pairing that simply isn't
   the best one, not an illegal one a legality check would catch.
 
-  ## What's simplified relative to bbpPairings, and why that's safe
+  ## Finding the minimum without rescanning
 
-  bbpPairings maintains incremental caches (`minOuterEdges` tables,
-  per-blossom `minOuterEdgeResistance`) specifically so it never rescans
-  the whole graph — that's what gets it to O(n^3). This module rescans
-  instead: every "find the minimum X" step in `graph.cpp` is reproduced
-  here as a plain `Enum` walk over the current state. That trades
-  asymptotic complexity for a much smaller, more directly verifiable
-  translation of the same mathematical method — legitimate specifically
-  because `Ainalrami.Pairing`'s brackets are small in practice (measured:
-  median 9, p90 19 for a combined current+next bracket), not because the
-  complexity doesn't matter in general.
+  Every "find the minimum X" step in `graph.cpp` was originally reproduced
+  here as a plain `Enum` walk over the whole state — a much smaller and
+  more directly verifiable translation, at the cost of the asymptotics
+  bbpPairings buys with its `minOuterEdges` tables and per-blossom
+  `minOuterEdgeResistance`.
+
+  That was defensible while `Ainalrami.Pairing`'s brackets were small
+  (median 9, p90 19 for a combined current+next bracket) and stopped being
+  so once the engine was pointed at a 209-player field, where the whole
+  round is handed to this module 124 times: one round took ninety seconds.
+
+  The two dominant scans are now maintained incrementally instead — see
+  the "delta-scan caches" section below for what is stored and, more
+  importantly, for the property that makes maintaining it sound. The
+  remaining walks are over one blossom or one label class rather than over
+  every vertex pair.
+
+  **This changes which minimum is found when several tie, and 86% of delta
+  steps have a tied minimum.** That is safe here, and was measured before
+  the caches were written rather than assumed: inverting the tie-break of
+  the old scans left the engine agreeing with bbpPairings on 1358/1358
+  rounds. The matching this module returns is determined by the weights,
+  not by the order the search happens to visit equal-slack edges in.
 
   ## The four dual-adjustment cases
 
@@ -81,10 +94,45 @@ defmodule Ainalrami.WeightedMatching do
 
   def solve(n, edges) do
     n
-    |> build_state(edges)
+    |> build_state(reduce_weights(edges))
     |> augment_until_done()
     |> resolve_all_matching()
     |> to_matching()
+  end
+
+  # Divide every weight by the greatest common divisor of all of them.
+  #
+  # This is worth far more than it looks. `Ainalrami.Pairing` packs
+  # C1-C21 into a single integer by giving each criterion its own band, and
+  # on a 209-player field that produces edge weights of about a HUNDRED AND
+  # THREE DIGITS — every `dual + dual - weight` inside the matcher is then
+  # arbitrary-precision arithmetic, on the innermost operation of the whole
+  # algorithm. In one real solve the 21,221 edges carried five distinct
+  # weights sharing a ninety-digit common factor; dividing it out left
+  # values that fit in 64 bits.
+  #
+  # Exact, not an approximation. Every matching's total scales by exactly
+  # 1/g, so the argmax is unchanged, and `solve/2` returns the pairs rather
+  # than any weight, so no caller can observe the scale at all. Doubling
+  # happens afterwards in `build_state/2`, so the invariant that keeps dual
+  # variables integral through the algorithm's halvings still holds.
+  #
+  # Costs one pass of Euclid over the edge list, against millions of
+  # bignum operations saved.
+  defp reduce_weights(edges) do
+    gcd =
+      Enum.reduce(edges, 0, fn {_i, _j, w}, acc ->
+        if w > 0, do: Integer.gcd(acc, w), else: acc
+      end)
+
+    if gcd > 1 do
+      Enum.map(edges, fn
+        {i, j, w} when w > 0 -> {i, j, div(w, gcd)}
+        edge -> edge
+      end)
+    else
+      edges
+    end
   end
 
   defp build_state(n, edges) do
@@ -153,6 +201,11 @@ defmodule Ainalrami.WeightedMatching do
       # {labeling_vertex, labeled_vertex}: the edge that connected this
       # INNER blossom to its OUTER parent when the tree grew into it.
       label_edge: %{},
+      # The delta-scan caches — see the "delta-scan caches" section below.
+      best_outer: %{},
+      best_cross: %{},
+      shift_outer: 0,
+      shift_cross: 0,
       next_blossom_id: n
     }
 
@@ -205,7 +258,12 @@ defmodule Ainalrami.WeightedMatching do
         end
       end)
 
-    %{state | label: label, label_edge: %{}}
+    # A new stage relabels everything at once, which is the one moment the
+    # outer set can SHRINK. The delta-scan caches are rebuilt from scratch
+    # here rather than repaired, and that is the whole reason maintaining
+    # them incrementally elsewhere is sound — see the "delta-scan caches"
+    # section. O(V^2), once per stage, against O(V) stages.
+    rebuild_caches(%{state | label: label, label_edge: %{}})
   end
 
   # Every currently top-level blossom id — vertices not absorbed into a
@@ -336,7 +394,13 @@ defmodule Ainalrami.WeightedMatching do
         handle_outer_outer_tight(state, outer_pair)
 
       min_inner_blossom && min_inner_blossom - 2 * delta == 0 ->
-        {:cont, expand_blossom(state, inner_blossom_id)} |> continue_growing()
+        # Captured BEFORE the expansion, because the blossom id stops
+        # existing. Its vertices were inner and so held no cache entries;
+        # the children that come out `:free` need them computed now.
+        expanded = blossom_vertices(state, inner_blossom_id)
+
+        {:cont, refresh_caches(expand_blossom(state, inner_blossom_id), expanded)}
+        |> continue_growing()
 
       true ->
         # Numerically shouldn't happen — one of the four must hit zero —
@@ -376,7 +440,13 @@ defmodule Ainalrami.WeightedMatching do
           label_edge: Map.put(state.label_edge, v_blossom, {outer_partner, v})
       }
 
-      {:grow, state}
+      # One blossom left the non-outer set and one joined the outer set, so
+      # both need their own cache entries rebuilt and the newly-outer one
+      # needs offering to everything it neighbours.
+      changed =
+        blossom_vertices(state, v_blossom) ++ blossom_vertices(state, matched_blossom)
+
+      {:grow, refresh_caches(state, changed)}
     end
   end
 
@@ -385,7 +455,12 @@ defmodule Ainalrami.WeightedMatching do
     b1 = Map.fetch!(state.in_blossom, v1)
 
     if tree_root(state, b0) == tree_root(state, b1) do
-      {:grow, form_blossom(state, v0, v1)}
+      # Formation is the one event that INVALIDATES rather than extends: an
+      # edge between two vertices now inside the same blossom has stopped
+      # being a cross edge, and any inner child has just become outer. Both
+      # are covered by recomputing every vertex of the new blossom.
+      state = form_blossom(state, v0, v1)
+      {:grow, refresh_caches(state, blossom_vertices(state, Map.fetch!(state.in_blossom, v0)))}
     else
       state = augment_to_source(state, v0, v1)
       state = augment_to_source(state, v1, v0)
@@ -419,74 +494,222 @@ defmodule Ainalrami.WeightedMatching do
     end
   end
 
-  # --------------------------------------------------------- resistance
+  ## ------------------------------------------------- delta-scan caches
+  #
+  # `min_free_or_zero_to_outer/1` and `min_outer_outer/1` were 84% of a
+  # solve between them, and both rescanned every relevant vertex pair on
+  # every delta step: O(V^2) a step, O(V^2) steps, which is the O(V^4) this
+  # module was measured at. bbpPairings avoids that with `minOuterEdges`
+  # and per-blossom `minOuterEdgeResistance`, and NOTICE records dropping
+  # them as a deliberate trade for a smaller translation. These are them,
+  # in the form this port can carry.
+  #
+  # Two maps, both keyed by VERTEX rather than by blossom, which is what
+  # makes blossom formation cheap to handle:
+  #
+  #   * `best_outer[v]`, for v labelled `:free` or `:zero` — the
+  #     least-resistance edge from v to any outer vertex, as
+  #     `{resistance, outer_vertex}`.
+  #   * `best_cross[v]`, for v labelled `:outer` — the least-resistance
+  #     edge from v to an outer vertex in a DIFFERENT top-level blossom.
+  #
+  # Nothing is stored for an `:inner` vertex. It would never be read, and
+  # storing it would go stale: `shift_caches/2` moves every entry by the
+  # amount an outer-to-non-outer edge moves, and an inner vertex's own dual
+  # rises by delta rather than staying put, so the two cancel instead.
+  #
+  # ## Why maintaining these is sound
+  #
+  # **Within a stage the outer set only ever grows.** Growing the tree
+  # makes a free blossom inner and its mate outer; forming a blossom makes
+  # inner children outer; expanding one splits an INNER blossom, whose
+  # vertices were never outer. Nothing leaves the outer set until the stage
+  # ends and `init_labels/1` starts over.
+  #
+  # So a cached entry can never go stale by pointing at a vertex that has
+  # STOPPED being outer. It can only fall out of date by missing one that
+  # has newly joined — which is exactly what `refresh_caches/2` folds in,
+  # in one pass over the changed vertices' own adjacency.
+  #
+  # Blossom formation is the one event that invalidates rather than
+  # extends: an edge between two vertices that end up inside the SAME new
+  # blossom stops being a cross edge. Both of its endpoints are in that
+  # blossom, and every vertex of a new blossom is recomputed from scratch,
+  # so the same pass covers it.
 
-  # resistance(u, v) = dual[u] + dual[v] - weight(u, v); nil if no edge.
-  defp resistance(state, u, v) do
-    case state.weight do
-      %{^u => row} ->
-        case row do
-          %{^v => w} -> dual_of(state, u) + dual_of(state, v) - w
-          _ -> nil
-        end
+  # Every vertex's entry, from nothing. O(V^2), and run once per stage.
+  defp rebuild_caches(state) do
+    state = %{state | best_outer: %{}, best_cross: %{}, shift_outer: 0, shift_cross: 0}
+
+    # Driven from the OUTER vertices, not from all of them. Every entry in
+    # either cache is an edge with an outer far end, so offering each outer
+    # vertex to its neighbours produces exactly the same maps as asking
+    # every vertex to find its own best — and costs O(|outer| x V) instead
+    # of O(V^2).
+    #
+    # That difference is the point at a stage boundary, which is when this
+    # runs: `init_labels/1` has just marked every MATCHED blossom free, so
+    # the outer set is only the unmatched ones. It starts at the whole
+    # field and shrinks towards nothing as the matching fills in, which is
+    # precisely the shape that makes iterating all V vertices wasteful.
+    Enum.reduce(0..(state.n - 1)//1, state, &offer_vertex(&2, &1))
+  end
+
+  # Fold a set of just-changed vertices back in. Two directions, and both
+  # are needed: the changed vertices need their own entries rebuilt, and
+  # every OTHER vertex needs them offered, since a vertex that has just
+  # become outer is a new candidate for everyone it neighbours.
+  #
+  # Offering after recomputing is safe in either order — an offer only ever
+  # takes a minimum against what is already there, and a freshly recomputed
+  # entry already accounts for the offer.
+  defp refresh_caches(state, changed) do
+    state = Enum.reduce(changed, state, &recompute_vertex(&2, &1))
+
+    Enum.reduce(changed, state, &offer_vertex(&2, &1))
+  end
+
+  defp recompute_vertex(state, v) do
+    blossom = Map.fetch!(state.in_blossom, v)
+    row = Map.get(state.weight, v)
+
+    case Map.get(state.label, blossom) do
+      :outer ->
+        best = bias(scan_row(state, v, row, blossom, :cross), state.shift_cross)
+
+        %{
+          state
+          | best_cross: put_best(state.best_cross, v, best),
+            best_outer: Map.delete(state.best_outer, v)
+        }
+
+      label when label in [:free, :zero] ->
+        best = bias(scan_row(state, v, row, blossom, :outer), state.shift_outer)
+
+        %{
+          state
+          | best_outer: put_best(state.best_outer, v, best),
+            best_cross: Map.delete(state.best_cross, v)
+        }
 
       _ ->
-        nil
+        %{
+          state
+          | best_outer: Map.delete(state.best_outer, v),
+            best_cross: Map.delete(state.best_cross, v)
+        }
     end
   end
 
-  # Hoisted rather than restructured: the traversal and the answer are
-  # exactly what the straightforward nested `resistance/3` loop gave. What
-  # moved is the repeated work — each outer vertex's dual is looked up once
-  # for the whole scan instead of once per candidate, and each candidate's
-  # adjacency row and dual once instead of once per outer vertex.
-  defp min_free_or_zero_to_outer(state) do
-    duals = state.dual
-    outer_with_duals = Enum.map(outer_vertices(state), &{&1, Map.fetch!(duals, &1)})
+  defp scan_row(_state, _v, nil, _blossom, _kind), do: nil
 
-    non_outer_blossoms =
-      top_blossoms(state) |> Enum.filter(&(Map.get(state.label, &1) in [:free, :zero]))
+  defp scan_row(state, v, row, blossom, kind) do
+    dual_v = Map.fetch!(state.dual, v)
 
-    non_outer_blossoms
-    |> Enum.flat_map(&blossom_vertices(state, &1))
-    |> Enum.reduce({nil, nil}, fn v, acc ->
-      case state.weight do
-        %{^v => row} ->
-          dual_v = Map.fetch!(duals, v)
+    Enum.reduce(row, nil, fn {u, w}, best ->
+      u_blossom = Map.fetch!(state.in_blossom, u)
 
-          Enum.reduce(outer_with_duals, acc, fn {ov, dual_ov}, {best, best_v} ->
-            case row do
-              %{^ov => w} ->
-                r = dual_v + dual_ov - w
-                if best == nil or r < best, do: {r, v}, else: {best, best_v}
+      keep? =
+        Map.get(state.label, u_blossom) == :outer and
+          (kind == :outer or u_blossom != blossom)
+
+      if keep? do
+        r = dual_v + Map.fetch!(state.dual, u) - w
+        if best == nil or r < elem(best, 0), do: {r, u}, else: best
+      else
+        best
+      end
+    end)
+  end
+
+  # `v` may have just become outer; offer it to everything it neighbours.
+  defp offer_vertex(state, v) do
+    blossom = Map.fetch!(state.in_blossom, v)
+
+    if Map.get(state.label, blossom) != :outer do
+      state
+    else
+      case Map.get(state.weight, v) do
+        nil ->
+          state
+
+        row ->
+          dual_v = Map.fetch!(state.dual, v)
+
+          Enum.reduce(row, state, fn {u, w}, state ->
+            u_blossom = Map.fetch!(state.in_blossom, u)
+            r = dual_v + Map.fetch!(state.dual, u) - w
+
+            case Map.get(state.label, u_blossom) do
+              :outer when u_blossom != blossom ->
+                %{state | best_cross: offer(state.best_cross, u, stored(r, state.shift_cross), v)}
+
+              label when label in [:free, :zero] ->
+                %{state | best_outer: offer(state.best_outer, u, stored(r, state.shift_outer), v)}
 
               _ ->
-                {best, best_v}
+                state
             end
           end)
-
-        _ ->
-          acc
       end
-    end)
+    end
   end
 
+  defp offer(cache, u, r, v) do
+    case cache do
+      %{^u => {best, _}} when best <= r -> cache
+      _ -> Map.put(cache, u, {r, v})
+    end
+  end
+
+  defp put_best(cache, v, nil), do: Map.delete(cache, v)
+  defp put_best(cache, v, best), do: Map.put(cache, v, best)
+
+  defp bias(nil, _shift), do: nil
+  defp bias({r, u}, shift), do: {stored(r, shift), u}
+
+  # `apply_delta/2` moves every outer vertex's dual down by delta and every
+  # inner vertex's up by the same, so a cached resistance moves by a fixed
+  # amount that depends only on how many of its endpoints are outer: one
+  # for `best_outer` (the far end), two for `best_cross` (both ends).
+  #
+  # Crucially, EVERY entry in a given cache moves by the same amount. So
+  # rather than rewriting the map — O(V) allocation on every one of O(V^2)
+  # delta steps, which measured as costing more than the scans it replaced
+  # — the shift is carried as a running offset. Entries are stored biased
+  # by the offset at the moment they were written, and read back unbiased,
+  # so they all track the duals for free.
+  defp shift_caches(state, 0), do: state
+
+  defp shift_caches(state, delta) do
+    %{state | shift_outer: state.shift_outer + delta, shift_cross: state.shift_cross + 2 * delta}
+  end
+
+  # Stored biased, read unbiased. Comparisons between two entries of the
+  # same cache can use the stored form directly, since the bias is common.
+  defp stored(r, shift), do: r + shift
+  defp unbiased(r, shift), do: r - shift
+
+  # Straight off `best_outer`, which holds an entry for exactly the free
+  # and zero vertices that have any edge to an outer one. Was a rescan of
+  # every (non-outer, outer) pair on every delta step.
+  defp min_free_or_zero_to_outer(state) do
+    state.best_outer
+    |> Enum.reduce({nil, nil}, fn {v, {r, _u}}, {best, best_v} ->
+      if best == nil or r < best, do: {r, v}, else: {best, best_v}
+    end)
+    |> case do
+      {nil, _} -> {nil, nil}
+      {r, v} -> {unbiased(r, state.shift_outer), v}
+    end
+  end
+
+  # The partner achieving that minimum, which the cache already recorded.
   defp min_outer_edge(state, v) do
-    outer_vertices(state)
-    |> Enum.reduce({nil, nil}, fn ov, {best, best_ov} ->
-      case resistance(state, v, ov) do
-        nil -> {best, best_ov}
-        r when best == nil or r < best -> {r, ov}
-        _ -> {best, best_ov}
-      end
-    end)
-    |> elem(1)
-  end
-
-  defp outer_vertices(state) do
-    top_blossoms(state)
-    |> Enum.filter(&(Map.get(state.label, &1) == :outer))
-    |> Enum.flat_map(&blossom_vertices(state, &1))
+    case state.best_outer do
+      %{^v => {_r, u}} -> u
+      _ -> nil
+    end
   end
 
   defp blossom_vertices(state, b) do
@@ -497,69 +720,17 @@ defmodule Ainalrami.WeightedMatching do
     end
   end
 
-  # Two things here are about cost, not meaning, and the answer is
-  # identical either way.
-  #
-  # `blossom_vertices/2` is a recursive walk of a blossom's children. A
-  # comprehension re-evaluates its generators for every combination of the
-  # ones before them, so writing `v0 <- blossom_vertices(state, b0)` inside
-  # the `b1` loop ran that walk once per PAIR of blossoms rather than once
-  # per blossom — O(B^2) tree walks per call. Hoisted into a map.
-  #
-  # And the pair list was materialised in full before being reduced, which
-  # allocates O(V^2) tuples on every delta step. Folding directly keeps the
-  # same traversal without building it.
-  #
-  # This is the hot path: `min_outer_outer/1` runs once per grow step and
-  # a grow step runs O(V) times per augmentation. Pairing 209 players went
-  # from 90s to the figure quoted in `docs/validation.md`.
+  # Straight off `best_cross`, one entry per outer vertex holding its
+  # least-resistance edge to an outer vertex in a different blossom. Was a
+  # rescan of every outer pair on every delta step, and 55% of a solve.
   defp min_outer_outer(state) do
-    outer_blossoms = top_blossoms(state) |> Enum.filter(&(Map.get(state.label, &1) == :outer))
-    vertices = Map.new(outer_blossoms, &{&1, blossom_vertices(state, &1)})
-
-    duals = state.dual
-
-    # Both sides of the comparison, prepared once per blossom. The
-    # generator nesting below is b0, then b1, then their vertices — so
-    # anything fetched inside it was being rebuilt once per PAIR of
-    # blossoms. `right` in particular was a fresh list of |b1| tuples for
-    # every b0 that preceded it, and each v0's adjacency row and dual were
-    # re-read for every b1.
-    #
-    # The iteration order is deliberately identical. Both scans take the
-    # FIRST strict minimum, so visiting the same pairs in a different
-    # sequence would resolve ties to a different edge and change which
-    # pairing comes out — which is why this hoists rather than restructures.
-    prepared =
-      Map.new(outer_blossoms, fn b ->
-        {b,
-         Enum.map(Map.fetch!(vertices, b), fn v ->
-           {v, Map.get(state.weight, v), Map.fetch!(duals, v)}
-         end)}
-      end)
-
-    for b0 <- outer_blossoms, reduce: {nil, nil} do
-      acc ->
-        left = Map.fetch!(prepared, b0)
-
-        for b1 <- outer_blossoms, b0 < b1, reduce: acc do
-          acc1 ->
-            right = Map.fetch!(prepared, b1)
-
-            for {v0, row, dual_v0} <- left, row != nil, reduce: acc1 do
-              acc2 ->
-                Enum.reduce(right, acc2, fn {v1, _row1, dual_v1}, {best, best_pair} ->
-                  case row do
-                    %{^v1 => w} ->
-                      r = dual_v0 + dual_v1 - w
-                      if best == nil or r < best, do: {r, {v0, v1}}, else: {best, best_pair}
-
-                    _ ->
-                      {best, best_pair}
-                  end
-                end)
-            end
-        end
+    state.best_cross
+    |> Enum.reduce({nil, nil}, fn {v, {r, u}}, {best, best_pair} ->
+      if best == nil or r < best, do: {r, {v, u}}, else: {best, best_pair}
+    end)
+    |> case do
+      {nil, _} -> {nil, nil}
+      {r, pair} -> {unbiased(r, state.shift_cross), pair}
     end
   end
 
@@ -585,6 +756,7 @@ defmodule Ainalrami.WeightedMatching do
         _ -> state
       end
     end)
+    |> shift_caches(delta)
   end
 
   defp update_blossom_duals(state, b, delta) do

@@ -1,20 +1,26 @@
-# Records `WeightedMatching.solve/2`'s output on a fixed corpus of random
-# graphs, so an optimisation of the matcher can be proven output-identical
-# rather than merely "still passes the tests".
+# Differential net for `WeightedMatching.solve/2`.
 #
-#   mix run tools/matching_baseline.exs record   # before the change
+#   mix run tools/matching_baseline.exs record   # before a change
 #   mix run tools/matching_baseline.exs verify   # after it
 #
-# Weights span both the small values the unit tests use and the very large
-# packed integers `Ainalrami.Pairing` actually produces, since the
-# algorithm's arithmetic behaves differently at each scale.
+# Checks TOTAL WEIGHT first and exact identity second, and that ordering is
+# the point. A maximum-weight matching need not be unique: on these random
+# graphs several matchings often reach the same optimum, so an optimisation
+# that picks a different one is correct and an exact-match check would call
+# it a regression.
+#
+# It matters here specifically. 86% of the algorithm's delta steps have a
+# TIED minimum, so anything that changes which minimum is chosen -- a cache
+# rather than a linear scan, say -- takes a different path through the
+# search almost every step. What must not change is the weight it lands on.
+#
+# Two tiers: small graphs, where blossom formation and expansion are easy
+# to hit by chance, and large ones at the size the engine actually runs at,
+# where a scale-dependent error would hide.
 
 mode = System.argv() |> Enum.at(0, "verify")
 path = "matching_baseline.bin"
 
-# Two tiers. The small one is where blossom formation and expansion are
-# easy to hit by chance; the large one is where a scale-dependent error
-# would hide, and is the size the engine actually runs at.
 small =
   for seed <- 1..400 do
     :rand.seed(:exsss, {seed, seed * 7919, seed * 104_729})
@@ -47,20 +53,20 @@ large =
 
 graphs = small ++ large
 
-results =
-  Enum.map(graphs, fn {seed, n, edges} ->
-    {seed, Ainalrami.WeightedMatching.solve(n, edges)}
-  end)
-
-total_weight = fn {_, n, edges}, matching ->
-  w = Map.new(edges, fn {i, j, w} -> {{min(i, j), max(i, j)}, w} end)
+weight_of = fn edges, matching ->
+  lookup = Map.new(edges, fn {i, j, w} -> {{min(i, j), max(i, j)}, w} end)
 
   matching
-  |> Enum.map(fn {a, b} -> Map.get(w, {min(a, b), max(a, b)}, 0) end)
+  |> Enum.map(fn {a, b} -> Map.get(lookup, {min(a, b), max(a, b)}, 0) end)
   |> Enum.sum()
   |> div(2)
-  |> then(fn s -> {n, s} end)
 end
+
+results =
+  Enum.map(graphs, fn {seed, n, edges} ->
+    matching = Ainalrami.WeightedMatching.solve(n, edges)
+    {seed, matching, weight_of.(edges, matching), map_size(matching)}
+  end)
 
 case mode do
   "record" ->
@@ -69,28 +75,51 @@ case mode do
 
   "verify" ->
     unless File.exists?(path) do
-      IO.puts("no baseline at #{path} — run `record` first")
+      IO.puts("no baseline at #{path} -- run `record` first")
       System.halt(1)
     end
 
     expected = path |> File.read!() |> :erlang.binary_to_term()
+    pairs = Enum.zip(expected, results)
 
-    diffs =
-      Enum.zip(expected, results)
-      |> Enum.reject(fn {{s1, m1}, {s2, m2}} -> s1 == s2 and m1 == m2 end)
+    worse =
+      Enum.filter(pairs, fn {{_, _, w1, _}, {_, _, w2, _}} -> w2 != w1 end)
+
+    differing_size =
+      Enum.filter(pairs, fn {{_, _, _, s1}, {_, _, _, s2}} -> s1 != s2 end)
+
+    not_identical =
+      Enum.filter(pairs, fn {{_, m1, _, _}, {_, m2, _, _}} -> m1 != m2 end)
 
     IO.puts("compared #{length(results)} matchings")
+    IO.puts("  same total weight:  #{length(results) - length(worse)}/#{length(results)}")
+    IO.puts("  same matched count: #{length(results) - length(differing_size)}/#{length(results)}")
+    IO.puts("  byte-identical:     #{length(results) - length(not_identical)}/#{length(results)}")
 
-    if diffs == [] do
-      IO.puts("IDENTICAL")
-    else
-      IO.puts("#{length(diffs)} DIFFER:")
+    cond do
+      worse != [] ->
+        IO.puts("\nNOT OPTIMAL -- total weight changed:")
 
-      for {{seed, before}, {_, now}} <- Enum.take(diffs, 5) do
-        g = Enum.find(graphs, fn {s, _, _} -> s == seed end)
-        IO.puts("  seed #{seed}: was #{inspect(total_weight.(g, before))}, now #{inspect(total_weight.(g, now))}")
-      end
+        for {{seed, _, w1, _}, {_, _, w2, _}} <- Enum.take(worse, 5) do
+          IO.puts("  seed #{seed}: #{w1} -> #{w2}")
+        end
 
-      System.halt(1)
+        System.halt(1)
+
+      differing_size != [] ->
+        IO.puts("\nMATCHED A DIFFERENT NUMBER OF VERTICES:")
+
+        for {{seed, _, _, s1}, {_, _, _, s2}} <- Enum.take(differing_size, 5) do
+          IO.puts("  seed #{seed}: #{s1} -> #{s2}")
+        end
+
+        System.halt(1)
+
+      not_identical != [] ->
+        IO.puts("\nOPTIMAL, but a different matching of the same weight in " <>
+                  "#{length(not_identical)} case(s) -- expected when the optimum is not unique.")
+
+      true ->
+        IO.puts("\nIDENTICAL")
     end
 end

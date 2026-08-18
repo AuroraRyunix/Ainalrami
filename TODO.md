@@ -43,30 +43,41 @@ What is left is one limit of method rather than a known divergence.
       Gacrux did not break the tie — it renumbers too. What broke it was
       reading C.04.2, which nobody had done.
 
-## Performance — the largest outstanding item
+## Performance
 
-- [ ] **`WeightedMatching` is roughly O(n⁴) in the field size.** One round
-      takes 0.11 s at 40 players, 4.9 s at 120, and **47 s at 209**. Club
-      and national events pair in seconds; a 200-player open takes a minute
-      and a half a round; 300+ is still not usable.
+- [x] ~~**Implement the incremental caches.**~~ **Done 2026-08-18**, with
+      the field-size curve going from 90 s to **38 s** for one round of 209
+      players — 2.4×, and verified optimal on 460 random graphs plus the
+      corpus at 100.00%.
 
-      Not a defect so much as a bill coming due. `NOTICE` records the
-      trade: the module omits bbpPairings' incremental caches
-      (`minOuterEdges`, per-blossom `minOuterEdgeResistance`) and rescans,
-      giving up the O(n³) bound for a smaller and more verifiable
-      translation. Each delta step is O(V²), a grow step runs O(V) of them,
-      an augmentation runs O(V) grow steps.
+      Honest about what it did and did not do: the work was undertaken to
+      change the growth rate and mostly did not. It is still somewhere
+      between n³ and n⁴. What it bought was a large constant factor, from
+      three separate things — maintaining the two dominant delta scans
+      instead of recomputing them, dividing edge weights by their GCD
+      (worth more than the caches: `Pairing`'s packed criteria produce
+      **103-digit** weights, so the innermost operation in the algorithm
+      was bignum arithmetic), and two passes of plain hoisting.
 
-      Closing it means implementing those caches — real work on the most
-      delicate module in the engine, and the one place where a subtle error
-      would produce wrong pairings rather than an obvious failure. Worth
-      doing before any large open uses this, and worth doing carefully:
-      `weighted_matching_test.exs` checks against a DP oracle on small
-      graphs, which is the safety net to lean on.
+- [ ] **Make cache maintenance incremental across stages.** Profiling the
+      finished version: the scans that were the whole problem are down to
+      10% of a solve, and cache *maintenance* is the other 90% — 46%
+      rebuilding at stage boundaries, 44% refreshing after structural
+      changes. The cost moved rather than vanished.
 
-      Constant-factor work is already in and totals 1.9x (see
-      docs/validation.md); it is verified output-identical over 400 random
-      graphs. The rest is asymptotic.
+      The stage-boundary rebuild is O(|outer| × V) and runs once per
+      stage, because `init_labels/1` recomputes every label wholesale and
+      the outer set is the one thing that can SHRINK there. Carrying
+      information across that boundary is what would finally change the
+      exponent.
+
+      Worth attempting only with the same discipline as this round:
+      `tools/matching_baseline.exs` first, corpus second.
+
+- [ ] **300+ player fields remain impractical** — roughly two and a half
+      minutes a round at 300, on the current curve. Club and national
+      events (up to ~150) pair in seconds and a 200-player open is about
+      forty seconds a round, so this bites only for large opens.
 
 ## Harness
 
