@@ -281,13 +281,13 @@ the wrong scores.
 Correctness has never been the constraint here; field size is. Measured on
 one round of a real 209-player tournament, cut down to size:
 
-| players | one round |
-|---|---|
-| 40 | 0.19 s |
-| 80 | 2.1 s |
-| 120 | 8.3 s |
-| 160 | 24 s |
-| 209 | 81 s |
+| players | one round | (before 2026-08-18) |
+|---|---|---|
+| 40 | 0.11 s | 0.19 s |
+| 80 | 1.3 s | 2.1 s |
+| 120 | 4.9 s | 8.3 s |
+| 160 | 13 s | 24 s |
+| 209 | **47 s** | 90 s |
 
 That is roughly **O(n⁴)**, and it is not a surprise: `NOTICE` records the
 trade explicitly. `Ainalrami.WeightedMatching` omits bbpPairings'
@@ -307,12 +307,28 @@ Closing it means implementing the caches that were traded away. That is a
 real piece of work on the most delicate module in the engine, and it is
 the largest outstanding item — see [../TODO.md](../TODO.md).
 
-One constant-factor improvement is already in: `min_outer_outer/1` was
-re-running a recursive blossom walk once per *pair* of blossoms rather
-than once per blossom, and materialising every vertex pair before reducing
-them. Fixing both took 209 players from 90 s to 81 s — worth having, and a
-useful demonstration that the remaining cost is asymptotic rather than
-sloppy.
+The constant factor has been worked on, twice, for a combined **1.9×**
+across the whole curve:
+
+- `min_outer_outer/1` was re-running a recursive blossom walk once per
+  *pair* of blossoms rather than once per blossom, materialising every
+  vertex pair before reducing them, and rebuilding one side's dual list
+  for every pair.
+- The weight map is adjacency (`%{u => %{v => w}}`) rather than flat
+  (`%{{u, v} => w}`), so the innermost operation in the algorithm no
+  longer allocates and hashes a two-tuple, and each scan reads a vertex's
+  row and dual once instead of once per candidate.
+
+Both preserve the **iteration order** deliberately. Each scan takes the
+first strict minimum, so visiting the same pairs in a different sequence
+would resolve ties to a different edge and quietly change which pairing
+comes out — which is why these hoist rather than restructure. Proven, not
+assumed: `tools/matching_baseline.exs` replays `solve/2` over 400 random
+graphs spanning small weights and the large packed integers
+`Ainalrami.Pairing` produces, and every matching is identical across both
+changes.
+
+What is left is asymptotic, and only the caches remove it.
 
 ## Not covered
 

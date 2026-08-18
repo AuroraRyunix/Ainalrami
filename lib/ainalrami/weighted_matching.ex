@@ -519,20 +519,36 @@ defmodule Ainalrami.WeightedMatching do
 
     duals = state.dual
 
-    for b0 <- outer_blossoms, b1 <- outer_blossoms, b0 < b1, reduce: {nil, nil} do
+    # Both sides of the comparison, prepared once per blossom. The
+    # generator nesting below is b0, then b1, then their vertices — so
+    # anything fetched inside it was being rebuilt once per PAIR of
+    # blossoms. `right` in particular was a fresh list of |b1| tuples for
+    # every b0 that preceded it, and each v0's adjacency row and dual were
+    # re-read for every b1.
+    #
+    # The iteration order is deliberately identical. Both scans take the
+    # FIRST strict minimum, so visiting the same pairs in a different
+    # sequence would resolve ties to a different edge and change which
+    # pairing comes out — which is why this hoists rather than restructures.
+    prepared =
+      Map.new(outer_blossoms, fn b ->
+        {b,
+         Enum.map(Map.fetch!(vertices, b), fn v ->
+           {v, Map.get(state.weight, v), Map.fetch!(duals, v)}
+         end)}
+      end)
+
+    for b0 <- outer_blossoms, reduce: {nil, nil} do
       acc ->
-        # Same hoisting as `min_free_or_zero_to_outer/1`: b1's vertices
-        # carry their duals for the whole of b0's loop, and each v0 fetches
-        # its adjacency row and dual once.
-        right = Enum.map(Map.fetch!(vertices, b1), &{&1, Map.fetch!(duals, &1)})
+        left = Map.fetch!(prepared, b0)
 
-        for v0 <- Map.fetch!(vertices, b0), reduce: acc do
-          inner ->
-            case state.weight do
-              %{^v0 => row} ->
-                dual_v0 = Map.fetch!(duals, v0)
+        for b1 <- outer_blossoms, b0 < b1, reduce: acc do
+          acc1 ->
+            right = Map.fetch!(prepared, b1)
 
-                Enum.reduce(right, inner, fn {v1, dual_v1}, {best, best_pair} ->
+            for {v0, row, dual_v0} <- left, row != nil, reduce: acc1 do
+              acc2 ->
+                Enum.reduce(right, acc2, fn {v1, _row1, dual_v1}, {best, best_pair} ->
                   case row do
                     %{^v1 => w} ->
                       r = dual_v0 + dual_v1 - w
@@ -542,9 +558,6 @@ defmodule Ainalrami.WeightedMatching do
                       {best, best_pair}
                   end
                 end)
-
-              _ ->
-                inner
             end
         end
     end

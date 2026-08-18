@@ -6,10 +6,9 @@ that looked obviously correct and measured *worse* — is in
 
 ## Conformance
 
-Two gaps against C.04.3 (2026). Neither has produced a measured pairing
-disagreement in 4.3M tournaments, and both are real anyway: "not observed"
-is not "cannot happen", and these are the only two places left where a
-disagreement could come from.
+Both of the gaps carried here are now closed — 4.3 against the article
+itself, 5.2.5 against the handbook and AGAINST both reference engines.
+What is left is one limit of method rather than a known divergence.
 
 - [x] ~~**Article 4.3, including the heterogeneous case.**~~ **Closed
       2026-08-17/18** by `exchange_order_test.exs`, which walks Article 4's
@@ -36,8 +35,8 @@ disagreement could come from.
       **Settled 2026-08-17, in this engine's favour, from the handbook.**
       C.04.2 Article 2 fixes a TPN for the tournament; nothing renumbers
       it around players sitting a round out. Both references renumber
-      anyway, and differently from each other, so there was never a
-      single "agreeing" behaviour to adopt.
+      anyway -- around players who have never participated, measured both
+      ways with `tools/rip_probe.exs`, and they agree with each other.
 
       Now a filed dispute rather than an open question:
       [docs/dispute-initial-colour.md](docs/dispute-initial-colour.md).
@@ -47,9 +46,9 @@ disagreement could come from.
 ## Performance — the largest outstanding item
 
 - [ ] **`WeightedMatching` is roughly O(n⁴) in the field size.** One round
-      takes 0.19 s at 40 players, 8.3 s at 120, and **81 s at 209**. Club
+      takes 0.11 s at 40 players, 4.9 s at 120, and **47 s at 209**. Club
       and national events pair in seconds; a 200-player open takes a minute
-      and a half a round; 300+ is not usable.
+      and a half a round; 300+ is still not usable.
 
       Not a defect so much as a bill coming due. `NOTICE` records the
       trade: the module omits bbpPairings' incremental caches
@@ -65,9 +64,9 @@ disagreement could come from.
       `weighted_matching_test.exs` checks against a DP oracle on small
       graphs, which is the safety net to lean on.
 
-      A constant-factor win is already in (`min_outer_outer/1` no longer
-      re-walks blossoms per pair; 90 s → 81 s at 209 players). The rest is
-      asymptotic.
+      Constant-factor work is already in and totals 1.9x (see
+      docs/validation.md); it is verified output-identical over 400 random
+      graphs. The rest is asymptotic.
 
 ## Harness
 
