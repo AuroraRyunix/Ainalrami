@@ -373,9 +373,19 @@ independent checks:
   Inverting the tie-break of the old linear scans left the engine agreeing
   with bbpPairings on 1358/1358 rounds — so the pairing is determined by
   the weights, not by the order equal-slack edges happen to be visited in.
-- **The corpus**, which is the check that actually matters: 100.00% of
-  rounds and pairs across plain, bye, combined and even-round axes with
-  the caches in place, zero illegal.
+- **The corpus**, which is the check that actually matters. With the
+  caches in place, **39,371 rounds and 435,294 individual pairings at
+  100.00%**, zero illegal and zero refusals:
+
+  | axis | rounds | individual pairs |
+  |---|---|---|
+  | byes + forfeits + `XXP` + Baku, 2,000 tournaments | 13,252 | 132,065 |
+  | 15% byes, **10** rounds, 2,000 tournaments | 18,332 | 186,645 |
+  | **60–120 players** | 1,050 | 48,132 |
+  | plain / byes / combined / 8-round, 250 each | 6,737 | 68,452 |
+
+  The large-field row is the one to look at. It is where a matcher change
+  would show first, and where the differential corpus is thinnest.
 
 ### What it means in practice
 
