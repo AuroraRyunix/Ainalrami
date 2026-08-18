@@ -74,10 +74,19 @@ What is left is one limit of method rather than a known divergence.
       Worth attempting only with the same discipline as this round:
       `tools/matching_baseline.exs` first, corpus second.
 
-- [ ] **300+ player fields remain impractical** — roughly two and a half
-      minutes a round at 300, on the current curve. Club and national
-      events (up to ~150) pair in seconds and a 200-player open is about
-      forty seconds a round, so this bites only for large opens.
+- [ ] **Large opens are not usable.** Measured against bbpPairings on the
+      same file: at 400 players it takes 3.0 s and this engine takes 498 s
+      -- eight minutes a round, over an hour across a nine-round event.
+
+      The gap WIDENS with field size (56x at 209, 166x at 400), so it is
+      not a flat language penalty. And the reference does it in three
+      seconds with the same algorithm, so the method is not the obstacle;
+      the bookkeeping around it is.
+
+      Correctness is not what degrades: on that 400-player round the two
+      engines returned 200 of 200 boards identical, colours included.
+
+      Club and national events (up to ~150) still pair in seconds.
 
 ## Harness
 

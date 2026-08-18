@@ -387,11 +387,45 @@ independent checks:
   The large-field row is the one to look at. It is where a matcher change
   would show first, and where the differential corpus is thinnest.
 
+### Against bbpPairings, on the same file
+
+The reference is not instant either, which is worth knowing before
+treating any target as obvious. Same tournament, same round, same machine
+— bbpPairings generated the file itself, so neither side is favoured:
+
+| players | bbpPairings | Ainalrami | gap |
+|---|---|---|---|
+| 209 | 0.68 s | 38 s | 56× |
+| 400 | 3.0 s | 498 s | **166×** |
+
+Two things in that table matter more than the absolute numbers.
+
+**bbpPairings pays real cost too** — 0.68 s to 3.0 s as the field roughly
+doubles, about n^2.4. A 400-player Swiss is genuine work for a weighted
+matcher however it is written.
+
+**The gap WIDENS**: 56× at 209, 166× at 400. A fixed language penalty
+would show as a flat multiple — a tight numeric loop like this is worth
+perhaps 5–20× between C++ and the BEAM before any algorithmic difference.
+The growth on top of that is this implementation's, and it is the same
+asymptotic story as above: 2026-08-18's work moved the line down without
+changing its slope.
+
+It also sets the target honestly. The same algorithm does this in three
+seconds, so the method is not the obstacle; the bookkeeping around it is.
+
+**Correctness is not what degrades.** On that 400-player round the two
+engines returned **200 of 200 boards identical, colours included** — twice
+the largest field the corpus had ever covered.
+
 ### What it means in practice
 
 Club and national events — up to ~150 players — pair in seconds. A
 200-player open is now about **forty seconds a round** rather than a
-minute and a half. Three hundred players remains impractical, and closing
-that gap is a different piece of work from this one: see
-[../TODO.md](../TODO.md).
+minute and a half.
+
+Beyond that it is not usable: a 400-player open takes **eight minutes a
+round**, which across nine rounds is over an hour of an arbiter and four
+hundred players waiting. Closing that is a different piece of work from
+the constant-factor pass — see [../TODO.md](../TODO.md).
 
