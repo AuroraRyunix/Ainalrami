@@ -441,6 +441,7 @@ defmodule Ainalrami.WeightedMatching do
         vertices_of: Map.delete(state.vertices_of, b),
         blossom_match: Map.delete(state.blossom_match, b),
         label: Map.delete(state.label, b),
+        tops: tops_split(state.tops, b, children),
         label_edge: Map.delete(state.label_edge, b)
     }
   end
@@ -572,6 +573,7 @@ defmodule Ainalrami.WeightedMatching do
       connectors: %{},
       # Per TOP-LEVEL blossom only.
       label: %{},
+      tops: [],
       # {labeling_vertex, labeled_vertex}: the edge that connected this
       # INNER blossom to its OUTER parent when the tree grew into it.
       label_edge: %{},
@@ -742,7 +744,10 @@ defmodule Ainalrami.WeightedMatching do
     # here rather than repaired, and that is the whole reason maintaining
     # them incrementally elsewhere is sound — see the "delta-scan caches"
     # section. O(V^2), once per stage, against O(V) stages.
-    carry_caches(%{state | label: label, label_edge: %{}}, state.label)
+    carry_caches(
+      %{state | label: label, label_edge: %{}, tops: Enum.sort(top)},
+      state.label
+    )
   end
 
   # Every currently top-level blossom id — vertices not absorbed into a
@@ -775,8 +780,27 @@ defmodule Ainalrami.WeightedMatching do
     # Still SORTED, for the reason the comment above gives: several
     # consumers take the first strict minimum, and Erlang's map order is
     # not stable across the 32-key flatmap-to-hashmap transition.
-    state.label |> Map.keys() |> Enum.sort()
+    #
+    # And CACHED: `state.tops` is that sorted list, rebuilt by `init_labels/1`
+    # once per stage and patched in place by the four structural events
+    # (`tops_formed/3`, `tops_split/3`). Sorting the keys on every call was
+    # two to three sorts per delta step -- 0.8 s of a 400-player round.
+    state.tops
   end
+
+  # `new_id` replaces `children` at the top level. Ids are allocated in
+  # increasing order, so the new one belongs at the end.
+  defp tops_formed(tops, children, new_id), do: (tops -- children) ++ [new_id]
+
+  # `children` replace `b` at the top level (expansion, dissolution).
+  defp tops_split(tops, b, children) do
+    merge_sorted(List.delete(tops, b), Enum.sort(children))
+  end
+
+  defp merge_sorted([], ys), do: ys
+  defp merge_sorted(xs, []), do: xs
+  defp merge_sorted([x | xs], [y | _] = ys) when x <= y, do: [x | merge_sorted(xs, ys)]
+  defp merge_sorted(xs, [y | ys]), do: [y | merge_sorted(xs, ys)]
 
   defp matched?(state, b), do: Map.has_key?(state.blossom_match, b)
   defp base_vertex(state, b), do: Map.fetch!(state.base, b)
@@ -1276,20 +1300,26 @@ defmodule Ainalrami.WeightedMatching do
         duals = state.dual
         labels = state.label
         in_blossom = state.in_blossom
-        cross_shift = state.shift_cross
-        outer_shift = state.shift_outer
+        # The stored (biased) resistance is `dual_v + dual_u - w + shift`;
+        # folding the shift into `dual_v` once saves a bignum addition per
+        # neighbour.
+        dv_cross = dual_v + state.shift_cross
+        dv_outer = dual_v + state.shift_outer
 
+        # The label is read FIRST and the resistance computed only for the
+        # neighbours that take an offer: an inner neighbour, or one in the
+        # same blossom, costs one lookup rather than two lookups and two
+        # bignum operations.
         {cross, best_outer} =
           Enum.reduce(row, {cross, best_outer}, fn {u, w}, {cr, bo} ->
             ub = Map.fetch!(in_blossom, u)
-            r = dual_v + Map.fetch!(duals, u) - w
 
             case Map.get(labels, ub) do
               :outer when ub != blossom ->
-                {cross_offer(cr, blossom, ub, stored(r, cross_shift), v, u), bo}
+                {cross_offer(cr, blossom, ub, dv_cross + Map.fetch!(duals, u) - w, v, u), bo}
 
               label when label in [:free, :zero] ->
-                {cr, offer(bo, u, stored(r, outer_shift), v)}
+                {cr, offer(bo, u, dv_outer + Map.fetch!(duals, u) - w, v)}
 
               _ ->
                 {cr, bo}
@@ -1521,14 +1551,25 @@ defmodule Ainalrami.WeightedMatching do
           |> Map.update(a, %{b => {r, va, vb}}, &Map.put(&1, b, {r, va, vb}))
           |> Map.update(b, %{a => {r, vb, va}}, &Map.put(&1, a, {r, vb, va}))
 
-        mins =
-          mins
-          |> Map.update(a, {r, b}, &lower_min(&1, {r, b}))
-          |> Map.update(b, {r, a}, &lower_min(&1, {r, a}))
-
+        mins = mins |> offer_min(a, {r, b}) |> offer_min(b, {r, a})
         {lo, hi} = if a < b, do: {a, b}, else: {b, a}
         best = lower_best(best, {r, lo, hi})
         {rows, mins, best}
+    end
+  end
+
+  # Write the row minimum only when it changes; a `Map.update` that puts
+  # the old value back still rebuilds the map.
+  defp offer_min(mins, a, cand) do
+    case mins do
+      %{^a => old} ->
+        case lower_min(old, cand) do
+          ^old -> mins
+          new -> Map.put(mins, a, new)
+        end
+
+      _ ->
+        Map.put(mins, a, cand)
     end
   end
 
@@ -1966,6 +2007,7 @@ defmodule Ainalrami.WeightedMatching do
         # this the stale child entries were harmless only because
         # `top_blossoms/1` was derived from `in_blossom` instead.
         label: Enum.reduce(cycle, Map.put(state.label, new_id, :outer), &Map.delete(&2, &1)),
+        tops: tops_formed(state.tops, cycle, new_id),
         next_blossom_id: new_id + 1
     }
     |> then(&{&1, cycle, formerly_inner})
@@ -2172,6 +2214,7 @@ defmodule Ainalrami.WeightedMatching do
         parent_of: Map.new(state.parent_of |> Enum.reject(fn {_c, p} -> p == b end)),
         vertices_of: Map.delete(state.vertices_of, b),
         label: Map.delete(state.label, b),
+        tops: tops_split(state.tops, b, children),
         label_edge: Map.delete(state.label_edge, b),
         dual: Map.delete(state.dual, b)
     }
