@@ -79,7 +79,23 @@ What is left is one limit of method rather than a known divergence.
       alongside the note reverting it and is now actually reverted (equal
       speed, no mutable-array hazard).
 
-- [ ] **The last 1.5–2×.** Per-operation cost on work the reference does
+- [ ] **A 1,000-player round is 85 s** -- measured on a file bbpPairings'
+      own generator produced, where bbpPairings takes 50 s and Gacrux
+      (Python) takes 5 s, and all three return the identical 500 boards.
+      The gap to Gacrux is not per-operation: it answers large brackets
+      with Article 3's transposition procedure directly and only falls
+      back to a matching where that fails. Shrinking the graph to the
+      window instead was built, measured at 2.8-3.2x, and REVERTED at
+      99.34% -- with a dense oracle giving the same 99.34%, so the window
+      truncation itself is the cost, not the oracle. Full write-up,
+      including the three fixes it did need and the exact case that broke
+      it: docs/engineering-log.md, "1,000 players, and why the graph
+      cannot shrink". What would close it is the direct Article 3 path for
+      brackets the tentative matching already pairs internally, where
+      every rung except the colour criteria is provably constant; it is a
+      second pairing path and needs the corpus to license it.
+
+- [ ] **The last 1.5–2× at 209-400 players.** Per-operation cost on work the reference does
       too — tree growth, the per-stage inner–outer rebuild, formation —
       on 450-bit weights. Two things would move it, neither tried:
       narrower weights (six score-place rungs are 300 of the 450 bits —
