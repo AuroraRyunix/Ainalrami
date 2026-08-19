@@ -181,8 +181,75 @@ defmodule Ainalrami.WeightedMatching do
     # rebuilds; an empty label map is the signal `carry_caches/2` reads.
     state = %{state | label: %{}}
 
-    state = state |> even_up_exposed_duals() |> augment_until_done() |> resolve_all_matching()
+    state =
+      state
+      |> greedy_resume()
+      |> even_up_exposed_duals()
+      |> augment_until_done()
+      |> resolve_all_matching()
+
     {state, to_matching(state)}
+  end
+
+  # The resumed-solve counterpart of `greedy_start/3`: every vertex that
+  # `prepare_vertex/2` reset -- exposed, its own top-level blossom, its
+  # dual back at the ceiling -- gets the lowest dual that keeps every edge
+  # at it feasible against its neighbours' CURRENT duals, `max(2w - y_u)`,
+  # and is then matched to its lowest-indexed exposed neighbour on a tight
+  # edge if it has one. That is exactly what the first stage would do for
+  # it when its tightest neighbour is exposed -- bring the dual down, find
+  # the tight outer-outer edge, augment -- minus the stage: its label reset,
+  # cache rebuild and tree growth across the field. At a bracket boundary
+  # every resident is prepared and their heaviest edges are to each other,
+  # so most of them pair here.
+  defp greedy_resume(state) do
+    max_w = state.max_w
+
+    fresh =
+      for v <- 0..(state.n - 1)//1,
+          Map.fetch!(state.in_blossom, v) == v,
+          not Map.has_key?(state.blossom_match, v),
+          Map.fetch!(state.dual, v) == max_w,
+          do: v
+
+    case fresh do
+      [] ->
+        state
+
+      _ ->
+        {dual, bm} =
+          Enum.reduce(fresh, {state.dual, state.blossom_match}, fn v, {dual, bm} ->
+            row = Map.get(state.weight, v, %{})
+
+            yv =
+              Enum.reduce(row, 0, fn {u, w2}, acc ->
+                need = w2 - Map.fetch!(dual, u)
+                if need > acc, do: need, else: acc
+              end)
+
+            dual = Map.put(dual, v, yv)
+
+            if Map.has_key?(bm, v) do
+              {dual, bm}
+            else
+              partner =
+                Enum.reduce(row, nil, fn {u, w2}, best ->
+                  if yv + Map.fetch!(dual, u) == w2 and
+                       Map.fetch!(state.in_blossom, u) == u and
+                       not Map.has_key?(bm, u) and (best == nil or u < best),
+                     do: u,
+                     else: best
+                end)
+
+              case partner do
+                nil -> {dual, bm}
+                u -> {dual, bm |> Map.put(v, u) |> Map.put(u, v)}
+              end
+            end
+          end)
+
+        %{state | dual: dual, blossom_match: bm}
+    end
   end
 
   # bbpPairings' `computeMatching()` prologue (graph.cpp:793-845): "Make
