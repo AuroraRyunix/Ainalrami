@@ -78,6 +78,12 @@ defmodule Ainalrami.Pairing do
   # could fire a round early for them; a late entrant has fewer, so it could
   # fail to fire when it should.
   @played_key :ainalrami_played_rounds
+  # One WeightedMatching state for the whole round, carried across every
+  # bracket of the cascade: `{matcher, field_index_of_rank, previous_edges,
+  # field_size}`. Set by `global_cascade/2`, consumed by `solve/1`, cleared
+  # with the rest of the round-scoped keys.
+  @round_matcher_key :ainalrami_round_matcher
+  @dirty_key :ainalrami_dirty_edges
   # C.04.3 5.1's initial colour -- the one drawn by lot before round 1, which
   # 5.2.5 gives to the higher ranked player of a pair when neither holds a
   # preference. Defaults to White, which is what this engine assumed
@@ -297,6 +303,8 @@ defmodule Ainalrami.Pairing do
       Process.delete(@played_key)
       Process.delete(@forbidden_key)
       Process.delete(@bye_score_key)
+      Process.delete(@round_matcher_key)
+      Process.delete(@dirty_key)
       Process.delete(@first_single_bye_key)
     end
   end
@@ -748,6 +756,8 @@ defmodule Ainalrami.Pairing do
       end
     after
       Process.delete(@bye_score_key)
+      Process.delete(@round_matcher_key)
+      Process.delete(@dirty_key)
       Process.delete(@first_single_bye_key)
     end
   end
@@ -1175,6 +1185,14 @@ defmodule Ainalrami.Pairing do
       |> Enum.map(&Map.put(&1, :colour_stats, colour_stats(&1)))
 
     ctx = global_context(field)
+
+    # Vertex ids for the round's single matcher are positions in `field`,
+    # which every bracket's vertex set is a subsequence of (measured: 10 of
+    # 10 brackets in a 209-player round). The matcher itself is created
+    # lazily by the first `solve/1`.
+    field_index = field |> Enum.with_index() |> Map.new(fn {p, i} -> {p.rank, i} end)
+    Process.put(@round_matcher_key, {nil, field_index, length(field)})
+
     {pairs, leftover} = run_brackets(field, ctx)
 
     # The staged refinement is not told how many byes are legal, so the
@@ -1672,6 +1690,7 @@ defmodule Ainalrami.Pairing do
       bands: bands,
       base: base,
       live: base,
+      synced: false,
       transposition: transposition_terms(m, sgb, nsgb),
       # Any value above every real weight will do: `finalize_pair/3`
       # leaves the two vertices exactly one usable edge each, so the pair
@@ -1701,6 +1720,7 @@ defmodule Ainalrami.Pairing do
     |> trace_stage("7 reset bits")
     |> stage_first_group_partners()
     |> trace_stage("8 first-group partners")
+    |> flush_live()
     |> collect_bracket()
   end
 
@@ -1741,102 +1761,229 @@ defmodule Ainalrami.Pairing do
   defp get_w(weights, i, j) when i < j, do: Map.get(weights, {i, j}, 0)
   defp get_w(weights, i, j), do: Map.get(weights, {j, i}, 0)
 
+  # `put_w/4` for the LIVE weights: the same write, plus a note of which
+  # vertex was modified. `i` is the modified vertex and `j` its neighbour,
+  # in that order, at every call site -- the same order `dutch.cpp` passes
+  # them to `setEdgeWeight(modifiedVertex, neighbor)`, and for the same
+  # reason: the matcher re-prepares exactly the modified end of each
+  # changed edge, and the cost of the next solve is proportional to how
+  # many DISTINCT vertices were modified (computer.cpp:69-71: "after calls
+  # to setEdgeWeight using at most k different values for modifiedVertex,
+  # the subsequent computeMatching() operation will take O(k n^2) time").
+  # A whole-map diff of `live` cannot recover that vertex, and preparing
+  # the lower-indexed end instead made `finalize_pair/3` prepare every
+  # earlier vertex the pair still had an edge to: ~10.7 stages per
+  # in-bracket solve where the reference's contract needs two or three.
+  defp set_live(live, i, j, w) do
+    Process.put(@dirty_key, [{i, j} | Process.get(@dirty_key, [])])
+    put_w(live, i, j, w)
+  end
+
   defp solve(st) do
-    scale = st.transposition.scale
-    terms = st.transposition.terms
-    reserve = st.bands.reserve
-    above? = System.get_env("AINALRAMI_TRANS_ABOVE") != nil
+    {round_matcher, field_index, field_size} = Process.get(@round_matcher_key)
+    to_field = fn i -> Map.fetch!(field_index, elem(st.arr, i).rank) end
+    weigh = edge_weigher(st)
+    dirty = Process.get(@dirty_key, [])
+    Process.delete(@dirty_key)
 
-    # The matcher's edge map for the current `live` weights, keyed `{i, j}`
-    # with `i < j` (which is how `live` is keyed too).
-    edges =
-      Enum.reduce(st.live, %{}, fn {{i, j}, w}, acc ->
-        if w > 0 do
-          term = Map.get(terms, {i, j}, 0)
+    # One matcher for the whole ROUND, carried across every bracket.
+    #
+    # Every bracket's vertex set is a subsequence of the round's field
+    # order, and the bands are field-wide and constant (`global_context/1`),
+    # so a bracket boundary is a set of edge changes on one graph rather
+    # than a new graph. Vertex ids are positions in `field`; bracket-local
+    # indices are translated on the way in and back on the way out.
+    #
+    # Three ways in:
+    #
+    #   * no matcher yet -- the round's first bracket builds it;
+    #   * a bracket's FIRST solve -- its `live` is a fresh
+    #     `base_edge_weights/7`, so the matcher's edges on this bracket's
+    #     vertices are diffed against it and the differences applied. The
+    #     far edges are frozen (`:far_weights`), so that diff is the new
+    #     bracket's own pairs and its edges into the next group, not the
+    #     whole graph;
+    #   * every later solve of the same bracket -- exactly the edges the
+    #     stages wrote through `set_live/4`, each prepared at its modified
+    #     vertex, as `setEdgeWeight` would have been called.
+    matcher =
+      cond do
+        round_matcher == nil ->
+          # Ceiling for the ROUND -- must exceed every weight ANY bracket can
+          # produce, not just this one's. `st.max_w` is per bracket and a later
+          # bracket's can be larger (different sgb/MDP structure, same bands),
+          # which the guard caught as "weight exceeds the initial dual" on
+          # 4-player fields where the first bracket is trivial.
+          #
+          # A safe bound from the packing itself: `ranked/1` packs rungs as
+          # `acc * span + value` with every span from the field-wide `bands`,
+          # so the product of the spans bounds any base weight; times the
+          # reserve band the stages add into; times the largest transposition
+          # scale any bracket can reach, `(n + 2)^(n/2 + 1)`, when that
+          # tie-break is switched on; doubled for room. Too LARGE is
+          # harmless -- it is only the initial dual, and bbpPairings'
+          # `aboveMaxEdgeWeight` is likewise a bound, not exact.
+          n = field_size
+          s = st.bands.count_span
+          ps = st.bands.place_span
+          span_product = Integer.pow(s, 12) * Integer.pow(ps, 6) * Integer.pow(s, 4) * 64
 
-          weight =
-            if above? do
-              # Split `w` back into its criteria part and the refinement
-              # stages' reserved addend, and slot the transposition order
-              # BETWEEN them: criteria still win, but FIDE's order now
-              # outranks a stage nudge instead of the other way round.
-              div(w, reserve) * scale * reserve + term * reserve + rem(w, reserve)
-            else
-              w * scale + term
+          round_scale =
+            if st.transposition.scale == 1, do: 1, else: Integer.pow(n + 2, div(n, 2) + 1)
+
+          round_ceiling = 2 * span_product * st.bands.reserve * round_scale * s
+
+          list =
+            for {{i, j}, w} <- st.live, w > 0 do
+              {to_field.(i), to_field.(j), weigh.(i, j, w)}
             end
 
-          Map.put(acc, {i, j}, weight)
-        else
-          acc
+          WeightedMatching.new(field_size, list, max_weight: round_ceiling, gcd: 1)
+
+        not st.synced ->
+          # Bracket boundary. For every vertex of this bracket's graph, the
+          # matcher's current edges to OTHER vertices of the graph must
+          # become exactly `live`'s; edges to vertices outside it (players
+          # already finalised) are another bracket's business and stay.
+          # Applied lower-index first, which is also the near-minimal set of
+          # vertices to prepare: the changes are a clique on the new
+          # bracket's residents plus their edges into the next group.
+          here = Map.new(0..(st.m - 1)//1, fn i -> {to_field.(i), i} end)
+
+          Enum.reduce(0..(st.m - 1)//1, round_matcher, fn i, acc ->
+            fi = to_field.(i)
+
+            # Edges the matcher has from `fi` into this graph that `live`
+            # does not have, or has at a different weight.
+            acc =
+              Enum.reduce(WeightedMatching.neighbours(acc, fi), acc, fn {fj, cur}, acc ->
+                case Map.get(here, fj) do
+                  nil ->
+                    acc
+
+                  j when j < i ->
+                    acc
+
+                  j ->
+                    want = weigh.(i, j, get_w(st.live, i, j))
+                    if want == cur, do: acc, else: WeightedMatching.set_weight(acc, fi, fj, want)
+                end
+              end)
+
+            # Edges `live` has from `i` that the matcher lacks.
+            Enum.reduce((i + 1)..(st.m - 1)//1, acc, fn j, acc ->
+              case get_w(st.live, i, j) do
+                0 ->
+                  acc
+
+                w ->
+                  fj = to_field.(j)
+                  want = weigh.(i, j, w)
+
+                  if WeightedMatching.edge_weight(acc, fi, fj) == want,
+                    do: acc,
+                    else: WeightedMatching.set_weight(acc, fi, fj, want)
+              end
+            end)
+          end)
+
+        true ->
+          apply_dirty(round_matcher, st, dirty, to_field, weigh)
+      end
+
+    {matcher, matching_f} = WeightedMatching.solve(matcher)
+
+    # Back to bracket-local indices; anything matched outside this
+    # bracket's vertex set is another bracket's business.
+    from_field = Map.new(0..(st.m - 1)//1, fn i -> {to_field.(i), i} end)
+
+    matching =
+      Enum.reduce(matching_f, %{}, fn {a, b}, acc ->
+        case {Map.get(from_field, a), Map.get(from_field, b)} do
+          {nil, _} -> acc
+          {_, nil} -> acc
+          {i, j} -> Map.put(acc, i, j)
         end
       end)
 
-    # One persistent matcher per bracket state, created on the first solve
-    # and updated by DIFF on every later one -- bbpPairings' Computer works
-    # exactly this way (setEdgeWeight / computeMatching), keeping the
-    # matching and duals between calls so the next solve re-augments from
-    # the previous solution rather than from nothing.
-    #
-    # It is worth less than it looks, and the reason is worth recording. The
-    # median change between consecutive solves is ~200 edges of ~5,500,
-    # which sounds small; but the refinement stages rewrite whole
-    # remainder-by-remainder blocks, so those 200 edges touch a median of
-    # 89 of 127 vertices, and 99 of 114 reused solves touch more than half.
-    # Every touched vertex is unmatched by `set_weight/4`, so re-augmenting
-    # from what is left runs ~50 stages against ~105 fresh -- about 1.35x,
-    # not the order of magnitude that a small edge diff suggests. The
-    # reference has the identical shape (dutch.cpp:1295-1315 rewrites the
-    # same remainder block before its computeMatching); its speed is the
-    # constant factor, not this.
-    #
-    # The ceiling is the largest weight this bracket can ever produce,
-    # transformed the same way the edges are: `st.max_w` is above every BASE
-    # weight and is what `finalize_pair/3` writes; the refinement stages ADD
-    # to live weights (`w + 1`, `w + bump`, `w + addend`) and every addend
-    # lives inside `bands.reserve` -- the packing invariant, "a nudge can
-    # break a tie without ever outranking a real criterion" -- so the bound
-    # is `max_w + reserve`. A live weight above it would be a packing bug
-    # that the matcher's guard now catches rather than silently absorbs.
-    max_term = terms |> Map.values() |> Enum.max(fn -> 0 end)
-    ceiling = (st.max_w + reserve) * scale + max_term
+    Process.put(@round_matcher_key, {matcher, field_index, field_size})
+    %{st | matching: matching, synced: true}
+  end
 
-    fresh = fn ->
-      WeightedMatching.new(st.m, Enum.map(edges, fn {{i, j}, w} -> {i, j, w} end),
-        max_weight: ceiling,
-        gcd: 1
-      )
+  # The stages' writes since the last solve, most recent first. Each
+  # `{modified, neighbour}` pair is applied once, at `live`'s current (final)
+  # value; a write that left the matcher's weight as it was is skipped,
+  # which prepares nothing the reference would not also have left
+  # untouched in effect.
+  defp apply_dirty(matcher, st, dirty, to_field, weigh) do
+    {matcher, _seen} =
+      Enum.reduce(dirty, {matcher, MapSet.new()}, fn {i, j} = key, {acc, seen} ->
+        if MapSet.member?(seen, key) do
+          {acc, seen}
+        else
+          fi = to_field.(i)
+          fj = to_field.(j)
+          want = weigh.(i, j, get_w(st.live, i, j))
+
+          acc =
+            if WeightedMatching.edge_weight(acc, fi, fj) == want,
+              do: acc,
+              else: WeightedMatching.set_weight(acc, fi, fj, want)
+
+          {acc, MapSet.put(seen, key)}
+        end
+      end)
+
+    matcher
+  end
+
+  # Push the stages' writes since the last solve into the round matcher
+  # WITHOUT solving -- called once at the end of every bracket, so that the
+  # next bracket's boundary diff starts from a matcher whose edges equal
+  # this bracket's final `live`. Without it the last `finalize_pair/3` of a
+  # bracket (which always follows its last solve) would be lost, and the
+  # finalised pair's stale edges into the next bracket would still be in
+  # the graph.
+  defp flush_live(st) do
+    case Process.get(@round_matcher_key) do
+      {nil, _, _} ->
+        st
+
+      {matcher, field_index, field_size} ->
+        dirty = Process.get(@dirty_key, [])
+        Process.delete(@dirty_key)
+        to_field = fn i -> Map.fetch!(field_index, elem(st.arr, i).rank) end
+        matcher = apply_dirty(matcher, st, dirty, to_field, edge_weigher(st))
+        Process.put(@round_matcher_key, {matcher, field_index, field_size})
+        st
     end
+  end
 
-    matcher =
-      case st[:matcher] do
-        nil ->
-          fresh.()
+  # The weight the matcher sees for a `live` weight `w` on `{i, j}`: the
+  # criteria weight itself, unless the transposition tie-break is switched
+  # on, in which case it is scaled to make room for the tie-break term.
+  defp edge_weigher(st) do
+    scale = st.transposition.scale
+    terms = st.transposition.terms
+    reserve = st.bands.reserve
 
-        prev_matcher ->
-          prev = st.matcher_edges
+    cond do
+      scale == 1 and map_size(terms) == 0 ->
+        fn _i, _j, w -> w end
 
-          changed =
-            prev
-            |> Map.keys()
-            |> Enum.concat(Map.keys(edges))
-            |> Enum.uniq()
-            |> Enum.filter(fn key -> Map.get(prev, key, 0) != Map.get(edges, key, 0) end)
+      System.get_env("AINALRAMI_TRANS_ABOVE") != nil ->
+        # Split `w` back into its criteria part and the refinement
+        # stages' reserved addend, and slot the transposition order
+        # BETWEEN them: criteria still win, but FIDE's order now
+        # outranks a stage nudge instead of the other way round.
+        fn i, j, w ->
+          term = Map.get(terms, {min(i, j), max(i, j)}, 0)
+          div(w, reserve) * scale * reserve + term * reserve + rem(w, reserve)
+        end
 
-          # Measured, and worth writing down because it is counter-intuitive:
-          # starting FRESH whenever more than half the vertices changed made
-          # a round SLOWER (24.6s -> 27s at 209 players). Even a mostly-torn
-          # matching keeps some pairs and all its duals, and re-augmenting
-          # from that beats an empty state. Reuse unconditionally.
-          Enum.reduce(changed, prev_matcher, fn {i, j} = key, acc ->
-            WeightedMatching.set_weight(acc, i, j, Map.get(edges, key, 0))
-          end)
-      end
-
-    {matcher, matching} = WeightedMatching.solve(matcher)
-
-    %{st | matching: matching}
-    |> Map.put(:matcher, matcher)
-    |> Map.put(:matcher_edges, edges)
+      true ->
+        fn i, j, w -> w * scale + Map.get(terms, {min(i, j), max(i, j)}, 0) end
+    end
   end
 
   # FIDE section 3's transposition order as an edge-additive tie-break,
@@ -1901,9 +2048,9 @@ defmodule Ainalrami.Pairing do
 
     # One unit above anything the terms can reach, so the whole tie-break
     # sits under the criteria rather than beside them.
-    if System.get_env("AINALRAMI_NO_TRANS"),
-      do: %{terms: %{}, scale: 1},
-      else: %{terms: terms, scale: Map.fetch!(pow, k + 1)}
+    if System.get_env("AINALRAMI_TRANS"),
+      do: %{terms: terms, scale: Map.fetch!(pow, k + 1)},
+      else: %{terms: %{}, scale: 1}
   end
 
   # bbpPairings reads an unmatched vertex as matched to ITSELF, and three
@@ -1934,8 +2081,8 @@ defmodule Ainalrami.Pairing do
   defp finalize_pair(st, i, j) do
     live =
       Enum.reduce(0..(st.m - 1)//1, st.live, fn k, acc ->
-        acc = if k == i, do: acc, else: put_w(acc, i, k, if(k == j, do: st.max_w, else: 0))
-        if k == j, do: acc, else: put_w(acc, j, k, if(k == i, do: st.max_w, else: 0))
+        acc = if k == i, do: acc, else: set_live(acc, i, k, if(k == j, do: st.max_w, else: 0))
+        if k == j, do: acc, else: set_live(acc, j, k, if(k == i, do: st.max_w, else: 0))
       end)
 
     %{st | live: live}
@@ -2236,7 +2383,7 @@ defmodule Ainalrami.Pairing do
       Enum.reduce(st.sgb..(st.nsgb - 1)//1, st.live, fn opp, acc ->
         case get_w(st.base, mdp, opp) do
           0 -> acc
-          w -> put_w(acc, mdp, opp, w + 1)
+          w -> set_live(acc, mdp, opp, w + 1)
         end
       end)
 
@@ -2253,7 +2400,7 @@ defmodule Ainalrami.Pairing do
       Enum.reduce(st.sgb..(st.nsgb - 1)//1, st.live, fn opp, acc ->
         case get_w(st.base, mdp, opp) do
           0 -> acc
-          w -> put_w(acc, mdp, opp, w + bump)
+          w -> set_live(acc, mdp, opp, w + bump)
         end
       end)
 
@@ -2291,7 +2438,7 @@ defmodule Ainalrami.Pairing do
         else
           case get_w(st.base, mdp, opp) do
             0 -> {acc, addend}
-            w -> {put_w(acc, mdp, opp, w + addend), addend + 1}
+            w -> {set_live(acc, mdp, opp, w + addend), addend + 1}
           end
         end
       end)
@@ -2331,7 +2478,7 @@ defmodule Ainalrami.Pairing do
         |> Enum.take_while(&(&1 < opp))
         |> Enum.with_index()
         |> Enum.reduce(acc, fn {p, idx}, inner ->
-          put_w(inner, p, opp, exchange_weight(st, p, opp, idx))
+          set_live(inner, p, opp, exchange_weight(st, p, opp, idx))
         end)
       end)
 
@@ -2384,7 +2531,7 @@ defmodule Ainalrami.Pairing do
                   Enum.reduce(opponents, st.live, fn opp, acc ->
                     case exchange_weight(st, player, opp, pos) do
                       0 -> acc
-                      w -> put_w(acc, player, opp, w - 1)
+                      w -> set_live(acc, player, opp, w - 1)
                     end
                   end)
 
@@ -2422,7 +2569,7 @@ defmodule Ainalrami.Pairing do
     {base, live} =
       Enum.reduce(opponents, {st.base, st.live}, fn opp, {b, l} ->
         b = if exchange, do: put_w(b, player, opp, 0), else: b
-        {b, put_w(l, player, opp, exchange_weight(%{st | base: b}, player, opp, pos))}
+        {b, set_live(l, player, opp, exchange_weight(%{st | base: b}, player, opp, pos))}
       end)
 
     %{st | base: base, live: live}
@@ -2465,7 +2612,7 @@ defmodule Ainalrami.Pairing do
       Enum.reduce(opponents, st.live, fn opp, acc ->
         case exchange_weight(st, player, opp, pos) do
           0 -> acc
-          w -> put_w(acc, player, opp, w + 1)
+          w -> set_live(acc, player, opp, w + 1)
         end
       end)
 
@@ -2475,7 +2622,7 @@ defmodule Ainalrami.Pairing do
   defp restore_probe(st, player, pos, opponents) do
     live =
       Enum.reduce(opponents, st.live, fn opp, acc ->
-        put_w(acc, player, opp, exchange_weight(st, player, opp, pos))
+        set_live(acc, player, opp, exchange_weight(st, player, opp, pos))
       end)
 
     %{st | live: live}
@@ -2493,7 +2640,7 @@ defmodule Ainalrami.Pairing do
 
     {base, live} =
       Enum.reduce(cuts, {st.base, st.live}, fn opp, {b, l} ->
-        {put_w(b, player, opp, 0), put_w(l, player, opp, 0)}
+        {put_w(b, player, opp, 0), set_live(l, player, opp, 0)}
       end)
 
     %{st | base: base, live: live}
@@ -2517,7 +2664,7 @@ defmodule Ainalrami.Pairing do
               do: put_w(b, player, opp, 0),
               else: b
 
-          {b, put_w(l, player, opp, get_w(b, player, opp))}
+          {b, set_live(l, player, opp, get_w(b, player, opp))}
         end)
       end)
 
@@ -2547,7 +2694,7 @@ defmodule Ainalrami.Pairing do
           acc =
             case get_w(st.base, player, opp) do
               0 -> acc
-              w -> put_w(acc, player, opp, w + addend)
+              w -> set_live(acc, player, opp, w + addend)
             end
 
           # Incremented even when the edge was unusable, so the ordering
