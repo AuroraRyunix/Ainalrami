@@ -2505,3 +2505,49 @@ the seed range anywhere, and every seed is independent, so
 `seed735265-r7-p10` regenerates in about a second instead of requiring the
 735,264 tournaments before it. That knob not existing is a large part of
 why the catalogued cases were adjudicated once and never revisited.
+
+## Matcher performance, 2026-08-18: what worked and what did not
+
+One day, one 209-player round, warm medians of three. From 90 s to 10.6 s.
+
+| change | 209 players | note |
+|---|---|---|
+| start of day | 90 s | |
+| hoisting, adjacency map, GCD reduction | 38 s | constant factors |
+| per-vertex delta-scan caches | 38 s | correct; moved the cost rather than removing it |
+| persistent matcher across a bracket's eight stages | 24.6 s | `set_weight/4` + `solve/1`, bbpPairings' `Computer` API |
+| **prepare only the modified end** | **13.3 s** | one misread argument: `setEdgeWeight(modifiedVertex, neighbor)` prepares the FIRST only; preparing both tore the whole matching down on every `finalize_pair` |
+| per-blossom-pair cross table + running minimum | 10.6 s | bbpPairings' `minOuterEdges`; formation becomes a merge, not a rescan |
+| field-wide weight bands | 10.6 s | no speed change; a precondition, and aligns the engine with `explain_round/3` |
+
+**Tried and reverted, with the reason**, so nobody repeats them:
+
+- *Starting fresh when >50% of vertices changed* (24.6 → 27 s). A
+  mostly-torn matching still keeps some pairs and all its duals, and
+  re-augmenting from that beats an empty state. Reuse unconditionally.
+- *Nested per-blossom rows for the cross table* (12.4 → 15 s). Two nested
+  `Map.update!`s per outer neighbour; `settle_outer_vertex` went from 21 to
+  54 µs. Flat `{lo, hi}` keys instead.
+- *Packed integer keys instead of tuple keys* (0.95×, no difference). The
+  cost of a losing offer is the map lookup, not the key.
+- *`:atomics` for the inner loop* — measured 2.96× on the exact access
+  pattern, not pursued: the spike showed the remaining language gap is
+  ~10×, and the larger wins were still in the algorithm's call pattern.
+- *One matcher for the whole round, carried across brackets* (10.6 →
+  11.9 s). Correct — corpus 100% once the ceiling was a true upper bound —
+  but `base_edge_weights` is recomputed per bracket with different
+  `sgb`/`nsgb`, so an edge that was "next bracket" becomes "current" and
+  its C6/C7/C8 values change: ~20,000 of 21,000 edges differ at every
+  boundary, every vertex gets prepared, and it is a cold solve plus 20,000
+  `set_weight` calls. The premise ("a boundary is a small edge diff") was
+  wrong, and the reference has the same property — it recomputes
+  `baseEdgeWeights` per bracket too, and simply solves fast enough not to
+  care.
+
+Against bbpPairings on the same 209-player file: 0.68 s. The remaining 15×
+is, by measurement, BEAM map bookkeeping against C++ in-place arrays on
+the same algorithm — bignum arithmetic is 3% of a solve. Profiled at the
+end of the day: `settle_outer_vertex` 52% (165,000 calls, most from
+`rebuild_caches` at stage start on the ~7 cold bracket-boundary solves),
+`rebuild_caches` itself 36%, the running-minimum `min_outer_outer` now
+under 2%.
