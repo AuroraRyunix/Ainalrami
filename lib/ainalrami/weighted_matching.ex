@@ -515,6 +515,8 @@ defmodule Ainalrami.WeightedMatching do
           if w > 0, do: max(acc, 2 * w), else: acc
         end)
 
+    {dual, blossom_match} = greedy_start(n, weights)
+
     state = %{
       n: n,
       max_w: max_w,
@@ -524,7 +526,7 @@ defmodule Ainalrami.WeightedMatching do
       # merges that into the same map keyed by blossom id (>= n for
       # non-trivial blossoms), since nothing about the algorithm needs
       # them kept apart.
-      dual: Map.new(0..(n - 1), &{&1, max_w}),
+      dual: dual,
       mate: %{},
       # `in_blossom[v]` is always the TOP-LEVEL blossom currently
       # containing vertex v — the direct analogue of bbpPairings'
@@ -551,7 +553,7 @@ defmodule Ainalrami.WeightedMatching do
       # would see its own sibling's brand-new write and misread it as a
       # stale match needing further walking — an infinite loop on
       # anything past the trivial one-edge case.
-      blossom_match: %{},
+      blossom_match: blossom_match,
       # Connector vertex pair for every cyclically-adjacent pair of
       # children ever formed — see `form_blossom/3`'s doc.
       connectors: %{},
@@ -569,6 +571,78 @@ defmodule Ainalrami.WeightedMatching do
     }
 
     state
+  end
+
+  # The starting point of a fresh solve: duals and a greedy matching, both
+  # on the tight edges, instead of every dual at the ceiling and no
+  # matching at all.
+  #
+  # bbpPairings starts cold -- every dual `aboveMaxEdgeWeight`, nothing
+  # matched -- and so did this, and a cold solve on a 209-player field ran
+  # 106 stages: the first delta lowers every dual to the top weight, the
+  # heaviest edge goes tight and is matched, and from there it is one
+  # augmentation per stage, each stage paying O(V^2) in cache rebuilds and
+  # tree growth while the outer set is still most of the graph. Two of
+  # those per round (the bye bootstrap and the round matcher's first
+  # solve) were 43% of a 209-player round and would be 45% of a
+  # 400-player one.
+  #
+  # Any state that satisfies the invariants is a legal starting point, and
+  # the resumed solves after `set_weight/4` already rely on that. So:
+  #
+  #   * `dual[v]` = the weight of v's heaviest edge (half of it on the
+  #     doubled scale). Feasible, since `dual[u] + dual[v]` is then at
+  #     least `w(u, v)` from each side; at most `max_w`; and an isolated
+  #     vertex sits at zero, which is where the search would put it.
+  #   * match each exposed vertex, in index order, to its lowest-indexed
+  #     exposed neighbour with which its heaviest edge is TIGHT -- the
+  #     two are each other's heaviest, counting ties. Those are exactly
+  #     the edges the first stages would have matched; the greedy pass
+  #     does it in one walk of the adjacency.
+  #
+  # No blossoms, so `even_up_exposed_duals/1`'s parity step (which is
+  # the one place the doubled scale cares) applies unchanged. On the
+  # 209-player round's first graph 5 distinct weights cover 21,221 edges
+  # and the greedy pass matches 202 of 209 vertices; the remaining stages
+  # are the real work, and the outer set at their start is seven vertices
+  # rather than two hundred and nine. When the optimum is not unique the
+  # matching returned may differ from the cold search's -- which was
+  # itself decided by map internals, not by anything canonical -- and the
+  # corpus is the arbiter of whether that matters.
+  defp greedy_start(n, weights) do
+    dual =
+      Map.new(0..(n - 1)//1, fn v ->
+        {v,
+         weights
+         |> Map.get(v, %{})
+         |> Enum.reduce(0, fn {_u, w2}, best -> max(best, div(w2, 2)) end)}
+      end)
+
+    blossom_match =
+      Enum.reduce(0..(n - 1)//1, %{}, fn v, bm ->
+        yv = Map.fetch!(dual, v)
+
+        if yv == 0 or Map.has_key?(bm, v) do
+          bm
+        else
+          partner =
+            weights
+            |> Map.fetch!(v)
+            |> Enum.reduce(nil, fn {u, w2}, best ->
+              if w2 == 2 * yv and Map.fetch!(dual, u) == yv and not Map.has_key?(bm, u) and
+                   (best == nil or u < best),
+                 do: u,
+                 else: best
+            end)
+
+          case partner do
+            nil -> bm
+            u -> bm |> Map.put(v, u) |> Map.put(u, v)
+          end
+        end
+      end)
+
+    {dual, blossom_match}
   end
 
   # A stage bound of `2n` is generous — the reference algorithm needs at
@@ -1019,8 +1093,57 @@ defmodule Ainalrami.WeightedMatching do
         |> Enum.flat_map(fn {b, _} -> blossom_vertices(state, b) end)
         |> Enum.reject(&Map.has_key?(kept, &1))
 
-      Enum.reduce(needing, state, &recompute_vertex(&2, &1))
+      # Two ways to give the `needing` vertices their entries, and the
+      # cheaper one depends on the stage:
+      #
+      #   * each needing vertex walks its OWN row looking for outer
+      #     neighbours -- O(|needing| x V);
+      #   * each OUTER vertex walks its row and offers itself to the
+      #     needing neighbours it finds -- O(|outer| x V), which is how
+      #     bbpPairings' `initializeInnerOuterEdges` is driven.
+      #
+      # Early in a cold solve the outer set is most of the graph and only
+      # the augmented tree needs recomputing, so the first wins. In a
+      # resumed solve after `set_weight/4` the outer set is the two or
+      # three prepared vertices and `needing` is every free vertex whose
+      # best partner was one of them -- a hundred row walks to find what
+      # three would have delivered. Measured on a 209-player round: 136,000
+      # row walks from this one reduce, a quarter of the round.
+      outer_vertices = Enum.flat_map(outer_blossoms, &blossom_vertices(state, &1))
+
+      if length(needing) <= length(outer_vertices) do
+        Enum.reduce(needing, state, &recompute_vertex(&2, &1))
+      else
+        offer_outer_to(state, outer_vertices, MapSet.new(needing))
+      end
     end
+  end
+
+  # `best_outer` entries for the vertices in `targets`, delivered by the
+  # outer vertices walking their own rows. The caller has already dropped
+  # any stale entries the targets held.
+  defp offer_outer_to(state, outer_vertices, targets) do
+    duals = state.dual
+    shift = state.shift_outer
+
+    best_outer =
+      Enum.reduce(outer_vertices, state.best_outer, fn u, bo ->
+        case Map.get(state.weight, u) do
+          nil ->
+            bo
+
+          row ->
+            dual_u = Map.fetch!(duals, u)
+
+            Enum.reduce(row, bo, fn {v, w}, bo ->
+              if MapSet.member?(targets, v),
+                do: offer(bo, v, stored(dual_u + Map.fetch!(duals, v) - w, shift), u),
+                else: bo
+            end)
+        end
+      end)
+
+    %{state | best_outer: best_outer}
   end
 
   # Every vertex's entry, from nothing. O(V^2), and run once per stage.
