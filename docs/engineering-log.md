@@ -2900,3 +2900,32 @@ learned on the way, both recorded in the code:
 
 1,000 players 7.3 s -> 6.8 s; corpus 100.00% on seven axes. The 5M run
 was restarted on this engine (b185abc) at 19:30 UTC.
+
+### Measuring it fairly (2026-08-19, correction)
+
+The table in the local-graph section above compared bbpPairings and
+Gacrux as COLD PROCESSES against this engine measured WARM and
+in-process, which flatters us by exactly one BEAM start-up and is not a
+comparison. Corrected, by measuring each engine's own floor on a
+ten-player file and subtracting it:
+
+| | start-up | 209 | 400 | 1,000 |
+|---|---|---|---|---|
+| bbpPairings | 0.18 s | 0.72 s | 3.05 s | 50.1 s |
+| Gacrux | 0.68 s | 0.88 s | 1.22 s | 5.14 s |
+| Ainalrami (CLI) | 0.63 s | 1.05 s | 2.07 s | 7.35 s |
+
+Pairing work alone: bbpPairings 0.54 / 2.87 / 49.9 s, Gacrux 0.20 /
+0.54 / 4.46 s, this engine 0.42 / 1.43 / 6.72 s.
+
+So: **faster than the C++ reference (1.3x, 2x, 7.4x) and slower than the
+Python one (2.1x, 2.7x, 1.5x)**, and a cold 209-player invocation loses
+to bbpPairings outright on start-up. The gap to Gacrux narrows with field
+size, which is what the local graph predicts -- it is the small brackets,
+where the local path's preconditions fail and the whole field is small
+enough not to matter, that still run the full matcher.
+
+Worth keeping in view: the widest remaining gap is at 400 players
+(2.7x), not at 1,000 (1.5x). And 0.63 s of every CLI invocation is BEAM
+start-up, which a long-lived process pays once -- a packaging question,
+not an engine one.

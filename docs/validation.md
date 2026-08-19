@@ -390,56 +390,71 @@ independent checks:
 ### Against bbpPairings and Gacrux, on the same files
 
 The reference is not instant either, which is worth knowing before
-treating any target as obvious. Same tournament, same round, same machine
-— bbpPairings' own generator produced every file, so no side is favoured.
-Cold process times for the other two engines; warm in-process medians of
-three for this one (the CLI adds about a second of BEAM start-up, once):
+treating any target as obvious. Same tournaments, same machine —
+bbpPairings' own generator produced every file, so no side is favoured.
 
-| players | bbpPairings (C++) | Gacrux (Python) | Ainalrami 08-18 evening | **08-19 evening** |
-|---|---|---|---|---|
-| 60 | | | | **0.04 s** |
-| 120 | | | | **0.14 s** |
-| 209 | 0.72 s | 0.88 s | 9.5 s | **0.37 s** |
-| 300 | | | | **0.76 s** |
-| 400 | 3.05 s | 1.22 s | 69.8 s | **1.33 s** |
-| 1,000 | 50.1 s | 5.1 s | 85.5 s (08-19 noon) | **6.8 s** |
+**Cold process, start to finish**, which is how an arbiter's tool
+actually invokes any of the three:
 
-Gacrux's times include 0.64 s of interpreter and networkx start-up, so
-its pairing work is roughly 0.25 s, 0.6 s and 4.5 s. On every one of
-these rounds all three engines return the **identical boards** — 105 of
-105, 200 of 200, 500 of 500, colours included.
+| players | bbpPairings (C++) | Gacrux (Python) | Ainalrami |
+|---|---|---|---|
+| 10 (start-up floor) | 0.18 s | 0.68 s | 0.63 s |
+| 209 | **0.72 s** | 0.88 s | 1.05 s |
+| 400 | 3.05 s | **1.22 s** | 2.07 s |
+| 1,000 | 50.1 s | **5.14 s** | 7.35 s |
 
-**From 166× slower than the C++ reference to faster than it, in two days,
-all in Elixir.** The first day made the matcher's bookkeeping the
-reference's step for step; the second found the operation counts were
-still not the same and fixed that (`docs/engineering-log.md`, "Matcher
-performance, 2026-08-19"); the third step, the same evening, changed what
-graph a bracket is solved on. bbpPairings solves every bracket on the
-whole remaining field — one matcher for the round, the eight refinement
-stages re-solving it at every step, which is ~n³ a round and is why it
-takes 50 s at 1,000 players. This engine now solves a bracket on **its own
-graph** whenever that is provably the same answer (`Pairing.pair_bracket/6`:
+Each engine pays a fixed start-up it cannot avoid — a C++ binary 0.18 s,
+CPython plus networkx 0.68 s, the BEAM 0.63 s. Subtracting each one's own
+floor leaves the **pairing work**:
+
+| players | bbpPairings | Gacrux | Ainalrami |
+|---|---|---|---|
+| 209 | 0.54 s | **0.20 s** | 0.42 s |
+| 400 | 2.87 s | **0.54 s** | 1.43 s |
+| 1,000 | 49.9 s | **4.46 s** | 6.72 s |
+
+On every one of these rounds all three engines return the **identical
+boards** — 105 of 105, 200 of 200, 500 of 500, colours included.
+
+**Read honestly: this engine is faster than the C++ reference and slower
+than the Python one.** Against bbpPairings the pairing work is 1.3×,
+2× and 7.4× quicker, though a cold 209-player invocation still loses to
+it on start-up alone. Against Gacrux it is 2.1×, 2.7× and 1.5× slower,
+and the gap narrows as the field grows.
+
+That ordering is not about the languages, and the morning's numbers show
+why: 209 players took 9.5 s here yesterday evening and 85 s at 1,000
+players this morning, which is 24× and 11× behind Gacrux. What changed
+was how much of the whole-field matcher each bracket has to run.
+bbpPairings runs all of it, every bracket, eight refinement stages deep —
+~n³ a round, and that is the 50 s. Gacrux runs almost none of it: its
+`BI` path walks Article 3's transposition procedure directly and accepts
+the first candidate that is legal and meets a counting bound on the
+colour criteria, falling back to a bracket-sized networkx matching only
+where that fails. This engine now solves a bracket on **its own graph**
+whenever that is provably the whole-field answer (`Pairing.pair_bracket/6`:
 every window member a non-candidate for the bye, a perfect internal
 matching, and the rest of the field pairable without it, certified by a
 sparse cardinality oracle), with a one-vertex stand-in for the next score
-group on odd brackets, and falls back to the whole-field graph otherwise.
-That is what Gacrux's direct Article 3 path buys it, reached from the
-matcher side rather than the procedure side — so the eight stages, and
-the 100.00% they carry, are unchanged.
+group on odd brackets, and on the whole field otherwise. Same destination
+as Gacrux's, reached from the matcher side rather than the procedure
+side — so the eight stages, and the 100.00% they carry, are unchanged.
 
 **Correctness is not what degrades.** Every step was held to 100.00% on
 seven corpus axes — 4–10, 4–40, 60–120 and 150–250 players, with byes,
 forfeits, forbidden pairs, acceleration and round counts of 7, 8 and 13 —
 and both differential nets before it was committed, and the large-field
 axes are where the local graph does its work. The 5-million-tournament
-run on the Photon box was restarted on the final engine the same evening
-and is the judge of the one condition not certified term by term: that an
-odd bracket's float choice does not depend on which member of a dense
-next group it lands on (`@local_min_next_group`).
+run on the Photon box was restarted on the final engine and is the judge
+of the one condition not certified term by term: that an odd bracket's
+float choice does not depend on which member of a dense next group it
+lands on (`@local_min_next_group`).
 
 ### What it means in practice
 
 Club and national events — up to ~150 players — pair in well under a
-fifth of a second. A 200-player open is **a third of a second a round**,
-a 400-player open about a second and a quarter, and a Moscow-Open-sized
-event of 1,000 players under seven seconds — against the reference's fifty.
+second including start-up. A 200-player open is about a second, a
+400-player open two, and a Moscow-Open-sized event of 1,000 players
+seven — against the C++ reference's fifty. Inside a long-lived process
+(the sibling OpenPairings app, or any server) the 0.63 s BEAM start-up is
+paid once rather than per round, which is most of the small-field cost.
