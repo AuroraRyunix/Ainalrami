@@ -535,7 +535,7 @@ defmodule Ainalrami.WeightedMatching do
       label_edge: %{},
       # The delta-scan caches — see the "delta-scan caches" section below.
       best_outer: %{},
-      best_cross: %{},
+      cross: {%{}, nil},
       shift_outer: 0,
       shift_cross: 0,
       next_blossom_id: n
@@ -841,9 +841,9 @@ defmodule Ainalrami.WeightedMatching do
       # for the LABEL_INNER children, and a min over existing tables for the
       # rest. Re-settling every vertex of every new blossom -- as this did --
       # was 479,000 row walks per 209-player round, 78% of it.
-      {state, formerly_inner} = form_blossom(state, v0, v1)
+      {state, children, formerly_inner} = form_blossom(state, v0, v1)
       new_b = Map.fetch!(state.in_blossom, v0)
-      {:grow, refresh_after_formation(state, new_b, formerly_inner)}
+      {:grow, refresh_after_formation(state, new_b, children, formerly_inner)}
     else
       state = augment_to_source(state, v0, v1)
       state = augment_to_source(state, v1, v0)
@@ -922,7 +922,7 @@ defmodule Ainalrami.WeightedMatching do
 
   # Every vertex's entry, from nothing. O(V^2), and run once per stage.
   defp rebuild_caches(state) do
-    state = %{state | best_outer: %{}, best_cross: %{}, shift_outer: 0, shift_cross: 0}
+    state = %{state | best_outer: %{}, cross: {%{}, nil}, shift_outer: 0, shift_cross: 0}
 
     # Driven from the OUTER vertices, not from all of them. Every entry in
     # either cache is an edge with an outer far end, so offering each outer
@@ -965,45 +965,29 @@ defmodule Ainalrami.WeightedMatching do
   #     status is what it depends on. Nothing to offer: it is not outer.
   #
   # Same maps as before, reached with roughly a third of the row visits.
-  # After `form_blossom/3`: the new blossom `b` is outer. Its vertices fall
-  # in two classes and get two treatments -- bbpPairings'
-  # `initializeFromChildren`, which runs `updateOuterOuterEdges` for the
-  # LABEL_INNER children and takes a min over existing tables for the rest.
+  # After `form_blossom/3`: the new blossom `b` is outer, built from
+  # `children`, of which the `formerly_inner` vertices had no presence in
+  # any cache. This is bbpPairings' `initializeFromChildren`.
   #
-  #   * Formerly INNER: no cache entries, no offers made. Full settle.
-  #   * Formerly OUTER: already hold a valid `best_cross` and have already
-  #     offered themselves to every neighbour. Formation can only
-  #     invalidate that entry by putting its partner INSIDE `b`, so it is
-  #     kept when the partner is outside and rescanned when not.
-  #
-  # And every vertex OUTSIDE `b` whose `best_cross` or `best_outer` pointed
-  # at a vertex now inside `b`? Still valid: that vertex is still outer,
-  # the edge is unchanged, and it is a cross edge from the outside vertex's
-  # point of view whatever blossom the far end is in.
-  #
-  # Re-settling every vertex of every new blossom instead -- as this did --
-  # was 479,000 full row walks per 209-player round, 78% of it.
-  defp refresh_after_formation(state, b, formerly_inner) do
+  #   * The cross table: MERGE the outer children's rows into `b`'s, and
+  #     every other blossom's entries for the children into one entry for
+  #     `b`. No vertex walked. The second-best edge to every other blossom
+  #     was already in the table, so nothing is lost when the best one
+  #     becomes internal -- which is exactly the case formation produces,
+  #     since blossoms merge because their best edges pointed at each
+  #     other. Under the previous per-vertex design that invalidated almost
+  #     every entry and cost 252,000 rescans per 209-player round.
+  #   * The formerly-inner vertices: walked once, offering their edges to
+  #     the table and to `best_outer` (they are outer now).
+  #   * Every vertex of `b` loses its `best_outer` entry, since an outer
+  #     vertex holds none.
+  defp refresh_after_formation(state, b, children, formerly_inner) do
+    state = cross_merge(state, b, children)
+
     Enum.reduce(blossom_vertices(state, b), state, fn v, state ->
-      cond do
-        MapSet.member?(formerly_inner, v) ->
-          settle_outer_vertex(state, v)
-
-        true ->
-          # Formerly outer. `best_outer` cannot apply to an outer vertex,
-          # so only `best_cross` is in question.
-          state = %{state | best_outer: Map.delete(state.best_outer, v)}
-
-          case Map.get(state.best_cross, v) do
-            {_r, partner} ->
-              if Map.fetch!(state.in_blossom, partner) == b,
-                do: settle_outer_vertex(state, v),
-                else: state
-
-            nil ->
-              state
-          end
-      end
+      if MapSet.member?(formerly_inner, v),
+        do: settle_outer_vertex(state, v),
+        else: %{state | best_outer: Map.delete(state.best_outer, v)}
     end)
   end
 
@@ -1011,11 +995,7 @@ defmodule Ainalrami.WeightedMatching do
     Enum.reduce(changed, state, fn v, state ->
       case Map.get(state.label, Map.fetch!(state.in_blossom, v)) do
         :inner ->
-          %{
-            state
-            | best_outer: Map.delete(state.best_outer, v),
-              best_cross: Map.delete(state.best_cross, v)
-          }
+          %{state | best_outer: Map.delete(state.best_outer, v)}
 
         :outer ->
           settle_outer_vertex(state, v)
@@ -1026,23 +1006,27 @@ defmodule Ainalrami.WeightedMatching do
     end)
   end
 
-  # For a vertex that is (now) outer: its own best cross edge and its offer
-  # to every neighbour, in one pass over its adjacency row.
+  # For a vertex that is (now) outer, in one pass over its adjacency row:
+  # offer itself to every free/zero neighbour (`best_outer`), and offer
+  # every edge to an outer neighbour in another blossom to the cross table
+  # (both rows). This is the ONLY place a vertex's edges are ever walked
+  # for the cross table; everything else about the table is a merge or a
+  # delete.
   defp settle_outer_vertex(state, v) do
     blossom = Map.fetch!(state.in_blossom, v)
     best_outer = Map.delete(state.best_outer, v)
+    cross = state.cross
 
     case Map.get(state.weight, v) do
       nil ->
-        %{state | best_outer: best_outer, best_cross: Map.delete(state.best_cross, v)}
+        %{state | best_outer: best_outer, cross: cross}
 
       row ->
-        # Everything the loop reads is pulled out of `state` ONCE, and the two
-        # caches are threaded through the reduce as bare maps. Writing
-        # `%{state | ...}` inside the loop -- as this did -- rebuilds the whole
-        # nine-field state map on every neighbour visited, and that rebuild
-        # measured at four times the cost of the work it wrapped. It is the
-        # single largest constant factor in the module.
+        # Everything the loop reads is pulled out of `state` ONCE, and the
+        # two caches are threaded through the reduce as bare maps. Writing
+        # `%{state | ...}` inside the loop rebuilds the whole state map on
+        # every neighbour visited, which measured at four times the cost of
+        # the work it wrapped.
         dual_v = Map.fetch!(state.dual, v)
         duals = state.dual
         labels = state.label
@@ -1050,63 +1034,42 @@ defmodule Ainalrami.WeightedMatching do
         cross_shift = state.shift_cross
         outer_shift = state.shift_outer
 
-        {best_cross, best_outer, own_best} =
-          Enum.reduce(row, {state.best_cross, best_outer, nil}, fn {u, w}, {bc, bo, own} ->
-            u_blossom = Map.fetch!(in_blossom, u)
+        {cross, best_outer} =
+          Enum.reduce(row, {cross, best_outer}, fn {u, w}, {cr, bo} ->
+            ub = Map.fetch!(in_blossom, u)
             r = dual_v + Map.fetch!(duals, u) - w
 
-            case Map.get(labels, u_blossom) do
-              :outer when u_blossom != blossom ->
-                # A cross edge, both ways round: a candidate for v's own
-                # entry AND v is a candidate for u's.
-                own = if own == nil or r < elem(own, 0), do: {r, u}, else: own
-                {offer(bc, u, stored(r, cross_shift), v), bo, own}
+            case Map.get(labels, ub) do
+              :outer when ub != blossom ->
+                {cross_offer(cr, blossom, ub, stored(r, cross_shift), v, u), bo}
 
               label when label in [:free, :zero] ->
-                {bc, offer(bo, u, stored(r, outer_shift), v), own}
+                {cr, offer(bo, u, stored(r, outer_shift), v)}
 
               _ ->
-                {bc, bo, own}
+                {cr, bo}
             end
           end)
 
-        %{
-          state
-          | best_cross: put_best(best_cross, v, bias(own_best, cross_shift)),
-            best_outer: best_outer
-        }
+        %{state | cross: cross, best_outer: best_outer}
     end
   end
 
+  # For a FREE or ZERO vertex: its best edge to any outer vertex. (An outer
+  # vertex is handled by `settle_outer_vertex/2`; an inner one holds
+  # nothing.) The cross table is not a per-vertex thing any more, so only
+  # `best_outer` is in question here.
   defp recompute_vertex(state, v) do
     blossom = Map.fetch!(state.in_blossom, v)
     row = Map.get(state.weight, v)
 
     case Map.get(state.label, blossom) do
-      :outer ->
-        best = bias(scan_row(state, v, row, blossom, :cross), state.shift_cross)
-
-        %{
-          state
-          | best_cross: put_best(state.best_cross, v, best),
-            best_outer: Map.delete(state.best_outer, v)
-        }
-
       label when label in [:free, :zero] ->
         best = bias(scan_row(state, v, row, blossom, :outer), state.shift_outer)
-
-        %{
-          state
-          | best_outer: put_best(state.best_outer, v, best),
-            best_cross: Map.delete(state.best_cross, v)
-        }
+        %{state | best_outer: put_best(state.best_outer, v, best)}
 
       _ ->
-        %{
-          state
-          | best_outer: Map.delete(state.best_outer, v),
-            best_cross: Map.delete(state.best_cross, v)
-        }
+        %{state | best_outer: Map.delete(state.best_outer, v)}
     end
   end
 
@@ -1221,17 +1184,133 @@ defmodule Ainalrami.WeightedMatching do
     end
   end
 
-  # Straight off `best_cross`, one entry per outer vertex holding its
-  # least-resistance edge to an outer vertex in a different blossom. Was a
-  # rescan of every outer pair on every delta step, and 55% of a solve.
+  ## --------------------------------------------- the cross-edge table
+  #
+  # `state.cross` is bbpPairings' `minOuterEdges`: for every pair of OUTER
+  # top-level blossoms, the least-resistance edge between them.
+  #
+  #     cross :: %{blossom => %{other_blossom => {stored_r, v_here, v_there}}}
+  #
+  # Symmetric -- both rows hold the edge, each from its own side -- and
+  # keyed by BLOSSOM, which is the whole point. The previous design kept one
+  # entry per VERTEX (its single best cross edge), and that died on blossom
+  # formation: when outer blossoms merge it is because their best edges
+  # point at each other, so nearly every entry was invalidated and had to
+  # be rescanned -- 252,000 row walks per 209-player round, 58% of it.
+  #
+  # Per blossom pair, formation is a MERGE: the new blossom's row is the
+  # min over its children's rows, and every other blossom's entry for the
+  # new one is the min over its entries for the children. No vertex is
+  # visited. The second-best edge to every other blossom was already in
+  # the table, so nothing is lost when the best one becomes internal.
+  #
+  # Maintained at:
+  #   * `rebuild_cross/1`      -- stage start, from the outer set, by walking
+  #   * `cross_add_blossom/2`  -- a blossom has just become outer: walk its
+  #                               vertices once, fill its row and everyone
+  #                               else's entry for it
+  #   * `cross_merge/3`        -- formation: merge children's rows, O(B^2)
+  #   * `cross_remove/2`       -- a blossom stops being outer or stops
+  #                               existing: drop its row and every entry
+  #                               pointing at it
+  #
+  # Stored resistances carry `shift_cross` bias exactly as before, so the
+  # dual shift stays O(1).
+
+  # One flat map, `{lo, hi} => {stored_r, v_lo, v_hi}` with `lo < hi`, plus
+  # a running minimum `cross_best :: {stored_r, key} | nil` kept alongside
+  # it -- bbpPairings' `minOuterOuterEdgeResistance`. An offer that wins
+  # updates both in O(1); `min_outer_outer/1` reads the minimum instead of
+  # scanning the table, which at stage start holds ~|outer|^2 entries and
+  # was scanned on every one of ~27,000 delta steps a round -- 20% of it.
+  #
+  # The minimum can only go STALE in one way: `cross_merge/3` drops or
+  # re-keys entries, so it recomputes the minimum from the merged table.
+  # Within a stage nothing else removes an entry. (A tuple key was measured
+  # against a packed integer key and made no difference; the cost of a
+  # losing offer is the lookup itself, not the key.)
+  defp cross_offer({cross, best}, a, b, r, va, vb) do
+    {key, vlo, vhi} = if a < b, do: {{a, b}, va, vb}, else: {{b, a}, vb, va}
+
+    case cross do
+      %{^key => {old, _, _}} when old <= r ->
+        {cross, best}
+
+      _ ->
+        best = if best == nil or r < elem(best, 0), do: {r, key}, else: best
+        {Map.put(cross, key, {r, vlo, vhi}), best}
+    end
+  end
+
+  # The new blossom `new_b` has absorbed `children`, all of which were
+  # top-level and some of which were outer. Every table entry touching a
+  # child is re-keyed: an entry between two children is now INTERNAL and is
+  # dropped; an entry between a child and an outsider `k` becomes an entry
+  # between `new_b` and `k`, keeping the minimum if several collapse onto
+  # the same key. No vertex is visited. The running minimum is recomputed
+  # from the result, since the old best may have been one of the dropped.
+  #
+  # The second-best edge to every outsider was already in the table, so
+  # nothing is lost when the best one becomes internal -- which is exactly
+  # the case formation produces, since blossoms merge because their best
+  # edges pointed at each other. Under the per-vertex design that
+  # invalidated almost every entry and cost 252,000 rescans per 209-player
+  # round.
+  #
+  # Children that were INNER had no entries; the caller walks their
+  # vertices with `settle_outer_vertex/2`.
+  defp cross_merge(state, new_b, children) do
+    child_set = MapSet.new(children)
+    {cross, _best} = state.cross
+
+    cross =
+      Enum.reduce(cross, %{}, fn {{a, b} = key, {r, va, vb} = entry}, acc ->
+        a_in = MapSet.member?(child_set, a)
+        b_in = MapSet.member?(child_set, b)
+
+        cond do
+          a_in and b_in ->
+            acc
+
+          a_in ->
+            {k2, v1, v2} = if new_b < b, do: {{new_b, b}, va, vb}, else: {{b, new_b}, vb, va}
+
+            case acc do
+              %{^k2 => {old, _, _}} when old <= r -> acc
+              _ -> Map.put(acc, k2, {r, v1, v2})
+            end
+
+          b_in ->
+            {k2, v1, v2} = if a < new_b, do: {{a, new_b}, va, vb}, else: {{new_b, a}, vb, va}
+
+            case acc do
+              %{^k2 => {old, _, _}} when old <= r -> acc
+              _ -> Map.put(acc, k2, {r, v1, v2})
+            end
+
+          true ->
+            Map.put(acc, key, entry)
+        end
+      end)
+
+    best =
+      Enum.reduce(cross, nil, fn {key, {r, _, _}}, best ->
+        if best == nil or r < elem(best, 0), do: {r, key}, else: best
+      end)
+
+    %{state | cross: {cross, best}}
+  end
+
+  # The least-resistance outer-outer edge overall, straight off the running
+  # minimum.
   defp min_outer_outer(state) do
-    state.best_cross
-    |> Enum.reduce({nil, nil}, fn {v, {r, u}}, {best, best_pair} ->
-      if best == nil or r < best, do: {r, {v, u}}, else: {best, best_pair}
-    end)
-    |> case do
-      {nil, _} -> {nil, nil}
-      {r, pair} -> {unbiased(r, state.shift_cross), pair}
+    case state.cross do
+      {_, nil} ->
+        {nil, nil}
+
+      {cross, {r, key}} ->
+        {_, va, vb} = Map.fetch!(cross, key)
+        {unbiased(r, state.shift_cross), {va, vb}}
     end
   end
 
@@ -1541,7 +1620,7 @@ defmodule Ainalrami.WeightedMatching do
         label: Enum.reduce(cycle, Map.put(state.label, new_id, :outer), &Map.delete(&2, &1)),
         next_blossom_id: new_id + 1
     }
-    |> then(&{&1, formerly_inner})
+    |> then(&{&1, cycle, formerly_inner})
   end
 
   # Records the connector between every CONSECUTIVE pair of blossoms in
