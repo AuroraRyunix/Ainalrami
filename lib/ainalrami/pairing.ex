@@ -84,6 +84,10 @@ defmodule Ainalrami.Pairing do
   # with the rest of the round-scoped keys.
   @round_matcher_key :ainalrami_round_matcher
   @dirty_key :ainalrami_dirty_edges
+  # The round.s completability oracle -- see `build_oracle/3`. Set by
+  # `global_cascade/2`, consulted by `attempt_local/7`, cleared with the
+  # rest of the round-scoped keys.
+  @oracle_key :ainalrami_oracle
   # C.04.3 5.1's initial colour -- the one drawn by lot before round 1, which
   # 5.2.5 gives to the higher ranked player of a pair when neither holds a
   # preference. Defaults to White, which is what this engine assumed
@@ -120,7 +124,6 @@ defmodule Ainalrami.Pairing do
       # rounds, so the map cannot be built until the round being paired is
       # known.
       Process.put(@forbidden_key, forbidden_map(opts[:forbidden_pairs], played + 1))
-      Process.delete(:far_weights)
 
       active = Enum.filter(players, &active_this_round?(&1, played))
 
@@ -304,6 +307,7 @@ defmodule Ainalrami.Pairing do
       Process.delete(@forbidden_key)
       Process.delete(@bye_score_key)
       Process.delete(@round_matcher_key)
+      Process.delete(@oracle_key)
       Process.delete(@dirty_key)
       Process.delete(@first_single_bye_key)
     end
@@ -757,6 +761,7 @@ defmodule Ainalrami.Pairing do
     after
       Process.delete(@bye_score_key)
       Process.delete(@round_matcher_key)
+      Process.delete(@oracle_key)
       Process.delete(@dirty_key)
       Process.delete(@first_single_bye_key)
     end
@@ -1186,15 +1191,13 @@ defmodule Ainalrami.Pairing do
 
     ctx = global_context(field)
 
-    # Vertex ids for the round's single matcher are positions in `field`,
-    # which every bracket's vertex set is a subsequence of (measured: 10 of
-    # 10 brackets in a 209-player round). The matcher itself is created
-    # lazily by the first `solve/1`.
-    field_index = field |> Enum.with_index() |> Map.new(fn {p, i} -> {p.rank, i} end)
-    Process.put(@round_matcher_key, {nil, field_index, length(field)})
-    # Reset with the matcher: the first bracket after this scores the whole
-    # field and builds the matcher from it (`base_edge_weights/8`).
-    Process.delete(:far_weights)
+    # Vertex ids for the round.s field matcher are positions in `field`,
+    # which every bracket.s vertex set is a subsequence of. The matcher
+    # itself is created lazily by the first field-graph `solve/1`, and
+    # rebuilt after any bracket the local graph answered.
+    Process.put(@round_matcher_key, {nil, ctx.field_index, length(field)})
+    # Whole-field and round-scoped, like the matcher: see `build_oracle/3`.
+    Process.put(@oracle_key, build_oracle(field, allowed_byes, ctx))
 
     {pairs, leftover} = run_brackets(field, ctx)
 
@@ -1391,6 +1394,9 @@ defmodule Ainalrami.Pairing do
       unplayed_ranks: unplayed_ranks(field, bye_score),
       odd_field?: rem(length(field), 2) == 1,
       first_single_bye?: Process.get(@first_single_bye_key, false),
+      # Rank -> position in the round.s field: the vertex ids of the round
+      # matcher and the oracle.
+      field_index: field |> Enum.with_index() |> Map.new(fn {p, i} -> {p.rank, i} end),
       bands: %{
         places: places,
         place_span: place_span,
@@ -1659,33 +1665,250 @@ defmodule Ainalrami.Pairing do
   # finalised, consumed, or exchanged into, and it exists so that players
   # leaving this bracket get a realistic tentative match (see
   # `peek_groups/3`).
+  # A bracket is paired on one of two graphs.
+  #
+  # The FIELD graph is the whole remaining field, one matcher for the
+  # round, the eight stages re-solving it at every step -- bbpPairings'
+  # design, and the one every number in docs/validation.md was measured
+  # on. It is exact and it is n^3 a round: 85 s for 1,000 players.
+  #
+  # The LOCAL graph is the bracket alone. It is exact too, but only under
+  # conditions this function checks first, and the argument for it goes
+  # like this. Suppose the bracket has an even number of members, every one
+  # of them a non-candidate for the bye, and suppose (a) the bracket has a
+  # perfect internal matching on legal edges and (b) the rest of the field
+  # can be perfectly matched among themselves (leaving the one bye, if any,
+  # on a bye candidate). Then every matching that is optimal on the ladder
+  # pairs the bracket internally: the completion rung is maximal with the
+  # bracket internal, by (a) and (b), and C6 -- pairs inside the bracket,
+  # which outranks everything below it -- is maximal ONLY with the bracket
+  # internal. An internal bracket shares no edge with the rest, so the
+  # optimum splits: the bracket's part is the optimum over the bracket's
+  # own edges with the bracket's own weights, which is what the local graph
+  # computes, and the rest's part is constant across every candidate. The
+  # eight stages only ever add to bracket-internal edges, in the reserve
+  # band below every rung, so none of them can break (a)'s internality
+  # either, and each stage's optimum is again the local one.
+  #
+  # (a) is what the local graph's own first solve establishes -- the
+  # completion rung is the top rung, so its maximum-weight matching is a
+  # maximum-cardinality one, and it is perfect or it is not. (b) is what
+  # `oracle_completable?/2` establishes: a sparse maximum-cardinality
+  # matching over the field with this bracket removed, sound in the
+  # direction that matters (a matching it finds is real; one it misses
+  # costs a fall back to the field graph, never a wrong answer). The
+  # non-candidate condition is what makes the completion rung's per-vertex
+  # terms a constant for the bracket and keeps C9 and the C9 gate out of
+  # it -- see `local_eligible?/4`.
+  #
+  # What the local graph does NOT claim is the tie-break. When two
+  # matchings tie on every rung and on the nearness term, the two graphs
+  # could in principle settle it differently; the stages are built to
+  # leave no such tie, and the corpus is the judge.
   defp pair_bracket(combined, sgb, nsgb, wsgb, ctx, single_bye?) do
     m = length(combined)
-    arr = List.to_tuple(combined)
 
-    # Sized to the GRAPH, which is now the whole remaining field. That is
-    # what bbpPairings does too — `scoreGroupSizeBits`/`scoreGroupShifts`
+    with true <- local_eligible?(combined, nsgb, wsgb, ctx),
+         {:ok, result} <- attempt_local(combined, m, sgb, nsgb, wsgb, ctx, single_bye?) do
+      result
+    else
+      _ -> attempt_field(combined, m, sgb, nsgb, wsgb, ctx, single_bye?)
+    end
+  end
+
+  # The bracket can be paired on its own graph only if its members are all
+  # non-candidates for the bye -- which on an odd field means everyone in
+  # the window scores above `bye_score`, and on an even one means nobody in
+  # the window is an eligible player on zero points (`bye_candidate?/2`'s
+  # even-field reading). That is what keeps three things out of the local
+  # computation: the completion rung's `!isByeCandidate` terms are then the
+  # same for every bracket member; `c9_rank/3` is zero for everyone in it;
+  # and `bracket_loop/6`'s C9 gate for the NEXT bracket cannot fire, since
+  # it needs the bye score to reach the next group. The local path's
+  # tentative matching says nothing about the field below, which is fine
+  # precisely because nothing downstream reads it here.
+  #
+  # An ODD bracket floats one member, and who floats is decided jointly
+  # with the field below. The local graph stands the next score group in
+  # with ONE vertex (`local_graph_length/1`), and that is exact when two
+  # things hold -- see `stand_in_edges/7` for the argument:
+  #
+  #   * every member of the bracket has at least one legal, colour-
+  #     compatible partner in the next group, so every one of them can
+  #     take the C8 float and none is forced deeper; and
+  #   * the next group is large enough that taking any one member out of
+  #     it leaves it as well off as taking any other -- its internal
+  #     matching number unchanged, its own float (if the parity forces
+  #     one) still placeable below. That is a property of a DENSE group,
+  #     and `@local_min_next_group` is where "dense enough" is drawn: a
+  #     group that size with the legality a real event has is never
+  #     fragile, and brackets over smaller groups are cheap on the field
+  #     graph anyway, since the field below them is small.
+  #
+  # The second condition is the one that is not certified term by term,
+  # and it is the one the corpus is asked to judge: the small-field axes
+  # put every bracket on the field graph, and the 60-120 and 150-250
+  # axes put the large ones here.
+  @local_min_next_group 16
+
+  defp local_eligible?(combined, nsgb, wsgb, ctx) do
+    window = Enum.take(combined, min(wsgb, length(combined)))
+
+    System.get_env("AINALRAMI_NOFAST") == nil and nsgb >= 2 and
+      Enum.all?(window, fn p ->
+        if ctx.odd_field?,
+          do: not is_nil(ctx.bye_score) and p.points > ctx.bye_score,
+          else: not bye_candidate?(p, nil)
+      end) and
+      (rem(nsgb, 2) == 0 or floats_placeable?(combined, nsgb, wsgb))
+  end
+
+  defp floats_placeable?(combined, nsgb, wsgb) do
+    {bracket, rest} = Enum.split(combined, nsgb)
+    next_group = Enum.take(rest, wsgb - nsgb)
+
+    length(next_group) >= @local_min_next_group and
+      Enum.all?(bracket, fn a ->
+        Enum.any?(next_group, fn b -> legal_pair?(a, b) and colour_compatible?(a, b) end)
+      end)
+  end
+
+  # The local graph is the bracket -- plus, for an odd bracket, one vertex
+  # at position `nsgb` standing in for the whole next score group.
+  defp local_graph_length(nsgb), do: nsgb + rem(nsgb, 2)
+
+  # The stand-in's edges: one per bracket member that has a legal,
+  # colour-compatible partner in the next group, weighted as that member's
+  # float edge.
+  #
+  # Why one vertex is exact. Under the eligibility conditions an odd
+  # bracket's optimum has exactly one member F floating into the next
+  # group: C6 wants the other (b-1)/2 pairs internal, and C8 and its score
+  # term put the float in the NEXT group rather than deeper, which
+  # `floats_placeable?/3` says it always can be. The float edge (F, G)
+  # scores the completion rung, C8 and C8's score term and nothing else --
+  # every other rung is gated on `in_current`, and under `local_eligible?/4`
+  # the completion rung's per-vertex terms are the same for every G -- so
+  # its weight depends on F alone and is the same for every legal G. What
+  # the field below is worth once G is gone is, by the density condition,
+  # the same whichever G it was. So what decides F is the bracket's
+  # internal optimum without F plus F's own float weight: the local graph
+  # with the stand-in, exactly. The stand-in's weight for F is computed
+  # against F's first legal partner in the group, which by the above is
+  # the weight against any of them.
+  #
+  # The stand-in also carries the right tie-break. The nearness term on a
+  # real float edge (F, G) is `n - (G - F)`; two bracket members compare
+  # on it by `F - F'` whatever G is, and that is what a stand-in at a fixed
+  # position gives them too.
+  defp stand_in_edges(base, arr, sgb, nsgb, wsgb, ctx, bands, single_bye?) do
+    if rem(nsgb, 2) == 0 do
+      base
+    else
+      Enum.reduce(0..(nsgb - 1)//1, base, fn i, acc ->
+        a = elem(arr, i)
+
+        g =
+          Enum.find(nsgb..(wsgb - 1)//1, fn j ->
+            b = elem(arr, j)
+            legal_pair?(a, b) and colour_compatible?(a, b)
+          end)
+
+        case g && bracket_edge_weight(a, elem(arr, g), nsgb, sgb, 1, ctx, bands, single_bye?) do
+          nil -> acc
+          w -> Map.put(acc, {i, nsgb}, w)
+        end
+      end)
+    end
+  end
+
+  defp attempt_local(combined, m, sgb, nsgb, wsgb, ctx, single_bye?) do
+    wl = local_graph_length(nsgb)
+    st = new_bracket(:local, combined, m, sgb, nsgb, wsgb, wl, ctx, single_bye?) |> solve()
+
+    if map_size(st.matching) == wl do
+      {pairs, _, _, _} = result = st |> run_stages() |> collect_bracket()
+
+      # Condition (b): with this bracket's finalised players gone, the rest
+      # -- the floater included, on an odd bracket -- can still be paired.
+      positions =
+        Enum.flat_map(pairs, fn {w, b} ->
+          [Map.fetch!(ctx.field_index, w), Map.fetch!(ctx.field_index, b)]
+        end)
+
+      case oracle_completable?(Process.get(@oracle_key), positions) do
+        {:ok, oracle} ->
+          # The bracket is out of the field for good, for the oracle and
+          # for the field matcher alike: the next field-graph bracket
+          # rebuilds its matcher from the players that remain.
+          Process.put(@oracle_key, oracle)
+          {_, field_index, field_size} = Process.get(@round_matcher_key)
+          Process.put(@round_matcher_key, {nil, field_index, field_size})
+          {:ok, result}
+
+        :no ->
+          :field
+      end
+    else
+      :field
+    end
+  end
+
+  defp attempt_field(combined, m, sgb, nsgb, wsgb, ctx, single_bye?) do
+    {pairs, _, _, _} =
+      result =
+      new_bracket(:field, combined, m, sgb, nsgb, wsgb, m, ctx, single_bye?)
+      |> solve()
+      |> run_stages()
+      |> flush_live()
+      |> collect_bracket()
+
+    # Keep the oracle in step: whoever this bracket finalised is out of the
+    # field for every later bracket's (b).
+    positions =
+      Enum.flat_map(pairs, fn {w, b} ->
+        [Map.fetch!(ctx.field_index, w), Map.fetch!(ctx.field_index, b)]
+      end)
+
+    Process.put(@oracle_key, oracle_remove(Process.get(@oracle_key), positions))
+    result
+  end
+
+  defp new_bracket(mode, combined, m, sgb, nsgb, wsgb, wl, ctx, single_bye?) do
+    arr = List.to_tuple(combined)
+    Process.delete(@dirty_key)
+
+    # Field-wide and constant for the round -- see `global_context/2`. That
+    # is what bbpPairings does too: `scoreGroupSizeBits`/`scoreGroupShifts`
     # are computed once over `sortedPlayers` and never re-derived per
-    # bracket (dutch.cpp:684-730) — and it is what makes the weights
-    # commensurable in the first place: one solve now mixes edges scored
-    # for this bracket with edges scored as plain completability, and two
-    # differently-scaled radices cannot be compared.
-    #
-    # The cost is real and was the reason this used to be bracket-sized:
-    # a field-wide span inflates the bignums the matcher compares, eight
-    # re-solves per bracket over. Measured rather than assumed — see the
-    # timing note in docs/engineering-log.md.
-    # Field-wide and constant for the round -- see `global_context/1`. This
-    # is what lets one matcher serve every bracket: the weights never
-    # rescale, so a bracket boundary is a set of edge changes rather than
-    # a new graph.
+    # bracket (dutch.cpp:684-730). It is also what makes the weights
+    # commensurable: one solve mixes edges scored for this bracket with
+    # edges scored as plain completability, and two differently-scaled
+    # radices cannot be compared.
     bands = ctx.bands
 
-    base = base_edge_weights(arr, m, sgb, nsgb, wsgb, ctx, bands, single_bye?)
+    # The field graph scores the whole field only when it is about to BUILD
+    # the round matcher from it; once built, a bracket boundary is the
+    # window's edges changing on an existing graph.
+    {round_matcher, _, _} = Process.get(@round_matcher_key)
+
+    base =
+      case mode do
+        :local ->
+          arr
+          |> base_edge_weights(m, sgb, nsgb, nsgb, ctx, bands, single_bye?)
+          |> stand_in_edges(arr, sgb, nsgb, wsgb, ctx, bands, single_bye?)
+
+        :field ->
+          scored = if round_matcher != nil, do: min(wsgb, m), else: m
+          base_edge_weights(arr, m, sgb, nsgb, scored, ctx, bands, single_bye?)
+      end
 
     %{
+      mode: mode,
       arr: arr,
       m: m,
+      wl: wl,
       sgb: sgb,
       nsgb: nsgb,
       wsgb: wsgb,
@@ -1693,6 +1916,7 @@ defmodule Ainalrami.Pairing do
       bands: bands,
       base: base,
       live: base,
+      wm: nil,
       synced: false,
       transposition: transposition_terms(m, sgb, nsgb),
       # Any value above every real weight will do: `finalize_pair/3`
@@ -1705,7 +1929,10 @@ defmodule Ainalrami.Pairing do
       remainder_pairs: 0,
       exchange_count: 0
     }
-    |> solve()
+  end
+
+  defp run_stages(st) do
+    st
     |> trace_stage("initial solve")
     |> stage_select_mdps()
     |> trace_stage("1 select MDPs")
@@ -1723,8 +1950,6 @@ defmodule Ainalrami.Pairing do
     |> trace_stage("7 reset bits")
     |> stage_first_group_partners()
     |> trace_stage("8 first-group partners")
-    |> flush_live()
-    |> collect_bracket()
   end
 
   # How many pairs the bracket would KEEP if it stopped here. Set
@@ -1782,7 +2007,179 @@ defmodule Ainalrami.Pairing do
     put_w(live, i, j, w)
   end
 
-  defp solve(st) do
+  defp solve(%{mode: :local} = st), do: solve_local(st)
+  defp solve(st), do: solve_field(st)
+
+  # The LOCAL graph: the bracket's own `nsgb` vertices, bracket-local
+  # indices, one fresh matcher per bracket, the full ladder on every edge.
+  # See `pair_bracket/6` for when this is exact. The weights carry the
+  # same nearness term as the field graph's (`edge_weigher/3`), on the
+  # same positions -- the bracket is a prefix of `arr` -- so the two graphs
+  # agree on every tie the term can break.
+  defp solve_local(st) do
+    weigh = edge_weigher(st, & &1, st.m)
+    dirty = Process.get(@dirty_key, [])
+    Process.delete(@dirty_key)
+
+    wm =
+      case st.wm do
+        nil ->
+          # The same bound `solve_field/1` uses, minus the round scale: the
+          # transposition tie-break's scale is per bracket and this matcher
+          # is too.
+          s = st.bands.count_span
+          ps = st.bands.place_span
+          span_product = Integer.pow(s, 12) * Integer.pow(ps, 6) * Integer.pow(s, 4) * 64
+
+          ceiling =
+            2 * span_product * st.bands.reserve * st.transposition.scale * s *
+              (st.m * st.m + 1)
+
+          list = for {{i, j}, w} <- st.live, w > 0, j < st.wl, do: {i, j, weigh.(i, j, w)}
+          WeightedMatching.new(st.wl, list, max_weight: ceiling, gcd: 1)
+
+        wm ->
+          {wm, _seen} =
+            Enum.reduce(dirty, {wm, MapSet.new()}, fn {i, j} = key, {acc, seen} ->
+              cond do
+                i >= st.wl or j >= st.wl ->
+                  {acc, seen}
+
+                MapSet.member?(seen, key) ->
+                  {acc, seen}
+
+                true ->
+                  want = weigh.(i, j, get_w(st.live, i, j))
+
+                  acc =
+                    if WeightedMatching.edge_weight(acc, i, j) == want,
+                      do: acc,
+                      else: WeightedMatching.set_weight(acc, i, j, want)
+
+                  {acc, MapSet.put(seen, key)}
+              end
+            end)
+
+          wm
+      end
+
+    {wm, matching} = WeightedMatching.solve(wm)
+    %{st | wm: wm, matching: matching}
+  end
+
+  ## ------------------------------------------- the completability oracle
+  #
+  # One question, asked once per bracket that wants the local graph: with
+  # this bracket taken out, can everyone who is left still be paired --
+  # leaving the one bye, if any, on a bye candidate? That is condition (b)
+  # of `pair_bracket/6`, and it is a MAXIMUM-CARDINALITY question with a
+  # per-vertex preference, which two things make cheap:
+  #
+  #   * **Sparse.** Each player keeps only their `@oracle_degree` nearest
+  #     legal, colour-compatible opponents below them in the field order
+  #     (and inherits the same from above), so the graph is O(n) edges
+  #     rather than O(n^2). Sound in the direction that matters: a
+  #     matching of a subgraph is a matching of the graph. A false NEGATIVE
+  #     is possible -- the sparse graph may miss a matching the dense one
+  #     has -- and it costs a fall back to the field graph for that
+  #     bracket, never a wrong answer.
+  #
+  #   * **Small weights.** `B + K*(noncand(i) + noncand(j)) + (n - |i-j|)`
+  #     with `B > n*K + n^2 > K > n^2/2`: one more pair beats any number
+  #     of matched non-candidates, one more matched non-candidate beats
+  #     any amount of nearness, and the nearness term breaks the ties that
+  #     would otherwise make every edge tight. So maximum weight is maximum
+  #     cardinality, then most non-candidates matched -- the shape of the
+  #     completion rung exactly -- then nearest.
+  #
+  # Removing a bracket is edge removal on a persistent map, so the
+  # pre-removal oracle is kept for free and simply discarded when the
+  # answer is good.
+  @oracle_degree 12
+
+  defp build_oracle(field, allowed_byes, ctx) do
+    arr = List.to_tuple(field)
+    n = length(field)
+
+    noncand =
+      for i <- 0..(n - 1)//1, into: %{} do
+        {i, bit(not bye_candidate?(elem(arr, i), ctx.bye_score))}
+      end
+
+    edges =
+      for i <- 0..(n - 1)//1,
+          j <-
+            Enum.reduce_while((i + 1)..(n - 1)//1, {[], 0}, fn j, {acc, taken} ->
+              cond do
+                taken >= @oracle_degree ->
+                  {:halt, {acc, taken}}
+
+                legal_pair?(elem(arr, i), elem(arr, j)) and
+                    colour_compatible?(elem(arr, i), elem(arr, j)) ->
+                  {:cont, {[j | acc], taken + 1}}
+
+                true ->
+                  {:cont, {acc, taken}}
+              end
+            end)
+            |> elem(0),
+          do: {i, j, oracle_weight(i, j, n, noncand)}
+
+    %{
+      state: WeightedMatching.new(n, edges, max_weight: oracle_ceiling(n), gcd: 1),
+      n: n,
+      allowed_byes: allowed_byes,
+      noncand: noncand,
+      gone: MapSet.new()
+    }
+  end
+
+  defp oracle_weight(i, j, n, noncand) do
+    k = n * n
+    b = n * k + n * n + 1
+    b + k * (Map.fetch!(noncand, i) + Map.fetch!(noncand, j)) + (n - abs(j - i))
+  end
+
+  defp oracle_ceiling(n), do: n * n * n + 4 * n * n + n + 1
+
+  # Condition (b) for `positions` as the bracket: take them out, re-solve,
+  # and look at who is left unmatched among the players still in the field.
+  # `{:ok, oracle}` carries the state with the bracket gone, to keep if the
+  # bracket is accepted.
+  defp oracle_completable?(oracle, positions) do
+    oracle = oracle_remove(oracle, positions)
+
+    unmatched =
+      for v <- 0..(oracle.n - 1)//1,
+          not MapSet.member?(oracle.gone, v),
+          WeightedMatching.mate_of(oracle.state, v) == nil,
+          do: v
+
+    if length(unmatched) <= oracle.allowed_byes and
+         Enum.all?(unmatched, &(Map.fetch!(oracle.noncand, &1) == 0)),
+       do: {:ok, oracle},
+       else: :no
+  end
+
+  # `positions` leave the field: every edge at each of them goes, and the
+  # matching is re-solved around the hole.
+  defp oracle_remove(oracle, []), do: oracle
+
+  defp oracle_remove(oracle, positions) do
+    state =
+      Enum.reduce(positions, oracle.state, fn v, acc ->
+        acc
+        |> WeightedMatching.neighbours(v)
+        |> Enum.reduce(acc, fn {u, _w}, acc -> WeightedMatching.set_weight(acc, v, u, 0) end)
+      end)
+
+    {state, _} = WeightedMatching.solve(state)
+    %{oracle | state: state, gone: MapSet.union(oracle.gone, MapSet.new(positions))}
+  end
+
+  # The FIELD graph: the whole remaining field, one matcher for the round,
+  # carried across every bracket.
+  defp solve_field(st) do
     {round_matcher, field_index, field_size} = Process.get(@round_matcher_key)
     to_field = fn i -> Map.fetch!(field_index, elem(st.arr, i).rank) end
     weigh = edge_weigher(st, to_field, field_size)
@@ -2126,7 +2523,7 @@ defmodule Ainalrami.Pairing do
   # usable edge — the one to the other.
   defp finalize_pair(st, i, j) do
     live =
-      Enum.reduce(0..(st.m - 1)//1, st.live, fn k, acc ->
+      Enum.reduce(0..(st.wl - 1)//1, st.live, fn k, acc ->
         acc = if k == i, do: acc, else: set_live(acc, i, k, if(k == j, do: st.max_w, else: 0))
         if k == j, do: acc, else: set_live(acc, j, k, if(k == i, do: st.max_w, else: 0))
       end)
@@ -2136,7 +2533,7 @@ defmodule Ainalrami.Pairing do
 
   ## ---------- the ladder ----------
 
-  defp base_edge_weights(_arr, m, _sgb, _nsgb, _wsgb, _ctx, _bands, _single_bye?) when m < 2,
+  defp base_edge_weights(_arr, m, _sgb, _nsgb, _scored, _ctx, _bands, _single_bye?) when m < 2,
     do: %{}
 
   # The weights for this bracket's graph -- and the graph is the whole
@@ -2159,28 +2556,23 @@ defmodule Ainalrami.Pairing do
   # Before this every bracket rescored all m^2/2 pairs and the boundary
   # diff walked them again: 1.4 s of a 9 s round at 400 players, for
   # values that could not have changed.
-  defp base_edge_weights(arr, m, sgb, nsgb, wsgb, ctx, bands, single_bye?) do
+  defp base_edge_weights(arr, m, sgb, nsgb, scored, ctx, bands, single_bye?) do
     reach = reach_table(arr, m, nsgb)
-    first? = Process.get(:far_weights) == nil
-    last = if first?, do: m - 1, else: min(wsgb, m) - 1
+    last = scored - 1
 
-    weights =
-      Enum.reduce(0..(last - 1)//1, %{}, fn i, acc ->
-        a = elem(arr, i)
+    Enum.reduce(0..(last - 1)//1, %{}, fn i, acc ->
+      a = elem(arr, i)
 
-        Enum.reduce((i + 1)..last//1, acc, fn j, inner ->
-          r = Map.get(reach, j, 0)
-          b = elem(arr, j)
+      Enum.reduce((i + 1)..last//1, acc, fn j, inner ->
+        r = Map.get(reach, j, 0)
+        b = elem(arr, j)
 
-          case bracket_edge_weight(a, b, j, sgb, r, ctx, bands, single_bye?) do
-            nil -> inner
-            w -> Map.put(inner, {i, j}, w)
-          end
-        end)
+        case bracket_edge_weight(a, b, j, sgb, r, ctx, bands, single_bye?) do
+          nil -> inner
+          w -> Map.put(inner, {i, j}, w)
+        end
       end)
-
-    if first?, do: Process.put(:far_weights, :in_matcher)
-    weights
+    end)
   end
 
   # How far BELOW the current bracket each position sits, counted in score

@@ -299,6 +299,12 @@ defmodule Ainalrami.WeightedMatching do
   end
 
   @doc """
+  The vertex `v` is matched to, or `nil` when it is exposed. Valid after a
+  `solve/1`.
+  """
+  def mate_of(state, v), do: Map.get(state.mate, v)
+
+  @doc """
   The weight of the edge `{u, v}` as the caller gave it (to `new/3` or
   `set_weight/4`), or 0 when there is no edge.
   """
