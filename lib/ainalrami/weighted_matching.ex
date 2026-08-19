@@ -305,6 +305,79 @@ defmodule Ainalrami.WeightedMatching do
   def mate_of(state, v), do: Map.get(state.mate, v)
 
   @doc """
+  Re-weight edges WITHOUT preparing anyone, by moving duals instead.
+
+  `shifts` is `%{vertex => delta}` (on the doubled scale; even); `edges` is
+  `[{u, v, w}]` on the caller's scale. The result is a valid state -- every
+  touched edge feasible, every matched touched edge tight, every touched
+  vertex a trivial top-level blossom (dissolved first if it was not), duals
+  non-negative -- or `:error`, in which case the caller falls back to
+  `set_weight/4`. Nothing is unmatched, so a `solve/1` after a successful
+  call finds the matching already optimal when it was optimal before.
+
+  This exists for one caller: the refinement stage that rewrites every
+  remainder pair's weight at once (`Ainalrami.Pairing`'s stage 4). Done
+  through `set_weight/4` that prepared every remainder vertex and
+  rediscovered the matching from nothing -- 372 stages and 2.7 s of a
+  1,000-player round -- for weights whose change is a per-vertex amount
+  on one side of every pair, which is exactly what a dual can absorb.
+  """
+  def shift_and_set(state, shifts, edges) do
+    touched =
+      shifts
+      |> Map.keys()
+      |> Enum.concat(Enum.flat_map(edges, fn {u, v, _} -> [u, v] end))
+      |> Enum.uniq()
+
+    # A touched vertex inside a non-trivial blossom is a refusal, not a
+    # dissolution: dissolving pushes half the blossom dual into every vertex,
+    # which keeps the INTERNAL edges tight but puts that half onto the
+    # base.s external match -- fine for `prepare_vertex/2`, which unmatches
+    # the base next, and not for this, which unmatches nothing. Tried;
+    # the state passed every check here and broke the next real search.
+
+    if Enum.any?(touched, &(Map.fetch!(state.in_blossom, &1) != &1)) do
+      :error
+    else
+      dual =
+        Enum.reduce(shifts, state.dual, fn {v, d}, acc -> Map.update!(acc, v, &(&1 + d)) end)
+
+      state =
+        Enum.reduce(edges, %{state | dual: dual}, fn {u, v, w}, acc ->
+          w2 = if w <= 0, do: 0, else: 2 * div(w, acc.gcd)
+          put_weight(acc, u, v, w2)
+        end)
+
+      # Every matched edge at a shifted vertex must still be tight, whether
+      # or not the caller listed it; every listed edge must be feasible.
+      matched_tight? = fn v ->
+        case Map.get(state.blossom_match, v) do
+          nil ->
+            true
+
+          u ->
+            w2 = state.weight |> Map.get(v, %{}) |> Map.get(u, 0)
+            Map.fetch!(state.dual, v) + Map.fetch!(state.dual, u) == w2
+        end
+      end
+
+      ok? =
+        Enum.all?(shifts, fn {v, _} -> Map.fetch!(state.dual, v) >= 0 and matched_tight?.(v) end) and
+          Enum.all?(edges, fn {u, v, w} ->
+            w2 = if w <= 0, do: 0, else: 2 * div(w, state.gcd)
+            slack = Map.fetch!(state.dual, u) + Map.fetch!(state.dual, v) - w2
+
+            matched? =
+              Map.get(state.blossom_match, u) == v or Map.get(state.blossom_match, v) == u
+
+            slack >= 0 and (not matched? or slack == 0)
+          end)
+
+      if ok?, do: {:ok, state}, else: :error
+    end
+  end
+
+  @doc """
   The weight of the edge `{u, v}` as the caller gave it (to `new/3` or
   `set_weight/4`), or 0 when there is no edge.
   """

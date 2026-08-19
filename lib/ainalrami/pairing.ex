@@ -2936,18 +2936,85 @@ defmodule Ainalrami.Pairing do
   defp stage_exchange_weights(%{remainder: []} = st), do: st
 
   defp stage_exchange_weights(st) do
-    live =
-      Enum.reduce(st.remainder, st.live, fn opp, acc ->
-        st.remainder
-        |> Enum.take_while(&(&1 < opp))
-        |> Enum.with_index()
-        |> Enum.reduce(acc, fn {p, idx}, inner ->
-          set_live(inner, p, opp, exchange_weight(st, p, opp, idx))
-        end)
+    changes =
+      for opp <- st.remainder,
+          {p, idx} <- st.remainder |> Enum.take_while(&(&1 < opp)) |> Enum.with_index(),
+          do: {p, opp, idx, exchange_weight(st, p, opp, idx)}
+
+    case exchange_by_dual_shift(st, changes) do
+      {:ok, st} ->
+        solve(st)
+
+      :no ->
+        live =
+          Enum.reduce(changes, st.live, fn {p, opp, _, w}, acc -> set_live(acc, p, opp, w) end)
+
+        solve(%{st | live: live})
+    end
+  end
+
+  # Stage 4 rewrites every remainder pair's weight, which through
+  # `set_live/4` prepares every remainder vertex and makes the next solve
+  # rediscover the matching from nothing -- 372 stages and 2.7 s of a
+  # 1,000-player round, for a step that almost always returns the matching
+  # it was given. It returns it because of how the change is shaped: pair
+  # (p, opp) with p < opp moves by `2 * c(p)`, a per-vertex amount on the
+  # SMALLER side, with c >= 0 for the first half of the remainder and
+  # c <= 0 for the second. When the current matching already pairs first
+  # half against second half -- every pair one of each, the odd one out
+  # from the second half -- raising each first-half vertex's dual by its
+  # own `2 * c(p)` (doubled scale) absorbs the change exactly: a first-to-
+  # second pair's slack is unchanged and stays tight; a first-to-first
+  # pair's slack rises by the other member's c; a second-to-second pair's
+  # slack rises by minus its own c. Nothing is unmatched, so the state is
+  # still optimal and `solve/1` has nothing to do. `shift_and_set/3`
+  # checks the invariants it relies on and refuses otherwise -- including
+  # when a remainder vertex sits inside a blossom, which it dissolves
+  # first -- and a refusal, or a matching not in that shape, takes the
+  # old path. Local graph only: the field graph's matcher indexes by
+  # field position and its brackets are small.
+  defp exchange_by_dual_shift(%{mode: :local} = st, changes) do
+    s1 = st.remainder |> Enum.take(st.remainder_pairs) |> MapSet.new()
+    remainder = MapSet.new(st.remainder)
+
+    # Every first-half member paired with a second-half member; a second-
+    # half member may be paired outside the remainder (the odd one floats).
+    shaped? =
+      Enum.all?(st.remainder, fn v ->
+        p = partner(st, v)
+
+        if MapSet.member?(s1, v),
+          do: MapSet.member?(remainder, p) and not MapSet.member?(s1, p),
+          else: not MapSet.member?(remainder, p) or MapSet.member?(s1, p)
       end)
 
-    solve(%{st | live: live})
+    if shaped? do
+      weigh = edge_weigher(st, & &1, st.m)
+      s = st.bands.count_span
+
+      shifts =
+        for {p, idx} <- st.remainder |> Enum.take(st.remainder_pairs) |> Enum.with_index(),
+            into: %{},
+            do: {p, 2 * (weigh.(p, p + 1, 1 + 2 * (s * s - idx)) - weigh.(p, p + 1, 1))}
+
+      edges = for {p, opp, _, w} <- changes, do: {p, opp, weigh.(p, opp, w)}
+
+      case WeightedMatching.shift_and_set(st.wm, shifts, edges) do
+        {:ok, wm} ->
+          live =
+            Enum.reduce(changes, st.live, fn {p, opp, _, w}, acc -> put_w(acc, p, opp, w) end)
+
+          {:ok, %{st | wm: wm, live: live}}
+
+        :error ->
+          :no
+      end
+    else
+      :no
+    end
   end
+
+  defp exchange_by_dual_shift(_st, _changes), do: :no
 
   # dutch.cpp:1055-1085. Two objectives, lexicographically: first keep the
   # pair inside its own half of the remainder (minimise the number of
