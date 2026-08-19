@@ -393,39 +393,50 @@ The reference is not instant either, which is worth knowing before
 treating any target as obvious. Same tournament, same round, same machine
 — bbpPairings generated the file itself, so neither side is favoured:
 
-| players | bbpPairings | Ainalrami | gap |
-|---|---|---|---|
-| 209 | 0.68 s | 38 s | 56× |
-| 400 | 3.0 s | 498 s | **166×** |
+| players | bbpPairings | Ainalrami (morning) | Ainalrami (evening) | gap now |
+|---|---|---|---|---|
+| 209 | 0.67 s | 38 s | **9.5 s** | 14× |
+| 400 | 2.9 s | 498 s | **69.8 s** | 24× |
 
-Two things in that table matter more than the absolute numbers.
+**From 166× to 24× at 400 players in one day, all in Elixir.** The
+algorithm and its bookkeeping are now the reference's, step for step, and
+each step was checked against `dutch.cpp` / `graph.cpp` before it went in:
+a persistent matcher across a bracket's refinement stages (`Computer`'s
+`setEdgeWeight`/`computeMatching`); preparing only the *modified* end of a
+changed edge, which was the single largest win of the day — one misread
+argument, and every `finalize_pair` had been tearing down the whole
+matching; a per-blossom-pair cross table with a running minimum
+(`minOuterEdges` / `minOuterOuterEdgeResistance`); and the caches carried
+across stage boundaries, which the reference does *not* do — measured
+first: the new stage's outer set was a subset of the previous stage's
+final outer set on 10,816 of 10,816 boundaries.
 
-**bbpPairings pays real cost too** — 0.68 s to 3.0 s as the field roughly
+**What remains is per-operation cost, and that is measured rather than
+assumed.** Bignum arithmetic is 3% of a solve. Tuple-indexed storage was
+measured *slower* than maps at this size (0.85×). A packed integer key
+measured the same as a tuple key (0.95×). `:atomics` measured 2.96× on the
+exact inner-loop access pattern and was not pursued because the
+structural wins were larger at the time; it is the one remaining lever
+and is now worth revisiting. The reference's own per-stage rebuild of
+inner–outer resistances is O(V × |outer|), the same as ours.
+
+**bbpPairings pays real cost too** — 0.67 s to 2.9 s as the field roughly
 doubles, about n^2.4. A 400-player Swiss is genuine work for a weighted
 matcher however it is written.
 
-**The gap WIDENS**: 56× at 209, 166× at 400. A fixed language penalty
-would show as a flat multiple — a tight numeric loop like this is worth
-perhaps 5–20× between C++ and the BEAM before any algorithmic difference.
-The growth on top of that is this implementation's, and it is the same
-asymptotic story as above: 2026-08-18's work moved the line down without
-changing its slope.
-
-It also sets the target honestly. The same algorithm does this in three
-seconds, so the method is not the obstacle; the bookkeeping around it is.
-
 **Correctness is not what degrades.** On that 400-player round the two
 engines returned **200 of 200 boards identical, colours included** — twice
-the largest field the corpus had ever covered.
+the largest field the corpus had ever covered — and every step above was
+held to 100.00% on the corpus before it was committed.
 
 ### What it means in practice
 
-Club and national events — up to ~150 players — pair in seconds. A
-200-player open is now about **forty seconds a round** rather than a
-minute and a half.
+Club and national events — up to ~150 players — pair in a second or two.
+A 200-player open is **under ten seconds a round**. A 400-player open is
+about seventy seconds a round — slow, and usable in a way eight minutes
+was not.
 
-Beyond that it is not usable: a 400-player open takes **eight minutes a
-round**, which across nine rounds is over an hour of an arbiter and four
-hundred players waiting. Closing that is a different piece of work from
-the constant-factor pass — see [../TODO.md](../TODO.md).
+The remaining 24x at 400 players is the next piece of work, and the one
+lever left standing after a day of measurement is `:atomics` for the
+small-integer bookkeeping -- see [../TODO.md](../TODO.md).
 

@@ -45,48 +45,41 @@ What is left is one limit of method rather than a known divergence.
 
 ## Performance
 
-- [x] ~~**Implement the incremental caches.**~~ **Done 2026-08-18**, with
-      the field-size curve going from 90 s to **38 s** for one round of 209
-      players — 2.4×, and verified optimal on 460 random graphs plus the
-      corpus at 100.00%.
+- [x] ~~**Implement the incremental caches.**~~ **Done 2026-08-18** — and
+      then most of the rest of the reference's bookkeeping with it. In one
+      day, all in Elixir, one round of 209 players went **90 s → 9.5 s**
+      and 400 players **498 s → 69.8 s**. Against bbpPairings on the same
+      files: 14× behind at 209, 24× at 400 (was 56× and 166×).
 
-      Honest about what it did and did not do: the work was undertaken to
-      change the growth rate and mostly did not. It is still somewhere
-      between n³ and n⁴. What it bought was a large constant factor, from
-      three separate things — maintaining the two dominant delta scans
-      instead of recomputing them, dividing edge weights by their GCD
-      (worth more than the caches: `Pairing`'s packed criteria produce
-      **103-digit** weights, so the innermost operation in the algorithm
-      was bignum arithmetic), and two passes of plain hoisting.
+      What went in, each checked against `dutch.cpp`/`graph.cpp` and held
+      to 100.00% on the corpus: a persistent matcher across a bracket's
+      eight stages; preparing only the *modified* end of a changed edge
+      (the single biggest win — one misread argument had every
+      `finalize_pair` tearing down the whole matching); a per-blossom-pair
+      cross table with a running minimum; field-wide weight bands; and
+      caches carried across stage boundaries, which the reference does not
+      do. Full table with what was tried and reverted:
+      `docs/engineering-log.md`, "Matcher performance, 2026-08-18".
 
-- [ ] **Make cache maintenance incremental across stages.** Profiling the
-      finished version: the scans that were the whole problem are down to
-      10% of a solve, and cache *maintenance* is the other 90% — 46%
-      rebuilding at stage boundaries, 44% refreshing after structural
-      changes. The cost moved rather than vanished.
+- [ ] **The remaining 24× at 400 players.** Measured rather than assumed:
+      bignum arithmetic is 3% of a solve; tuple storage is *slower* than
+      maps here (0.85×); a packed key is no faster than a tuple key
+      (0.95×). What is left is per-operation cost of BEAM maps on the
+      algorithm's bookkeeping — `in_blossom`, `label`, `dual`, `best_outer`
+      — and the one lever still standing is **`:atomics`** for those, which
+      measured **2.96×** on the exact inner-loop pattern and was set aside
+      while the structural wins were larger. They no longer are. A full
+      move of the small-integer state onto mutable arrays is the next piece
+      of work; it is a representation change, not an algorithm change, and
+      both differential nets exist so it can be done safely.
 
-      The stage-boundary rebuild is O(|outer| × V) and runs once per
-      stage, because `init_labels/1` recomputes every label wholesale and
-      the outer set is the one thing that can SHRINK there. Carrying
-      information across that boundary is what would finally change the
-      exponent.
-
-      Worth attempting only with the same discipline as this round:
-      `tools/matching_baseline.exs` first, corpus second.
-
-- [ ] **Large opens are not usable.** Measured against bbpPairings on the
-      same file: at 400 players it takes 3.0 s and this engine takes 498 s
-      -- eight minutes a round, over an hour across a nine-round event.
-
-      The gap WIDENS with field size (56x at 209, 166x at 400), so it is
-      not a flat language penalty. And the reference does it in three
-      seconds with the same algorithm, so the method is not the obstacle;
-      the bookkeeping around it is.
-
-      Correctness is not what degrades: on that 400-player round the two
-      engines returned 200 of 200 boards identical, colours included.
-
-      Club and national events (up to ~150) still pair in seconds.
+- [ ] **Carrying one matcher across the brackets of a round** was built,
+      made correct (corpus 100.00%) and reverted: `base_edge_weights` is
+      recomputed per bracket with different `sgb`/`nsgb`, so ~20,000 of
+      21,000 edges change at every boundary and it is a cold solve plus
+      20,000 `set_weight` calls — slower, not faster. The reference has the
+      same shape. Recorded so it is not retried without a reason to think
+      the edge diff has shrunk.
 
 ## Harness
 
