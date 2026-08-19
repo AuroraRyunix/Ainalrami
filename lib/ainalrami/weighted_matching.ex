@@ -398,6 +398,7 @@ defmodule Ainalrami.WeightedMatching do
       state
       | children: Map.delete(state.children, b),
         base: Map.delete(state.base, b),
+        vertices_of: Map.delete(state.vertices_of, b),
         blossom_match: Map.delete(state.blossom_match, b),
         label: Map.delete(state.label, b),
         label_edge: Map.delete(state.label_edge, b)
@@ -506,6 +507,7 @@ defmodule Ainalrami.WeightedMatching do
       # order starting from the child containing the base, and each
       # child's parent. Trivial (single-vertex) blossoms have no entry.
       children: %{},
+      vertices_of: %{},
       parent_of: %{},
       base: Map.new(0..(n - 1), &{&1, &1}),
       # Per TOP-LEVEL blossom, ASYMMETRIC: the external vertex this
@@ -827,8 +829,21 @@ defmodule Ainalrami.WeightedMatching do
       # edge between two vertices now inside the same blossom has stopped
       # being a cross edge, and any inner child has just become outer. Both
       # are covered by recomputing every vertex of the new blossom.
-      state = form_blossom(state, v0, v1)
-      {:grow, refresh_caches(state, blossom_vertices(state, Map.fetch!(state.in_blossom, v0)))}
+      # Which children were INNER before formation is knowable only now,
+      # before `form_blossom/3` relabels everything: their vertices have no
+      # cache entries and made no offers, so they need the full treatment.
+      # The OUTER children's vertices already hold valid entries and have
+      # already offered themselves; formation can only INVALIDATE one of
+      # those -- by putting its partner inside the same new blossom -- so
+      # they are filtered, and rescanned only if their entry died.
+      #
+      # This is bbpPairings' `initializeFromChildren`: `updateOuterOuterEdges`
+      # for the LABEL_INNER children, and a min over existing tables for the
+      # rest. Re-settling every vertex of every new blossom -- as this did --
+      # was 479,000 row walks per 209-player round, 78% of it.
+      {state, formerly_inner} = form_blossom(state, v0, v1)
+      new_b = Map.fetch!(state.in_blossom, v0)
+      {:grow, refresh_after_formation(state, new_b, formerly_inner)}
     else
       state = augment_to_source(state, v0, v1)
       state = augment_to_source(state, v1, v0)
@@ -950,6 +965,48 @@ defmodule Ainalrami.WeightedMatching do
   #     status is what it depends on. Nothing to offer: it is not outer.
   #
   # Same maps as before, reached with roughly a third of the row visits.
+  # After `form_blossom/3`: the new blossom `b` is outer. Its vertices fall
+  # in two classes and get two treatments -- bbpPairings'
+  # `initializeFromChildren`, which runs `updateOuterOuterEdges` for the
+  # LABEL_INNER children and takes a min over existing tables for the rest.
+  #
+  #   * Formerly INNER: no cache entries, no offers made. Full settle.
+  #   * Formerly OUTER: already hold a valid `best_cross` and have already
+  #     offered themselves to every neighbour. Formation can only
+  #     invalidate that entry by putting its partner INSIDE `b`, so it is
+  #     kept when the partner is outside and rescanned when not.
+  #
+  # And every vertex OUTSIDE `b` whose `best_cross` or `best_outer` pointed
+  # at a vertex now inside `b`? Still valid: that vertex is still outer,
+  # the edge is unchanged, and it is a cross edge from the outside vertex's
+  # point of view whatever blossom the far end is in.
+  #
+  # Re-settling every vertex of every new blossom instead -- as this did --
+  # was 479,000 full row walks per 209-player round, 78% of it.
+  defp refresh_after_formation(state, b, formerly_inner) do
+    Enum.reduce(blossom_vertices(state, b), state, fn v, state ->
+      cond do
+        MapSet.member?(formerly_inner, v) ->
+          settle_outer_vertex(state, v)
+
+        true ->
+          # Formerly outer. `best_outer` cannot apply to an outer vertex,
+          # so only `best_cross` is in question.
+          state = %{state | best_outer: Map.delete(state.best_outer, v)}
+
+          case Map.get(state.best_cross, v) do
+            {_r, partner} ->
+              if Map.fetch!(state.in_blossom, partner) == b,
+                do: settle_outer_vertex(state, v),
+                else: state
+
+            nil ->
+              state
+          end
+      end
+    end)
+  end
+
   defp refresh_caches(state, changed) do
     Enum.reduce(changed, state, fn v, state ->
       case Map.get(state.label, Map.fetch!(state.in_blossom, v)) do
@@ -1131,9 +1188,34 @@ defmodule Ainalrami.WeightedMatching do
     end
   end
 
+  # The flat vertex list of a blossom.
+  #
+  # `state.vertices_of` caches it for every NON-TRIVIAL blossom, maintained
+  # at the three places the structure changes: `form_blossom/3` sets the new
+  # blossom's list to the concatenation of its children's; `expand_blossom/2`
+  # and `dissolve_one/3` delete the parent's entry (the children's are still
+  # there, since they were non-trivial blossoms or bare vertices before).
+  # A trivial blossom IS its vertex.
+  #
+  # Before this it was recomputed by recursion on every call -- 5.5 million
+  # calls per 209-player round, most of them from `refresh_caches/2`
+  # expanding a changed blossom to feed `settle_outer_vertex/2`, and each
+  # one walking a nested tree that had not changed since the last call. It
+  # was the largest cost in the profile once the stage count was right.
+  #
+  # The recursive walk is kept as the fallback for anything not in the
+  # cache, so a caller asking about a blossom mid-transition still gets the
+  # right answer rather than a crash.
   defp blossom_vertices(state, b) do
+    case state.vertices_of do
+      %{^b => vs} -> vs
+      _ -> if Map.has_key?(state.children, b), do: walk_blossom_vertices(state, b), else: [b]
+    end
+  end
+
+  defp walk_blossom_vertices(state, b) do
     if Map.has_key?(state.children, b) do
-      state.children |> Map.fetch!(b) |> Enum.flat_map(&blossom_vertices(state, &1))
+      state.children |> Map.fetch!(b) |> Enum.flat_map(&walk_blossom_vertices(state, &1))
     else
       [b]
     end
@@ -1388,6 +1470,16 @@ defmodule Ainalrami.WeightedMatching do
 
     cycle = ids0_before ++ [common] ++ Enum.reverse(ids1_before)
 
+    # Which cycle members were INNER, captured before the relabel below:
+    # their vertices hold no cache entries and need the full treatment after
+    # formation, where the outer children's only need filtering. Returned
+    # to the caller alongside the new state.
+    formerly_inner =
+      cycle
+      |> Enum.filter(&(Map.get(state.label, &1) == :inner))
+      |> Enum.flat_map(&blossom_vertices(state, &1))
+      |> MapSet.new()
+
     # `add_connectors/2` needs each id list in the SAME direction its own
     # `flat` was actually walked — `path_to_target/4` always walks UP
     # (b -> ... -> common), so that direction is `ids0_before ++
@@ -1412,6 +1504,11 @@ defmodule Ainalrami.WeightedMatching do
 
     new_id = state.next_blossom_id
     children_map = Map.put(state.children, new_id, cycle)
+
+    # The new blossom's vertex list is its children's, concatenated -- read
+    # BEFORE `in_blossom` is rewritten below, while each child's own list
+    # is still what `blossom_vertices/2` returns for it.
+    new_vertices = Enum.flat_map(cycle, &blossom_vertices(state, &1))
     parent_of = Enum.reduce(cycle, state.parent_of, &Map.put(&2, &1, new_id))
 
     in_blossom =
@@ -1429,6 +1526,7 @@ defmodule Ainalrami.WeightedMatching do
     %{
       state
       | children: children_map,
+        vertices_of: Map.put(state.vertices_of, new_id, new_vertices),
         parent_of: parent_of,
         in_blossom: in_blossom,
         base: base,
@@ -1443,6 +1541,7 @@ defmodule Ainalrami.WeightedMatching do
         label: Enum.reduce(cycle, Map.put(state.label, new_id, :outer), &Map.delete(&2, &1)),
         next_blossom_id: new_id + 1
     }
+    |> then(&{&1, formerly_inner})
   end
 
   # Records the connector between every CONSECUTIVE pair of blossoms in
@@ -1644,6 +1743,7 @@ defmodule Ainalrami.WeightedMatching do
       state
       | children: Map.delete(state.children, b),
         parent_of: Map.new(state.parent_of |> Enum.reject(fn {_c, p} -> p == b end)),
+        vertices_of: Map.delete(state.vertices_of, b),
         label: Map.delete(state.label, b),
         label_edge: Map.delete(state.label_edge, b),
         dual: Map.delete(state.dual, b)
