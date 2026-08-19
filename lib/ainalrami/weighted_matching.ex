@@ -577,7 +577,7 @@ defmodule Ainalrami.WeightedMatching do
       label_edge: %{},
       # The delta-scan caches — see the "delta-scan caches" section below.
       best_outer: %{},
-      cross: {%{}, nil},
+      cross: cross_empty(),
       shift_outer: 0,
       shift_cross: 0,
       next_blossom_id: n
@@ -1092,17 +1092,7 @@ defmodule Ainalrami.WeightedMatching do
       rebuild_caches(state)
     else
       outer_blossoms = for {b, :outer} <- state.label, into: MapSet.new(), do: b
-      {cross, _} = state.cross
-
-      cross =
-        Map.filter(cross, fn {{a, b}, _} ->
-          MapSet.member?(outer_blossoms, a) and MapSet.member?(outer_blossoms, b)
-        end)
-
-      best =
-        Enum.reduce(cross, nil, fn {key, {r, _, _}}, best ->
-          if best == nil or r < elem(best, 0), do: {r, key}, else: best
-        end)
+      cross = cross_retain(state.cross, outer_blossoms)
 
       in_blossom = state.in_blossom
       outer_vertex? = fn v -> MapSet.member?(outer_blossoms, Map.fetch!(in_blossom, v)) end
@@ -1114,7 +1104,7 @@ defmodule Ainalrami.WeightedMatching do
         end)
         |> Map.new()
 
-      state = %{state | cross: {cross, best}, best_outer: kept}
+      state = %{state | cross: cross, best_outer: kept}
 
       needing =
         state.label
@@ -1177,7 +1167,7 @@ defmodule Ainalrami.WeightedMatching do
 
   # Every vertex's entry, from nothing. O(V^2), and run once per stage.
   defp rebuild_caches(state) do
-    state = %{state | best_outer: %{}, cross: {%{}, nil}, shift_outer: 0, shift_cross: 0}
+    state = %{state | best_outer: %{}, cross: cross_empty(), shift_outer: 0, shift_cross: 0}
 
     # Driven from the OUTER vertices, not from all of them. Every entry in
     # either cache is an edge with an outer far end, so offering each outer
@@ -1484,31 +1474,96 @@ defmodule Ainalrami.WeightedMatching do
   # Within a stage nothing else removes an entry. (A tuple key was measured
   # against a packed integer key and made no difference; the cost of a
   # losing offer is the lookup itself, not the key.)
-  defp cross_offer({cross, best}, a, b, r, va, vb) do
-    {key, vlo, vhi} = if a < b, do: {{a, b}, va, vb}, else: {{b, a}, vb, va}
+  ## ------------------------------------------------------ the cross table
+  #
+  # bbpPairings' `minOuterEdges`: for every pair of OUTER top-level
+  # blossoms, the least-resistance edge between them, as `{resistance,
+  # vertex_here, vertex_there}`. Kept as ROWS, one per outer blossom,
+  # each row a map from partner blossom to that entry, with the symmetric
+  # entry in the partner's row -- the same shape as the weight adjacency,
+  # and for the same reason: the two operations that change the table
+  # touch one blossom's row and its partners' entries for it, and a flat
+  # `{lo, hi}`-keyed map made both of them a walk of the whole table.
+  #
+  #   * `cross_merge/3` (blossom formation) used to rebuild the flat map
+  #     from scratch -- O(k^2) in the number of outer blossoms -- and
+  #     formations are the commonest event after tree growth: 9,877 of
+  #     them on a 400-player round, 5.3 s of 15. Now it folds the
+  #     children's rows into one and re-keys the partners' entries:
+  #     O(children x k).
+  #   * the stage-start filter in `carry_caches/2` dropped every entry of
+  #     a blossom that left the outer set by testing all k^2 entries; now
+  #     it walks the leaving blossoms' rows: O(left x k).
+  #
+  # Alongside the rows, `mins[a]` is row a's minimum as `{r, partner}`,
+  # and `best` the minimum over the rows as `{r, a, b}` with `a < b`.
+  # Offers only lower minima and update them in place; merges and the
+  # stage filter can raise them, and recompute exactly the rows they
+  # touched plus `best` (one pass over `mins`, O(k)). Ties are broken on
+  # `{r, partner}` / `{r, a, b}` -- a canonical order, where the flat map
+  # had "first offered wins", which was deterministic but an accident of
+  # iteration order.
+  #
+  # Resistances are stored biased by `shift_cross` at the moment they are
+  # written and read back unbiased (`stored/2`, `unbiased/2`), exactly as
+  # before; comparisons between entries are on the stored form.
 
-    case cross do
-      %{^key => {old, _, _}} when old <= r ->
-        {cross, best}
+  defp cross_empty, do: {%{}, %{}, nil}
+
+  defp cross_offer({rows, mins, best} = cross, a, b, r, va, vb) do
+    case rows do
+      %{^a => %{^b => {old, _, _}}} when old <= r ->
+        cross
 
       _ ->
-        best = if best == nil or r < elem(best, 0), do: {r, key}, else: best
-        {Map.put(cross, key, {r, vlo, vhi}), best}
+        rows =
+          rows
+          |> Map.update(a, %{b => {r, va, vb}}, &Map.put(&1, b, {r, va, vb}))
+          |> Map.update(b, %{a => {r, vb, va}}, &Map.put(&1, a, {r, vb, va}))
+
+        mins =
+          mins
+          |> Map.update(a, {r, b}, &lower_min(&1, {r, b}))
+          |> Map.update(b, {r, a}, &lower_min(&1, {r, a}))
+
+        {lo, hi} = if a < b, do: {a, b}, else: {b, a}
+        best = lower_best(best, {r, lo, hi})
+        {rows, mins, best}
     end
   end
 
+  defp lower_min({r0, _} = old, {r, _}) when r0 < r, do: old
+  defp lower_min({r0, b0} = old, {r, b}) when r0 == r and b0 <= b, do: old
+  defp lower_min(_old, new), do: new
+
+  defp lower_best(nil, new), do: new
+  defp lower_best(old, new), do: if(new < old, do: new, else: old)
+
+  # Row a's minimum, from its entries.
+  defp row_min(row) do
+    Enum.reduce(row, nil, fn {b, {r, _, _}}, acc ->
+      if acc == nil, do: {r, b}, else: lower_min(acc, {r, b})
+    end)
+  end
+
+  defp cross_best(mins) do
+    Enum.reduce(mins, nil, fn {a, {r, b}}, acc ->
+      {lo, hi} = if a < b, do: {a, b}, else: {b, a}
+      lower_best(acc, {r, lo, hi})
+    end)
+  end
+
   # The new blossom `new_b` has absorbed `children`, all of which were
-  # top-level and some of which were outer. Every table entry touching a
-  # child is re-keyed: an entry between two children is now INTERNAL and is
+  # top-level and some of which were outer. Every entry touching a child
+  # is re-keyed: an entry between two children is now INTERNAL and is
   # dropped; an entry between a child and an outsider `k` becomes an entry
   # between `new_b` and `k`, keeping the minimum if several collapse onto
-  # the same key. No vertex is visited. The running minimum is recomputed
-  # from the result, since the old best may have been one of the dropped.
+  # the same key. No vertex is visited.
   #
   # The second-best edge to every outsider was already in the table, so
   # nothing is lost when the best one becomes internal -- which is exactly
   # the case formation produces, since blossoms merge because their best
-  # edges pointed at each other. Under the per-vertex design that
+  # edges pointed at each other. Under a per-vertex design that
   # invalidated almost every entry and cost 252,000 rescans per 209-player
   # round.
   #
@@ -1516,55 +1571,93 @@ defmodule Ainalrami.WeightedMatching do
   # vertices with `settle_outer_vertex/2`.
   defp cross_merge(state, new_b, children) do
     child_set = MapSet.new(children)
-    {cross, _best} = state.cross
+    {rows, mins, _best} = state.cross
 
-    cross =
-      Enum.reduce(cross, %{}, fn {{a, b} = key, {r, va, vb} = entry}, acc ->
-        a_in = MapSet.member?(child_set, a)
-        b_in = MapSet.member?(child_set, b)
-
-        cond do
-          a_in and b_in ->
-            acc
-
-          a_in ->
-            {k2, v1, v2} = if new_b < b, do: {{new_b, b}, va, vb}, else: {{b, new_b}, vb, va}
-
-            case acc do
-              %{^k2 => {old, _, _}} when old <= r -> acc
-              _ -> Map.put(acc, k2, {r, v1, v2})
-            end
-
-          b_in ->
-            {k2, v1, v2} = if a < new_b, do: {{a, new_b}, va, vb}, else: {{new_b, a}, vb, va}
-
-            case acc do
-              %{^k2 => {old, _, _}} when old <= r -> acc
-              _ -> Map.put(acc, k2, {r, v1, v2})
-            end
-
-          true ->
-            Map.put(acc, key, entry)
-        end
+    # The merged row: every child's entries to outsiders, best per outsider.
+    new_row =
+      Enum.reduce(children, %{}, fn c, acc ->
+        Enum.reduce(Map.get(rows, c, %{}), acc, fn {k, {r, vc, vk}}, acc ->
+          cond do
+            MapSet.member?(child_set, k) -> acc
+            match?(%{^k => {old, _, _}} when old <= r, acc) -> acc
+            true -> Map.put(acc, k, {r, vc, vk})
+          end
+        end)
       end)
 
-    best =
-      Enum.reduce(cross, nil, fn {key, {r, _, _}}, best ->
-        if best == nil or r < elem(best, 0), do: {r, key}, else: best
+    rows = Map.drop(rows, children)
+    mins = Map.drop(mins, children)
+
+    # Each outsider loses its entries for the children and gains one for
+    # `new_b`; its row minimum is recomputed only if it pointed at a child
+    # or the new entry beats it.
+    {rows, mins} =
+      Enum.reduce(new_row, {rows, mins}, fn {k, {r, vc, vk}}, {rows, mins} ->
+        row = rows |> Map.fetch!(k) |> Map.drop(children) |> Map.put(new_b, {r, vk, vc})
+        rows = Map.put(rows, k, row)
+
+        mins =
+          case Map.get(mins, k) do
+            {_, p} = old ->
+              if MapSet.member?(child_set, p),
+                do: Map.put(mins, k, row_min(row)),
+                else: Map.put(mins, k, lower_min(old, {r, new_b}))
+
+            nil ->
+              Map.put(mins, k, row_min(row))
+          end
+
+        {rows, mins}
       end)
 
-    %{state | cross: {cross, best}}
+    {rows, mins} =
+      if map_size(new_row) == 0,
+        do: {rows, mins},
+        else: {Map.put(rows, new_b, new_row), Map.put(mins, new_b, row_min(new_row))}
+
+    %{state | cross: {rows, mins, cross_best(mins)}}
+  end
+
+  # Drop every entry of the blossoms that are no longer outer -- the
+  # stage-start filter. Walks the leaving blossoms' rows, not the table.
+  defp cross_retain({rows, mins, _best}, outer_blossoms) do
+    left = for {b, _} <- rows, not MapSet.member?(outer_blossoms, b), do: b
+    left_set = MapSet.new(left)
+
+    {rows, mins} =
+      Enum.reduce(left, {rows, mins}, fn b, {rows, mins} ->
+        Enum.reduce(Map.fetch!(rows, b), {rows, mins}, fn {k, _}, {rows, mins} ->
+          if MapSet.member?(left_set, k) do
+            {rows, mins}
+          else
+            row = rows |> Map.fetch!(k) |> Map.delete(b)
+            rows = Map.put(rows, k, row)
+
+            mins =
+              case Map.get(mins, k) do
+                {_, ^b} -> Map.put(mins, k, row_min(row))
+                _ -> mins
+              end
+
+            {rows, mins}
+          end
+        end)
+      end)
+
+    rows = Map.drop(rows, left)
+    mins = mins |> Map.drop(left) |> Map.reject(fn {_, m} -> m == nil end)
+    {rows, mins, cross_best(mins)}
   end
 
   # The least-resistance outer-outer edge overall, straight off the running
   # minimum.
   defp min_outer_outer(state) do
     case state.cross do
-      {_, nil} ->
+      {_, _, nil} ->
         {nil, nil}
 
-      {cross, {r, key}} ->
-        {_, va, vb} = Map.fetch!(cross, key)
+      {rows, _, {r, a, b}} ->
+        {_, va, vb} = rows |> Map.fetch!(a) |> Map.fetch!(b)
         {unbiased(r, state.shift_cross), {va, vb}}
     end
   end

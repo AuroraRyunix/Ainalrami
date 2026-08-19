@@ -1192,6 +1192,9 @@ defmodule Ainalrami.Pairing do
     # lazily by the first `solve/1`.
     field_index = field |> Enum.with_index() |> Map.new(fn {p, i} -> {p.rank, i} end)
     Process.put(@round_matcher_key, {nil, field_index, length(field)})
+    # Reset with the matcher: the first bracket after this scores the whole
+    # field and builds the matcher from it (`base_edge_weights/8`).
+    Process.delete(:far_weights)
 
     {pairs, leftover} = run_brackets(field, ctx)
 
@@ -1678,7 +1681,7 @@ defmodule Ainalrami.Pairing do
     # a new graph.
     bands = ctx.bands
 
-    base = base_edge_weights(arr, m, sgb, nsgb, ctx, bands, single_bye?)
+    base = base_edge_weights(arr, m, sgb, nsgb, wsgb, ctx, bands, single_bye?)
 
     %{
       arr: arr,
@@ -1782,7 +1785,7 @@ defmodule Ainalrami.Pairing do
   defp solve(st) do
     {round_matcher, field_index, field_size} = Process.get(@round_matcher_key)
     to_field = fn i -> Map.fetch!(field_index, elem(st.arr, i).rank) end
-    weigh = edge_weigher(st)
+    weigh = edge_weigher(st, to_field, field_size)
     dirty = Process.get(@dirty_key, [])
     Process.delete(@dirty_key)
 
@@ -1831,7 +1834,7 @@ defmodule Ainalrami.Pairing do
           round_scale =
             if st.transposition.scale == 1, do: 1, else: Integer.pow(n + 2, div(n, 2) + 1)
 
-          round_ceiling = 2 * span_product * st.bands.reserve * round_scale * s
+          round_ceiling = 2 * span_product * st.bands.reserve * round_scale * s * (n * n + 1)
 
           list =
             for {{i, j}, w} <- st.live, w > 0 do
@@ -1841,16 +1844,19 @@ defmodule Ainalrami.Pairing do
           WeightedMatching.new(field_size, list, max_weight: round_ceiling, gcd: 1)
 
         not st.synced ->
-          # Bracket boundary. For every vertex of this bracket's graph, the
-          # matcher's current edges to OTHER vertices of the graph must
-          # become exactly `live`'s; edges to vertices outside it (players
-          # already finalised) are another bracket's business and stay.
-          # Applied lower-index first, which is also the near-minimal set of
-          # vertices to prepare: the changes are a clique on the new
-          # bracket's residents plus their edges into the next group.
-          here = Map.new(0..(st.m - 1)//1, fn i -> {to_field.(i), i} end)
+          # Bracket boundary. For every vertex of the WINDOW (the bracket and
+          # the next score group -- see `base_edge_weights/8`), the matcher's
+          # edges to other window vertices must become exactly `live`'s.
+          # Everything else stays: edges into the far field are the frozen
+          # completability weights set with the first bracket, and edges to
+          # finalised players were zeroed when they were finalised. Applied
+          # lower-index first, which is also the near-minimal set of vertices
+          # to prepare: the changes are a clique on the new bracket's
+          # residents plus their edges into the next group.
+          last = min(st.wsgb, st.m) - 1
+          here = Map.new(0..last//1, fn i -> {to_field.(i), i} end)
 
-          Enum.reduce(0..(st.m - 1)//1, round_matcher, fn i, acc ->
+          Enum.reduce(0..last//1, round_matcher, fn i, acc ->
             fi = to_field.(i)
 
             # Edges the matcher has from `fi` into this graph that `live`
@@ -1871,7 +1877,7 @@ defmodule Ainalrami.Pairing do
               end)
 
             # Edges `live` has from `i` that the matcher lacks.
-            Enum.reduce((i + 1)..(st.m - 1)//1, acc, fn j, acc ->
+            Enum.reduce((i + 1)..last//1, acc, fn j, acc ->
               case get_w(st.live, i, j) do
                 0 ->
                   acc
@@ -1953,36 +1959,76 @@ defmodule Ainalrami.Pairing do
         dirty = Process.get(@dirty_key, [])
         Process.delete(@dirty_key)
         to_field = fn i -> Map.fetch!(field_index, elem(st.arr, i).rank) end
-        matcher = apply_dirty(matcher, st, dirty, to_field, edge_weigher(st))
+
+        matcher =
+          apply_dirty(matcher, st, dirty, to_field, edge_weigher(st, to_field, field_size))
+
         Process.put(@round_matcher_key, {matcher, field_index, field_size})
         st
     end
   end
 
-  # The weight the matcher sees for a `live` weight `w` on `{i, j}`: the
-  # criteria weight itself, unless the transposition tie-break is switched
-  # on, in which case it is scaled to make room for the tie-break term.
-  defp edge_weigher(st) do
+  # The weight the matcher sees for a `live` weight `w` on `{i, j}`.
+  #
+  # Two things sit on top of the criteria weight, both strictly below it
+  # and below every stage addend:
+  #
+  #   * the transposition tie-break, only when switched on (see
+  #     `transposition_terms/3`), scales `w` to make room for its term;
+  #   * always, a NEARNESS term: the whole thing is scaled by `n^2 + 1` and
+  #     `n - |fi - fj|` is added, `fi`/`fj` being the two players' positions
+  #     in the round's field. Among matchings of equal criteria weight the
+  #     one pairing nearer positions wins; a sum of fewer than n/2 such
+  #     terms cannot reach `n^2 + 1`, so it can never overturn a one-unit
+  #     difference in anything above it.
+  #
+  # The nearness term is not there for the pairing. The refinement stages
+  # settle every tie the criteria leave, and the corpus is identical with
+  # it on or off. It is there for the SEARCH. The far edges -- most of the
+  # graph on a large field -- carry only the completability weight, and
+  # with thousands of them equal, every one of them is TIGHT at the
+  # optimum: the alternating forest of each stage then grows across the
+  # entire field, at a row walk per vertex, before it can augment, and
+  # odd cycles of tight edges form blossoms by the thousand. With each
+  # edge's weight made distinct by a canonical term, the optimum leaves
+  # few edges tight, the forest grows only where it must, and a
+  # 400-player round ran 14.2 s -> 9.0 s on that alone: 23,470 -> 13,405
+  # tree growths and 9,142 -> 4,525 blossom formations. Nearness in
+  # particular, rather than any other canonical term, because the greedy
+  # start (`WeightedMatching.new/3`) matches mutually-heaviest pairs and
+  # nearest neighbours are mutual, so the cold solve stays short.
+  #
+  # Field positions, not bracket positions, so that a far edge's weight is
+  # the same in every bracket that sees it and the round matcher never has
+  # to be told about it twice.
+  defp edge_weigher(st, to_field, field_size) do
     scale = st.transposition.scale
     terms = st.transposition.terms
     reserve = st.bands.reserve
+    p = field_size * field_size + 1
 
-    cond do
-      scale == 1 and map_size(terms) == 0 ->
-        fn _i, _j, w -> w end
+    criteria =
+      cond do
+        scale == 1 and map_size(terms) == 0 ->
+          fn _i, _j, w -> w end
 
-      System.get_env("AINALRAMI_TRANS_ABOVE") != nil ->
-        # Split `w` back into its criteria part and the refinement
-        # stages' reserved addend, and slot the transposition order
-        # BETWEEN them: criteria still win, but FIDE's order now
-        # outranks a stage nudge instead of the other way round.
-        fn i, j, w ->
-          term = Map.get(terms, {min(i, j), max(i, j)}, 0)
-          div(w, reserve) * scale * reserve + term * reserve + rem(w, reserve)
-        end
+        System.get_env("AINALRAMI_TRANS_ABOVE") != nil ->
+          # Split `w` back into its criteria part and the refinement
+          # stages' reserved addend, and slot the transposition order
+          # BETWEEN them: criteria still win, but FIDE's order now
+          # outranks a stage nudge instead of the other way round.
+          fn i, j, w ->
+            term = Map.get(terms, {min(i, j), max(i, j)}, 0)
+            div(w, reserve) * scale * reserve + term * reserve + rem(w, reserve)
+          end
 
-      true ->
-        fn i, j, w -> w * scale + Map.get(terms, {min(i, j), max(i, j)}, 0) end
+        true ->
+          fn i, j, w -> w * scale + Map.get(terms, {min(i, j), max(i, j)}, 0) end
+      end
+
+    fn
+      _i, _j, 0 -> 0
+      i, j, w -> criteria.(i, j, w) * p + field_size - abs(to_field.(j) - to_field.(i))
     end
   end
 
@@ -2090,41 +2136,50 @@ defmodule Ainalrami.Pairing do
 
   ## ---------- the ladder ----------
 
-  defp base_edge_weights(_arr, m, _sgb, _nsgb, _ctx, _bands, _single_bye?) when m < 2, do: %{}
+  defp base_edge_weights(_arr, m, _sgb, _nsgb, _wsgb, _ctx, _bands, _single_bye?) when m < 2,
+    do: %{}
 
-  defp base_edge_weights(arr, m, sgb, nsgb, ctx, bands, single_bye?) do
+  # The weights for this bracket's graph -- and the graph is the whole
+  # remaining field, but only the WINDOW of it is scored here.
+  #
+  # The window is the bracket and the next score group, positions
+  # `0..wsgb-1`: bbpPairings' `playersByIndex`, the only vertices its
+  # `computeBaseEdgeWeights` sees. Every edge with an end below the window
+  # is a far edge -- scored for completability alone, at reach two or
+  # more -- and bbpPairings sets those ONCE per round, before the first
+  # bracket (dutch.cpp:740-816), and never touches them again. So does
+  # this: the round's first bracket scores the whole field and the round
+  # matcher is built from it; every later bracket scores its window and
+  # nothing else, and the matcher still holds the far edges from the
+  # first. The one thing that has to reach past the window is
+  # `finalize_pair/3`, which zeroes a finalised player's every edge, and
+  # it does so through `set_live/4` whether or not `live` ever held the
+  # edge.
+  #
+  # Before this every bracket rescored all m^2/2 pairs and the boundary
+  # diff walked them again: 1.4 s of a 9 s round at 400 players, for
+  # values that could not have changed.
+  defp base_edge_weights(arr, m, sgb, nsgb, wsgb, ctx, bands, single_bye?) do
     reach = reach_table(arr, m, nsgb)
-    frozen = Process.get(:far_weights, %{})
+    first? = Process.get(:far_weights) == nil
+    last = if first?, do: m - 1, else: min(wsgb, m) - 1
 
-    {weights, far} =
-      Enum.reduce(0..(m - 2), {%{}, %{}}, fn i, {acc, far} ->
+    weights =
+      Enum.reduce(0..(last - 1)//1, %{}, fn i, acc ->
         a = elem(arr, i)
 
-        Enum.reduce((i + 1)..(m - 1), {acc, far}, fn j, {inner, far} ->
+        Enum.reduce((i + 1)..last//1, acc, fn j, inner ->
           r = Map.get(reach, j, 0)
           b = elem(arr, j)
-          key = {min(a.rank, b.rank), max(a.rank, b.rank)}
 
-          w =
-            if r >= 2 and Map.has_key?(frozen, key) do
-              Map.fetch!(frozen, key)
-            else
-              bracket_edge_weight(a, b, j, sgb, r, ctx, bands, single_bye?)
-            end
-
-          far =
-            if r >= 2 and w != nil and not Map.has_key?(frozen, key),
-              do: Map.put(far, key, w),
-              else: far
-
-          case w do
-            nil -> {inner, far}
-            w -> {Map.put(inner, {i, j}, w), far}
+          case bracket_edge_weight(a, b, j, sgb, r, ctx, bands, single_bye?) do
+            nil -> inner
+            w -> Map.put(inner, {i, j}, w)
           end
         end)
       end)
 
-    Process.put(:far_weights, Map.merge(frozen, far))
+    if first?, do: Process.put(:far_weights, :in_matcher)
     weights
   end
 
