@@ -2398,6 +2398,19 @@ defmodule Ainalrami.Pairing do
   # Field positions, not bracket positions, so that a far edge's weight is
   # the same in every bracket that sees it and the round matcher never has
   # to be told about it twice.
+  # The distance the tie-break prefers between two bracket members: half the
+  # bracket, which is where Article 3.3 puts S1[i] against S2[i] and where
+  # stage 4 (fewest exchanges) and stage 8 (highest remaining partner for
+  # each S1 player in turn) will push the matching anyway. Starting the
+  # search there instead of at adjacent pairs means those stages find the
+  # matching already in shape and augment a handful of times rather than
+  # half the bracket. Zero outside the bracket, where adjacent is right:
+  # the far edges only need SOME canonical order, and the greedy start
+  # pairs adjacent far vertices in one pass.
+  defp natural_gap(st, i, j) do
+    if i < st.nsgb and j < st.nsgb, do: div(st.nsgb, 2), else: 0
+  end
+
   defp edge_weigher(st, to_field, field_size) do
     scale = st.transposition.scale
     terms = st.transposition.terms
@@ -2424,8 +2437,12 @@ defmodule Ainalrami.Pairing do
       end
 
     fn
-      _i, _j, 0 -> 0
-      i, j, w -> criteria.(i, j, w) * p + field_size - abs(to_field.(j) - to_field.(i))
+      _i, _j, 0 ->
+        0
+
+      i, j, w ->
+        criteria.(i, j, w) * p + field_size -
+          abs(abs(to_field.(j) - to_field.(i)) - natural_gap(st, i, j))
     end
   end
 

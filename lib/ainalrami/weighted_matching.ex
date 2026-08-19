@@ -655,6 +655,7 @@ defmodule Ainalrami.WeightedMatching do
       cross: cross_empty(),
       shift_outer: 0,
       shift_cross: 0,
+      min_outer: nil,
       next_blossom_id: n
     }
 
@@ -891,21 +892,44 @@ defmodule Ainalrami.WeightedMatching do
   # can share a blossom with one inherited at 7, and guarding the base
   # alone let the low one be driven to -10. Measured, seed 168 of
   # `tools/matching_incremental.exs`.
+  # Tracked, not scanned: `state.min_outer` is `{biased_dual, vertex}` over
+  # every outer vertex, where the biased dual is the dual plus `shift_outer`
+  # -- invariant under `apply_delta/2`, since every outer dual falls by
+  # exactly what the shift rises by. Within a stage the outer set only
+  # grows, so the minimum only ever has to take new vertices into account,
+  # and every vertex that becomes outer passes through `settle_outer_vertex/2`,
+  # which offers it. A stage start recomputes it from the outer set once
+  # (`carry_caches/2`, `rebuild_caches/1`). This was a scan of every outer
+  # vertex on every delta step -- bbpPairings tracks `minOuterDualVariable`
+  # the same way (graph.cpp:401-412, updated on growth). Ties go to the
+  # lower vertex id, a canonical order.
   defp min_outer_dual(state) do
-    case min_outer_dual_vertex(state) do
+    case state.min_outer do
       nil -> nil
-      {d, _v} -> d
+      {biased, _v} -> biased - state.shift_outer
     end
   end
 
   defp min_outer_dual_vertex(state) do
-    top_blossoms(state)
-    |> Enum.filter(&(Map.get(state.label, &1) == :outer))
+    case state.min_outer do
+      nil -> nil
+      {biased, v} -> {biased - state.shift_outer, v}
+    end
+  end
+
+  defp offer_min_outer(state, v) do
+    biased = Map.fetch!(state.dual, v) + state.shift_outer
+
+    case state.min_outer do
+      {b0, v0} when b0 < biased or (b0 == biased and v0 < v) -> state
+      _ -> %{state | min_outer: {biased, v}}
+    end
+  end
+
+  defp recompute_min_outer(state, outer_blossoms) do
+    outer_blossoms
     |> Enum.flat_map(&blossom_vertices(state, &1))
-    |> Enum.reduce(nil, fn v, best ->
-      d = dual_of(state, v)
-      if best == nil or d < elem(best, 0), do: {d, v}, else: best
-    end)
+    |> Enum.reduce(%{state | min_outer: nil}, &offer_min_outer(&2, &1))
   end
 
   # ------------------------------------------------------- the main loop
@@ -1189,6 +1213,7 @@ defmodule Ainalrami.WeightedMatching do
       rebuild_caches(state)
     else
       outer_blossoms = for {b, :outer} <- state.label, into: MapSet.new(), do: b
+      state = recompute_min_outer(state, outer_blossoms)
       cross = cross_retain(state.cross, outer_blossoms)
 
       in_blossom = state.in_blossom
@@ -1264,7 +1289,14 @@ defmodule Ainalrami.WeightedMatching do
 
   # Every vertex's entry, from nothing. O(V^2), and run once per stage.
   defp rebuild_caches(state) do
-    state = %{state | best_outer: %{}, cross: cross_empty(), shift_outer: 0, shift_cross: 0}
+    state = %{
+      state
+      | best_outer: %{},
+        cross: cross_empty(),
+        shift_outer: 0,
+        shift_cross: 0,
+        min_outer: nil
+    }
 
     # Driven from the OUTER vertices, not from all of them. Every entry in
     # either cache is an edge with an outer far end, so offering each outer
@@ -1355,6 +1387,7 @@ defmodule Ainalrami.WeightedMatching do
   # for the cross table; everything else about the table is a merge or a
   # delete.
   defp settle_outer_vertex(state, v) do
+    state = offer_min_outer(state, v)
     blossom = Map.fetch!(state.in_blossom, v)
     best_outer = Map.delete(state.best_outer, v)
     cross = state.cross
