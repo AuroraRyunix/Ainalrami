@@ -2556,3 +2556,41 @@ end of the day: `settle_outer_vertex` 52% (165,000 calls, most from
 `rebuild_caches` at stage start on the ~7 cold bracket-boundary solves),
 `rebuild_caches` itself 36%, the running-minimum `min_outer_outer` now
 under 2%.
+
+### Where the matcher work stopped, and why (2026-08-18, evening)
+
+The loop converged. Final profile of a 209-player round, 9.5 s: no single
+item above 36%, every remaining item doing work the reference also does
+(`carry_caches` rebuilding inner–outer resistances per stage is
+`initializeInnerOuterEdges`; the cold solve at each bracket boundary is a
+cold solve there too; `finalizePair` zeroes whole rows in both). Measured
+by reach: at a 205-vertex bracket the refinement stages change 3,020
+edges, 2,620 of them beyond the current+next window — that is
+`finalize_pair`'s row-zeroing, identical to `common.h`'s `finalizePair`,
+and it is why a round-level matcher saw 20,000 changed edges per boundary.
+
+Three data-structure swaps were measured on the real solve and all lost:
+tuples for maps (0.85×), packed integer keys (0.95×), `:atomics` for the
+most-read small-int map (0.39× — correct, and 2.5× SLOWER; the NIF
+dispatch per read costs more than a shallow HAMT lookup). BEAM maps on a
+few hundred small-int keys are the floor.
+
+So the remaining 14× at 209 and 24× at 400 is the per-operation gap
+between a BEAM map lookup and a C array index, on the same algorithm with
+the same number of operations. That is not a guess this time; it is what
+is left after every other explanation was measured away.
+
+What *would* move it, in order of plausibility, none of them tried:
+
+- **Fewer solves per bracket.** Eight refinement stages, each a solve;
+  the reference runs the same eight. Whether any stage's solve can be
+  skipped when its stage changed nothing is a question about the cascade,
+  not the matcher, and was not examined today.
+- **Window-sized graphs.** The reference's `playersByIndex` is the
+  current bracket plus the next group; its out-of-window edges exist from
+  the bootstrap but are never rewritten. Ours rewrites every bracket via
+  `base_edge_weights`. The unbounded peek was what took the cascade from
+  95.97% to 100% (see above), so narrowing it is a correctness question
+  first and a speed question second.
+- **A native matcher.** Ruled out by the project owner; recorded only as
+  the thing that would close the gap outright.
