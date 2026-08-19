@@ -2929,3 +2929,33 @@ Worth keeping in view: the widest remaining gap is at 400 players
 (2.7x), not at 1,000 (1.5x). And 0.63 s of every CLI invocation is BEAM
 start-up, which a long-lived process pays once -- a packaging question,
 not an engine one.
+
+### The bracket that was solving the whole field for nothing (2026-08-19, last)
+
+Profiling 400 players after the local graph: 1,334 ms total, of which the
+matcher accounted for 427 ms. The other two thirds were one bracket --
+the first, a lone 4.0-point leader -- taking 660 ms and returning **zero
+pairs**. `collect_bracket/1` records a pair only when both ends are
+inside the bracket, so a bracket of one member can never finalise
+anything; the solve existed entirely for its tentative matching, on the
+whole 400-vertex field, and the only consumer of that matching is
+`carried_partner_scores` feeding `bracket_loop/6`'s C9 gate. That gate
+opens with `ctx.odd_field?`, and 400 is even, so the answer was
+unobservable.
+
+`idle_bracket?/4` skips it when the gate's own preconditions
+(`c9_gate_live?/4`, the four conjuncts of `next_single_bye?` that do not
+depend on the matching) do not hold. A lone leader is a common shape and
+it is always the FIRST bracket, which is exactly when the field graph is
+at its largest.
+
+| | 209 | 400 | 1,000 |
+|---|---|---|---|
+| before | 0.39 s | 1.35 s | 6.8 s |
+| after | **0.23 s** | **0.72 s** | **6.45 s** |
+
+Against Gacrux's pairing work (0.20 / 0.54 / 4.46 s) that is 1.15x, 1.3x
+and 1.45x. Against bbpPairings' (0.54 / 2.87 / 49.9 s), 2.3x, 4x and
+7.7x the other way. A corpus axis with a fixed odd field was added,
+because the skip's guard turns on `odd_field?` and every existing axis
+mixes parities.

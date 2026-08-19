@@ -399,9 +399,9 @@ actually invokes any of the three:
 | players | bbpPairings (C++) | Gacrux (Python) | Ainalrami |
 |---|---|---|---|
 | 10 (start-up floor) | 0.18 s | 0.68 s | 0.63 s |
-| 209 | **0.72 s** | 0.88 s | 1.05 s |
-| 400 | 3.05 s | **1.22 s** | 2.07 s |
-| 1,000 | 50.1 s | **5.14 s** | 7.35 s |
+| 209 | **0.72 s** | 0.88 s | 0.86 s |
+| 400 | 3.05 s | 1.22 s | **1.35 s** |
+| 1,000 | 50.1 s | **5.14 s** | 7.12 s |
 
 Each engine pays a fixed start-up it cannot avoid — a C++ binary 0.18 s,
 CPython plus networkx 0.68 s, the BEAM 0.63 s. Subtracting each one's own
@@ -409,18 +409,20 @@ floor leaves the **pairing work**:
 
 | players | bbpPairings | Gacrux | Ainalrami |
 |---|---|---|---|
-| 209 | 0.54 s | **0.20 s** | 0.42 s |
-| 400 | 2.87 s | **0.54 s** | 1.43 s |
-| 1,000 | 49.9 s | **4.46 s** | 6.72 s |
+| 209 | 0.54 s | **0.20 s** | 0.23 s |
+| 400 | 2.87 s | **0.54 s** | 0.72 s |
+| 1,000 | 49.9 s | **4.46 s** | 6.45 s |
 
 On every one of these rounds all three engines return the **identical
 boards** — 105 of 105, 200 of 200, 500 of 500, colours included.
 
-**Read honestly: this engine is faster than the C++ reference and slower
-than the Python one.** Against bbpPairings the pairing work is 1.3×,
-2× and 7.4× quicker, though a cold 209-player invocation still loses to
-it on start-up alone. Against Gacrux it is 2.1×, 2.7× and 1.5× slower,
-and the gap narrows as the field grows.
+**Read honestly: this engine is faster than the C++ reference and a
+little slower than the Python one.** Against bbpPairings the pairing work
+is 2.3×, 4× and 7.7× quicker, though a cold 209-player invocation is
+still within a rounding error of it, on start-up alone. Against Gacrux it
+is 1.15×, 1.3× and 1.45× slower -- close enough at 209 players that the
+difference is smaller than the run-to-run spread, and never more than
+half again as slow.
 
 That ordering is not about the languages, and the morning's numbers show
 why: 209 players took 9.5 s here yesterday evening and 85 s at 1,000

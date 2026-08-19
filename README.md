@@ -60,11 +60,11 @@ Full methodology, per-axis detail and the reasoning behind each number:
 [docs/validation.md](docs/validation.md).
 
 **Speed**, same files, same machine, cold process start to finish
-(2026-08-19): 209 players in 1.05 s, 400 in 2.07 s, 1,000 in 7.35 s —
+(2026-08-19): 209 players in 0.86 s, 400 in 1.35 s, 1,000 in 7.12 s —
 against bbpPairings' 0.72 s, 3.05 s and 50.1 s, and Gacrux's 0.88 s,
 1.22 s and 5.14 s, with the identical boards. Discounting each engine's
-own start-up floor, the pairing work is **1.3x to 7.4x quicker than the
-C++ reference** and **1.5x to 2.7x slower than the Python one**. A
+own start-up floor, the pairing work is **2.3x to 7.7x quicker than the
+C++ reference** and **1.15x to 1.45x slower than the Python one**. A
 bracket is solved on its own graph when that is provably the whole-field
 answer, and on the whole field otherwise; the full table, and how it got
 here from 90 s and 498 s, is in
