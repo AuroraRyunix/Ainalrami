@@ -2602,8 +2602,8 @@ Yesterday's closing note said the remaining 14x at 209 players and 24x at
 index, on the same algorithm with the same number of operations", and
 that it was measured rather than guessed. It was measured; the
 conclusion was still wrong. The operations were not the same number.
-Today, one 209-player round went 9.2 s -> 1.3 s and one 400-player round
-69.8 s -> 6.8 s, every step held to 100.00% on all six corpus axes and
+Today, one 209-player round went 9.2 s -> 1.24 s and one 400-player round
+69.8 s -> 4.5 s, every step held to 100.00% on all six corpus axes and
 both differential nets, and 200 of 200 boards at 400 players still
 identical to bbpPairings. Warm medians of three.
 
@@ -2620,7 +2620,8 @@ identical to bbpPairings. Warm medians of three.
 | score only the window per bracket | 1.9 s | 13.3 s | every bracket rescored all m^2/2 pairs and diffed them again; bbpPairings scores `playersByIndex` and sets far edges once |
 | **nearness term below every criterion** | **1.7 s** | **8.0 s** | thousands of equal far edges were all TIGHT at the optimum; each stage's forest grew across the whole field before it could augment -- growths 23,470 -> 13,405, formations 9,142 -> 4,525 |
 | cached sorted top list, settle-loop trim | 1.37 s | 6.8 s | two or three sorts per delta step; resistance computed for neighbours that took no offer |
-| **end of day** | **1.3 s** | **6.8 s** | bbpPairings: 0.67 s / 2.9 s -- **2x and 2.3x**, from 14x and 24x |
+| **greedy resume** (`greedy_resume/1`) | **1.24 s** | **4.5 s** | the same tight start for a RESUMED solve: at a boundary every resident is prepared and their heaviest edges are to each other, so they pair before a stage runs; boundary solves were a third of the round |
+| **end of day** | **1.24 s** | **4.5 s** | bbpPairings: 0.67 s / 2.9 s -- **1.9x and 1.5x**, from 14x and 24x |
 
 Things learned, each the reverse of something believed yesterday:
 
@@ -2654,12 +2655,12 @@ Things learned, each the reverse of something believed yesterday:
   design exactly; the greedy start and the nearness term are the two
   places this engine now does LESS work than the reference.
 
-What is left at 400 players (6.8 s, profile): tree growth 2.1 s (13,405
+What is left at 400 players (4.5 s, profile before the greedy resume: 6.8 s): tree growth 2.1 s (13,405
 events, one O(V) row walk each -- `updateInnerOuterEdges` in the
 reference), the per-stage inner-outer rebuild 1.2 s (O(non-outer x
 outer), `initializeInnerOuterEdges`), formation 0.7 s, and about 1 s
 outside the matcher. All of it is work the reference does too, and the
-per-operation ratio on it is now 2-2.5x, which is the BEAM against C++
+per-operation ratio on it is now 1.5-2x, which is the BEAM against C++
 on bignums of 450 bits -- the weights are that wide because six rungs
 carry a score-place digit with a 50-bit span, and bbpPairings' are just
 as wide (it sizes `edge_weight` to the field). Fewer solves per bracket

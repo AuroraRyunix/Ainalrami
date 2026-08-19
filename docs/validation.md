@@ -396,13 +396,13 @@ Warm medians of three:
 
 | players | bbpPairings | Ainalrami 08-18 morning | 08-18 evening | **08-19** | gap now |
 |---|---|---|---|---|---|
-| 60 | | | | **0.07 s** | |
-| 120 | | | | **0.30 s** | |
-| 209 | 0.67 s | 38 s | 9.5 s | **1.3 s** | **2×** |
-| 300 | | | | **2.7 s** | |
-| 400 | 2.9 s | 498 s | 69.8 s | **6.8 s** | **2.3×** |
+| 60 | | | | **0.05 s** | |
+| 120 | | | | **0.22 s** | |
+| 209 | 0.67 s | 38 s | 9.5 s | **1.24 s** | **1.9×** |
+| 300 | | | | **1.7 s** | |
+| 400 | 2.9 s | 498 s | 69.8 s | **4.5 s** | **1.5×** |
 
-**From 166× to 2.3× at 400 players in two days, all in Elixir.** The
+**From 166× to 1.5× at 400 players in two days, all in Elixir.** The
 first day made the algorithm and its bookkeeping the reference's, step
 for step; the second found that the operation counts were still not the
 same, and fixed that. In order of effect: preparing the *modified* vertex
@@ -416,7 +416,9 @@ next-group window per bracket, with far edges set once per round as
 leaves the optimum nearly unique so that each stage's alternating forest
 grows only where it must instead of across the whole field; and the
 cross table kept as rows so that blossom formation is a merge, not a
-rebuild. The full table, with what each step measured and what it
+rebuild; and the same greedy tight start applied to a RESUMED solve, so
+that at a bracket boundary the residents pair among themselves before a
+single stage runs. The full table, with what each step measured and what it
 corrected, is in `docs/engineering-log.md`, "Matcher performance,
 2026-08-19".
 
@@ -432,7 +434,7 @@ tree growth (one O(V) row walk per newly-outer vertex), the per-stage
 inner–outer rebuild, blossom formation — all on weights of 450 bits,
 which is what six score-place rungs with 50-bit spans come to, and which
 bbpPairings carries as well (it sizes `edge_weight` to the field). The
-gap on that is 2–2.5× and is the BEAM against C++ on bignums.
+gap on that is 1.5–2× and is the BEAM against C++ on bignums.
 
 **Correctness is not what degrades.** On that 400-player round the two
 engines returned **200 of 200 boards identical, colours included** — twice
@@ -442,7 +444,7 @@ it was committed.
 
 ### What it means in practice
 
-Club and national events — up to ~150 players — pair in well under half a
+Club and national events — up to ~150 players — pair in a quarter of a
 second. A 200-player open is **about a second a round**. A 400-player
-open is under seven seconds, against the reference's three.
+open is four and a half seconds, against the reference's three.
 

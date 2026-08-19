@@ -51,9 +51,9 @@ What is left is one limit of method rather than a known divergence.
       **498 s → 69.8 s**.
 
 - [x] ~~**The remaining 24× at 400 players.**~~ **Closed 2026-08-19: it
-      was structural, not per-operation.** 209 players **9.2 s → 1.3 s**,
-      400 players **69.8 s → 6.8 s**; bbpPairings 0.67 s / 2.9 s, so
-      **2× and 2.3×**, from 14× and 24×. Every step held to 100.00% on all
+      was structural, not per-operation.** 209 players **9.2 s → 1.24 s**,
+      400 players **69.8 s → 4.5 s**; bbpPairings 0.67 s / 2.9 s, so
+      **1.9× and 1.5×**, from 14× and 24×. Every step held to 100.00% on all
       six corpus axes and both nets, 200/200 boards identical at 400.
 
       What it was, in order of effect: the resumed solves prepared the
@@ -66,7 +66,10 @@ What is left is one limit of method rather than a known divergence.
       `playersByIndex` and sets far edges once; the far edges all tied,
       so every stage's alternating forest spanned the field (a nearness
       term below every criterion leaves it local); and blossom formation
-      rebuilt a k² cross table that is now merged by rows. Full table in
+      rebuilt a k² cross table that is now merged by rows; and a resumed
+      solve now starts, like a fresh one, from a greedy tight matching of
+      the prepared vertices, which pairs most of a bracket before a stage
+      runs. Full table in
       `docs/engineering-log.md`, "Matcher performance, 2026-08-19".
 
       Recorded there too: yesterday's note that nested cross rows lose to
@@ -76,7 +79,7 @@ What is left is one limit of method rather than a known divergence.
       alongside the note reverting it and is now actually reverted (equal
       speed, no mutable-array hazard).
 
-- [ ] **The last 2–2.5×.** Per-operation cost on work the reference does
+- [ ] **The last 1.5–2×.** Per-operation cost on work the reference does
       too — tree growth, the per-stage inner–outer rebuild, formation —
       on 450-bit weights. Two things would move it, neither tried:
       narrower weights (six score-place rungs are 300 of the 450 bits —
