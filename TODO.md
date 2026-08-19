@@ -79,30 +79,35 @@ What is left is one limit of method rather than a known divergence.
       alongside the note reverting it and is now actually reverted (equal
       speed, no mutable-array hazard).
 
-- [ ] **A 1,000-player round is 85 s** -- measured on a file bbpPairings'
-      own generator produced, where bbpPairings takes 50 s and Gacrux
-      (Python) takes 5 s, and all three return the identical 500 boards.
-      The gap to Gacrux is not per-operation: it answers large brackets
-      with Article 3's transposition procedure directly and only falls
-      back to a matching where that fails. Shrinking the graph to the
-      window instead was built, measured at 2.8-3.2x, and REVERTED at
-      99.34% -- with a dense oracle giving the same 99.34%, so the window
-      truncation itself is the cost, not the oracle. Full write-up,
-      including the three fixes it did need and the exact case that broke
-      it: docs/engineering-log.md, "1,000 players, and why the graph
-      cannot shrink". What would close it is the direct Article 3 path for
-      brackets the tentative matching already pairs internally, where
-      every rung except the colour criteria is provably constant; it is a
-      second pairing path and needs the corpus to license it.
+- [x] ~~**A 1,000-player round is 85 s.**~~ **7.3 s as of 2026-08-19
+      evening** -- faster than bbpPairings' 50 s, within 2.5 s of
+      Gacrux's 5.1 s, identical 500 boards. A bracket is now solved on
+      its own graph whenever that is provably the whole-field answer
+      (`pair_bracket/6`, with the argument in its comment and in
+      docs/engineering-log.md "The local graph"); odd brackets get a
+      one-vertex stand-in for the next group. The window-graph attempt
+      that preceded it is recorded there too, reverted at 99.34%.
 
-- [ ] **The last 1.5–2× at 209-400 players.** Per-operation cost on work the reference does
-      too — tree growth, the per-stage inner–outer rebuild, formation —
-      on 450-bit weights. Two things would move it, neither tried:
-      narrower weights (six score-place rungs are 300 of the 450 bits —
-      a question about the criteria, not the matcher), and carrying the
-      alternating forest across stages instead of relabelling, which is a
-      different algorithm from the reference's. "Fewer solves per
-      bracket" is closed: one of 124 solves changed nothing.
+- [ ] **The last 2.5 s at 1,000 players, and the one uncertified
+      condition.** What remains is on 200-vertex graphs: the cold solve
+      of each bracket's own graph (the greedy start pairs half), the
+      stage-4 re-solve (every remainder vertex prepared, matching
+      rediscovered), and the stage-8 per-pair solves. A smarter warm
+      start for stage 4 -- it almost always returns the stage-3 matching
+      -- is the obvious lever. And `@local_min_next_group` (16) is the
+      one condition on the local path not certified term by term: that
+      an odd bracket's float choice does not depend on which member of a
+      dense next group it lands on. The 5M run on the final engine is
+      its judge; if it ever disagrees, the fix is to raise the threshold
+      or certify the group's matching number directly.
+
+- [x] ~~**The last 1.5–2× at 209-400 players.**~~ **Overtaken 2026-08-19
+      evening**: 209 players 0.37 s against the reference's 0.72 s, 400
+      players 1.33 s against 3.05 s -- the local graph, above. The
+      per-operation levers recorded here (narrower weights, carrying the
+      forest across stages) are still untried and still the only ones
+      left on the matcher itself; "fewer solves per bracket" is closed:
+      one of 124 solves changed nothing.
 
 ## Harness
 

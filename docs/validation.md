@@ -387,64 +387,59 @@ independent checks:
   The large-field row is the one to look at. It is where a matcher change
   would show first, and where the differential corpus is thinnest.
 
-### Against bbpPairings, on the same file
+### Against bbpPairings and Gacrux, on the same files
 
 The reference is not instant either, which is worth knowing before
 treating any target as obvious. Same tournament, same round, same machine
-— bbpPairings generated the file itself, so neither side is favoured.
-Warm medians of three:
+— bbpPairings' own generator produced every file, so no side is favoured.
+Cold process times for the other two engines; warm in-process medians of
+three for this one (the CLI adds about a second of BEAM start-up, once):
 
-| players | bbpPairings | Ainalrami 08-18 morning | 08-18 evening | **08-19** | gap now |
-|---|---|---|---|---|---|
-| 60 | | | | **0.05 s** | |
-| 120 | | | | **0.22 s** | |
-| 209 | 0.67 s | 38 s | 9.5 s | **1.24 s** | **1.9×** |
-| 300 | | | | **1.7 s** | |
-| 400 | 2.9 s | 498 s | 69.8 s | **4.5 s** | **1.5×** |
+| players | bbpPairings (C++) | Gacrux (Python) | Ainalrami 08-18 evening | **08-19 evening** |
+|---|---|---|---|---|
+| 60 | | | | **0.04 s** |
+| 120 | | | | **0.14 s** |
+| 209 | 0.72 s | 0.88 s | 9.5 s | **0.37 s** |
+| 300 | | | | **0.76 s** |
+| 400 | 3.05 s | 1.22 s | 69.8 s | **1.33 s** |
+| 1,000 | 50.1 s | 5.1 s | 85.5 s (08-19 noon) | **7.3 s** |
 
-**From 166× to 1.5× at 400 players in two days, all in Elixir.** The
-first day made the algorithm and its bookkeeping the reference's, step
-for step; the second found that the operation counts were still not the
-same, and fixed that. In order of effect: preparing the *modified* vertex
-of each changed edge rather than the lower-indexed one (`computer.cpp:69`
-— the cost of a resumed solve is proportional to how many distinct
-vertices were modified, and a whole-map diff cannot know which one that
-was); starting a fresh solve from a greedy tight matching instead of a
-hundred stages of one heaviest edge each; scoring only the bracket-and-
-next-group window per bracket, with far edges set once per round as
-`dutch.cpp:740-816` does; a nearness term below every criterion, which
-leaves the optimum nearly unique so that each stage's alternating forest
-grows only where it must instead of across the whole field; and the
-cross table kept as rows so that blossom formation is a merge, not a
-rebuild; and the same greedy tight start applied to a RESUMED solve, so
-that at a bracket boundary the residents pair among themselves before a
-single stage runs. The full table, with what each step measured and what it
-corrected, is in `docs/engineering-log.md`, "Matcher performance,
-2026-08-19".
+Gacrux's times include 0.64 s of interpreter and networkx start-up, so
+its pairing work is roughly 0.25 s, 0.6 s and 4.5 s. On every one of
+these rounds all three engines return the **identical boards** — 105 of
+105, 200 of 200, 500 of 500, colours included.
 
-**Two of those are places this engine now does less work than the
-reference.** bbpPairings starts every solve cold, and it leaves its far
-edges tied, so its forests span the field too; it is simply fast enough
-per operation not to mind. The greedy start and the nearness term are
-both below every criterion and every refinement-stage addend, and the
-corpus is identical with each of them on or off.
+**From 166× slower than the C++ reference to faster than it, in two days,
+all in Elixir.** The first day made the matcher's bookkeeping the
+reference's step for step; the second found the operation counts were
+still not the same and fixed that (`docs/engineering-log.md`, "Matcher
+performance, 2026-08-19"); the third step, the same evening, changed what
+graph a bracket is solved on. bbpPairings solves every bracket on the
+whole remaining field — one matcher for the round, the eight refinement
+stages re-solving it at every step, which is ~n³ a round and is why it
+takes 50 s at 1,000 players. This engine now solves a bracket on **its own
+graph** whenever that is provably the same answer (`Pairing.pair_bracket/6`:
+every window member a non-candidate for the bye, a perfect internal
+matching, and the rest of the field pairable without it, certified by a
+sparse cardinality oracle), with a one-vertex stand-in for the next score
+group on odd brackets, and falls back to the whole-field graph otherwise.
+That is what Gacrux's direct Article 3 path buys it, reached from the
+matcher side rather than the procedure side — so the eight stages, and
+the 100.00% they carry, are unchanged.
 
-**What remains is per-operation cost on work the reference does too**:
-tree growth (one O(V) row walk per newly-outer vertex), the per-stage
-inner–outer rebuild, blossom formation — all on weights of 450 bits,
-which is what six score-place rungs with 50-bit spans come to, and which
-bbpPairings carries as well (it sizes `edge_weight` to the field). The
-gap on that is 1.5–2× and is the BEAM against C++ on bignums.
-
-**Correctness is not what degrades.** On that 400-player round the two
-engines returned **200 of 200 boards identical, colours included** — twice
-the largest field the corpus had ever covered — and every step above was
-held to 100.00% on all six corpus axes and both differential nets before
-it was committed.
+**Correctness is not what degrades.** Every step was held to 100.00% on
+seven corpus axes — 4–10, 4–40, 60–120 and 150–250 players, with byes,
+forfeits, forbidden pairs, acceleration and round counts of 7, 8 and 13 —
+and both differential nets before it was committed, and the large-field
+axes are where the local graph does its work. The 5-million-tournament
+run on the Photon box was restarted on the final engine the same evening
+and is the judge of the one condition not certified term by term: that an
+odd bracket's float choice does not depend on which member of a dense
+next group it lands on (`@local_min_next_group`).
 
 ### What it means in practice
 
-Club and national events — up to ~150 players — pair in a quarter of a
-second. A 200-player open is **about a second a round**. A 400-player
-open is four and a half seconds, against the reference's three.
-
+Club and national events — up to ~150 players — pair in well under a
+fifth of a second. A 200-player open is **a third of a second a round**,
+a 400-player open about a second and a quarter, and a Moscow-Open-sized
+event of 1,000 players seven seconds — against the reference's fifty.

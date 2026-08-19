@@ -2782,3 +2782,93 @@ optimum. `Ainalrami.Sequence` already generates that order and is already
 tested against the engine. That is a second pairing path with its own
 correctness burden, and the corpus -- which now runs 60-120 players at
 12 tournaments/s -- is the only thing that could license it.
+
+## The local graph (2026-08-19, evening): faster than the C++ reference
+
+The window experiment above failed because it asked the window to decide
+things the far part has a say in -- who the next group pairs with, who
+floats deeper. The fix was to ask less. A bracket's own graph decides only
+the bracket's own pairs, and there is a clean argument for when that is
+exactly what the whole-field graph would have decided (`pair_bracket/6`):
+
+1. Every member of the window is a non-candidate for the bye. Then the
+   completion rung's per-vertex terms are the same for every bracket
+   member, `c9_rank/3` is zero for all of them, and `bracket_loop/6`'s C9
+   gate for the next bracket cannot fire -- the three places the far part
+   and the bye reached into a bracket's scoring.
+2. The bracket has a perfect internal matching on legal edges, and the
+   rest of the field can be paired without it. Then every ladder-optimal
+   matching pairs the bracket internally: the completion rung is maximal
+   with it internal (by 2), and C6 -- pairs inside the bracket, which
+   outranks everything below it -- is maximal ONLY with it internal.
+3. An internal bracket shares no edge with the rest, so the optimum
+   splits, and the bracket's part is the optimum over the bracket's own
+   edges with the bracket's own weights. The eight stages only add to
+   bracket-internal edges, in the reserve band below every rung, so none
+   of them breaks 2, and each stage's optimum is again the local one.
+
+(2)'s first half is what the local graph's own first solve establishes --
+the completion rung is the top rung, so its maximum-weight matching is
+perfect or nothing. Its second half is `oracle_completable?/2`: a sparse
+maximum-cardinality matching over the whole field with the bracket taken
+out, weighted `B + K*noncand + nearness` so that maximum weight is maximum
+cardinality, then most non-candidates matched -- the shape of the
+completion rung -- then nearest. Sound in the direction that matters: a
+matching it finds is real, and a matching it misses (twelve nearest legal
+opponents per player) costs one bracket a fall back to the field graph.
+
+An odd bracket floats one member, and who floats is decided jointly with
+the field below. It gets a stand-in vertex for the next score group
+(`stand_in_edges/8`): the float edge (F, G) scores the completion rung,
+C8 and C8's score term and nothing else -- every other rung is gated on
+`in_current` -- so its weight depends on F alone; and if every F has the
+same G to choose from, the rest's value once G is gone is the same
+constant whichever F floats, so F is decided by the bracket's internal
+optimum without F plus F's own float weight, which is the local graph
+with the stand-in. The first condition was tried literally (every F legal
+with every G) and never held -- a 121-player bracket over a 171-player
+group had 70 illegal pairs of 20,691 -- so it is `floats_placeable?/3`:
+every F has SOME legal partner in the group, and the group is at least
+`@local_min_next_group` (16) strong, which is the one condition in the
+whole path that is not certified term by term. Dense groups are not
+fragile -- taking any one member out leaves the same matching number and
+the same room below -- and brackets over smaller groups are cheap on the
+field graph anyway, since the field below them is small. The small-field
+corpus axes put every bracket on the field graph; the 60-120 and 150-250
+axes put the large ones here; the 5M run was restarted on the final
+engine to judge it.
+
+Two more things went in the same evening, both below every rung:
+
+* the nearness term between two bracket members now prefers a distance
+  of half the bracket (`natural_gap/3`), where Article 3.3 puts S1[i]
+  against S2[i] and where stages 4 and 8 push the matching anyway;
+* `state.min_outer` is tracked as `{dual + shift_outer, vertex}`, which is
+  invariant under delta steps, instead of scanned on every one.
+
+| players | bbpPairings | Gacrux | before (08-19 noon) | after |
+|---|---|---|---|---|
+| 209 | 0.72 s | 0.88 s | 1.24 s | **0.37 s** |
+| 400 | 3.05 s | 1.22 s | 4.5 s | **1.33 s** |
+| 1,000 | 50.1 s | 5.1 s | 85.5 s | **7.3 s** |
+
+Every step at 100.00% on seven corpus axes and both nets; 105/105,
+200/200 and 500/500 boards identical to bbpPairings on the three files.
+At 1,000 players the nine brackets the local graph takes cost 9 ms to
+3.1 s each; the two bye-level brackets at the bottom go to the field
+graph and cost 60 ms between them, because the field below them is small.
+
+What is left at 1,000 players (7.3 s, profiled): the cold solve of each
+bracket's own graph (489 stages, 2.3 s -- the greedy start pairs the
+mutually-heaviest half and the rest augments), the stage-4 re-solve
+(372 stages, 2.7 s -- every remainder pair's weight is rewritten, so
+every remainder vertex is prepared, and the matching is rediscovered),
+and the stage-8 per-pair solves (482 of them, 1.9 s). All of it is on
+200-vertex graphs now, and all of it is what the reference does on a
+1,000-vertex one.
+
+Tried and reverted the same evening, so nobody repeats them: choosing
+between carrying the caches and rebuilding them by size (slower, 7.7 ->
+9.3 s; the rebuild's per-vertex settle costs more than the estimate);
+running the greedy resume in descending index order or over every
+exposed vertex rather than the prepared ones (no change).
