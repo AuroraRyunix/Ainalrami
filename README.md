@@ -59,6 +59,13 @@ measuring nothing.
 Full methodology, per-axis detail and the reasoning behind each number:
 [docs/validation.md](docs/validation.md).
 
+**Speed**, same files, same machine, warm medians (2026-08-19): a
+120-player round in 0.22 s, 209 players in 1.24 s, 400 players in 4.5 s —
+against bbpPairings' 0.67 s and 2.9 s at 209 and 400, so within 2× of
+the C++ reference in pure Elixir, on the same algorithm. It is a maximum-
+weight matching per refinement stage; how it got there from 90 s and
+498 s is in [docs/engineering-log.md](docs/engineering-log.md).
+
 ## Install
 
 ```bash
