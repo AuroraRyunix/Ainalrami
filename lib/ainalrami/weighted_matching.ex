@@ -216,10 +216,28 @@ defmodule Ainalrami.WeightedMatching do
   Change the weight of the edge between `u` and `v`. Zero or negative
   removes it. The next `solve/1` re-augments from the previous solution.
 
-  The weight is reduced by the same GCD `new/2` found, so it lands on the
+  **Only `u` is prepared** -- unmatched, its blossoms dissolved, its dual
+  reset. `v` is left exactly as it was, match and all. This asymmetry is
+  bbpPairings' `setEdgeWeight(modifiedVertex, neighbor, w)` and it is
+  what makes the whole thing fast: `finalizePair` writes every edge of two
+  vertices, `2m` calls, and with only the modified end prepared those `2m`
+  calls disturb exactly two vertices. Preparing both ends -- as this did at
+  first, from reading the two arguments as symmetric -- unmatched every
+  vertex in the graph on every finalisation, and the "resumed" solve ran
+  ~m/2 stages, the same as a cold one. Measured: 104 stages against 11.
+
+  Why one side is enough: the invariants are per edge. Dual feasibility on
+  `(u, v)` holds for any weight under the ceiling once `u`'s dual is back
+  at the maximum. Complementary slackness on `v`'s matched edge `(v, x)`
+  is untouched, since that edge's weight did not change. The one case
+  where `v`'s state DID depend on `(u, v)` is `v` matched to `u`, and
+  preparing `u` unmatches that pair from `u`'s side, leaving `v` exposed
+  -- which is exactly the state a fresh solve would put it in.
+
+  The weight is reduced by the same GCD `new/3` found, so it lands on the
   same scale as the edges already stored; a weight that is not a multiple
   of that GCD, or that would exceed the initial dual, raises -- both mean
-  the caller's weights have changed shape and a fresh `new/2` is needed.
+  the caller's weights have changed shape and a fresh `new/3` is needed.
   """
   def set_weight(state, u, v, w) when u != v do
     w2 =
@@ -244,7 +262,6 @@ defmodule Ainalrami.WeightedMatching do
 
     state
     |> prepare_vertex(u)
-    |> prepare_vertex(v)
     |> put_weight(u, v, w2)
   end
 
