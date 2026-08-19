@@ -391,52 +391,58 @@ independent checks:
 
 The reference is not instant either, which is worth knowing before
 treating any target as obvious. Same tournament, same round, same machine
-— bbpPairings generated the file itself, so neither side is favoured:
+— bbpPairings generated the file itself, so neither side is favoured.
+Warm medians of three:
 
-| players | bbpPairings | Ainalrami (morning) | Ainalrami (evening) | gap now |
-|---|---|---|---|---|
-| 209 | 0.67 s | 38 s | **9.5 s** | 14× |
-| 400 | 2.9 s | 498 s | **69.8 s** | 24× |
+| players | bbpPairings | Ainalrami 08-18 morning | 08-18 evening | **08-19** | gap now |
+|---|---|---|---|---|---|
+| 60 | | | | **0.07 s** | |
+| 120 | | | | **0.30 s** | |
+| 209 | 0.67 s | 38 s | 9.5 s | **1.3 s** | **2×** |
+| 300 | | | | **2.7 s** | |
+| 400 | 2.9 s | 498 s | 69.8 s | **6.8 s** | **2.3×** |
 
-**From 166× to 24× at 400 players in one day, all in Elixir.** The
-algorithm and its bookkeeping are now the reference's, step for step, and
-each step was checked against `dutch.cpp` / `graph.cpp` before it went in:
-a persistent matcher across a bracket's refinement stages (`Computer`'s
-`setEdgeWeight`/`computeMatching`); preparing only the *modified* end of a
-changed edge, which was the single largest win of the day — one misread
-argument, and every `finalize_pair` had been tearing down the whole
-matching; a per-blossom-pair cross table with a running minimum
-(`minOuterEdges` / `minOuterOuterEdgeResistance`); and the caches carried
-across stage boundaries, which the reference does *not* do — measured
-first: the new stage's outer set was a subset of the previous stage's
-final outer set on 10,816 of 10,816 boundaries.
+**From 166× to 2.3× at 400 players in two days, all in Elixir.** The
+first day made the algorithm and its bookkeeping the reference's, step
+for step; the second found that the operation counts were still not the
+same, and fixed that. In order of effect: preparing the *modified* vertex
+of each changed edge rather than the lower-indexed one (`computer.cpp:69`
+— the cost of a resumed solve is proportional to how many distinct
+vertices were modified, and a whole-map diff cannot know which one that
+was); starting a fresh solve from a greedy tight matching instead of a
+hundred stages of one heaviest edge each; scoring only the bracket-and-
+next-group window per bracket, with far edges set once per round as
+`dutch.cpp:740-816` does; a nearness term below every criterion, which
+leaves the optimum nearly unique so that each stage's alternating forest
+grows only where it must instead of across the whole field; and the
+cross table kept as rows so that blossom formation is a merge, not a
+rebuild. The full table, with what each step measured and what it
+corrected, is in `docs/engineering-log.md`, "Matcher performance,
+2026-08-19".
 
-**What remains is per-operation cost, and that is measured rather than
-assumed.** Bignum arithmetic is 3% of a solve. Tuple-indexed storage was
-measured *slower* than maps at this size (0.85×). A packed integer key
-measured the same as a tuple key (0.95×). `:atomics` measured 2.96× on the
-exact inner-loop access pattern and was not pursued because the
-structural wins were larger at the time; it is the one remaining lever
-and is now worth revisiting. The reference's own per-stage rebuild of
-inner–outer resistances is O(V × |outer|), the same as ours.
+**Two of those are places this engine now does less work than the
+reference.** bbpPairings starts every solve cold, and it leaves its far
+edges tied, so its forests span the field too; it is simply fast enough
+per operation not to mind. The greedy start and the nearness term are
+both below every criterion and every refinement-stage addend, and the
+corpus is identical with each of them on or off.
 
-**bbpPairings pays real cost too** — 0.67 s to 2.9 s as the field roughly
-doubles, about n^2.4. A 400-player Swiss is genuine work for a weighted
-matcher however it is written.
+**What remains is per-operation cost on work the reference does too**:
+tree growth (one O(V) row walk per newly-outer vertex), the per-stage
+inner–outer rebuild, blossom formation — all on weights of 450 bits,
+which is what six score-place rungs with 50-bit spans come to, and which
+bbpPairings carries as well (it sizes `edge_weight` to the field). The
+gap on that is 2–2.5× and is the BEAM against C++ on bignums.
 
 **Correctness is not what degrades.** On that 400-player round the two
 engines returned **200 of 200 boards identical, colours included** — twice
 the largest field the corpus had ever covered — and every step above was
-held to 100.00% on the corpus before it was committed.
+held to 100.00% on all six corpus axes and both differential nets before
+it was committed.
 
 ### What it means in practice
 
-Club and national events — up to ~150 players — pair in a second or two.
-A 200-player open is **under ten seconds a round**. A 400-player open is
-about seventy seconds a round — slow, and usable in a way eight minutes
-was not.
-
-The remaining 24x at 400 players is the next piece of work, and the one
-lever left standing after a day of measurement is `:atomics` for the
-small-integer bookkeeping -- see [../TODO.md](../TODO.md).
+Club and national events — up to ~150 players — pair in well under half a
+second. A 200-player open is **about a second a round**. A 400-player
+open is under seven seconds, against the reference's three.
 

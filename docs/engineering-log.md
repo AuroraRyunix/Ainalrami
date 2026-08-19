@@ -2594,3 +2594,79 @@ What *would* move it, in order of plausibility, none of them tried:
   first and a speed question second.
 - **A native matcher.** Ruled out by the project owner; recorded only as
   the thing that would close the gap outright.
+
+## Matcher performance, 2026-08-19: the gap was structural after all
+
+Yesterday's closing note said the remaining 14x at 209 players and 24x at
+400 was "the per-operation gap between a BEAM map lookup and a C array
+index, on the same algorithm with the same number of operations", and
+that it was measured rather than guessed. It was measured; the
+conclusion was still wrong. The operations were not the same number.
+Today, one 209-player round went 9.2 s -> 1.3 s and one 400-player round
+69.8 s -> 6.8 s, every step held to 100.00% on all six corpus axes and
+both differential nets, and 200 of 200 boards at 400 players still
+identical to bbpPairings. Warm medians of three.
+
+| change | 209 | 400 | what was actually wrong |
+|---|---|---|---|
+| start of day | 9.2 s | 69.8 s | |
+| one matcher per round, but the transposition `scale` per bracket | 10.9 s | -- | every weight multiplied by a per-bracket factor, so every edge changed at every boundary -- the same failure as yesterday's attempt, one level down |
+| transposition tie-break off by default | 8.0 s | 56.8 s | inert for the pairing (measured again: identical), and a 46-digit factor in every comparison |
+| **prepare the MODIFIED vertex** (`set_live/4`, dirty list) | **4.4 s** | **26.6 s** | the whole-map diff prepared the lower-indexed end of each changed edge; `finalize_pair` then prepared every earlier vertex the pair still touched -- 10.7 stages per in-bracket solve where `computer.cpp:69` says O(k n^2) for k modified vertices, and k is three |
+| offer from the outer side at stage start | 3.9 s | -- | 136,000 row walks per round for what three outer vertices could deliver |
+| **greedy start** (`greedy_start/3`) | **2.6 s** | **14.8 s** | a cold solve matched one heaviest edge per stage for 106 stages; duals at each vertex's heaviest edge and a greedy tight matching start it at seven exposed vertices |
+| bootstrap duals (`new/3 duals:`) | 2.06 s | n/a (even field) | the bye bootstrap's weights are per-vertex sums, so "mutually heaviest" matched nothing; per-vertex duals make every compatible edge tight |
+| cross table as rows (`cross_merge` O(children x k)) | 1.99 s | 14.05 s | formation rebuilt a k^2 table: 9,877 times a round at 400 |
+| score only the window per bracket | 1.9 s | 13.3 s | every bracket rescored all m^2/2 pairs and diffed them again; bbpPairings scores `playersByIndex` and sets far edges once |
+| **nearness term below every criterion** | **1.7 s** | **8.0 s** | thousands of equal far edges were all TIGHT at the optimum; each stage's forest grew across the whole field before it could augment -- growths 23,470 -> 13,405, formations 9,142 -> 4,525 |
+| cached sorted top list, settle-loop trim | 1.37 s | 6.8 s | two or three sorts per delta step; resistance computed for neighbours that took no offer |
+| **end of day** | **1.3 s** | **6.8 s** | bbpPairings: 0.67 s / 2.9 s -- **2x and 2.3x**, from 14x and 24x |
+
+Things learned, each the reverse of something believed yesterday:
+
+- **"Nested rows lose to a flat map"** (yesterday, 12.4 -> 15 s) was true
+  when `cross_merge` was not on the profile. Once the k^2 rebuild per
+  formation was the largest item at 400 players, the same rows won by
+  4.7 s. The measurement was right and local; the conclusion was global.
+- **"The round-level matcher sees 20,000 changed edges per boundary"**
+  was the transposition scale, not the bracket structure. With far edges
+  frozen and the scale gone, a boundary changes the window's clique and
+  its edges into the next group -- 1-28% -- exactly as the premise said.
+- **"The tie structure does not matter"** is true for the pairing and
+  false for the search. The far edges all tie on purpose (completability
+  only), and at the optimum every one of them is tight, so the
+  alternating forest of every stage spans the field. A canonical term
+  below every criterion and every stage addend -- nearness in field
+  position, scaled by n^2 + 1 so no sum of it can reach one unit above --
+  leaves the optimum nearly unique and the forest local. Nearness rather
+  than any other term because the greedy start matches mutually-heaviest
+  pairs, and nearest neighbours are mutual.
+- **The :atomics spike was committed**, not reverted, alongside the note
+  saying it was 2.5x slower. Measured on a full round the two are equal
+  (8.0 / 8.2 s); the pure map version is back because it has no
+  mutable-array hazard against the persistent state, not because it is
+  faster.
+- **bbpPairings' matcher IS whole-field.** `matchingComputer(sortedPlayers
+  .size())` is built once per round with completability weights on every
+  pair (dutch.cpp:740-816), the bootstrap matching is solved on it, and
+  each bracket `setEdgeWeight`s only `playersByIndex`. Yesterday's note
+  had it as a bracket-sized graph. The window/far split above is that
+  design exactly; the greedy start and the nearness term are the two
+  places this engine now does LESS work than the reference.
+
+What is left at 400 players (6.8 s, profile): tree growth 2.1 s (13,405
+events, one O(V) row walk each -- `updateInnerOuterEdges` in the
+reference), the per-stage inner-outer rebuild 1.2 s (O(non-outer x
+outer), `initializeInnerOuterEdges`), formation 0.7 s, and about 1 s
+outside the matcher. All of it is work the reference does too, and the
+per-operation ratio on it is now 2-2.5x, which is the BEAM against C++
+on bignums of 450 bits -- the weights are that wide because six rungs
+carry a score-place digit with a 50-bit span, and bbpPairings' are just
+as wide (it sizes `edge_weight` to the field). Fewer solves per bracket
+was re-examined and is closed: one of 124 solves changed nothing.
+
+Not tried, and the only things left that would move it: narrower weights
+(the six place-span rungs are 300 of the 450 bits; whether any two can
+share a band is a question about the criteria, not the matcher), and
+carrying the alternating forest across stages instead of relabelling,
+which is a different algorithm from the reference's.

@@ -46,47 +46,44 @@ What is left is one limit of method rather than a known divergence.
 ## Performance
 
 - [x] ~~**Implement the incremental caches.**~~ **Done 2026-08-18** — and
-      then most of the rest of the reference's bookkeeping with it. In one
-      day, all in Elixir, one round of 209 players went **90 s → 9.5 s**
-      and 400 players **498 s → 69.8 s**. Against bbpPairings on the same
-      files: 14× behind at 209, 24× at 400 (was 56× and 166×).
+      then most of the rest of the reference's bookkeeping with it. One
+      round of 209 players went **90 s → 9.5 s** and 400 players
+      **498 s → 69.8 s**.
 
-      What went in, each checked against `dutch.cpp`/`graph.cpp` and held
-      to 100.00% on the corpus: a persistent matcher across a bracket's
-      eight stages; preparing only the *modified* end of a changed edge
-      (the single biggest win — one misread argument had every
-      `finalize_pair` tearing down the whole matching); a per-blossom-pair
-      cross table with a running minimum; field-wide weight bands; and
-      caches carried across stage boundaries, which the reference does not
-      do. Full table with what was tried and reverted:
-      `docs/engineering-log.md`, "Matcher performance, 2026-08-18".
+- [x] ~~**The remaining 24× at 400 players.**~~ **Closed 2026-08-19: it
+      was structural, not per-operation.** 209 players **9.2 s → 1.3 s**,
+      400 players **69.8 s → 6.8 s**; bbpPairings 0.67 s / 2.9 s, so
+      **2× and 2.3×**, from 14× and 24×. Every step held to 100.00% on all
+      six corpus axes and both nets, 200/200 boards identical at 400.
 
-- [ ] **The remaining 24× at 400 players.** Measured rather than assumed:
-      bignum arithmetic is 3% of a solve; tuple storage is *slower* than
-      maps here (0.85×); a packed key is no faster than a tuple key
-      (0.95×). What is left is per-operation cost of BEAM maps on the
-      algorithm's bookkeeping — `in_blossom`, `label`, `dual`, `best_outer`
-      -- and `:atomics` for those is now CLOSED: tried for real on
-      `in_blossom` alone, correct on both nets, and 2.5x SLOWER (395 ->
-      1015 ms). The isolated micro-benchmark that said 2.96x held the array
-      ref in a local; in the module every read is a map field access plus
-      a NIF dispatch, and a BEAM map on a few hundred small-int keys beats
-      that. The per-operation bookkeeping is at the BEAM's native floor.
+      What it was, in order of effect: the resumed solves prepared the
+      lower-indexed end of each changed edge instead of the MODIFIED
+      vertex (`computer.cpp:69` — cost is O(k n²) in the number of
+      modified vertices, and `finalize_pair` was making k the bracket
+      rather than three); cold solves ran a hundred stages where a greedy
+      tight start leaves seven exposed vertices; every bracket rescored
+      and diffed the whole field where the reference scores
+      `playersByIndex` and sets far edges once; the far edges all tied,
+      so every stage's alternating forest spanned the field (a nearness
+      term below every criterion leaves it local); and blossom formation
+      rebuilt a k² cross table that is now merged by rows. Full table in
+      `docs/engineering-log.md`, "Matcher performance, 2026-08-19".
 
-      What that leaves, honestly: the remaining gap to C++ is per-operation
-      cost of a well-optimised BEAM map against an array index, and no
-      data-structure swap available on the BEAM closes it. Further gains
-      have to come from doing FEWER operations -- which is where every win
-      today came from -- and the profile is now flat enough that there is
-      no single dominant item left to attack.
+      Recorded there too: yesterday's note that nested cross rows lose to
+      a flat map was locally right and globally wrong; the transposition
+      tie-break is off by default (`AINALRAMI_TRANS=1` restores it) after
+      measuring inert again; the `:atomics` spike had been committed
+      alongside the note reverting it and is now actually reverted (equal
+      speed, no mutable-array hazard).
 
-- [ ] **Carrying one matcher across the brackets of a round** was built,
-      made correct (corpus 100.00%) and reverted: `base_edge_weights` is
-      recomputed per bracket with different `sgb`/`nsgb`, so ~20,000 of
-      21,000 edges change at every boundary and it is a cold solve plus
-      20,000 `set_weight` calls — slower, not faster. The reference has the
-      same shape. Recorded so it is not retried without a reason to think
-      the edge diff has shrunk.
+- [ ] **The last 2–2.5×.** Per-operation cost on work the reference does
+      too — tree growth, the per-stage inner–outer rebuild, formation —
+      on 450-bit weights. Two things would move it, neither tried:
+      narrower weights (six score-place rungs are 300 of the 450 bits —
+      a question about the criteria, not the matcher), and carrying the
+      alternating forest across stages instead of relabelling, which is a
+      different algorithm from the reference's. "Fewer solves per
+      bracket" is closed: one of 124 solves changed nothing.
 
 ## Harness
 
