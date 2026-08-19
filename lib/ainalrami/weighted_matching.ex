@@ -130,8 +130,17 @@ defmodule Ainalrami.WeightedMatching do
   one-shot callers and for the tests.
   """
   def new(n, edges, opts \\ []) do
-    gcd = gcd_of(edges)
-    edges = reduce_weights(edges)
+    # `:gcd` overrides the reduction. A persistent caller whose LATER
+    # weights may not share the initial edges' common factor passes
+    # `gcd: 1` and forgoes the bignum saving rather than risk
+    # `set_weight/4` refusing a weight that is not on the initial scale.
+    gcd =
+      case Keyword.get(opts, :gcd) do
+        nil -> gcd_of(edges)
+        g when is_integer(g) and g >= 1 -> g
+      end
+
+    edges = if gcd > 1, do: reduce_weights(edges), else: edges
 
     # The initial dual, and the ceiling every later weight must stay under
     # -- bbpPairings fixes `aboveMaxEdgeWeight` at construction and asserts
@@ -437,7 +446,7 @@ defmodule Ainalrami.WeightedMatching do
     end
   end
 
-  defp build_state(n, edges, ceiling \\ nil) do
+  defp build_state(n, edges, ceiling) do
     # Adjacency, not a flat `{u, v} => w` map. `resistance/3` is the
     # innermost operation in the whole algorithm -- the delta scans call it
     # once per vertex pair, every step -- and a tuple key means allocating

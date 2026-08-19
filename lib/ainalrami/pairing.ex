@@ -1729,8 +1729,10 @@ defmodule Ainalrami.Pairing do
     reserve = st.bands.reserve
     above? = System.get_env("AINALRAMI_TRANS_ABOVE") != nil
 
+    # The matcher's edge map for the current `live` weights, keyed `{i, j}`
+    # with `i < j` (which is how `live` is keyed too).
     edges =
-      Enum.reduce(st.live, [], fn {{i, j}, w}, acc ->
+      Enum.reduce(st.live, %{}, fn {{i, j}, w}, acc ->
         if w > 0 do
           term = Map.get(terms, {i, j}, 0)
 
@@ -1745,13 +1747,78 @@ defmodule Ainalrami.Pairing do
               w * scale + term
             end
 
-          [{i, j, weight} | acc]
+          Map.put(acc, {i, j}, weight)
         else
           acc
         end
       end)
 
-    %{st | matching: WeightedMatching.solve(st.m, edges)}
+    # One persistent matcher per bracket state, created on the first solve
+    # and updated by DIFF on every later one -- bbpPairings' Computer works
+    # exactly this way (setEdgeWeight / computeMatching), keeping the
+    # matching and duals between calls so the next solve re-augments from
+    # the previous solution rather than from nothing.
+    #
+    # It is worth less than it looks, and the reason is worth recording. The
+    # median change between consecutive solves is ~200 edges of ~5,500,
+    # which sounds small; but the refinement stages rewrite whole
+    # remainder-by-remainder blocks, so those 200 edges touch a median of
+    # 89 of 127 vertices, and 99 of 114 reused solves touch more than half.
+    # Every touched vertex is unmatched by `set_weight/4`, so re-augmenting
+    # from what is left runs ~50 stages against ~105 fresh -- about 1.35x,
+    # not the order of magnitude that a small edge diff suggests. The
+    # reference has the identical shape (dutch.cpp:1295-1315 rewrites the
+    # same remainder block before its computeMatching); its speed is the
+    # constant factor, not this.
+    #
+    # The ceiling is the largest weight this bracket can ever produce,
+    # transformed the same way the edges are: `st.max_w` is above every BASE
+    # weight and is what `finalize_pair/3` writes; the refinement stages ADD
+    # to live weights (`w + 1`, `w + bump`, `w + addend`) and every addend
+    # lives inside `bands.reserve` -- the packing invariant, "a nudge can
+    # break a tie without ever outranking a real criterion" -- so the bound
+    # is `max_w + reserve`. A live weight above it would be a packing bug
+    # that the matcher's guard now catches rather than silently absorbs.
+    max_term = terms |> Map.values() |> Enum.max(fn -> 0 end)
+    ceiling = (st.max_w + reserve) * scale + max_term
+
+    fresh = fn ->
+      WeightedMatching.new(st.m, Enum.map(edges, fn {{i, j}, w} -> {i, j, w} end),
+        max_weight: ceiling,
+        gcd: 1
+      )
+    end
+
+    matcher =
+      case st[:matcher] do
+        nil ->
+          fresh.()
+
+        prev_matcher ->
+          prev = st.matcher_edges
+
+          changed =
+            prev
+            |> Map.keys()
+            |> Enum.concat(Map.keys(edges))
+            |> Enum.uniq()
+            |> Enum.filter(fn key -> Map.get(prev, key, 0) != Map.get(edges, key, 0) end)
+
+          # Measured, and worth writing down because it is counter-intuitive:
+          # starting FRESH whenever more than half the vertices changed made
+          # a round SLOWER (24.6s -> 27s at 209 players). Even a mostly-torn
+          # matching keeps some pairs and all its duals, and re-augmenting
+          # from that beats an empty state. Reuse unconditionally.
+          Enum.reduce(changed, prev_matcher, fn {i, j} = key, acc ->
+            WeightedMatching.set_weight(acc, i, j, Map.get(edges, key, 0))
+          end)
+      end
+
+    {matcher, matching} = WeightedMatching.solve(matcher)
+
+    %{st | matching: matching}
+    |> Map.put(:matcher, matcher)
+    |> Map.put(:matcher_edges, edges)
   end
 
   # FIDE section 3's transposition order as an edge-additive tie-break,
