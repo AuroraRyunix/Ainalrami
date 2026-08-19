@@ -162,6 +162,12 @@ defmodule Ainalrami.WeightedMatching do
   `{state, matching}`; the state carries the solution forward.
   """
   def solve(state) do
+    # Caches are carried stage to stage WITHIN a solve (`carry_caches/2`)
+    # and never across one: a `set_weight/4` in between changed weights the
+    # cached resistances were computed from. Cleared here so the first stage
+    # rebuilds; an empty label map is the signal `carry_caches/2` reads.
+    state = %{state | label: %{}}
+
     state = state |> even_up_exposed_duals() |> augment_until_done() |> resolve_all_matching()
     {state, to_matching(state)}
   end
@@ -554,7 +560,7 @@ defmodule Ainalrami.WeightedMatching do
   defp augment_until_done(state, budget) do
     case augment_once(state) do
       {:ok, state} -> augment_until_done(state, budget - 1)
-      :done -> state
+      {:done, state} -> state
     end
   end
 
@@ -574,8 +580,13 @@ defmodule Ainalrami.WeightedMatching do
     state = init_labels(state)
     Process.put(:wm_grow_steps, 0)
 
+    # The labelled state is returned on BOTH paths. Returning a bare `:done`
+    # here discarded `init_labels/1`'s work, which was harmless while the
+    # label map always held the previous stage's labels and became a real
+    # bug the moment `solve/1` started clearing it: `resolve_all_matching/1`
+    # reads `top_blossoms/1`, which reads the label keys, and found none.
     case min_outer_dual(state) do
-      nil -> :done
+      nil -> {:done, state}
       _ -> grow(state)
     end
   end
@@ -607,7 +618,7 @@ defmodule Ainalrami.WeightedMatching do
     # here rather than repaired, and that is the whole reason maintaining
     # them incrementally elsewhere is sound — see the "delta-scan caches"
     # section. O(V^2), once per stage, against O(V) stages.
-    rebuild_caches(%{state | label: label, label_edge: %{}})
+    carry_caches(%{state | label: label, label_edge: %{}}, state.label)
   end
 
   # Every currently top-level blossom id — vertices not absorbed into a
@@ -776,12 +787,12 @@ defmodule Ainalrami.WeightedMatching do
         # Numerically shouldn't happen — one of the four must hit zero —
         # but guards against an infinite loop from a rounding slip rather
         # than hanging.
-        :done
+        {:done, state}
     end
     |> case do
       {:ok, _state} = result -> result
       {:grow, state} -> grow(state)
-      :done -> :done
+      {:done, _state} = result -> result
     end
   end
 
@@ -919,6 +930,77 @@ defmodule Ainalrami.WeightedMatching do
   # blossom stops being a cross edge. Both of its endpoints are in that
   # blossom, and every vertex of a new blossom is recomputed from scratch,
   # so the same pass covers it.
+
+  # The caches at a stage boundary, carried forward from the previous stage
+  # rather than rebuilt -- WITHIN one solve only.
+  #
+  # Measured on a cold 209-vertex solve, 105 boundaries: the new stage's
+  # outer set was ALWAYS a subset of the previous stage's final outer set --
+  # 10,816 of 10,816 kept, 0 newly outer. It has to be: a stage ends by
+  # augmenting, which matches exactly two exposed vertices, and then
+  # `init_labels/1` makes every matched blossom free; the only blossoms
+  # outer at the new start are the still-exposed ones, every one of which
+  # was exposed (so outer) a moment ago. And no edge weight changes
+  # between two stages of one solve.
+  #
+  # So the cross table needs FILTERING, not rebuilding: keep an entry when
+  # both its blossoms are still outer, drop it otherwise. `best_outer`
+  # likewise: an entry whose partner is still outer is still the minimum
+  # over a set that only shrank. The only vertices needing a new entry are
+  # the ones that left the outer set -- the augmented pair and the tree
+  # that hung off them -- and those get one row walk each.
+  #
+  # Before: every outer vertex re-settled at every stage start,
+  # O(|outer| x V) per stage and Theta(V^3) over a cold solve -- 86,000
+  # `settle_outer_vertex` calls per 209-player round.
+  #
+  # ACROSS solves it does not hold and is not attempted. `set_weight/4`
+  # changes edge weights, so cached resistances for those edges are stale
+  # whatever the labels say, and it exposes vertices that were never outer.
+  # `solve/1` clears the caches on entry, so the first stage of every solve
+  # rebuilds from nothing -- which is what `prepare_vertex/2` already made
+  # cheap, since a resumed solve's outer set is small. A first attempt that
+  # carried across solves and patched the newly-outer vertices failed the
+  # incremental net on 266 of 300 graphs; the stale resistances were the
+  # reason.
+  defp carry_caches(state, prev_label) do
+    if map_size(prev_label) == 0 do
+      rebuild_caches(state)
+    else
+      outer_blossoms = for {b, :outer} <- state.label, into: MapSet.new(), do: b
+      {cross, _} = state.cross
+
+      cross =
+        Map.filter(cross, fn {{a, b}, _} ->
+          MapSet.member?(outer_blossoms, a) and MapSet.member?(outer_blossoms, b)
+        end)
+
+      best =
+        Enum.reduce(cross, nil, fn {key, {r, _, _}}, best ->
+          if best == nil or r < elem(best, 0), do: {r, key}, else: best
+        end)
+
+      in_blossom = state.in_blossom
+      outer_vertex? = fn v -> MapSet.member?(outer_blossoms, Map.fetch!(in_blossom, v)) end
+
+      kept =
+        state.best_outer
+        |> Enum.filter(fn {v, {_r, partner}} ->
+          outer_vertex?.(partner) and not outer_vertex?.(v)
+        end)
+        |> Map.new()
+
+      state = %{state | cross: {cross, best}, best_outer: kept}
+
+      needing =
+        state.label
+        |> Enum.filter(fn {_b, l} -> l in [:free, :zero] end)
+        |> Enum.flat_map(fn {b, _} -> blossom_vertices(state, b) end)
+        |> Enum.reject(&Map.has_key?(kept, &1))
+
+      Enum.reduce(needing, state, &recompute_vertex(&2, &1))
+    end
+  end
 
   # Every vertex's entry, from nothing. O(V^2), and run once per stage.
   defp rebuild_caches(state) do
