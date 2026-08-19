@@ -94,10 +94,312 @@ defmodule Ainalrami.WeightedMatching do
 
   def solve(n, edges) do
     n
-    |> build_state(reduce_weights(edges))
-    |> augment_until_done()
-    |> resolve_all_matching()
-    |> to_matching()
+    |> new(edges)
+    |> solve()
+    |> elem(1)
+  end
+
+  @doc """
+  A persistent matcher over vertices `0..n-1`, for callers that solve the
+  same graph repeatedly with small changes between solves.
+
+  `Ainalrami.Pairing`'s bracket cascade solves the whole field about a
+  hundred and twenty times per round, and between consecutive solves the
+  median change is about two hundred edges out of five thousand -- under
+  four percent -- and sometimes none at all. Solving each from an empty
+  matching ran roughly a hundred stages every time; re-augmenting from the
+  previous solution runs a handful.
+
+  This is exactly what bbpPairings' `Computer` does, and the algorithm is
+  its `setEdgeWeight` / `prepareVertexForWeightAdjustments`: when an
+  edge's weight changes, the two endpoints are unmatched, every blossom
+  containing them is dissolved back to trivial, and their duals are reset
+  to the initial maximum. Every other vertex keeps its match, its dual and
+  its blossom structure. That state is still a valid starting point for
+  the primal-dual search -- the invariants the algorithm maintains (dual
+  feasibility, complementary slackness on matched edges) hold on the
+  untouched part, and the touched vertices are exactly as they were at
+  the start of a fresh solve -- so `solve/1` reaches the same optimum.
+
+      state = WeightedMatching.new(n, edges)
+      {state, matching} = WeightedMatching.solve(state)
+      state = WeightedMatching.set_weight(state, u, v, new_w)
+      {state, matching} = WeightedMatching.solve(state)
+
+  `solve/2` is `new/2` followed by one `solve/1`, and remains the API for
+  one-shot callers and for the tests.
+  """
+  def new(n, edges, opts \\ []) do
+    gcd = gcd_of(edges)
+    edges = reduce_weights(edges)
+
+    # The initial dual, and the ceiling every later weight must stay under
+    # -- bbpPairings fixes `aboveMaxEdgeWeight` at construction and asserts
+    # on `setEdgeWeight`. Defaults to the largest weight present, which is
+    # right for a one-shot solve; a caller that will raise weights later
+    # passes `:max_weight` explicitly, on the caller's own scale.
+    ceiling =
+      case Keyword.get(opts, :max_weight) do
+        nil -> nil
+        w -> 2 * div(w, gcd)
+      end
+
+    state = build_state(n, edges, ceiling)
+    Map.put(state, :gcd, gcd)
+  end
+
+  @doc """
+  Re-augment from the current matching to a maximum-weight one. Returns
+  `{state, matching}`; the state carries the solution forward.
+  """
+  def solve(state) do
+    state = state |> even_up_exposed_duals() |> augment_until_done() |> resolve_all_matching()
+    {state, to_matching(state)}
+  end
+
+  # bbpPairings' `computeMatching()` prologue (graph.cpp:793-845): "Make
+  # sure all exposed Vertex dualVariables have the same parity."
+  #
+  # Within a stage the dual adjustment can be half a unit of the doubled
+  # scale, so a MATCHED vertex can finish a solve with an odd dual -- which
+  # is fine while it stays matched, because the sum along its matched edge
+  # stays even. `prepare_vertex/2` unmatches that vertex's partner without
+  # touching the partner's dual, and an EXPOSED vertex with an odd dual
+  # breaks the arithmetic: the four-way minimum halves the outer-outer and
+  # inner-blossom candidates, every tightness event is missed by one, and
+  # `grow_with_delta/6` falls through to its "numerically shouldn't happen"
+  # branch and stops early. Measured: three odd duals at entry, and a
+  # twelve-vertex solve that stopped after one augmentation with ten
+  # exposed vertices left.
+  #
+  # The fix is theirs exactly: every exposed top-level blossom whose base
+  # dual is odd gets +1 on each of its vertices, and -2 on its own blossom
+  # dual if it is non-trivial, so every edge's dual sum is unchanged. On a
+  # fresh solve every dual is `max_w`, which is even, so this is a no-op
+  # there and `solve/2` is unaffected.
+  defp even_up_exposed_duals(state) do
+    # Before the first stage the label map is empty and `top_blossoms/1`
+    # would see nothing; on a fresh state every dual is `max_w`, even, so
+    # falling back to `in_blossom` here costs one walk and changes nothing.
+    top =
+      if map_size(state.label) == 0,
+        do: state.in_blossom |> Map.values() |> Enum.uniq(),
+        else: top_blossoms(state)
+
+    Enum.reduce(top, state, fn b, state ->
+      if not matched?(state, b) and rem(dual_of(state, base_vertex(state, b)), 2) == 1 do
+        vs = blossom_vertices(state, b)
+        dual = Enum.reduce(vs, state.dual, fn v, d -> Map.update!(d, v, &(&1 + 1)) end)
+
+        dual =
+          if Map.has_key?(state.children, b),
+            do: Map.update!(dual, b, &(&1 - 2)),
+            else: dual
+
+        %{state | dual: dual}
+      else
+        state
+      end
+    end)
+  end
+
+  @doc """
+  Change the weight of the edge between `u` and `v`. Zero or negative
+  removes it. The next `solve/1` re-augments from the previous solution.
+
+  The weight is reduced by the same GCD `new/2` found, so it lands on the
+  same scale as the edges already stored; a weight that is not a multiple
+  of that GCD, or that would exceed the initial dual, raises -- both mean
+  the caller's weights have changed shape and a fresh `new/2` is needed.
+  """
+  def set_weight(state, u, v, w) when u != v do
+    w2 =
+      cond do
+        w <= 0 ->
+          0
+
+        rem(w, state.gcd) != 0 ->
+          raise ArgumentError,
+                "set_weight: #{w} is not on the scale this matcher was built at " <>
+                  "(gcd #{state.gcd}); build a fresh state"
+
+        true ->
+          2 * div(w, state.gcd)
+      end
+
+    if w2 > state.max_w do
+      raise ArgumentError,
+            "set_weight: weight exceeds the initial dual this matcher was built with; " <>
+              "build a fresh state"
+    end
+
+    state
+    |> prepare_vertex(u)
+    |> prepare_vertex(v)
+    |> put_weight(u, v, w2)
+  end
+
+  # `prepareVertexForWeightAdjustments`, exactly: unmatch, dissolve every
+  # enclosing blossom, reset the dual to the initial maximum. Idempotent,
+  # so touching both endpoints of several edges in a row costs nothing
+  # extra for a vertex already prepared.
+  defp prepare_vertex(state, v) do
+    state = dissolve_to_vertex(state, v)
+
+    # `v` is now its own top-level blossom. Unmatch it, both directions.
+    state =
+      case Map.get(state.blossom_match, v) do
+        nil ->
+          state
+
+        partner ->
+          partner_blossom = Map.fetch!(state.in_blossom, partner)
+
+          %{
+            state
+            | blossom_match: state.blossom_match |> Map.delete(v) |> Map.delete(partner_blossom)
+          }
+      end
+
+    %{state | dual: Map.put(state.dual, v, state.max_w)}
+  end
+
+  # Dissolve the top-level blossom containing `v`, and keep dissolving
+  # until `v` IS the top-level blossom. Each dissolution pushes the parent
+  # blossom's dual (halved) down into its vertices -- `freeAncestorOfBase`'s
+  # `dualVariableAdjustment` -- so the sum of duals over any edge is
+  # unchanged and dual feasibility survives.
+  defp dissolve_to_vertex(state, v) do
+    case Map.fetch!(state.in_blossom, v) do
+      ^v -> state
+      b -> state |> dissolve_one(b, v) |> dissolve_to_vertex(v)
+    end
+  end
+
+  # One level: `b` becomes its children, paired off around its base along
+  # the odd cycle exactly as `pair_children/4` pairs them for the final
+  # answer -- but at the BLOSSOM level (`blossom_match`), and permanently.
+  # No labels are involved: this runs between stages, when there is no
+  # tree.
+  # `v` is the vertex being prepared, and the blossom is REBASED at it
+  # before it is taken apart. This is `prepareVertexForWeightAdjustments`'
+  # `baseVertex = &vertex` and it is not optional.
+  #
+  # In this port a blossom's dual is a separate quantity from its vertices'
+  # duals: it records how far the vertex duals have been driven BELOW what
+  # the blossom's INTERNAL edges need, so those read as `-z_B` slack while
+  # every edge CROSSING the boundary is exactly tight on vertex duals
+  # alone. Dissolving adds `z_B / 2` to every vertex, which makes the
+  # internal edges tight and pushes every crossing edge OUT of tightness
+  # by that same amount. That is fine for the crossing edges that are
+  # unmatched -- slack is allowed -- and fatal for the ONE crossing edge
+  # that is matched: the base's external match, which the algorithm treats
+  # as tight and never revisits.
+  #
+  # Rebasing at `v` moves that external match onto `v`'s own child --
+  # which `prepare_vertex/2` is about to unmatch anyway -- so no matched
+  # crossing edge survives the dissolution. Every sibling pair that comes
+  # out matched sits on an INTERNAL edge, which the adjustment has just
+  # made tight. Complementary slackness holds on every matched edge, and
+  # `even_up_exposed_duals/1` then handles the parity of whatever was left
+  # exposed.
+  #
+  # Rebasing is a one-field write here, exactly as in `augment_to_source/3`:
+  # the internal alternating structure is resolved lazily from the base by
+  # `resolve_all_matching/1`, never stored.
+  #
+  # Found by checking the invariants directly rather than by reading the
+  # reference: with the OLD base kept, two matched crossing edges came out
+  # with dual sums 85 against a weight of 82 and 51 against 32, and the
+  # search stalled with ten exposed vertices left.
+  defp dissolve_one(state, b, v) do
+    state = %{state | base: Map.put(state.base, b, v)}
+    children = Map.fetch!(state.children, b)
+    base_v = v
+    partner = Map.get(state.blossom_match, b)
+    half_dual = div(Map.fetch!(state.dual, b), 2)
+
+    base_child = Enum.find(children, &(base_v in blossom_vertices(state, &1)))
+    base_idx = Enum.find_index(children, &(&1 == base_child))
+    rotated = Enum.drop(children, base_idx) ++ Enum.take(children, base_idx)
+
+    # Every vertex of `b` absorbs the blossom's dual. `blossom_vertices/2`
+    # is read BEFORE the structure changes.
+    all_vertices = blossom_vertices(state, b)
+
+    dual =
+      Enum.reduce(all_vertices, state.dual, fn x, d -> Map.update!(d, x, &(&1 + half_dual)) end)
+      |> Map.delete(b)
+
+    # Each child becomes top-level: `in_blossom` for its vertices points at
+    # it, and it gets its own base and match. The base child inherits `b`'s
+    # external match; the others pair up (1,2), (3,4), ... via connectors.
+    state =
+      rotated
+      |> Enum.with_index()
+      |> Enum.reduce(%{state | dual: dual}, fn {child, i}, state ->
+        in_blossom =
+          Enum.reduce(blossom_vertices(state, child), state.in_blossom, &Map.put(&2, &1, child))
+
+        {child_base, child_match} =
+          cond do
+            i == 0 ->
+              {base_v, partner}
+
+            rem(i, 2) == 1 ->
+              {out_a, in_b} = connector(state, child, Enum.at(rotated, i + 1))
+              {out_a, in_b}
+
+            true ->
+              {out_a, in_b} = connector(state, Enum.at(rotated, i - 1), child)
+              {in_b, out_a}
+          end
+
+        %{
+          state
+          | in_blossom: in_blossom,
+            base: Map.put(state.base, child, child_base),
+            blossom_match: put_or_delete(state.blossom_match, child, child_match),
+            parent_of: Map.delete(state.parent_of, child),
+            label: Map.put(state.label, child, :free)
+        }
+      end)
+
+    # The partner's own match pointed at `b`'s base vertex already (matches
+    # are recorded as VERTICES); the base child now owns that vertex, so
+    # nothing to redirect. `b` itself is gone.
+    %{
+      state
+      | children: Map.delete(state.children, b),
+        base: Map.delete(state.base, b),
+        blossom_match: Map.delete(state.blossom_match, b),
+        label: Map.delete(state.label, b),
+        label_edge: Map.delete(state.label_edge, b)
+    }
+  end
+
+  defp put_weight(state, u, v, 0) do
+    weight =
+      state.weight
+      |> Map.update(u, %{}, &Map.delete(&1, v))
+      |> Map.update(v, %{}, &Map.delete(&1, u))
+
+    %{state | weight: weight}
+  end
+
+  defp put_weight(state, u, v, w2) do
+    weight =
+      state.weight
+      |> Map.update(u, %{v => w2}, &Map.put(&1, v, w2))
+      |> Map.update(v, %{u => w2}, &Map.put(&1, u, w2))
+
+    %{state | weight: weight}
+  end
+
+  defp gcd_of(edges) do
+    edges
+    |> Enum.reduce(0, fn {_i, _j, w}, acc -> if w > 0, do: Integer.gcd(acc, w), else: acc end)
+    |> max(1)
   end
 
   # Divide every weight by the greatest common divisor of all of them.
@@ -135,7 +437,7 @@ defmodule Ainalrami.WeightedMatching do
     end
   end
 
-  defp build_state(n, edges) do
+  defp build_state(n, edges, ceiling \\ nil) do
     # Adjacency, not a flat `{u, v} => w` map. `resistance/3` is the
     # innermost operation in the whole algorithm -- the delta scans call it
     # once per vertex pair, every step -- and a tuple key means allocating
@@ -154,12 +456,14 @@ defmodule Ainalrami.WeightedMatching do
       end)
 
     max_w =
-      Enum.reduce(edges, 0, fn {_i, _j, w}, acc ->
-        if w > 0, do: max(acc, 2 * w), else: acc
-      end)
+      ceiling ||
+        Enum.reduce(edges, 0, fn {_i, _j, w}, acc ->
+          if w > 0, do: max(acc, 2 * w), else: acc
+        end)
 
     state = %{
       n: n,
+      max_w: max_w,
       weight: weights,
       # Dual variable per VERTEX only — bbpPairings separately tracks a
       # dual variable per BLOSSOM (`ParentBlossom.dualVariable`); this
@@ -315,14 +619,33 @@ defmodule Ainalrami.WeightedMatching do
   defp base_vertex(state, b), do: Map.fetch!(state.base, b)
   defp dual_of(state, v), do: Map.fetch!(state.dual, v)
 
+  # The minimum dual over every OUTER VERTEX -- not over each outer
+  # blossom's base. bbpPairings' `updateMinOuterDualVariable` is called for
+  # every vertex whose root blossom is outer (graph.cpp:401-412), and the
+  # vertex that reaches zero is passed to `augmentToSource`, which rebases
+  # the blossom at it.
+  #
+  # In a fresh solve the two are the same number: every vertex of an outer
+  # blossom entered together and has moved together, so they share a dual.
+  # After `prepare_vertex/2` they need not: a vertex reset to the maximum
+  # can share a blossom with one inherited at 7, and guarding the base
+  # alone let the low one be driven to -10. Measured, seed 168 of
+  # `tools/matching_incremental.exs`.
   defp min_outer_dual(state) do
+    case min_outer_dual_vertex(state) do
+      nil -> nil
+      {d, _v} -> d
+    end
+  end
+
+  defp min_outer_dual_vertex(state) do
     top_blossoms(state)
     |> Enum.filter(&(Map.get(state.label, &1) == :outer))
-    |> Enum.map(&dual_of(state, base_vertex(state, &1)))
-    |> case do
-      [] -> nil
-      duals -> Enum.min(duals)
-    end
+    |> Enum.flat_map(&blossom_vertices(state, &1))
+    |> Enum.reduce(nil, fn v, best ->
+      d = dual_of(state, v)
+      if best == nil or d < elem(best, 0), do: {d, v}, else: best
+    end)
   end
 
   # ------------------------------------------------------- the main loop
@@ -398,14 +721,11 @@ defmodule Ainalrami.WeightedMatching do
       min_outer - delta == 0 ->
         # An exposed OUTER vertex's dual variable is now zero: it is its
         # own trivial augmenting path.
-        v =
-          base_vertex(
-            state,
-            Enum.find(
-              top_blossoms(state),
-              &(dual_of(state, base_vertex(state, &1)) == 0 and Map.get(state.label, &1) == :outer)
-            )
-          )
+        # The VERTEX whose dual reached zero, which `augment_to_source/3`
+        # rebases its blossom at. Not the blossom's current base: after
+        # `prepare_vertex/2` a blossom's vertices can hold different duals,
+        # and the one at zero need not be the base.
+        {0, v} = min_outer_dual_vertex(state)
 
         {:ok, augment_to_source(state, v, nil)}
 
@@ -940,7 +1260,17 @@ defmodule Ainalrami.WeightedMatching do
   # that SAME base — the textbook one-special-point blossom lemma: given
   # any one base, the remaining even number of vertices pairs up
   # consecutively around the odd cycle).
+  # `mate` is a DERIVED view of `blossom_match`, rebuilt here from nothing
+  # at the end of every solve. It used to accumulate instead -- harmless
+  # when each solve started from an empty state, and wrong the moment a
+  # solve started from a previous one: `prepare_vertex/2` re-pairs siblings
+  # at the blossom level, and a vertex re-absorbed into a new blossom
+  # before the end of the next solve never had its old `mate` entry
+  # overwritten. Result: `%{1 => 5, 5 => 1}` alongside `blossom_match`
+  # saying `1 <-> 4`, and an asymmetric "matching" handed to the caller.
   defp resolve_all_matching(state) do
+    state = %{state | mate: %{}}
+
     Enum.reduce(top_blossoms(state), state, fn b, state ->
       state =
         case Map.get(state.blossom_match, b) do
