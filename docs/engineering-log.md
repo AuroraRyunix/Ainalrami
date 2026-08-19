@@ -2530,9 +2530,14 @@ One day, one 209-player round, warm medians of three. From 90 s to 10.6 s.
   54 µs. Flat `{lo, hi}` keys instead.
 - *Packed integer keys instead of tuple keys* (0.95×, no difference). The
   cost of a losing offer is the map lookup, not the key.
-- *`:atomics` for the inner loop* — measured 2.96× on the exact access
-  pattern, not pursued: the spike showed the remaining language gap is
-  ~10×, and the larger wins were still in the algorithm's call pattern.
+- *`:atomics` for the inner loop* — measured 2.96× on an isolated
+  micro-benchmark of the access pattern, then tried for real on
+  `in_blossom` alone (the most-read small-int map): correct on both nets
+  and **2.5× SLOWER** (395 → 1015 ms on the real 209 solve). The
+  micro-benchmark held the array ref in a local; in the module every read
+  is a map field access plus a NIF dispatch plus a `v + 1`, and a BEAM map
+  on a few hundred small-int keys is a shallow HAMT that beats that. The
+  bookkeeping is already at the BEAM's native floor. Closed.
 - *One matcher for the whole round, carried across brackets* (10.6 →
   11.9 s). Correct — corpus 100% once the ceiling was a true upper bound —
   but `base_edge_weights` is recomputed per bracket with different

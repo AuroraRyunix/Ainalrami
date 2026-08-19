@@ -198,7 +198,7 @@ defmodule Ainalrami.WeightedMatching do
     # falling back to `in_blossom` here costs one walk and changes nothing.
     top =
       if map_size(state.label) == 0,
-        do: state.in_blossom |> Map.values() |> Enum.uniq(),
+        do: (for i <- 0..(state.n - 1), uniq: true, do: :atomics.get(state.in_blossom, i + 1)),
         else: top_blossoms(state)
 
     Enum.reduce(top, state, fn b, state ->
@@ -285,7 +285,7 @@ defmodule Ainalrami.WeightedMatching do
           state
 
         partner ->
-          partner_blossom = Map.fetch!(state.in_blossom, partner)
+          partner_blossom = :atomics.get(state.in_blossom, partner + 1)
 
           %{
             state
@@ -302,7 +302,7 @@ defmodule Ainalrami.WeightedMatching do
   # `dualVariableAdjustment` -- so the sum of duals over any edge is
   # unchanged and dual feasibility survives.
   defp dissolve_to_vertex(state, v) do
-    case Map.fetch!(state.in_blossom, v) do
+    case :atomics.get(state.in_blossom, v + 1) do
       ^v -> state
       b -> state |> dissolve_one(b, v) |> dissolve_to_vertex(v)
     end
@@ -371,7 +371,7 @@ defmodule Ainalrami.WeightedMatching do
       |> Enum.with_index()
       |> Enum.reduce(%{state | dual: dual}, fn {child, i}, state ->
         in_blossom =
-          Enum.reduce(blossom_vertices(state, child), state.in_blossom, &Map.put(&2, &1, child))
+          Enum.reduce(blossom_vertices(state, child), state.in_blossom, fn v, a -> :atomics.put(a, v + 1, child); a end)
 
         {child_base, child_match} =
           cond do
@@ -508,7 +508,7 @@ defmodule Ainalrami.WeightedMatching do
       # `in_blossom[v]` is always the TOP-LEVEL blossom currently
       # containing vertex v — the direct analogue of bbpPairings'
       # `Vertex.rootBlossom`.
-      in_blossom: Map.new(0..(n - 1), &{&1, &1}),
+      in_blossom: (a = :atomics.new(n, signed: true); for i <- 0..(n - 1), do: :atomics.put(a, i + 1, i); a),
       # Nested structure, needed only for expansion: children in cyclic
       # order starting from the child containing the base, and each
       # child's parent. Trivial (single-vertex) blossoms have no entry.
@@ -601,7 +601,7 @@ defmodule Ainalrami.WeightedMatching do
     # no labels yet and falls back to `in_blossom`.
     top =
       if map_size(state.label) == 0,
-        do: state.in_blossom |> Map.values() |> Enum.uniq(),
+        do: (for i <- 0..(state.n - 1), uniq: true, do: :atomics.get(state.in_blossom, i + 1)),
         else: Map.keys(state.label)
 
     label =
@@ -801,7 +801,7 @@ defmodule Ainalrami.WeightedMatching do
   defp handle_free_outer_tight(state, v) do
     outer_partner = min_outer_edge(state, v)
 
-    if Map.get(state.label, Map.fetch!(state.in_blossom, v)) == :zero do
+    if Map.get(state.label, :atomics.get(state.in_blossom, v + 1)) == :zero do
       # ZERO vertex tight against OUTER: augment directly.
       state = augment_to_source(state, outer_partner, v)
       state = augment_to_source(state, v, outer_partner)
@@ -812,8 +812,8 @@ defmodule Ainalrami.WeightedMatching do
       # `state.blossom_match`'s doc), not a vertex-level lookup on `v`
       # itself: v may not be its blossom's current base if that blossom
       # persisted, still non-trivial, from an earlier stage.
-      v_blossom = Map.fetch!(state.in_blossom, v)
-      matched_blossom = Map.fetch!(state.in_blossom, Map.fetch!(state.blossom_match, v_blossom))
+      v_blossom = :atomics.get(state.in_blossom, v + 1)
+      matched_blossom = :atomics.get(state.in_blossom, Map.fetch!(state.blossom_match, v_blossom) + 1)
 
       state = %{
         state
@@ -832,8 +832,8 @@ defmodule Ainalrami.WeightedMatching do
   end
 
   defp handle_outer_outer_tight(state, {v0, v1}) do
-    b0 = Map.fetch!(state.in_blossom, v0)
-    b1 = Map.fetch!(state.in_blossom, v1)
+    b0 = :atomics.get(state.in_blossom, v0 + 1)
+    b1 = :atomics.get(state.in_blossom, v1 + 1)
 
     if tree_root(state, b0) == tree_root(state, b1) do
       # Formation is the one event that INVALIDATES rather than extends: an
@@ -853,7 +853,7 @@ defmodule Ainalrami.WeightedMatching do
       # rest. Re-settling every vertex of every new blossom -- as this did --
       # was 479,000 row walks per 209-player round, 78% of it.
       {state, children, formerly_inner} = form_blossom(state, v0, v1)
-      new_b = Map.fetch!(state.in_blossom, v0)
+      new_b = :atomics.get(state.in_blossom, v0 + 1)
       {:grow, refresh_after_formation(state, new_b, children, formerly_inner)}
     else
       state = augment_to_source(state, v0, v1)
@@ -981,7 +981,7 @@ defmodule Ainalrami.WeightedMatching do
         end)
 
       in_blossom = state.in_blossom
-      outer_vertex? = fn v -> MapSet.member?(outer_blossoms, Map.fetch!(in_blossom, v)) end
+      outer_vertex? = fn v -> MapSet.member?(outer_blossoms, :atomics.get(in_blossom, v + 1)) end
 
       kept =
         state.best_outer
@@ -1075,7 +1075,7 @@ defmodule Ainalrami.WeightedMatching do
 
   defp refresh_caches(state, changed) do
     Enum.reduce(changed, state, fn v, state ->
-      case Map.get(state.label, Map.fetch!(state.in_blossom, v)) do
+      case Map.get(state.label, :atomics.get(state.in_blossom, v + 1)) do
         :inner ->
           %{state | best_outer: Map.delete(state.best_outer, v)}
 
@@ -1095,7 +1095,7 @@ defmodule Ainalrami.WeightedMatching do
   # for the cross table; everything else about the table is a merge or a
   # delete.
   defp settle_outer_vertex(state, v) do
-    blossom = Map.fetch!(state.in_blossom, v)
+    blossom = :atomics.get(state.in_blossom, v + 1)
     best_outer = Map.delete(state.best_outer, v)
     cross = state.cross
 
@@ -1118,7 +1118,7 @@ defmodule Ainalrami.WeightedMatching do
 
         {cross, best_outer} =
           Enum.reduce(row, {cross, best_outer}, fn {u, w}, {cr, bo} ->
-            ub = Map.fetch!(in_blossom, u)
+            ub = :atomics.get(in_blossom, u + 1)
             r = dual_v + Map.fetch!(duals, u) - w
 
             case Map.get(labels, ub) do
@@ -1142,7 +1142,7 @@ defmodule Ainalrami.WeightedMatching do
   # nothing.) The cross table is not a per-vertex thing any more, so only
   # `best_outer` is in question here.
   defp recompute_vertex(state, v) do
-    blossom = Map.fetch!(state.in_blossom, v)
+    blossom = :atomics.get(state.in_blossom, v + 1)
     row = Map.get(state.weight, v)
 
     case Map.get(state.label, blossom) do
@@ -1161,7 +1161,7 @@ defmodule Ainalrami.WeightedMatching do
     dual_v = Map.fetch!(state.dual, v)
 
     Enum.reduce(row, nil, fn {u, w}, best ->
-      u_blossom = Map.fetch!(state.in_blossom, u)
+      u_blossom = :atomics.get(state.in_blossom, u + 1)
 
       keep? =
         Map.get(state.label, u_blossom) == :outer and
@@ -1461,7 +1461,7 @@ defmodule Ainalrami.WeightedMatching do
   # base, the remaining even number of vertices pairs up consecutively
   # around the cycle. No "exit" concept exists in the correct model.
   defp augment_to_source(state, v, new_match) do
-    b = Map.fetch!(state.in_blossom, v)
+    b = :atomics.get(state.in_blossom, v + 1)
     # The asymmetric, per-blossom field — see `state.blossom_match`'s doc
     # on why this must NOT be the same symmetric map `mate` is.
     old_partner = Map.get(state.blossom_match, b)
@@ -1477,7 +1477,7 @@ defmodule Ainalrami.WeightedMatching do
         state
 
       partner ->
-        parent_blossom = Map.fetch!(state.in_blossom, partner)
+        parent_blossom = :atomics.get(state.in_blossom, partner + 1)
         {labeling_v, labeled_v} = Map.fetch!(state.label_edge, parent_blossom)
 
         state = %{
@@ -1617,8 +1617,8 @@ defmodule Ainalrami.WeightedMatching do
   # pair, and the vertex the walk continues on is exactly the next
   # blossom's own entry, by construction of the walk itself.
   defp form_blossom(state, v0, v1) do
-    b0 = Map.fetch!(state.in_blossom, v0)
-    b1 = Map.fetch!(state.in_blossom, v1)
+    b0 = :atomics.get(state.in_blossom, v0 + 1)
+    b1 = :atomics.get(state.in_blossom, v1 + 1)
     ids0 = blossom_ids_to_root(state, b0)
     ids1 = blossom_ids_to_root(state, b1)
     common = find_common_ancestor(ids0, ids1)
@@ -1674,7 +1674,7 @@ defmodule Ainalrami.WeightedMatching do
 
     in_blossom =
       Enum.reduce(cycle, state.in_blossom, fn c, acc ->
-        Enum.reduce(blossom_vertices(state, c), acc, &Map.put(&2, &1, new_id))
+        Enum.reduce(blossom_vertices(state, c), acc, fn v, a -> :atomics.put(a, v + 1, new_id); a end)
       end)
 
     base = Map.put(state.base, new_id, base_vertex(state, common))
@@ -1740,12 +1740,12 @@ defmodule Ainalrami.WeightedMatching do
       :outer ->
         base = base_vertex(state, b)
         mate_v = Map.fetch!(state.blossom_match, b)
-        next_blossom = Map.fetch!(state.in_blossom, mate_v)
+        next_blossom = :atomics.get(state.in_blossom, mate_v + 1)
         [entry_vertex, base] ++ path_to_target(state, next_blossom, mate_v, target)
 
       :inner ->
         {labeling_v, labeled_v} = Map.fetch!(state.label_edge, b)
-        next_blossom = Map.fetch!(state.in_blossom, labeling_v)
+        next_blossom = :atomics.get(state.in_blossom, labeling_v + 1)
         [entry_vertex, labeled_v] ++ path_to_target(state, next_blossom, labeling_v, target)
     end
   end
@@ -1775,13 +1775,13 @@ defmodule Ainalrami.WeightedMatching do
             [b]
 
           partner ->
-            next_blossom = Map.fetch!(state.in_blossom, partner)
+            next_blossom = :atomics.get(state.in_blossom, partner + 1)
             [b | blossom_ids_to_root(state, next_blossom)]
         end
 
       :inner ->
         {labeling_v, _} = Map.fetch!(state.label_edge, b)
-        [b | blossom_ids_to_root(state, Map.fetch!(state.in_blossom, labeling_v))]
+        [b | blossom_ids_to_root(state, :atomics.get(state.in_blossom, labeling_v + 1))]
     end
   end
 
@@ -1883,7 +1883,7 @@ defmodule Ainalrami.WeightedMatching do
           end
 
         in_blossom =
-          Enum.reduce(blossom_vertices(state, child), state.in_blossom, &Map.put(&2, &1, child))
+          Enum.reduce(blossom_vertices(state, child), state.in_blossom, fn v, a -> :atomics.put(a, v + 1, child); a end)
 
         state = %{
           state

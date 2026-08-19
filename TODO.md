@@ -66,12 +66,19 @@ What is left is one limit of method rather than a known divergence.
       maps here (0.85×); a packed key is no faster than a tuple key
       (0.95×). What is left is per-operation cost of BEAM maps on the
       algorithm's bookkeeping — `in_blossom`, `label`, `dual`, `best_outer`
-      — and the one lever still standing is **`:atomics`** for those, which
-      measured **2.96×** on the exact inner-loop pattern and was set aside
-      while the structural wins were larger. They no longer are. A full
-      move of the small-integer state onto mutable arrays is the next piece
-      of work; it is a representation change, not an algorithm change, and
-      both differential nets exist so it can be done safely.
+      -- and `:atomics` for those is now CLOSED: tried for real on
+      `in_blossom` alone, correct on both nets, and 2.5x SLOWER (395 ->
+      1015 ms). The isolated micro-benchmark that said 2.96x held the array
+      ref in a local; in the module every read is a map field access plus
+      a NIF dispatch, and a BEAM map on a few hundred small-int keys beats
+      that. The per-operation bookkeeping is at the BEAM's native floor.
+
+      What that leaves, honestly: the remaining gap to C++ is per-operation
+      cost of a well-optimised BEAM map against an array index, and no
+      data-structure swap available on the BEAM closes it. Further gains
+      have to come from doing FEWER operations -- which is where every win
+      today came from -- and the profile is now flat enough that there is
+      no single dominant item left to attack.
 
 - [ ] **Carrying one matcher across the brackets of a round** was built,
       made correct (corpus 100.00%) and reverted: `base_edge_weights` is
