@@ -61,7 +61,7 @@ Full methodology, per-axis detail and the reasoning behind each number:
 
 **Speed**, same files, same machine (2026-08-19): a 120-player round in
 0.14 s, 209 players in 0.37 s, 400 players in 1.33 s, 1,000 players in
-7.3 s — against bbpPairings' 0.72 s, 3.05 s and 50 s, and Gacrux's 0.88 s,
+6.8 s — against bbpPairings' 0.72 s, 3.05 s and 50 s, and Gacrux's 0.88 s,
 1.22 s and 5.1 s — faster than the C++ reference at every size, in pure
 Elixir, with the identical boards. A bracket is solved on its own graph
 when that is provably the whole-field answer, and on the whole field

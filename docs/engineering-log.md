@@ -2872,3 +2872,31 @@ between carrying the caches and rebuilding them by size (slower, 7.7 ->
 9.3 s; the rebuild's per-vertex settle costs more than the estimate);
 running the greedy resume in descending index order or over every
 exposed vertex rather than the prepared ones (no change).
+
+### Stage 4 by dual shift (2026-08-19, late)
+
+The stage-4 re-solve above (372 stages, 2.7 s at 1,000) is now mostly
+gone: when the stage-3 matching already pairs first half against second
+half, the per-smaller-member addend is absorbed by raising each
+first-half dual by its own addend (`WeightedMatching.shift_and_set/3`),
+nothing is unmatched, and the solve has nothing to do. Two things were
+learned on the way, both recorded in the code:
+
+* Skipping the solve outright, on the argument that the matching is
+  already optimal, is NOT exact -- it is optimal, but among exact ties
+  bbpPairings' `setEdgeWeight`-everything-then-`computeMatching` lands
+  on a particular one, the prepare-everything path here lands on the
+  same one (that is part of what the 100% measures), and keeping the old
+  matching lands on another. The dual shift keeps the matching AND the
+  duals, so the subsequent searches start from the same place the
+  reference's do.
+* `dissolve_one/3` is valid only when the base is unmatched next. It
+  pushes half the blossom dual into every vertex, which keeps internal
+  edges tight and puts that half onto the base's external match.
+  `prepare_vertex/2` removes that match a moment later; `shift_and_set/3`
+  does not, and a state that passed every local check broke the next
+  real search (60-120 players: 98.33%). It now refuses when a touched
+  vertex is inside a blossom, and the bracket takes the old path.
+
+1,000 players 7.3 s -> 6.8 s; corpus 100.00% on seven axes. The 5M run
+was restarted on this engine (b185abc) at 19:30 UTC.

@@ -402,7 +402,7 @@ three for this one (the CLI adds about a second of BEAM start-up, once):
 | 209 | 0.72 s | 0.88 s | 9.5 s | **0.37 s** |
 | 300 | | | | **0.76 s** |
 | 400 | 3.05 s | 1.22 s | 69.8 s | **1.33 s** |
-| 1,000 | 50.1 s | 5.1 s | 85.5 s (08-19 noon) | **7.3 s** |
+| 1,000 | 50.1 s | 5.1 s | 85.5 s (08-19 noon) | **6.8 s** |
 
 Gacrux's times include 0.64 s of interpreter and networkx start-up, so
 its pairing work is roughly 0.25 s, 0.6 s and 4.5 s. On every one of
@@ -442,4 +442,4 @@ next group it lands on (`@local_min_next_group`).
 Club and national events — up to ~150 players — pair in well under a
 fifth of a second. A 200-player open is **a third of a second a round**,
 a 400-player open about a second and a quarter, and a Moscow-Open-sized
-event of 1,000 players seven seconds — against the reference's fifty.
+event of 1,000 players under seven seconds — against the reference's fifty.
