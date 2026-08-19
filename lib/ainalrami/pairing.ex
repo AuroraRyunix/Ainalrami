@@ -114,6 +114,7 @@ defmodule Ainalrami.Pairing do
       # rounds, so the map cannot be built until the round being paired is
       # known.
       Process.put(@forbidden_key, forbidden_map(opts[:forbidden_pairs], played + 1))
+      Process.delete(:far_weights)
 
       active = Enum.filter(players, &active_this_round?(&1, played))
 
@@ -1946,19 +1947,38 @@ defmodule Ainalrami.Pairing do
 
   defp base_edge_weights(arr, m, sgb, nsgb, ctx, bands, single_bye?) do
     reach = reach_table(arr, m, nsgb)
+    frozen = Process.get(:far_weights, %{})
 
-    Enum.reduce(0..(m - 2), %{}, fn i, acc ->
-      a = elem(arr, i)
+    {weights, far} =
+      Enum.reduce(0..(m - 2), {%{}, %{}}, fn i, {acc, far} ->
+        a = elem(arr, i)
 
-      Enum.reduce((i + 1)..(m - 1), acc, fn j, inner ->
-        r = Map.get(reach, j, 0)
+        Enum.reduce((i + 1)..(m - 1), {acc, far}, fn j, {inner, far} ->
+          r = Map.get(reach, j, 0)
+          b = elem(arr, j)
+          key = {min(a.rank, b.rank), max(a.rank, b.rank)}
 
-        case bracket_edge_weight(a, elem(arr, j), j, sgb, r, ctx, bands, single_bye?) do
-          nil -> inner
-          w -> Map.put(inner, {i, j}, w)
-        end
+          w =
+            if r >= 2 and Map.has_key?(frozen, key) do
+              Map.fetch!(frozen, key)
+            else
+              bracket_edge_weight(a, b, j, sgb, r, ctx, bands, single_bye?)
+            end
+
+          far =
+            if r >= 2 and w != nil and not Map.has_key?(frozen, key),
+              do: Map.put(far, key, w),
+              else: far
+
+          case w do
+            nil -> {inner, far}
+            w -> {Map.put(inner, {i, j}, w), far}
+          end
+        end)
       end)
-    end)
+
+    Process.put(:far_weights, Map.merge(frozen, far))
+    weights
   end
 
   # How far BELOW the current bracket each position sits, counted in score

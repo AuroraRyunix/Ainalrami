@@ -198,7 +198,7 @@ defmodule Ainalrami.WeightedMatching do
     # falling back to `in_blossom` here costs one walk and changes nothing.
     top =
       if map_size(state.label) == 0,
-        do: (for i <- 0..(state.n - 1), uniq: true, do: :atomics.get(state.in_blossom, i + 1)),
+        do: for(i <- 0..(state.n - 1), uniq: true, do: :atomics.get(state.in_blossom, i + 1)),
         else: top_blossoms(state)
 
     Enum.reduce(top, state, fn b, state ->
@@ -371,7 +371,10 @@ defmodule Ainalrami.WeightedMatching do
       |> Enum.with_index()
       |> Enum.reduce(%{state | dual: dual}, fn {child, i}, state ->
         in_blossom =
-          Enum.reduce(blossom_vertices(state, child), state.in_blossom, fn v, a -> :atomics.put(a, v + 1, child); a end)
+          Enum.reduce(blossom_vertices(state, child), state.in_blossom, fn v, a ->
+            :atomics.put(a, v + 1, child)
+            a
+          end)
 
         {child_base, child_match} =
           cond do
@@ -508,7 +511,12 @@ defmodule Ainalrami.WeightedMatching do
       # `in_blossom[v]` is always the TOP-LEVEL blossom currently
       # containing vertex v — the direct analogue of bbpPairings'
       # `Vertex.rootBlossom`.
-      in_blossom: (a = :atomics.new(n, signed: true); for i <- 0..(n - 1), do: :atomics.put(a, i + 1, i); a),
+      in_blossom:
+        (
+          a = :atomics.new(n, signed: true)
+          for i <- 0..(n - 1), do: :atomics.put(a, i + 1, i)
+          a
+        ),
       # Nested structure, needed only for expansion: children in cyclic
       # order starting from the child containing the base, and each
       # child's parent. Trivial (single-vertex) blossoms have no entry.
@@ -601,7 +609,7 @@ defmodule Ainalrami.WeightedMatching do
     # no labels yet and falls back to `in_blossom`.
     top =
       if map_size(state.label) == 0,
-        do: (for i <- 0..(state.n - 1), uniq: true, do: :atomics.get(state.in_blossom, i + 1)),
+        do: for(i <- 0..(state.n - 1), uniq: true, do: :atomics.get(state.in_blossom, i + 1)),
         else: Map.keys(state.label)
 
     label =
@@ -813,7 +821,9 @@ defmodule Ainalrami.WeightedMatching do
       # itself: v may not be its blossom's current base if that blossom
       # persisted, still non-trivial, from an earlier stage.
       v_blossom = :atomics.get(state.in_blossom, v + 1)
-      matched_blossom = :atomics.get(state.in_blossom, Map.fetch!(state.blossom_match, v_blossom) + 1)
+
+      matched_blossom =
+        :atomics.get(state.in_blossom, Map.fetch!(state.blossom_match, v_blossom) + 1)
 
       state = %{
         state
@@ -1674,7 +1684,10 @@ defmodule Ainalrami.WeightedMatching do
 
     in_blossom =
       Enum.reduce(cycle, state.in_blossom, fn c, acc ->
-        Enum.reduce(blossom_vertices(state, c), acc, fn v, a -> :atomics.put(a, v + 1, new_id); a end)
+        Enum.reduce(blossom_vertices(state, c), acc, fn v, a ->
+          :atomics.put(a, v + 1, new_id)
+          a
+        end)
       end)
 
     base = Map.put(state.base, new_id, base_vertex(state, common))
@@ -1883,7 +1896,10 @@ defmodule Ainalrami.WeightedMatching do
           end
 
         in_blossom =
-          Enum.reduce(blossom_vertices(state, child), state.in_blossom, fn v, a -> :atomics.put(a, v + 1, child); a end)
+          Enum.reduce(blossom_vertices(state, child), state.in_blossom, fn v, a ->
+            :atomics.put(a, v + 1, child)
+            a
+          end)
 
         state = %{
           state
