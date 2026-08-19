@@ -1708,12 +1708,40 @@ defmodule Ainalrami.Pairing do
   defp pair_bracket(combined, sgb, nsgb, wsgb, ctx, single_bye?) do
     m = length(combined)
 
-    with true <- local_eligible?(combined, nsgb, wsgb, ctx),
+    with false <- idle_bracket?(combined, nsgb, wsgb, ctx),
+         true <- local_eligible?(combined, nsgb, wsgb, ctx),
          {:ok, result} <- attempt_local(combined, m, sgb, nsgb, wsgb, ctx, single_bye?) do
       result
     else
+      :idle -> {[], combined, nsgb, Enum.map(Enum.take(combined, min(wsgb, m)), & &1.points)}
       _ -> attempt_field(combined, m, sgb, nsgb, wsgb, ctx, single_bye?)
     end
+  end
+
+  # A bracket with fewer than two members cannot finalise a pair at all --
+  # `collect_bracket/1` records one only when BOTH ends are inside the
+  # bracket -- so the whole solve exists for its tentative matching, and
+  # the only thing downstream reads that for is `carried_partner_scores`,
+  # which feeds `bracket_loop/6`.s C9 gate and nothing else. When that
+  # gate.s own preconditions do not hold, the solve has no observable
+  # effect and is skipped: the bracket carries everyone forward, its
+  # members counted as this round.s downfloaters, and every carried player
+  # reports their own score, which is what an unmatched vertex reports
+  # anyway (bbpPairings reads one as matched to itself).
+  #
+  # This is not a rare shape. A lone leader at the top of a large Swiss is
+  # the FIRST bracket of the round, so the graph it was solving was the
+  # whole field: 660 ms of a 1,334 ms round at 400 players, for nothing.
+  defp idle_bracket?(combined, nsgb, wsgb, ctx) do
+    if nsgb < 2, do: not c9_gate_live?(combined, nsgb, wsgb, ctx) && :idle, else: false
+  end
+
+  # The first four conjuncts of `bracket_loop/6`.s `next_single_bye?`, the
+  # ones that do not depend on the tentative matching. False here and the
+  # gate is false whatever the carried players report.
+  defp c9_gate_live?(combined, nsgb, wsgb, ctx) do
+    ctx.odd_field? and not is_nil(ctx.bye_score) and wsgb > nsgb and
+      ctx.bye_score >= Enum.at(combined, nsgb).points
   end
 
   # The bracket can be paired on its own graph only if its members are all
