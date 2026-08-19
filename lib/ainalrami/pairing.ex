@@ -1348,11 +1348,33 @@ defmodule Ainalrami.Pairing do
   defp global_context(field) do
     bye_score = Process.get(@bye_score_key)
 
+    # The weight bands, computed ONCE over the whole field and shared by
+    # every bracket of the round. They used to be re-derived per bracket
+    # from `combined` (`m + 1`, the scores present in the bracket's graph),
+    # which rescaled every edge weight whenever the bracket changed -- and
+    # that is what made each bracket boundary a cold solve: a matcher
+    # cannot be carried across a boundary when every weight in it changes.
+    #
+    # bbpPairings computes `scoreGroupSizeBits` once over `sortedPlayers`
+    # and never re-derives it (dutch.cpp:684-730), and `explain_round/3`
+    # here already sized its bands over the field for exactly the reason
+    # its comment gives: per-bracket scaling made rung values incomparable.
+    # A radix is a radix; a span wider than any bracket needs only leaves
+    # headroom in each band, never changes an ordering.
+    {places, place_span} = score_places(field)
+    count_span = length(field) + 1
+
     %{
       bye_score: bye_score,
       unplayed_ranks: unplayed_ranks(field, bye_score),
       odd_field?: rem(length(field), 2) == 1,
-      first_single_bye?: Process.get(@first_single_bye_key, false)
+      first_single_bye?: Process.get(@first_single_bye_key, false),
+      bands: %{
+        places: places,
+        place_span: place_span,
+        count_span: count_span,
+        reserve: 2 * count_span * count_span * count_span
+      }
     }
   end
 
@@ -1631,16 +1653,11 @@ defmodule Ainalrami.Pairing do
     # a field-wide span inflates the bignums the matcher compares, eight
     # re-solves per bracket over. Measured rather than assumed — see the
     # timing note in docs/engineering-log.md.
-    {places, place_span} = score_places(combined)
-    count_span = m + 1
-
-    bands = %{
-      places: places,
-      place_span: place_span,
-      count_span: count_span,
-      # dutch.cpp:462-469's reserved low space, as a multiplier.
-      reserve: 2 * count_span * count_span * count_span
-    }
+    # Field-wide and constant for the round -- see `global_context/1`. This
+    # is what lets one matcher serve every bracket: the weights never
+    # rescale, so a bracket boundary is a set of edge changes rather than
+    # a new graph.
+    bands = ctx.bands
 
     base = base_edge_weights(arr, m, sgb, nsgb, ctx, bands, single_bye?)
 
