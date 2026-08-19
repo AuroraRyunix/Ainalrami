@@ -2671,3 +2671,114 @@ Not tried, and the only things left that would move it: narrower weights
 share a band is a question about the criteria, not the matcher), and
 carrying the alternating forest across stages instead of relabelling,
 which is a different algorithm from the reference's.
+
+## 1,000 players, and why the graph cannot shrink (2026-08-19)
+
+Measured, not extrapolated. bbpPairings' own generator built a
+1,000-player, 5-round tournament (that generation took 229 s, because it
+pairs with its own engine); all three implementations then paired round 6
+of it on the same machine, and all three returned the **identical 500
+boards**:
+
+| 1,000 players, round 6 | time |
+|---|---|
+| Gacrux (`pairingchecker.py`, Python + networkx) | **5.1 s** (0.6 s of that is interpreter + networkx import) |
+| bbpPairings 6.0.0 (C++) | **50.1 s** |
+| Ainalrami | **85.5 s** |
+
+The Python engine beats both C++ and BEAM by an order of magnitude, and
+not because Python is fast. Its verbose log shows why: on the 400- and
+1,000-player files every large bracket is answered by its `BI` path in
+"0.00 s". That path (`pair_simple_round` / `simple_permute`) walks
+Article 3's transposition procedure directly -- natural S1-S2 pairing,
+then permutations of S2 in lexicographic order -- and accepts the first
+candidate that is legal AND meets a counting bound on the colour
+criteria (`analysis_colordiff`'s `c12`/`c13`), with completability read
+off a precomputed per-score-level table. It falls back to a weighted
+matching (networkx, bracket-sized) only where that fails, and its own
+comment says that path gets slow past 500 players. bbpPairings and this
+engine run the full matcher on every bracket regardless, which is n^3-ish
+per round; the language buys bbpPairings 1.7x over us and nothing more.
+
+### The window graph: 2.8x, and not faithful
+
+Where our 85 s goes, profiled: ten bracket boundaries cost 49 s and the
+in-bracket stages 26 s, and about 60 s of the whole round is row walks
+over 1,000-wide rows. Round 6 of a 1,000-player event has score groups of
+120-220, so a boundary re-prepares ~400 vertices and each of its ~200
+augmentations walks the entire field.
+
+So the graph was cut down to the WINDOW -- the bracket plus the next score
+group, `dutch.cpp`'s `playersByIndex` -- with the far part replaced by a
+sparse maximum-cardinality oracle. The argument for it is sound as far as
+it goes: a far edge scores only the completion rung and C9
+(`edge_rungs/6` gates everything else on `in_current` or `reach == 1`),
+both of which are sums of PER-VERTEX terms, so a far edge is worth
+`P + g(a) + g(b)` and every perfect matching of the far part scores
+identically. The far part is a cardinality constraint, not a weighted one.
+Three things followed and all of them were needed:
+
+* **The marginal weight.** On the window graph the completion rung counts
+  WINDOW edges, so a four-player bracket over a two-player group scored
+  three window pairs above two and pulled both members of the lower group
+  up rather than pairing the bracket and letting them float. The fix is
+  exact and pretty: subtract from every window edge what the same pair
+  would score as a far edge, `ladder(i,j) - far(i,j)`. If `i` and `j` each
+  float out to some `u1`, `u2`, those pairs are worth
+  `2P + g(i) + g(j) + g(u1) + g(u2)`; pairing `i` with `j` leaves `u1` and
+  `u2` to each other for `P + g(u1) + g(u2)`; the difference is exactly
+  that subtraction, and every term about the far part cancels.
+* **The bye.** The cancellation is exact only while everyone is matched.
+  An odd field has one player who never is, and their terms are the whole
+  of C9 and half the completion rung -- so the window path had to be
+  refused whenever the bye could be inside the window (`bye_score` is
+  absolute, so a window scoring entirely above it cannot hold the bye).
+  Without that, `top-score-group-tiebreak.trf` byes the player who sat a
+  round out instead of the one who played them all.
+* **The tentative matching.** `carried_partner_scores` (dutch.cpp:1636)
+  wants the score of whoever the WHOLE-FIELD tentative matching had each
+  carried player with, and the window has no opinion about anyone below
+  it; that came off the oracle instead. And the completion criterion is a
+  statement about the whole-field matching, so the oracle had to verify
+  the window's ENTIRE tentative matching, not just the pairs the bracket
+  finalises -- `seed15-r6-p16` pairs one bracket pair and sends both
+  remaining bracket players into the next group, which scores higher on C8
+  than the reference answer and leaves the bottom four unable to pair at
+  all, while the finalised pair alone looks perfectly completable.
+
+Result: **400 players 5.97 s -> 1.84 s, 1,000 players 76.7 s -> 27.6 s**,
+a 2.8-3.2x that would have put a 1,000-player round inside half a minute.
+And the corpus went to 99.34%.
+
+It was not shipped. The last mechanism was chased with a decisive
+experiment rather than another guess: the oracle's degree was raised from
+12 to 40 to 400 -- dense, every legal edge present -- and the rate did not
+move, **99.34% at all three**. So the residue is not the oracle failing to
+see a matching; it is the window truncation itself, and the criteria
+depend on the far part in ways a cardinality oracle cannot express. That
+is the same finding the peek measurement made from the other side
+(PEEK=0 94.52%, PEEK=1 99.33%, unbounded 100.00%) -- note that 99.33% and
+this 99.34% are the same number, which is what a bracket-plus-next-group
+window costs however it is dressed up.
+
+**The whole-field graph is load-bearing, which is what bbpPairings'
+design says too**: it builds `matchingComputer(sortedPlayers.size())` once
+per round with completability weights on every pair and only ever
+`setEdgeWeight`s `playersByIndex`. The window is the part it SCORES, not
+the part it SOLVES.
+
+The experiment is kept out of the tree. Reverted at 85.5 s and 100.00%,
+which is the trade this project makes every time.
+
+### What would actually close the gap
+
+Gacrux's answer, done rigorously: for a bracket the tentative matching
+already pairs internally, every rung except the four colour criteria is a
+constant over perfect internal matchings (checked term by term:
+completion, C6, C7, C9, C14-C17 are sums of per-vertex terms, C8 and
+C18-C21 are zero for a non-crossing pair), so the answer is the
+lexicographically-first Article 3 candidate that attains the colour
+optimum. `Ainalrami.Sequence` already generates that order and is already
+tested against the engine. That is a second pairing path with its own
+correctness burden, and the corpus -- which now runs 60-120 players at
+12 tournaments/s -- is the only thing that could license it.
