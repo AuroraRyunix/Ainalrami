@@ -2956,7 +2956,27 @@ defmodule Ainalrami.Pairing do
         end)
       end)
 
-    matching = WeightedMatching.solve(n, edges)
+    # Every compatible edge's weight is a sum of per-vertex terms plus the
+    # one-bit `top_pair`, so a dual of half the symmetric part per vertex
+    # (on the matcher's doubled scale: the whole of it), plus one for a
+    # top-group vertex, makes every compatible edge tight except a
+    # top-to-lower one (slack 1) and leaves the incompatible ones far from
+    # it. The matcher's greedy start then pairs the field in index order
+    # along those edges and the search has one or two exposed vertices to
+    # settle, instead of matching one heaviest edge per stage for a
+    # hundred stages. Checked against the weights by `new/3`.
+    duals =
+      Map.new(0..(n - 1)//1, fn i ->
+        p = elem(arr, i)
+
+        {i,
+         tie_unit *
+           (cardinality_unit + eligibility_unit * (1 + 2 * bit(not eligible_for_bye?(p))) +
+              2 * Map.fetch!(places, p.points)) + bit(p.points >= top_score)}
+      end)
+
+    {_state, matching} =
+      n |> WeightedMatching.new(edges, duals: duals) |> WeightedMatching.solve()
 
     case Enum.reject(0..(n - 1), &is_map_key(matching, &1)) do
       # No legal complete round exists; leave C5 unconstrained and let the

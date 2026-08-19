@@ -128,16 +128,29 @@ defmodule Ainalrami.WeightedMatching do
 
   `solve/2` is `new/2` followed by one `solve/1`, and remains the API for
   one-shot callers and for the tests.
+
+  Options: `:max_weight` (the ceiling every later weight must stay under,
+  on the caller's scale), `:gcd` (override the weight reduction), and
+  `:duals` -- a map of initial dual values, one per vertex, on TWICE the
+  weight scale: `duals[u] + duals[v] >= 2 * w(u, v)` must hold on every
+  edge, and the edges where it holds with equality are the ones the
+  greedy start may match. A caller whose weights are a sum of per-vertex
+  terms can make every edge tight this way and hand the search an almost
+  complete matching; see `greedy_start/3`.
   """
   def new(n, edges, opts \\ []) do
     # `:gcd` overrides the reduction. A persistent caller whose LATER
     # weights may not share the initial edges' common factor passes
     # `gcd: 1` and forgoes the bignum saving rather than risk
     # `set_weight/4` refusing a weight that is not on the initial scale.
+    # `:duals` -- see `greedy_start/3` -- are on the doubled scale the
+    # matcher compares against, so they are not reduced; a caller giving
+    # them gets no reduction either.
     gcd =
-      case Keyword.get(opts, :gcd) do
-        nil -> gcd_of(edges)
-        g when is_integer(g) and g >= 1 -> g
+      case {Keyword.get(opts, :gcd), Keyword.get(opts, :duals)} do
+        {nil, nil} -> gcd_of(edges)
+        {nil, _} -> 1
+        {g, _} when is_integer(g) and g >= 1 -> g
       end
 
     edges = if gcd > 1, do: reduce_weights(edges), else: edges
@@ -153,7 +166,7 @@ defmodule Ainalrami.WeightedMatching do
         w -> 2 * div(w, gcd)
       end
 
-    state = build_state(n, edges, ceiling)
+    state = build_state(n, edges, ceiling, Keyword.get(opts, :duals))
     Map.put(state, :gcd, gcd)
   end
 
@@ -491,7 +504,7 @@ defmodule Ainalrami.WeightedMatching do
     end
   end
 
-  defp build_state(n, edges, ceiling) do
+  defp build_state(n, edges, ceiling, duals) do
     # Adjacency, not a flat `{u, v} => w` map. `resistance/3` is the
     # innermost operation in the whole algorithm -- the delta scans call it
     # once per vertex pair, every step -- and a tuple key means allocating
@@ -515,7 +528,7 @@ defmodule Ainalrami.WeightedMatching do
           if w > 0, do: max(acc, 2 * w), else: acc
         end)
 
-    {dual, blossom_match} = greedy_start(n, weights)
+    {dual, blossom_match} = greedy_start(n, weights, duals)
 
     state = %{
       n: n,
@@ -609,27 +622,43 @@ defmodule Ainalrami.WeightedMatching do
   # matching returned may differ from the cold search's -- which was
   # itself decided by map internals, not by anything canonical -- and the
   # corpus is the arbiter of whether that matters.
-  defp greedy_start(n, weights) do
+  defp greedy_start(n, weights, given) do
     dual =
-      Map.new(0..(n - 1)//1, fn v ->
-        {v,
-         weights
-         |> Map.get(v, %{})
-         |> Enum.reduce(0, fn {_u, w2}, best -> max(best, div(w2, 2)) end)}
-      end)
+      case given do
+        nil ->
+          Map.new(0..(n - 1)//1, fn v ->
+            {v,
+             weights
+             |> Map.get(v, %{})
+             |> Enum.reduce(0, fn {_u, w2}, best -> max(best, div(w2, 2)) end)}
+          end)
+
+        given ->
+          dual = Map.new(0..(n - 1)//1, fn v -> {v, Map.get(given, v, 0)} end)
+
+          for {u, row} <- weights, {v, w2} <- row, u < v do
+            if Map.fetch!(dual, u) + Map.fetch!(dual, v) < w2 do
+              raise ArgumentError,
+                    "new/3: the given duals are infeasible on edge {#{u}, #{v}}: " <>
+                      "#{Map.fetch!(dual, u)} + #{Map.fetch!(dual, v)} < #{w2}"
+            end
+          end
+
+          dual
+      end
 
     blossom_match =
       Enum.reduce(0..(n - 1)//1, %{}, fn v, bm ->
         yv = Map.fetch!(dual, v)
 
-        if yv == 0 or Map.has_key?(bm, v) do
+        if Map.has_key?(bm, v) do
           bm
         else
           partner =
             weights
-            |> Map.fetch!(v)
+            |> Map.get(v, %{})
             |> Enum.reduce(nil, fn {u, w2}, best ->
-              if w2 == 2 * yv and Map.fetch!(dual, u) == yv and not Map.has_key?(bm, u) and
+              if yv + Map.fetch!(dual, u) == w2 and not Map.has_key?(bm, u) and
                    (best == nil or u < best),
                  do: u,
                  else: best
