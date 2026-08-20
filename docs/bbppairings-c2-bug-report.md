@@ -1,5 +1,7 @@
 # bbpPairings 6.0.0 allocates a second pairing-allocated bye, violating C.04.3 [C2]
 
+*Two independent positions, one of which has only one legal pairing.*
+
 **Reporter:** OpenPairings / Ainalrami project
 **Program:** BBP Pairings v6.0.0 (Built Feb 1 2026 17:39:15) —
 <https://github.com/BieremaBoyzProgramming/bbpPairings>
@@ -12,10 +14,15 @@ a legal pairing exists.
 
 ## Summary
 
-For the attached tournament file, bbpPairings allocates the
+For the attached tournament files, bbpPairings allocates the
 pairing-allocated bye to a player who has already received one. C.04.3 art.
 2.1.2 [C2] forbids this absolutely, and a legal alternative exists — two
 other implementations produce it.
+
+Two independent positions are attached. In the second the legal pairing is
+not merely better, it is FORCED: one player has a single remaining opponent
+and already holds a bye, so there is exactly one legal shape for the round,
+and bbpPairings does not return it.
 
 ## The rule
 
@@ -127,6 +134,45 @@ is `152 W`, which sets the initial colour (`fileformats/trf.cpp:1179-1198`).
 
 So the rule is implemented and is not being reached on this path.
 
+## A second, independent case
+
+Found on 2026-08-20, 11.6 million rounds into a fresh run on a different
+seed range, and it needs no argument about scoring at all: **the position
+has exactly one legal shape and bbpPairings does not return it.**
+
+`test/fixtures/fe1_disputes/seed8848759-r9-p10.trf`, round 9 of 9, 10
+players. TPNs 6, 8 and 9 carry arbiter byes for the round, so seven players
+are active and one pairing-allocated bye is to be given. Four of the seven
+already hold one, and TPN 4 has met every active player but TPN 1:
+
+| TPN | pts | already holds a PAB | unplayed, among active |
+|---|---|---|---|
+| 1 | 5.5 | no | 2, 4 |
+| 2 | 3.5 | **yes** (R6) | 1, 3, 5, 10 |
+| 3 | 4.0 | no | 2, 5, 7 |
+| 4 | 2.5 | **yes** (R4) | **1** |
+| 5 | 2.0 | **yes** (R5) | 2, 3, 7, 10 |
+| 7 | 5.0 | no | 3, 5, 10 |
+| 10 | 3.0 | **yes** (R1) | 2, 5, 7 |
+
+TPN 4 cannot take the bye — [C2] — and has one available opponent. So
+**1–4 is forced**, and every candidate without it strands TPN 4 into a
+second bye. The bye then falls to one of the three eligible players, and
+[C5] puts it on the lowest-scoring of them, TPN 3 on 4.0.
+
+```
+Ainalrami:    1-4, 5-2, 7-10, bye 3
+Gacrux:       1-4, 5-2, 7-10, bye 3
+bbpPairings:  1-2, 3-5, 7-10, bye 4      <- second bye for TPN 4
+```
+
+bbpPairings pairs 1–2, which removes TPN 4's only opponent, and then has
+nowhere to put TPN 4 except the bye. This is the same defect as the case
+above seen from a different angle: there, the illegal assignee was chosen
+where a legal one scored worse; here, it is chosen because an earlier
+choice in the same matching left no alternative. Both are cases of the
+eligibility test not constraining the matching that produces the leftover.
+
 ## Reproduction
 
 Save the file above with CRLF line endings and run the command in "Observed
@@ -136,8 +182,11 @@ behaviour". The engine that found it is at
 `tools/dispute_dump.exs` printing the decoded position and eligibility, and
 `tools/bye_probe.exs` building the minimal control case.
 
-It was found by differential testing: approximately 4.3 million synthetic
-tournaments and 195 million individual pairings compared board-for-board
-against bbpPairings across field sizes 4–120, round counts 6–10, arbiter
-byes, forfeits, `XXP` exclusions and `XXA` acceleration. This is the only
-position in that corpus where the two engines disagree.
+Both were found by differential testing: several million synthetic
+tournaments and hundreds of millions of individual pairings compared
+board-for-board against bbpPairings across field sizes 4–500, round counts
+6–13, arbiter byes, forfeits, `XXP` exclusions and `XXA` acceleration.
+These two positions are the only ones in that corpus where the engines
+disagree, and Gacrux sides with Ainalrami on both. The second is
+`test/fixtures/fe1_disputes/seed8848759-r9-p10.trf`; both are pinned by
+`test/ainalrami/c2_second_bye_test.exs`.
