@@ -172,7 +172,15 @@ million tournaments (see [docs/validation.md](docs/validation.md)).
 
 - [ ] **File the bbpPairings C2 report.**
       [docs/bbppairings-c2-bug-report.md](docs/bbppairings-c2-bug-report.md)
-      is written and submittable; it has not been submitted.
+      is written and submittable; it has not been submitted. **Stronger as
+      of 2026-08-20**: a second, independent position
+      (`seed8848759-r9-p10`, found 11.6M rounds into a fresh seed range)
+      where the legal pairing is not merely better but FORCED -- one
+      player has a single remaining opponent and already holds a bye, so
+      the round has exactly one legal shape and bbpPairings does not
+      return it. Gacrux agrees with us on both. No scoring argument is
+      needed for the second one, which is the kind of case that does not
+      get argued with.
 - [ ] **Decide what to do with the 5.2.5 dispute.**
       [docs/dispute-initial-colour.md](docs/dispute-initial-colour.md) is
       written. It is the stronger of the two cases — it rests on a
