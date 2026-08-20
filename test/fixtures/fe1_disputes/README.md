@@ -60,3 +60,41 @@ Reproduce from scratch, ~1 second:
       PAIRING_FUZZ_DUMP=repro mix test --only bbppairings
 
 Then `mix run tools/adjudicate.exs repro`.
+
+## `seed8848759-r9-p10`
+
+Round 9, 10 players, found 11.6 million rounds into the 2026-08-19 run
+(4-10 players, 15% arbiter byes, seeds from 7,000,001 — a different range
+from the one above). Gacrux again sides with Ainalrami.
+
+    Ainalrami:     [{1, 4}, {3, nil}, {5, 2}, {7, 10}]
+    bbpPairings:  [{1, 2}, {3, 5}, {4, nil}, {7, 10}]
+    Gacrux:        [{1, 4}, {3, nil}, {5, 2}, {7, 10}]
+
+**This one needs no adjudication.** Ranks 6, 8 and 9 carry arbiter byes for
+the round, leaving seven active players and one pairing-allocated bye to
+give. Four of the seven — 2, 4, 5 and 10 — already hold one, so C2 leaves
+three eligible: 1, 3 and 7. And rank 4 has met every active player except
+rank 1:
+
+| rank | pts | already had a PAB | unplayed, among active |
+|---|---|---|---|
+| 1 | 5.5 | no | 2, 4 |
+| 2 | 3.5 | **yes** | 1, 3, 5, 10 |
+| 3 | 4.0 | no | 2, 5, 7 |
+| 4 | 2.5 | **yes** | **1** |
+| 5 | 2.0 | **yes** | 2, 3, 7, 10 |
+| 7 | 5.0 | no | 3, 5, 10 |
+| 10 | 3.0 | **yes** | 2, 5, 7 |
+
+So rank 4 must be paired — C2 bars the alternative — and 1-4 is the only
+pairing they have. Every candidate that does not contain 1-4 strands rank 4
+into a second bye. bbpPairings pairs 1-2, and byes rank 4.
+
+The bye then goes to one of 1, 3, 7, and C5 (minimise the assignee's score)
+picks rank 3 on 4.0. That is what both other engines return.
+
+Pinned by `test/ainalrami/c2_second_bye_test.exs`, which asserts the forced
+pair and that the assignee had no earlier bye — a test rather than a file,
+because a change that made this engine agree with bbpPairings here would
+show up in the corpus as an improvement.

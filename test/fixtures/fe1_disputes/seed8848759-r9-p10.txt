@@ -1,0 +1,6 @@
+seed 8848759, round 9, 10 players
+pairs matched: 1/4
+
+Ainalrami:     [{1, 4}, {3, nil}, {5, 2}, {7, 10}]
+bbpPairings:  [{1, 2}, {3, 5}, {4, nil}, {7, 10}]
+Gacrux:        [{1, 4}, {3, nil}, {5, 2}, {7, 10}]
