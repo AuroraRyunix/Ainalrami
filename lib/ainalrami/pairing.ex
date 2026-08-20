@@ -2566,7 +2566,70 @@ defmodule Ainalrami.Pairing do
 
   # `common.h:164`. Lock the pair by leaving each vertex exactly one
   # usable edge — the one to the other.
+  #
+  # The fast path, `WeightedMatching.finalize_pair/3`, is a pure edge
+  # REMOVAL with no `prepare_vertex/2` and no forced re-solve (see its own
+  # doc for why that stays optimal). It runs directly against whichever
+  # matcher `i`/`j` are ALREADY matched in — `st.wm` for the local graph,
+  # or the round matcher for the field one, `i`/`j` translated to field
+  # indices exactly as `solve_field/1` itself does. Both call sites
+  # (`finalize_matched/2`, `finalize_both/2`) reach here right after their
+  # own `solve/1`, so that matcher always exists; the fallback below is for
+  # when the fast function itself refuses — `i` or `j` inside a
+  # non-trivial blossom — which is correctness-safe by construction since
+  # it is the old, already-proven path, just slower.
   defp finalize_pair(st, i, j) do
+    case fast_finalize_pair(st, i, j) do
+      {:ok, st} -> st
+      :error -> finalize_pair_by_rebuild(st, i, j)
+    end
+  end
+
+  defp fast_finalize_pair(%{mode: :local, wm: nil}, _i, _j), do: :error
+
+  defp fast_finalize_pair(%{mode: :local} = st, i, j) do
+    case WeightedMatching.finalize_pair(st.wm, i, j) do
+      {:ok, wm} -> {:ok, %{st | wm: wm, live: drop_other_live(st, i, j)}}
+      :error -> :error
+    end
+  end
+
+  defp fast_finalize_pair(%{mode: :field} = st, i, j) do
+    case Process.get(@round_matcher_key) do
+      {nil, _field_index, _field_size} ->
+        :error
+
+      {matcher, field_index, field_size} ->
+        to_field = fn k -> Map.fetch!(field_index, elem(st.arr, k).rank) end
+
+        case WeightedMatching.finalize_pair(matcher, to_field.(i), to_field.(j)) do
+          {:ok, matcher} ->
+            Process.put(@round_matcher_key, {matcher, field_index, field_size})
+            {:ok, %{st | live: drop_other_live(st, i, j)}}
+
+          :error ->
+            :error
+        end
+    end
+  end
+
+  defp fast_finalize_pair(_st, _i, _j), do: :error
+
+  # `live`'s half of the fast path: the matcher already has every OTHER
+  # edge of `i` and `j` gone, so `live` is brought in line the same way —
+  # plain writes, not `set_live/4`, since there is nothing left to apply
+  # and so nothing to queue as dirty. The `(i, j)` edge itself is left
+  # untouched here, unlike the slow path's max_w bump: the matcher already
+  # holds it exactly as it was, and writing `st.max_w` into `live` would
+  # queue exactly the `set_weight/4` prepare this path exists to avoid,
+  # the next time `live` is diffed against the matcher.
+  defp drop_other_live(st, i, j) do
+    0..(st.wl - 1)//1
+    |> Enum.reject(&(&1 == i or &1 == j))
+    |> Enum.reduce(st.live, fn k, acc -> acc |> put_w(i, k, 0) |> put_w(j, k, 0) end)
+  end
+
+  defp finalize_pair_by_rebuild(st, i, j) do
     live =
       Enum.reduce(0..(st.wl - 1)//1, st.live, fn k, acc ->
         acc = if k == i, do: acc, else: set_live(acc, i, k, if(k == j, do: st.max_w, else: 0))

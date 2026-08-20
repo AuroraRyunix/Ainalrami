@@ -451,6 +451,70 @@ defmodule Ainalrami.WeightedMatching do
     |> put_weight(u, v, w2)
   end
 
+  @doc """
+  Lock a pair that is ALREADY matched to each other, by dropping every
+  OTHER edge either endpoint holds -- with no `prepare_vertex/2` at all.
+
+  `Ainalrami.Pairing`'s `finalize_pair/3` calls this right after a `solve/1`
+  found `u` and `v` matched together. The old way to lock that in was
+  `set_weight/4` on every one of their edges: raise `(u, v)` to the
+  ceiling, zero everything else, each write through `prepare_vertex/2` --
+  which unmatches `u`, then unmatches `v`, dissolving any blossom either
+  sits in and resetting both duals to the maximum, so the NEXT `solve/1`
+  re-discovers this exact pair from scratch by augmenting path search. At
+  1000 players `stage_first_group_partners` alone does ~482 of these.
+
+  Dropping an edge is a pure RELAXATION and needs none of that. Dual
+  feasibility only requires `y_u + y_v >= w(u, v)`; lowering `w` to zero
+  can only make that easier. Complementary slackness only constrains
+  MATCHED edges, and every edge being dropped here is by construction
+  unmatched -- `u` and `v` have only each other. So `state.dual`,
+  `state.mate`, `state.blossom_match` and `state.in_blossom` all stay
+  exactly as they are, and the matched edge `(u, v)` is left at whatever
+  weight it already had -- NOT raised to the ceiling. It doesn't need to
+  be: once every other edge at `u` and `v` is gone, `(u, v)` is the only
+  edge either vertex has, every weight is positive
+  (`solve/2`'s own doc), and a maximum-weight matching always takes the
+  one positive edge available over leaving both ends exposed. So the pair
+  stays forced without the weight bump that used to force it.
+
+  Refuses (`:error`) when `u` or `v` sits inside a non-trivial blossom, or
+  when they turn out not to be matched to each other after all (the
+  caller's invariant broken, or the wrong vertex ids passed). The blossom
+  case is the one that matters and mirrors `shift_and_set/3`'s own guard:
+  `dissolve_one/3` rebases a blossom at whichever vertex is about to be
+  unmatched and pushes half the blossom's dual onto the base's OLD
+  external match -- sound when that match is removed right after, which
+  is what `prepare_vertex/2` does next and this never does. A version
+  that dissolved anyway and checked every local invariant still broke the
+  next real search. Either refusal sends the caller back to `set_weight/4`,
+  which is correctness-safe by construction -- it is the path already
+  proven right, just slower.
+  """
+  def finalize_pair(state, u, v) when u != v do
+    if Map.fetch!(state.in_blossom, u) != u or Map.fetch!(state.in_blossom, v) != v or
+         Map.get(state.blossom_match, u) != v or Map.get(state.blossom_match, v) != u do
+      :error
+    else
+      weight = state.weight |> drop_other_edges(u, v) |> drop_other_edges(v, u)
+      {:ok, %{state | weight: weight}}
+    end
+  end
+
+  # Zero every edge `keep_v` has except the one to `keep`, both directions
+  # -- `state.weight` is kept symmetric by `put_weight/3`, so the far side
+  # of each dropped edge needs its own entry removed too.
+  defp drop_other_edges(weight, keep_v, keep) do
+    row = Map.get(weight, keep_v, %{})
+
+    weight =
+      Enum.reduce(row, weight, fn {u, _w2}, acc ->
+        if u == keep, do: acc, else: Map.update!(acc, u, &Map.delete(&1, keep_v))
+      end)
+
+    Map.put(weight, keep_v, Map.take(row, [keep]))
+  end
+
   # `prepareVertexForWeightAdjustments`, exactly: unmatch, dissolve every
   # enclosing blossom, reset the dual to the initial maximum. Idempotent,
   # so touching both endpoints of several edges in a row costs nothing

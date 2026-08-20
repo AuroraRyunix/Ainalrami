@@ -3000,3 +3000,53 @@ survived roughly 3.1 million large-field rounds without a disagreement
 attributable to it. That is not a proof, and it is not claimed as one; it
 is the evidence that was available, and it is the reason the condition
 ships rather than the whole path being reverted.
+
+## `finalize_pair/3` as a pure removal (2026-08-20)
+
+`finalize_pair/3` locks a pair by leaving each vertex exactly one usable
+edge, and it did that through `set_live/4` on every edge -- including the
+KEPT one, raised to `st.max_w`. Raising it is what forced `set_weight/4`'s
+`prepare_vertex/2` on both `i` and `j`: unmatch, dissolve every blossom
+either sits in, reset both duals to the ceiling. At 1,000 players
+`stage_first_group_partners` alone finalises ~482 pairs a round, each one
+paying that prepare and then a re-solve that mostly just re-discovers the
+same pair by augmenting-path search -- the exact shape `shift_and_set/3`
+already cut out of stage 4.
+
+Dropping an edge, unlike raising one, is a pure RELAXATION: dual
+feasibility only needs `y_u + y_v >= w(u, v)`, and lowering `w` can only
+make that easier. Complementary slackness only constrains MATCHED edges,
+and every edge `finalize_pair/3` drops is by construction unmatched --
+`i` and `j` have only each other. So none of `dual`, `mate`,
+`blossom_match` or `in_blossom` needs to move, and the kept edge doesn't
+need raising either: once every other edge at `i` and `j` is gone, `(i,
+j)` is the only edge either vertex has, every weight is positive, and a
+maximum-weight matching always takes the one positive edge available over
+leaving both ends exposed. `WeightedMatching.finalize_pair/3` is that --
+plain `Map.delete`s on `state.weight`, nothing else touched -- and it
+refuses (`:error`) when `i` or `j` sits inside a non-trivial blossom,
+exactly the guard `shift_and_set/3` already needed for the same reason:
+`dissolve_one/3` rebases a blossom at whichever vertex is about to be
+unmatched and pushes half the blossom dual onto the base's OLD external
+match, which is sound only because `prepare_vertex/2` removes that match
+a moment later. Nothing here unmatches anything, so a dissolve would be
+unsound; refusing sends the caller back to `set_weight/4`, correctness-safe
+by construction since that's the already-proven path, just slower. The
+field graph keeps its `WeightedMatching` state in the round matcher
+(`@round_matcher_key`), not `st.wm`, so `Ainalrami.Pairing`'s
+`fast_finalize_pair/3` has a mode-specific branch that translates `i`/`j`
+to field indices first; the local graph calls straight through.
+
+Measured at 1,000 players: the fast path engaged 497/500 finalisations in
+one round (3 refused into blossoms and fell back). 209: 0.207 s (was
+0.211 s). 400: 0.718 s (was 0.731 s). 1,000: 6.46 s (was 6.83 s, -5.4%).
+Smaller than `stage_first_group_partners`'s finalisation count alone
+would suggest -- the prepare's re-solve was already cheap in most cases
+(`greedy_resume/1` picks a freshly-prepared pair straight back up when its
+heaviest edge is to its own kind, which a residual pair usually is), so
+removing the prepare mostly removes bookkeeping rather than search. Still
+a real, unconditional win with no corpus cost: `mix test` (187/187),
+`matching_baseline.exs` (460/460), `matching_incremental.exs` (all
+optimal and valid), all seven corpus axes at 100.00%, and board-for-board
+identical output at both 400 (200/200) and 1,000 (500/500) players
+against bbpPairings.
