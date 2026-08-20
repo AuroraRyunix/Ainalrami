@@ -39,23 +39,70 @@ measuring nothing.
 
 ## The corpus
 
-**4.3 million tournaments, ~195 million individual pairings, one
-disagreement**, from the 2026-08-17 runs on a 36-core machine.
+**5,993,000 tournaments, 44,486,465 rounds, 488,033,862 individual
+pairings, two disagreements** — the 2026-08-20 run on a 36-core machine,
+seventeen axes, ~15 hours. Neither disagreement is a defect here: both are
+the bbpPairings [C2] second-bye defect, and Gacrux returns this engine's
+answer on both (see below).
 
-> **This corpus predates the 2026-08-18 changes and has not been re-run at
-> that scale.** What changed since: `152` is written as well as read, the
-> initial colour is inferred when a file omits it, the CLI forwards the
-> drawing of lots, `260`/`250` are implemented, and `forbidden_map/2` took
-> a round argument.
->
-> None of them touches a path this corpus exercises — the harness writes
-> its own `152` and passes the colour explicitly, so the inference never
-> fires; it emits `XXP`/`XXA` and never `260`/`250`; and `forbidden_map`'s
-> behaviour for a plain group list is unchanged. That is an argument
-> though, not a measurement, so the *engine* was re-validated even though
-> the corpus was not.
+| axis | tournaments | rounds | individual pairs | disagreements |
+|---|---|---|---|---|
+| 300–500 players, byes | 3,000 | 27,000 | 4,871,001 | 0 |
+| 150–250 players, byes | 30,000 | 270,000 | 24,357,105 | 0 |
+| 150–250, byes+forfeits+`XXP`+Baku | 10,000 | 90,000 | 8,128,884 | 0 |
+| 60–120 players, byes | 200,000 | 1,800,000 | 73,378,553 | 0 |
+| 60–120, byes+forfeits+`XXP`+Baku | 100,000 | 900,000 | 36,689,898 | 0 |
+| 4–40, byes+forfeits+`XXP`+Baku | 400,000 | 3,334,635 | 35,022,819 | 0 |
+| 4–40, 15% byes | 600,000 | 5,037,730 | 50,883,196 | 0 |
+| 4–40, 10% forfeits | 300,000 | 2,518,015 | 29,805,864 | 0 |
+| 4–40, 20% forbidden (`XXP`) | 300,000 | 2,477,490 | 29,656,258 | 0 |
+| 4–40, random acceleration | 300,000 | 2,516,311 | 26,897,840 | **1** |
+| 4–40, Black drawn first | 300,000 | 2,526,740 | 25,473,925 | 0 |
+| 4–40, plain | 300,000 | 2,529,979 | 29,866,857 | 0 |
+| 4–40, 8 rounds | 300,000 | 2,270,382 | 22,727,208 | 0 |
+| 4–40, 10 rounds, combined | 200,000 | 1,825,095 | 19,327,331 | 0 |
+| 4–40, 13 rounds | 150,000 | 1,721,955 | 17,954,308 | 0 |
+| 4–10, 15% byes | 2,000,000 | 11,644,432 | 40,827,511 | **1** |
+| 4–10, plain | 500,000 | 2,996,701 | 12,165,304 | 0 |
 
-### Re-validation after the 2026-08-18 changes
+**Zero illegal rounds across all seventeen.** Legality is checked
+independently of agreement — it is the question with a right answer,
+where "does bbpPairings pair it the same way" is not.
+
+### What this run added over its predecessors
+
+It is the first corpus measured on the local-graph engine (see
+`docs/engineering-log.md`), and the speed is what bought the coverage:
+60–120 players ran at ~22 tournaments/s against 0.36 before, so the large
+axes stopped being unaffordable.
+
+- **300–500 players had never been validated at any scale.** Neither had
+  150–250 with forfeits and forbidden pairs on top.
+- **The large-field axes are 3.1 million rounds** between them, against
+  600 tournaments in the previous corpus — the dimension that was
+  thinnest is now among the thickest, which matters because the local
+  graph only engages on brackets big enough to qualify.
+- **A Black-drawn-first axis**, exercising the 5.2.5 reading this engine
+  settles against both references.
+
+### The two disagreements
+
+Both are the same bbpPairings defect, on different axes and seed ranges:
+it allocates a second pairing-allocated bye to a player who already holds
+one, which [C2] forbids absolutely. The adjudicator scores both
+`incomparable` — neither is a case where bbpPairings' answer is better on
+this engine's own ladder — and Gacrux, a third independent implementation,
+returns this engine's answer board-for-board on both.
+
+In `seed7073463-r8-p9` the round has exactly one legal shape, reached by
+eliminating four players who each already hold a bye and are down to a
+single legal opponent. There is no scoring argument to make about it.
+
+Written up in `docs/bbppairings-c2-bug-report.md`, decoded position by
+position in `test/fixtures/fe1_disputes/README.md`, and pinned by
+`test/ainalrami/c2_second_bye_test.exs`.
+
+## Re-validation after the 2026-08-18 changes
 
 **11,000 tournaments / 69,038 rounds / 680,022 individual pairings, at
 100.00% with zero illegal rounds, zero refusals and zero unexplained
@@ -95,7 +142,7 @@ change, and is worth doing before any endorsement submission.
 | odd-round controls (7, 9) | 350,000 | 100.00% | 100.00% | 0 |
 
 FIDE's FE1 endorsement bar is one difference per 500 tournaments. This is
-one per 4.3 million.
+one per 3.0 million.
 
 That one is `seed735265-r7-p10`, kept as a fixture at
 `test/fixtures/fe1_disputes/`. It is a rules-interpretation dispute, not a

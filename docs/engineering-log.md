@@ -2959,3 +2959,44 @@ and 1.45x. Against bbpPairings' (0.54 / 2.87 / 49.9 s), 2.3x, 4x and
 7.7x the other way. A corpus axis with a fixed odd field was added,
 because the skip's guard turns on `odd_field?` and every existing axis
 mixes parities.
+
+## The 6-million-tournament run (2026-08-20)
+
+The validation run for the local-graph engine, and the largest this
+project has done: **5,993,000 tournaments, 44,486,465 rounds, 488,033,862
+individual pairings, seventeen axes, ~15 hours on the 36-core box.** Two
+disagreements, both the bbpPairings C2 second-bye defect, both scored
+`incomparable` by the adjudicator, both answered our way by Gacrux. Zero
+illegal rounds.
+
+That is one disagreement per 22 million rounds, or per 3 million
+tournaments, against an FE1 bar of one per 500.
+
+**The speed is what bought the coverage**, which is the point worth
+recording. 60-120 players ran at ~22 tournaments/s against 0.36 before the
+matcher work, so axes that were previously unaffordable became routine:
+
+| | before (08-17 corpus) | this run |
+|---|---|---|
+| 60-120 players | 600 tournaments | 300,000 |
+| 150-250 players | never run | 40,000 |
+| 300-500 players | never run | 3,000 |
+
+The large-field axes alone are 3.1 million rounds. That matters more than
+the headline total, because the local graph only engages on brackets big
+enough to meet its preconditions -- the dimension the old corpus was
+thinnest on is exactly the one the new engine most needed tested, and it
+is now among the thickest.
+
+Also new: a Black-drawn-first axis (300,000 tournaments), exercising the
+5.2.5 reading this engine settles against both references; 13-round
+tournaments, the deepest yet, where the pairing graph is most exhausted;
+and random acceleration alongside Baku.
+
+`@local_min_next_group` -- the one condition on the local path that was
+not certified term by term, that an odd bracket's float choice does not
+depend on which member of a dense next group it lands on -- has now
+survived roughly 3.1 million large-field rounds without a disagreement
+attributable to it. That is not a proof, and it is not claimed as one; it
+is the evidence that was available, and it is the reason the condition
+ships rather than the whole path being reverted.

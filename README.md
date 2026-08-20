@@ -13,7 +13,7 @@ still ship. It reads and writes TRF16, mirrors JaVaFo's command-line
 shape, and is verified against two independent reference implementations.
 
 **Status: beta.** The engine is functionally complete and reproduces
-bbpPairings 6.0.0 exactly across 4.3 million generated tournaments.
+bbpPairings 6.0.0 exactly across 6 million generated tournaments.
 Article 4's candidate ordering is verified against the regulations
 directly, and one point of Article 5 is settled *against* both reference
 engines, from the handbook's own text. Both are documented rather than
@@ -24,29 +24,35 @@ hidden — see [What is not settled](#what-is-not-settled).
 ## Where it stands
 
 Measured against **bbpPairings 6.0.0**, which implements the same 2026
-rules — **4.3 million tournaments, ~195 million individual pairings, one
-disagreement in the entire corpus**:
+rules — **5,993,000 tournaments, 44.5 million rounds, 488 million
+individual pairings, two disagreements, zero illegal rounds** (run of
+2026-08-20, seventeen axes):
 
 | axis | tournaments | exact rounds | individual pairs | illegal |
 |---|---|---|---|---|
-| plain | 620,000 | **100.00%** | **100.00%** | 0 |
-| arbiter byes (15%) | 1,450,000 | **100.00%** (1 dispute) | **100.00%** | 0 |
-| forfeits (10%) | 120,000 | **100.00%** | **100.00%** | 0 |
-| forbidden pairs (`XXP`, 20%) | 120,000 | **100.00%** | **100.00%** | 0 |
-| Baku acceleration (`XXA`) | 120,000 | **100.00%** | **100.00%** | 0 |
-| all four combined | 120,000 | **100.00%** | **100.00%** | 0 |
-| even round counts (6, 8, 10) | 850,000 | **100.00%** | **100.00%** | 0 |
-| odd-round controls (7, 9) | 350,000 | **100.00%** | **100.00%** | 0 |
-| 60–120 players | 600 | **100.00%** | **100.00%** | 0 |
+| 300–500 players | 3,000 | **100.00%** | **100.00%** | 0 |
+| 150–250 players | 40,000 | **100.00%** | **100.00%** | 0 |
+| 60–120 players | 300,000 | **100.00%** | **100.00%** | 0 |
+| plain | 800,000 | **100.00%** | **100.00%** | 0 |
+| arbiter byes (15%) | 2,600,000 | **100.00%** (1 dispute) | **100.00%** | 0 |
+| forfeits (10%) | 300,000 | **100.00%** | **100.00%** | 0 |
+| forbidden pairs (`XXP`, 20%) | 300,000 | **100.00%** | **100.00%** | 0 |
+| acceleration (`XXA`, Baku + random) | 300,000 | **100.00%** (1 dispute) | **100.00%** | 0 |
+| all four combined | 510,000 | **100.00%** | **100.00%** | 0 |
+| round counts 8, 10, 13 | 650,000 | **100.00%** | **100.00%** | 0 |
+| Black drawn first | 300,000 | **100.00%** | **100.00%** | 0 |
 
 FIDE's FE1 endorsement allows one difference per 500 tournaments. This is
-one per 4.3 million — four orders of magnitude inside the bar.
+one per 3 million — nearly four orders of magnitude inside the bar.
 
-The single disagreement is `seed735265-r7-p10`, and it is **not a defect
-here**: bbpPairings awards a second pairing-allocated bye to a player who
-already has one, which absolute criterion C2 forbids. Gacrux — a third,
-independent implementation — pairs it the way this engine does. Written up
-in [docs/dispute-seed735265.md](docs/dispute-seed735265.md), with a
+Both disagreements are **not defects here**: bbpPairings awards a second
+pairing-allocated bye to a player who already has one, which absolute
+criterion C2 forbids. Gacrux — a third, independent implementation —
+pairs both the way this engine does. In one of them the round has exactly
+one legal shape, reached by pure elimination, so there is no scoring
+argument to be had. Written up in
+[docs/dispute-seed735265.md](docs/dispute-seed735265.md) and
+[test/fixtures/fe1_disputes/](test/fixtures/fe1_disputes/), with a
 submittable report in
 [docs/bbppairings-c2-bug-report.md](docs/bbppairings-c2-bug-report.md).
 
