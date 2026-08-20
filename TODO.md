@@ -172,15 +172,17 @@ million tournaments (see [docs/validation.md](docs/validation.md)).
 
 - [ ] **File the bbpPairings C2 report.**
       [docs/bbppairings-c2-bug-report.md](docs/bbppairings-c2-bug-report.md)
-      is written and submittable; it has not been submitted. **Stronger as
-      of 2026-08-20**: a second, independent position
-      (`seed8848759-r9-p10`, found 11.6M rounds into a fresh seed range)
-      where the legal pairing is not merely better but FORCED -- one
-      player has a single remaining opponent and already holds a bye, so
-      the round has exactly one legal shape and bbpPairings does not
-      return it. Gacrux agrees with us on both. No scoring argument is
-      needed for the second one, which is the kind of case that does not
-      get argued with.
+      is written and submittable; it has not been submitted. **Now rests on
+      THREE independent positions** (2026-08-20), from three different
+      generator axes and two seed ranges, with Gacrux returning our answer
+      board-for-board on all three. Two of them need no scoring argument
+      at all: the round has exactly one legal shape, because a player who
+      already holds a bye is down to a single legal opponent, and
+      bbpPairings pairs that opponent elsewhere. `seed7073463-r8-p9`
+      reaches it through a chain of four such players. That every
+      disagreement in a multi-million-tournament corpus is the same rule
+      in the same direction is itself evidence: one defect, narrow
+      trigger, not scattered edge cases.
 - [ ] **Decide what to do with the 5.2.5 dispute.**
       [docs/dispute-initial-colour.md](docs/dispute-initial-colour.md) is
       written. It is the stronger of the two cases — it rests on a

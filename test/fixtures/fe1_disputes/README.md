@@ -98,3 +98,48 @@ Pinned by `test/ainalrami/c2_second_bye_test.exs`, which asserts the forced
 pair and that the assignee had no earlier bye — a test rather than a file,
 because a change that made this engine agree with bbpPairings here would
 show up in the corpus as an improvement.
+
+## `seed7073463-r8-p9`
+
+Round 8, 9 players, from the random-acceleration axis of the 2026-08-20
+run (seeds from 7,000,001). Gacrux sides with Ainalrami again.
+
+    Ainalrami:     [{2, 1}, {4, 8}, {6, nil}, {9, 7}]
+    bbpPairings:  [{4, 2}, {6, 1}, {8, nil}, {9, 7}]
+    Gacrux:        [{2, 1}, {4, 8}, {6, nil}, {9, 7}]
+
+**The strongest of the three.** The round has exactly one legal shape and
+it falls out by pure elimination — there is no scoring step to argue
+about, and C5 never gets a say.
+
+Ranks 3 and 5 sit the round out on arbiter byes, leaving seven active.
+Four of those seven already hold a pairing-allocated bye, so [C2] requires
+each of them to be paired:
+
+| rank | pts | already has a PAB | unplayed, among active |
+|---|---|---|---|
+| 1 | 3.5 | **yes** | 2, 6, 9 |
+| 2 | 4.0 | **yes** | 1, 4 |
+| 4 | 3.5 | no | 2, 8 |
+| 6 | 5.0 | no | 1, 7 |
+| 7 | 4.5 | no | 6, 9 |
+| 8 | 2.5 | **yes** | **4** |
+| 9 | 2.5 | **yes** | 1, 7 |
+
+Then, one forced step at a time:
+
+1. rank 8 holds a bye and has one opponent left → **4–8**
+2. rank 2 holds a bye and now has one left → **2–1**
+3. rank 9 holds a bye and now has one left → **9–7**
+4. rank 6 is all that remains, and is eligible → **bye**
+
+bbpPairings pairs 4–2, which consumes rank 8's only opponent and leaves it
+nowhere to go but a second bye.
+
+Worth noting what this case is NOT: rank 6 on 5.0 is the HIGHEST-scoring
+active player, and C5 asks for the bye to go to the lowest. It goes to 6
+anyway because C2 is absolute and eliminates everyone else — a good
+reminder that the criteria are lexicographic, not a weighted blend.
+
+Pinned by `test/ainalrami/c2_second_bye_test.exs`, which asserts all three
+forced pairs, not just the bye.

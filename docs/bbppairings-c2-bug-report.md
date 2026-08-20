@@ -1,6 +1,7 @@
 # bbpPairings 6.0.0 allocates a second pairing-allocated bye, violating C.04.3 [C2]
 
-*Two independent positions, one of which has only one legal pairing.*
+*Three independent positions. In two of them the round has only one legal
+pairing at all.*
 
 **Reporter:** OpenPairings / Ainalrami project
 **Program:** BBP Pairings v6.0.0 (Built Feb 1 2026 17:39:15) —
@@ -19,10 +20,13 @@ pairing-allocated bye to a player who has already received one. C.04.3 art.
 2.1.2 [C2] forbids this absolutely, and a legal alternative exists — two
 other implementations produce it.
 
-Two independent positions are attached. In the second the legal pairing is
-not merely better, it is FORCED: one player has a single remaining opponent
-and already holds a bye, so there is exactly one legal shape for the round,
-and bbpPairings does not return it.
+Three independent positions are attached, found across three different
+generator axes and two separate seed ranges. In the second and third the
+legal pairing is not merely better, it is FORCED: a player who already
+holds a bye has a single remaining opponent, so there is exactly one legal
+shape for the round, and bbpPairings does not return it. The third reaches
+that shape through a chain of four such players and needs no scoring
+argument whatsoever.
 
 ## The rule
 
@@ -134,6 +138,22 @@ is `152 W`, which sets the initial colour (`fileformats/trf.cpp:1179-1198`).
 
 So the rule is implemented and is not being reached on this path.
 
+**What the three cases together suggest.** `eligibleForBye` is applied to
+the player who ends up unmatched, but it does not appear to constrain the
+*choice of matching* that decides who that is. In the first case the
+engine picks an illegal assignee where a legal one is merely worse on a
+lower-ranked criterion. In the second and third it picks a pairing that
+consumes the last available opponent of a player who already holds a bye,
+and only then discovers that player has nowhere to go — by which point
+the bye is forced on someone the rule forbids.
+
+The distinguishing feature of all three is that the ineligible player is
+*short of opponents*: a nearly-exhausted pairing graph late in a small
+event, which is where a bye is most likely to be needed twice and least
+likely to have an alternative. That would also explain why the defect is
+rare enough to survive a large corpus — it needs both an already-byed
+player and that player to be down to their last legal opponent.
+
 ## A second, independent case
 
 Found on 2026-08-20, 11.6 million rounds into a fresh run on a different
@@ -173,6 +193,50 @@ where a legal one scored worse; here, it is chosen because an earlier
 choice in the same matching left no alternative. Both are cases of the
 eligibility test not constraining the matching that produces the leftover.
 
+## A third case, forced by elimination
+
+Found on 2026-08-20 on a different axis again (random acceleration), and
+it is the cleanest of the three: the round has exactly **one** legal shape,
+it falls out by pure elimination, and no scoring criterion is ever
+consulted.
+
+`test/fixtures/fe1_disputes/seed7073463-r8-p9.trf`, round 8 of 9, 9
+players. TPNs 3 and 5 carry arbiter byes for the round, leaving seven
+active. Four of those seven already hold a pairing-allocated bye, so [C2]
+requires every one of them to be paired:
+
+| TPN | pts | already holds a PAB | unplayed, among active |
+|---|---|---|---|
+| 1 | 3.5 | **yes** | 2, 6, 9 |
+| 2 | 4.0 | **yes** | 1, 4 |
+| 4 | 3.5 | no | 2, 8 |
+| 6 | 5.0 | no | 1, 7 |
+| 7 | 4.5 | no | 6, 9 |
+| 8 | 2.5 | **yes** | **4** |
+| 9 | 2.5 | **yes** | 1, 7 |
+
+The chain is deterministic:
+
+1. TPN 8 holds a bye and has a single opponent left → **4–8**
+2. TPN 2 holds a bye and now has a single one left → **2–1**
+3. TPN 9 holds a bye and now has a single one left → **9–7**
+4. TPN 6 is all that remains, and is the one still eligible → **bye**
+
+```
+Ainalrami:    2-1, 4-8, 9-7, bye 6
+Gacrux:       2-1, 4-8, 9-7, bye 6
+bbpPairings:  4-2, 6-1, 9-7, bye 8      <- second bye for TPN 8
+```
+
+bbpPairings pairs 4–2, which consumes TPN 8's only remaining opponent and
+leaves it nowhere to go but a second pairing-allocated bye.
+
+Note also what the correct answer does NOT optimise: TPN 6 on 5.0 is the
+highest-scoring active player, and [C5] asks for the assignee's score to be
+minimised. It goes to TPN 6 regardless, because [C2] is absolute and has
+eliminated every other candidate — the criteria are lexicographic, and an
+absolute one is not tradeable against a lower-ranked preference.
+
 ## Reproduction
 
 Save the file above with CRLF line endings and run the command in "Observed
@@ -182,11 +246,20 @@ behaviour". The engine that found it is at
 `tools/dispute_dump.exs` printing the decoded position and eligibility, and
 `tools/bye_probe.exs` building the minimal control case.
 
-Both were found by differential testing: several million synthetic
+All three were found by differential testing: several million synthetic
 tournaments and hundreds of millions of individual pairings compared
 board-for-board against bbpPairings across field sizes 4–500, round counts
 6–13, arbiter byes, forfeits, `XXP` exclusions and `XXA` acceleration.
-These two positions are the only ones in that corpus where the engines
-disagree, and Gacrux sides with Ainalrami on both. The second is
-`test/fixtures/fe1_disputes/seed8848759-r9-p10.trf`; both are pinned by
-`test/ainalrami/c2_second_bye_test.exs`.
+These three positions are the only ones in that corpus where the engines
+disagree, and Gacrux -- a third, independent implementation of the same
+2026 rules -- returns Ainalrami's answer board-for-board on all three.
+
+The other two are
+`test/fixtures/fe1_disputes/seed8848759-r9-p10.trf` and
+`test/fixtures/fe1_disputes/seed7073463-r8-p9.trf`; all three are pinned by
+`test/ainalrami/c2_second_bye_test.exs`, and
+`test/fixtures/fe1_disputes/README.md` decodes each position in full.
+
+That every disagreement in a corpus this size is the SAME rule, in the
+same direction, is itself part of the report: this is one defect with a
+narrow trigger, not a scattering of edge cases.

@@ -54,6 +54,41 @@ defmodule Ainalrami.C2SecondByeTest do
            "rank #{bye} was given a pairing-allocated bye but already had one"
   end
 
+  # Round 8, 9 players, from the random-acceleration axis. The strongest of
+  # the three: the round has exactly ONE legal shape, reachable by pure
+  # elimination, and C5 never gets a say.
+  #
+  # Ranks 3 and 5 sit the round out on arbiter byes, leaving seven active.
+  # Ranks 1, 2, 8 and 9 already hold a pairing-allocated bye, so [C2] says
+  # each of them must be PAIRED. Then, one forced step at a time:
+  #
+  #   rank 8 holds a bye and has one opponent left (4)  -> 4-8
+  #   rank 2 holds a bye and now has one left      (1)  -> 2-1
+  #   rank 9 holds a bye and now has one left      (7)  -> 9-7
+  #   rank 6 is all that remains, and is eligible       -> bye
+  #
+  # bbpPairings pairs 4-2 instead, which takes rank 8's only opponent and
+  # leaves it nowhere to go but a second bye.
+  test "a forced chain of C2-ineligible players fixes the whole round" do
+    %{players: players} = Ainalrami.Trf.parse(File.read!("#{@doc_dir}/seed7073463-r8-p9.trf"))
+
+    pairs = Pairing.pair_next_round(players, expected_rounds: 9)
+    by_rank = Map.new(players, &{&1.rank, &1})
+    bye = Enum.find_value(pairs, fn {w, b} -> if is_nil(b), do: w end)
+    played = Enum.map(pairs, fn {w, b} -> Enum.sort([w, b]) end) |> MapSet.new()
+
+    for pair <- [[4, 8], [1, 2], [7, 9]] do
+      assert pair in played,
+             "#{inspect(pair)} is forced by elimination once C2 rules out the bye for " <>
+               "ranks 1, 2, 8 and 9 — got #{inspect(MapSet.to_list(played))}"
+    end
+
+    assert bye == 6, "rank 6 is the only player left, and the only one still bye-eligible"
+
+    refute had_pairing_bye?(by_rank[bye]),
+           "rank #{bye} was given a pairing-allocated bye but already had one"
+  end
+
   # `U`, `F` and `+` are the results that disqualify: a pairing-allocated
   # bye and the two full-point forfeits. Same list the engine enforces on
   # the cascade's final state (`Pairing`'s `@bye_disqualifying_results`).

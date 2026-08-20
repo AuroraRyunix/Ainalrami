@@ -1,0 +1,6 @@
+seed 7073463, round 8, 9 players
+pairs matched: 1/4
+
+Ainalrami:     [{2, 1}, {4, 8}, {6, nil}, {9, 7}]
+bbpPairings:  [{4, 2}, {6, 1}, {8, nil}, {9, 7}]
+Gacrux:        [{2, 1}, {4, 8}, {6, nil}, {9, 7}]
