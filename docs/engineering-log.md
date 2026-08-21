@@ -3220,3 +3220,59 @@ different-but-equal-weight matching is not a regression.
 
 This is now the best-evidenced target on the matcher, and it is a much
 narrower one than "narrower weights" ever was.
+
+### Dead lever 4: a cheaper feasible dual makes it twice as slow (2026-08-21)
+
+The lever the previous section left standing, tried and measured.
+
+`greedy_start/3` matches on TIGHT edges, and under the symmetric start
+`y_v = max_w(v)` an edge is tight only when its endpoints are each other's
+heaviest — which is why a local bracket graph yields one pair. The obvious
+fix is a cheaper feasible dual with more tight edges: process vertices in
+order and give each the least value that keeps it feasible against those
+already fixed,
+
+    y_v = max over already-fixed u of (w2(v, u) - y_u), floored at 0
+
+which is feasible for the whole graph (for an edge between two fixed
+vertices the later one was raised to satisfy it; for an edge to an unfixed
+vertex, that vertex is raised in its turn), and makes the edge achieving
+the maximum exactly tight.
+
+It is correct. `tools/matching_baseline.exs` reports the same total weight
+and the same matched count on all 460 graphs, differing only in WHICH
+optimum it lands on in 39 of them, and the full suite passes.
+
+It is also **twice as slow**:
+
+| | symmetric start | sequential duals |
+|---|---|---|
+| 209 players | 937 ms | 1,091 ms |
+| 400 players | 1,531 ms | 1,974 ms |
+| 1,000 players | **8,026 ms** | **15,948 ms** |
+
+Both halves of the theory were wrong, and the dual sums say why.
+
+**The dual gets catastrophically worse.** On the 1,000-player field graph
+the starting dual objective goes from 1.85×10¹² to about 1.4×10¹⁷⁰. The
+sequential rule cascades into an alternating 0 / `w2` pattern — a vertex
+fixed at 0 forces every neighbour to `w2`, those force their neighbours
+back to 0 — so the sum is roughly `n/2` times a 512-bit weight. The
+primal-dual algorithm's entire job is walking the dual objective down to
+the optimum, and this hands it a starting point 158 orders of magnitude
+away.
+
+**And it barely buys any tight edges.** 992 matched vertices became 154 on
+the field graph; the local graphs went 2 → 2, 2 → 4, 2 → 12. A vertex's
+dual is set by ONE edge, so only that edge is tight, and the greedy pass
+still needs both endpoints free. The mutually-heaviest condition is
+restrictive, but so is "the one edge that happened to fix this vertex".
+
+So the one-pair greedy start on local graphs is not a defect to be fixed
+by a better dual. It is what a symmetric feasible dual does on a
+star-shaped weight matrix, and the symmetric dual is worth keeping: it is
+close to optimal, which matters far more than how many edges it makes
+tight. Anything that improves the tight-edge count has to do it WITHOUT
+inflating the dual objective, and this project has no candidate for that.
+
+Reverted. `matching_baseline.exs` is byte-identical again on all 460.

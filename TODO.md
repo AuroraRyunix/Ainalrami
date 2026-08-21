@@ -108,7 +108,7 @@ What is left is one limit of method rather than a known divergence.
       final engine (`adae426`), 487,338,797 individual pairings, **zero
       disagreements**. The condition has been judged and it held.
 
-- [ ] **The last ~7.7 s at 1,000 players.** Optional, and recorded as
+- [x] ~~**The last ~7.7 s at 1,000 players.**~~ **Closed 2026-08-21**, with the lever tried and measured NEGATIVE. Optional, and recorded as
       such: the engine is already level with Gacrux and ~6x quicker than
       bbpPairings on pairing work, so nothing here is waiting on it.
 
@@ -126,13 +126,21 @@ What is left is one limit of method rather than a known divergence.
       opponents. A star has one mutually-heaviest pair. Cross-bracket
       edges spread the maxima out, which is why the field graph is fine.
 
-      So the lever is a feasible dual that makes more edges tight on a
-      star-shaped weight matrix. Real work: any replacement must keep
-      `y_u + y_v >= w` on every edge, and lowering one dual to create a
-      tight edge can violate another. `tools/matching_baseline.exs` is the
-      net. Three other levers were measured and closed — see the
-      engineering log, "Where the remaining time goes, and three levers
-      that do not move it".
+      That lever was then built and measured, and it makes the engine
+      **twice as slow** (1,000 players 8.0 s -> 15.9 s). It is correct —
+      same total weight and matched count on all 460 baseline graphs — and
+      it loses anyway, for a reason worth keeping: the sequential dual
+      cascades into an alternating 0/`w2` pattern, so the starting dual
+      objective goes from 1.85e12 to ~1.4e170, and walking that down is
+      the algorithm's whole job. It also barely buys tight edges (2 -> 4).
+
+      The one-pair greedy start is therefore not a defect. It is what a
+      symmetric feasible dual does on a star-shaped weight matrix, and
+      being close to optimal matters far more than how many edges are
+      tight. Anything better must raise the tight-edge count WITHOUT
+      inflating the dual objective; there is no candidate. Reverted, and
+      written up as "Dead lever 4" in the engineering log alongside the
+      other three.
 
 - [x] ~~**The last 1.5–2× at 209-400 players.**~~ **Overtaken 2026-08-19
       evening**: 209 players 0.37 s against the reference's 0.72 s, 400
