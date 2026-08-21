@@ -3174,3 +3174,49 @@ fast path with this matcher as the fallback and the oracle. Everything
 else measured here is percentages on a round that is already level with
 the fastest implementation in existence and several times quicker than the
 FIDE-endorsed one.
+
+### The greedy start does nothing on a local graph (2026-08-21)
+
+Measured, and it corrects a claim made twice above. `greedy_start/3` is
+described here and in its own comment as pairing "the mutually-heaviest
+half"; on the 209-player FIELD graph it does exactly that, and better —
+992 of 1,000 vertices. On every LOCAL bracket graph it matches **one
+pair**:
+
+| graph | n | matched |
+|---|---|---|
+| field | 1000 | 992 |
+| local | 206 | 2 |
+| local | 184 | 2 |
+| local | 178 | 2 |
+| local | 114 | 2 |
+| local | 102 | 2 |
+| local | 82 | 2 |
+| local | 78 | 2 |
+
+`map_size(blossom_match)` counts vertices, so 2 is a single pair and ~n
+vertices are left exposed. That is the 489 stages and the 2.3 s: the cold
+solve of a local graph is doing nearly all of its work through augmenting
+search, from an almost empty matching.
+
+The cause is the dual initialisation, not the matching pass. `y_v` starts
+at `max_u w(v,u) / 2`, so an edge is tight exactly when its two endpoints
+are each other's heaviest — and on a bracket graph they almost never are.
+The criteria make nearly every vertex's heaviest edge point at the same
+small set of top-ranked opponents, which reciprocate at most one of them.
+A star has one mutually-heaviest pair, and that is what comes back.
+
+On the field graph the same initialisation works because cross-bracket
+edges spread the maxima out.
+
+So the lever here is a feasible dual that makes more edges tight on a
+star-shaped weight matrix, not a cleverer greedy pass over the one that
+exists — the pass is fine, it is being handed a graph with one tight edge.
+Any replacement has to keep `y_u + y_v >= w` everywhere, which is what
+makes it real work rather than a tweak; lowering a dual to create one
+tight edge can violate another. `tools/matching_baseline.exs` is the net:
+it checks total weight first and identity second, precisely because a
+different-but-equal-weight matching is not a regression.
+
+This is now the best-evidenced target on the matcher, and it is a much
+narrower one than "narrower weights" ever was.
