@@ -12,7 +12,14 @@ which defines the pairing rules and endorses software implementing them
 comparison itself.** The question is whether the programs match the text,
 and that question is strictly stronger without a fifth implementation in
 the table: as written, it is the published rule against every program,
-rather than one newcomer against four established ones.
+rather than one newcomer against three established ones.
+
+**Tone is deliberate too.** It closes expecting to be wrong. That is
+partly honest — three programs agreeing usually does mean the reader erred
+— and partly practical: a letter that asks to be corrected invites an
+explanation, where one asserting an error invites a defence. If the
+reading here turns out to be right, that is a better way to find out than
+arguing for it.
 
 ---
 
@@ -89,9 +96,20 @@ every board that reaches 5.2.5 in any tournament where a registered player
 has not yet been paired — a bye, a late entry not yet arrived, a
 withdrawal before round one.
 
-**What would settle it:** a yes or no on whether the change from "pairing
-number" to "TPN" was intended to change the number whose parity is tested.
+**What I think is most likely.** Three independent programs agreeing is
+usually a sign that the reader has misunderstood the rule rather than that
+the programs are wrong, so I expect I am missing something — most probably
+a definition or a settled convention that is obvious to those who work
+with these rules regularly and simply is not visible from the text on its
+own. If that is so, I would be genuinely glad to be told what it is: partly
+to stop misreading it, and partly because I have not been able to find it
+written down anywhere I could point someone else to.
 
-I am happy to supply the TRF file and each program's raw output.
+If instead the February rewrite did narrow the definition, then knowing
+that is just as useful.
 
-With thanks,
+Either way I would very much appreciate a line explaining which it is. I
+am happy to supply the TRF file and each program's raw output if that
+helps, and I am grateful for your time.
+
+With many thanks,
