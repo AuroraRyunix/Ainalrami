@@ -8,6 +8,12 @@ which defines the pairing rules and endorses software implementing them
 (`spp.fide.com`); the contact address published for it is
 `secretary.tec@fide.com`.
 
+**Deliberately says nothing about who is asking or why beyond the
+comparison itself.** The question is whether the programs match the text,
+and that question is strictly stronger without a fifth implementation in
+the table: as written, it is the published rule against every program,
+rather than one newcomer against four established ones.
+
 ---
 
 **Subject:** C.04.3 Art. 5.2.5 — did the change from "pairing number" to
@@ -15,10 +21,10 @@ which defines the pairing rules and endorses software implementing them
 
 Dear Commission,
 
-I am preparing an FE1 endorsement application for a pairing engine and
-have found a behavioural difference between the current text of C.04.3 and
-every reference implementation I can test. Before I declare an internal
-engine, I would like to know which is intended.
+I have been comparing the colour allocation produced by several pairing
+programs against the current text of C.04.3, and have found a case where
+all of them appear to depart from Article 5.2.5 as written. I would be
+grateful to know which behaviour is intended.
 
 **The question, in one sentence:** when Article 5.2.5 tests whether the
 higher ranked player has an odd TPN, and some registered player has never
@@ -52,28 +58,31 @@ data, which is barred after the fourth round has been paired (2.3), and
 the closing of the List of Participants (2.5). It makes no distinction
 between a registered player who has been paired and one who has not.
 
-Read literally, the current text gives **(a)**.
+Read literally, the current text gives **(a)**. Every program I tested
+gives **(b)**.
 
-**What implementations do.** All four give **(b)** except mine. Round one
-of a ten-player event, initial colour White, with TPNs 1 and 3 sitting the
-round out on an arbiter-assigned bye. Every board falls through 5.2.1–
-5.2.4 to 5.2.5 alone, since no player yet has a colour preference:
+**The comparison.** Round one of a ten-player event, initial colour White,
+with TPNs 1 and 3 sitting the round out on an arbiter-assigned bye. Every
+board falls through 5.2.1–5.2.4 to 5.2.5 alone, since no player yet has a
+colour preference:
 
-| board | higher TPN | parity | 5.2.5 read literally | JaVaFo | bbpPairings 6.0.0 | Gacrux | mine |
-|---|---|---|---|---|---|---|---|
-| 2 v 7 | 2 | even | 7 is White | 2 | 2 | 2 | 7 |
-| 4 v 8 | 4 | even | 8 is White | 8 | 8 | 8 | 8 |
-| 5 v 9 | 5 | odd | 5 is White | 5 | 5 | 5 | 5 |
-| 6 v 10 | 6 | even | 10 is White | 10 | 10 | 10 | 10 |
+| board | higher TPN | parity | 5.2.5 read literally | JaVaFo | bbpPairings 6.0.0 | pairing checker |
+|---|---|---|---|---|---|---|
+| 2 v 7 | 2 | even | 7 is White | 2 | 2 | 2 |
+| 4 v 8 | 4 | even | 8 is White | 8 | 8 | 8 |
+| 5 v 9 | 5 | odd | 5 is White | 5 | 5 | 5 |
+| 6 v 10 | 6 | even | 10 is White | 10 | 10 | 10 |
 
 Exactly one board differs, and it is the one board where the TPN's parity
-and the player's position-among-those-being-paired disagree.
+and the player's position among those actually being paired disagree. On
+the other three they coincide, which is why a complete field shows no
+difference at all.
 
 I note that JaVaFo predates the current wording, and that under the
 previous wording — a "pairing number" carrying "subsequent modifications"
 in its own definition — behaviour (b) appears well founded. That is why I
 am asking whether the February rewrite was intended to change behaviour,
-rather than reporting a defect against anyone.
+rather than reporting a defect against any program.
 
 **Why it matters.** This is not a rare position. It decides colours on
 every board that reaches 5.2.5 in any tournament where a registered player
@@ -83,7 +92,6 @@ withdrawal before round one.
 **What would settle it:** a yes or no on whether the change from "pairing
 number" to "TPN" was intended to change the number whose parity is tested.
 
-I am happy to supply the TRF file, the four engines' raw output, and a
-script that reproduces the table above.
+I am happy to supply the TRF file and each program's raw output.
 
 With thanks,
