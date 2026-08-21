@@ -220,11 +220,33 @@ leaving it to be inferred from the result.
 
 Nothing structural that has been identified. The comparison holds the
 bracket fixed and requires it to be last, so a bracket in the MIDDLE of a
-round — one that both inherits MDPs and floats players onward — is still
-compared only through the corpus rather than by enumeration. That is a
-limit of the method rather than a known divergence, and closing it needs a
-way to compare candidates that float different players, which the rules
-do not define (see below).
+round — one that both inherits MDPs and floats players onward — cannot be
+asked the same question: closing it fully needs a way to compare
+candidates that float different players, which the rules do not define
+(see below).
+
+**Narrowed 2026-08-21.** That bracket now has an enumeration check of its
+own in `mid_round_bracket_test.exs`, where it previously had only the
+corpus. The claim is deliberately weaker than the last-bracket one, and it
+is the strongest one available: **reachability** — that the engine's
+answer for a middle bracket is a candidate Article 4's sequence actually
+generates. The engine solves a matching rather than walking 4.2/4.3, so
+nothing structurally prevents it returning a pairing outside the
+enumeration, and nothing had checked that here.
+
+Worth recording that the oracle was wrong twice before it was right, both
+times by being WEAKER than the engine — the exact failure mode this
+section warns about further down:
+
+* it generated only the MDP-Pairing and not the remainder, so a
+  heterogeneous bracket's two-stage answer (3.4) looked unreachable;
+* it then generated the remainder by transposition alone, so a remainder
+  answer pairing two S2 members together — reachable only after an
+  exchange (4.3) — looked unreachable too.
+
+The engine was right both times. That is why the reachability result is
+worth more than it sounds: the oracle had to be made genuinely complete
+before it would pass at all.
 
 4.3 has never produced a measured disagreement with bbpPairings — 4.3M
 tournaments, one disagreement, and that one is a case where bbpPairings

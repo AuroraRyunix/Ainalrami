@@ -24,12 +24,22 @@ What is left is one limit of method rather than a known divergence.
       the rung vectors are commensurable — which is what the earlier
       "incommensurable structures" objection was really about.
 
-- [ ] **A bracket in the MIDDLE of a round**, inheriting moved-down players
-      *and* floating players onward, is still compared only through the
-      corpus. Not a known divergence — a limit of the method. Closing it
-      needs a way to compare candidates that float different players, and
-      the regulations define no ordering over those; see
-      [docs/conformance-c0403-2026.md](docs/conformance-c0403-2026.md).
+- [x] ~~**A bracket in the MIDDLE of a round**~~ — **narrowed 2026-08-21**
+      by `mid_round_bracket_test.exs`, which checks REACHABILITY: the
+      engine's answer for a middle bracket is a candidate Article 4's
+      sequence actually generates. Previously corpus-only.
+
+      Not the full claim, and cannot be: candidates floating different
+      players are incommensurable and the rules define no ordering over
+      them. But the engine solves a matching rather than walking 4.2/4.3,
+      so "does it stay inside the enumeration at all" was an unchecked
+      structural question, and it is now checked over 25+ real middle
+      brackets per run.
+
+      The oracle was wrong twice first, both times by being weaker than
+      the engine — no remainder stage, then no exchanges in the remainder.
+      Recorded in the conformance doc, since that is the failure mode this
+      whole area keeps producing.
 
 - [x] ~~**Article 5.2.5 — which number the parity applies to.**~~
       **Settled 2026-08-17, in this engine's favour, from the handbook.**
