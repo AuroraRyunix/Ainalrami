@@ -43,4 +43,56 @@ defmodule Ainalrami.LogTest do
     assert out =~ "warning: something looks off"
     assert out =~ "error: something is wrong"
   end
+
+  describe "levels" do
+    test "defaults to :normal" do
+      Application.delete_env(:ainalrami, :log_level)
+      assert Log.level() == :normal
+      refute Log.quiet?()
+      refute Log.debug?()
+    end
+
+    test ":debug is a superset of :normal" do
+      Log.set_level(:debug)
+
+      out = capture_io(fn -> Log.step("s") end) <> capture_io(fn -> Log.detail("d") end)
+
+      assert out =~ "==> s"
+      assert out =~ "    d"
+      assert capture_io(fn -> Log.debug("internals") end) =~ "[dbg] internals"
+    end
+
+    test "debug output is suppressed at :normal and :quiet" do
+      for level <- [:normal, :quiet] do
+        Log.set_level(level)
+        assert capture_io(fn -> Log.debug("internals") end) == ""
+      end
+    end
+
+    # The engine calls Log.debug/1 from inside the bracket loop, so the
+    # message must not be BUILT unless it is going to be printed.
+    test "the function form is not evaluated below :debug" do
+      Log.set_level(:normal)
+      me = self()
+
+      capture_io(fn -> Log.debug(fn -> send(me, :evaluated) && "x" end) end)
+
+      refute_received :evaluated
+
+      Log.set_level(:debug)
+      capture_io(fn -> Log.debug(fn -> send(me, :evaluated) && "x" end) end)
+      assert_received :evaluated
+    end
+
+    test "set_quiet/1 still works, and false clears :debug" do
+      Log.set_level(:debug)
+      Log.set_quiet(false)
+
+      assert Log.level() == :normal
+      assert capture_io(fn -> Log.debug("internals") end) == ""
+
+      Log.set_quiet(true)
+      assert Log.quiet?()
+    end
+  end
 end

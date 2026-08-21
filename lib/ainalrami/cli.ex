@@ -30,7 +30,13 @@ defmodule Ainalrami.CLI do
   def run(argv) do
     {flags, positional} = split_flags(argv)
 
-    Log.set_quiet("-q" in flags or "--quiet" in flags)
+    Log.set_level(
+      cond do
+        "-q" in flags or "--quiet" in flags -> :quiet
+        "-d" in flags or "--debug" in flags -> :debug
+        true -> :normal
+      end
+    )
 
     cond do
       "-h" in flags or "--help" in flags -> print_help_and_ok()
@@ -40,7 +46,7 @@ defmodule Ainalrami.CLI do
   end
 
   defp split_flags(argv) do
-    known_bare_flags = ~w(-p -g -c -x --explain -q --quiet -h --help --version)
+    known_bare_flags = ~w(-p -g -c -x --explain -q --quiet -d --debug -h --help --version)
     Enum.split_with(argv, &(&1 in known_bare_flags or &1 =~ ~r/^--[a-z-]+=/))
   end
 
@@ -554,7 +560,8 @@ Round #{round_number} — #{boards} board#{plural(boards)} over " <>
                                                  criteria decided it
 
     Options:
-      -q, --quiet    Suppress the step-by-step trace (verbose is the default)
+      -q, --quiet    Warnings and errors only
+      -d, --debug    Add engine internals (bracket paths, sizes, timings)
       -h, --help     Show this help
           --version  Show the version number
     """)

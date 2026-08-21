@@ -37,6 +37,7 @@ defmodule Ainalrami.Pairing do
   — the shape `Ainalrami.Trf.parse/1` returns.
   """
 
+  alias Ainalrami.Log
   alias Ainalrami.WeightedMatching
 
   # This engine used to carry a second pairing path — a per-bracket
@@ -1705,17 +1706,57 @@ defmodule Ainalrami.Pairing do
   # matchings tie on every rung and on the nearness term, the two graphs
   # could in principle settle it differently; the stages are built to
   # leave no such tie, and the corpus is the judge.
+  # Two paths only so the debug trace can time and label a bracket without
+  # costing anything when it is switched off: `Log.debug?/0` is one
+  # application-env read per bracket, and the timing wrapper is not built
+  # at all otherwise. See `Ainalrami.Log`.
   defp pair_bracket(combined, sgb, nsgb, wsgb, ctx, single_bye?) do
+    if Log.debug?() do
+      {us, {path, result}} =
+        :timer.tc(fn -> pair_bracket_solve(combined, sgb, nsgb, wsgb, ctx, single_bye?) end)
+
+      Log.debug(fn -> bracket_trace(combined, sgb, nsgb, wsgb, path, us) end)
+      result
+    else
+      {_path, result} = pair_bracket_solve(combined, sgb, nsgb, wsgb, ctx, single_bye?)
+      result
+    end
+  end
+
+  # `path` says which of the three routes the bracket took, which is the
+  # first thing worth knowing when one is slow or wrong: `idle` did no
+  # work, `local` solved the bracket on its own graph, `field` fell back to
+  # the whole remaining field. See `pair_bracket/6`'s own comment and
+  # docs/engineering-log.md, "The local graph".
+  defp pair_bracket_solve(combined, sgb, nsgb, wsgb, ctx, single_bye?) do
     m = length(combined)
 
     with false <- idle_bracket?(combined, nsgb, wsgb, ctx),
          true <- local_eligible?(combined, nsgb, wsgb, ctx),
          {:ok, result} <- attempt_local(combined, m, sgb, nsgb, wsgb, ctx, single_bye?) do
-      result
+      {:local, result}
     else
-      :idle -> {[], combined, nsgb, Enum.map(Enum.take(combined, min(wsgb, m)), & &1.points)}
-      _ -> attempt_field(combined, m, sgb, nsgb, wsgb, ctx, single_bye?)
+      :idle ->
+        {:idle, {[], combined, nsgb, Enum.map(Enum.take(combined, min(wsgb, m)), & &1.points)}}
+
+      _ ->
+        {:field, attempt_field(combined, m, sgb, nsgb, wsgb, ctx, single_bye?)}
     end
+  end
+
+  # `nsgb` is the bracket's own size and `sgb` its moved-down count, which
+  # are the two numbers that actually predict cost -- not `length(combined)`,
+  # which includes the peek and is routinely the whole field on a cheap
+  # bracket.
+  defp bracket_trace(combined, sgb, nsgb, wsgb, path, us) do
+    score =
+      case combined do
+        [%{points: p} | _] -> :erlang.float_to_binary(p / 1, decimals: 1)
+        _ -> "?"
+      end
+
+    "bracket score=#{score} size=#{nsgb} mdps=#{sgb} window=#{wsgb} " <>
+      "combined=#{length(combined)} path=#{path} #{us}us"
   end
 
   # A bracket with fewer than two members cannot finalise a pair at all --
