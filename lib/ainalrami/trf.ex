@@ -272,10 +272,109 @@ defmodule Ainalrami.Trf do
     |> Kernel.++(legend_lines(opts[:column_legend], max_round))
     |> Kernel.++(Enum.map(players, &player_line/1))
     |> Kernel.++(Enum.map(teams, &team_line/1))
-    |> Kernel.++(acceleration_lines(players))
-    |> Kernel.++(forbidden_pair_lines(t[:forbidden_pairs]))
+    |> Kernel.++(extension_lines(t, players, max_round, opts[:numeric_extensions]))
     |> Enum.map_join("", &(&1 <> "\r\n"))
   end
+
+  # `XXA`/`XXP` are JaVaFo's spellings and what the sibling project emits,
+  # so they stay the default. `250`/`260` are bbpPairings' own fixed-column,
+  # round-limited siblings — and it is the implementation that DEFINES them,
+  # which is exactly why generating them matters. Until now they were
+  # covered by unit tests written from its source, and never by a file the
+  # real binary had to read back.
+  defp extension_lines(t, players, max_round, true) do
+    rounds = t[:number_of_rounds] || max_round
+
+    numeric_acceleration_lines(players) ++
+      numeric_forbidden_lines(t[:forbidden_pairs], max(rounds, max_round + 1))
+  end
+
+  defp extension_lines(t, players, _max_round, _) do
+    acceleration_lines(players) ++ forbidden_pair_lines(t[:forbidden_pairs])
+  end
+
+  # One `250` per player per round carrying non-zero virtual points.
+  #
+  # A `250` says "these players, over these rounds, get these points", so a
+  # single line can cover a whole accelerated group — but only when that
+  # group is contiguous by rank AND flat across the rounds, which is true of
+  # Baku and false of the random axis. The degenerate range (one player, one
+  # round) is correct for both, and for a corpus that is the better trade:
+  # it puts MORE lines through the parser, not fewer.
+  defp numeric_acceleration_lines(players) do
+    for player <- players,
+        {points, round} <- Enum.with_index(player[:accelerations] || [], 1),
+        points != 0 do
+      # Widths taken from `readAccelerations250` (trf.cpp:418) rather than
+      # from `parse_250/2` below, and they are NOT the same. The C++ reads
+      # half-open 0-based ranges — [4,8) match points, [9,13) game points,
+      # [14,17) and [18,21) the rounds, [22,26) and [27,31) the players —
+      # so every field is separated from the next by one blank column.
+      #
+      # `parse_250/2` reads each field one column wider, swallowing that
+      # separator, which is harmless on the way IN because `read/2` trims.
+      # On the way OUT it is fatal: right-aligning into the wider field puts
+      # the digit in the separator, and the real binary then reads a blank
+      # round and rejects the line. Verified by feeding both to
+      # bbpPairings — the wide form is `Invalid line`, this one pairs.
+      #
+      # Same shape as the `XXA` column bug: a field written one column too
+      # wide, tolerated by the reader we happened to test against and
+      # rejected by the one that defines the format.
+      []
+      |> place({1, 3}, "250")
+      # 5–8 is MATCH points and must stay blank; bbpPairings rejects a `250`
+      # that carries any, and `parse_250/2` enforces the same on the way in.
+      |> place({10, 13}, format_points(points), align: :right)
+      |> place({15, 17}, round, align: :right)
+      |> place({19, 21}, round, align: :right)
+      |> place({23, 26}, player[:rank], align: :right)
+      |> place({28, 31}, player[:rank], align: :right)
+      |> render()
+    end
+  end
+
+  # One `260` per forbidden group, spanning every round.
+  #
+  # `XXP` carries no round limit at all — it means "never pair these" — so
+  # the equivalent `260` has to name a range that outlives the tournament,
+  # not just the rounds already played. Bounding it at `number_of_rounds`
+  # is the subtle version of getting this wrong: on a file whose declared
+  # round count is behind the round actually being paired, the ban expires
+  # exactly when it is needed and the two spellings pair differently.
+  # Caught by diffing bbpPairings' own output on both forms of one
+  # tournament, which is the only way it shows up — each file is
+  # individually valid and parses without complaint.
+  defp numeric_forbidden_lines(nil, _rounds), do: []
+  defp numeric_forbidden_lines([], _rounds), do: []
+
+  defp numeric_forbidden_lines(groups, rounds) do
+    last = max(rounds, 1)
+
+    for group <- groups, ids = group_ids(group), length(ids) >= 2 do
+      ids
+      |> Enum.with_index()
+      |> Enum.reduce(
+        []
+        |> place({1, 3}, "260")
+        |> place({5, 7}, 1, align: :right)
+        |> place({9, 11}, last, align: :right),
+        fn {id, i}, acc ->
+          start = 13 + i * 5
+          place(acc, {start, start + 3}, id, align: :right)
+        end
+      )
+      |> render()
+    end
+  end
+
+  # A group is either a bare list of ranks (`XXP`) or the round-limited
+  # `{ids, first, last}` a `260` parses into. Writing either back out has to
+  # accept both, so that a file read as `260` and written as `260`
+  # round-trips rather than losing its groups.
+  defp group_ids({ids, _first, _last}) when is_list(ids), do: ids
+  defp group_ids(ids) when is_list(ids), do: ids
+  defp group_ids(_), do: []
 
   defp acceleration_lines(players) do
     players

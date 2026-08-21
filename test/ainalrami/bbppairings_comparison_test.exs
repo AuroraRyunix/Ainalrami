@@ -68,10 +68,14 @@ defmodule Ainalrami.BbppairingsComparisonTest do
   player count in a dump's filename are all that is needed; the rest of the
   configuration has to match what produced it.
 
-  Two more cover the `XX` extension lines, and they work because
+  Three more cover the extension lines, and they work because
   bbpPairings implements both — the same file is handed to both engines, so
   the oracle validates them exactly as it validates every other axis:
 
+    * `PAIRING_FUZZ_NUMERIC_EXT` — `1` to write forbidden pairs and
+      acceleration as bbpPairings' fixed-column `260`/`250` instead of
+      JaVaFo's `XXP`/`XXA`. Same tournament, different lines on both
+      sides: a different writer here, a different reader there.
     * `PAIRING_FUZZ_FORBIDDEN_PCT` — percentage of players given one
       arbiter-forbidden opponent, emitted as `XXP`.
     * `PAIRING_FUZZ_ACCEL` — `baku` or `random`, emitted as `XXA`.
@@ -546,11 +550,28 @@ seed #{seed} round #{round}: UNEXPLAINED — we say #{w} White, bbpPairings says
   # same "deliberately colour-blind" stance `Ainalrami.JavafoComparisonTest`
   # takes and for the identical reason (Article 5.1's drawing of lots has
   # no deterministic rule either engine's fixed convention needs to match).
+  # `PAIRING_FUZZ_NUMERIC_EXT=1` swaps JaVaFo's free-form `XXA`/`XXP` for
+  # bbpPairings' own fixed-column `250`/`260`. Worth an axis because
+  # bbpPairings is the implementation that DEFINES those two lines, and
+  # until now they were exercised only by unit tests written from its
+  # source -- nothing had ever handed the real binary a `250` we wrote.
+  # The first attempt was rejected outright (`Invalid line`), which is
+  # the whole argument for generating them rather than asserting them.
   defp build_trf(players, total_rounds, forbidden) do
-    Ainalrami.Trf.serialize(%{
-      tournament: %{name: "Fuzz", type: "swiss", forbidden_pairs: forbidden},
-      players: players
-    }) <> "152 W\r\nXXR #{total_rounds}\r\n"
+    numeric? = System.get_env("PAIRING_FUZZ_NUMERIC_EXT") in ["1", "true"]
+
+    Ainalrami.Trf.serialize(
+      %{
+        tournament: %{
+          name: "Fuzz",
+          type: "swiss",
+          forbidden_pairs: forbidden,
+          number_of_rounds: total_rounds
+        },
+        players: players
+      },
+      numeric_extensions: numeric?
+    ) <> "152 W\r\nXXR #{total_rounds}\r\n"
   end
 
   defp assign_requested_byes(players) do

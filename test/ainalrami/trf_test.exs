@@ -717,4 +717,82 @@ defmodule Ainalrami.TrfTest do
       assert player[:accelerations] == [1.0, 0.5, 0.0]
     end
   end
+
+  describe "numeric_extensions: bbpPairings' fixed-column 250/260" do
+    defp numeric(data), do: Ainalrami.Trf.serialize(data, numeric_extensions: true)
+
+    defp sample_data do
+      %{
+        tournament: %{
+          name: "T",
+          number_of_rounds: 5,
+          forbidden_pairs: [[1, 4]]
+        },
+        players:
+          for r <- 1..4 do
+            %{
+              rank: r,
+              name: "P#{r}",
+              points: 0.0,
+              games: [],
+              accelerations: if(r == 2, do: [1.0], else: [])
+            }
+          end
+      }
+    end
+
+    # The widths are bbpPairings' own, from readAccelerations250
+    # (trf.cpp:418), which reads HALF-OPEN 0-based ranges with a blank
+    # separator column between every field. The parser below reads each
+    # field one column wider and trims, which is harmless on the way in and
+    # was fatal on the way out: right-aligning into the wider field puts the
+    # digit in the separator, and the real binary reads a blank round and
+    # rejects the line. Same shape as the XXA column bug.
+    test "a 250 line puts each field in bbpPairings' columns, not one wider" do
+      line =
+        sample_data() |> numeric() |> String.split("
+") |> Enum.find(&String.starts_with?(&1, "250"))
+
+      assert String.slice(line, 4, 4) == "    ", "cols 5-8 are MATCH points and must be blank"
+      assert String.slice(line, 9, 4) == " 1.0", "cols 10-13 are game points"
+      assert String.slice(line, 14, 3) == "  1", "cols 15-17 are the first round"
+      assert String.slice(line, 18, 3) == "  1", "cols 19-21 are the last round"
+      assert String.slice(line, 22, 4) == "   2", "cols 23-26 are the first player"
+      assert String.slice(line, 27, 4) == "   2", "cols 28-31 are the last player"
+    end
+
+    # XXP means "never pair these" and carries no round limit at all, so a
+    # 260 bounded at number_of_rounds lets the ban EXPIRE on the round being
+    # paired. Both files parse cleanly either way; the only symptom is that
+    # the two spellings pair differently.
+    test "a 260 line outlives the declared round count" do
+      line =
+        sample_data() |> numeric() |> String.split("
+") |> Enum.find(&String.starts_with?(&1, "260"))
+
+      assert String.slice(line, 4, 3) == "  1"
+      last = line |> String.slice(8, 3) |> String.trim() |> String.to_integer()
+      assert last >= 5, "a forbidden pair must still be forbidden in the round being paired"
+      assert String.slice(line, 12, 4) == "   1"
+      assert String.slice(line, 17, 4) == "   4"
+    end
+
+    test "round-trips: what 250/260 write, parse/1 reads back" do
+      parsed = sample_data() |> numeric() |> Ainalrami.Trf.parse()
+
+      assert [{[1, 4], 1, _last}] = parsed.tournament[:forbidden_pairs]
+
+      assert parsed.players |> Enum.map(& &1[:accelerations]) |> Enum.reject(&(&1 in [nil, []])) ==
+               [[1.0]]
+    end
+
+    test "the XX spelling is still the default" do
+      text = Ainalrami.Trf.serialize(sample_data())
+
+      assert text =~ "XXP"
+      assert text =~ "XXA"
+      refute text =~ ~r/^250/m
+      refute text =~ ~r/^260/m
+    end
+  end
 end
