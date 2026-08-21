@@ -161,20 +161,39 @@ Target: a team round should be well inside a millisecond for realistic
 field sizes, because the work is a short walk down a generator, not a
 search. If it is ever slow, the pruning is wrong, not the approach.
 
-## Verification: there is no reference implementation
+## Is any of this required?
 
-Checked, rather than assumed:
+**No.** Endorsement is granted per pairing system, not per program:
+C.04.A says "the endorsement is given for the specific pairing systems
+(one or more)", and the bar is being able to manage Swiss tournaments
+using the FIDE (Dutch) System *or any other approved system* — at least
+one. So C.04.6 is a separate, optional endorsement, and team support is a
+product decision rather than a prerequisite for FE1 on the Dutch system.
+
+Worth knowing before spending the effort, and worth re-reading before
+starting: nothing below is blocking anything.
+
+## Verification: no reference we can automate against
+
+Team pairing is not unsolved — **Swiss-Manager** does team Swiss and team
+round-robin, is FIDE-endorsed, is used by 180+ federations, and is what
+pairs the Olympiad and most national leagues. It is also closed-source
+Windows software, so it cannot be read, run headless, or diffed against a
+generated corpus.
+
+What that leaves is no *automatable* oracle. Checked, rather than
+assumed:
 
 | | teams? |
 |---|---|
 | bbpPairings 6.0.0 | **no** — no team code at all; `--dutch` and `--burstein` are both individual |
 | JaVaFo | no |
 | Gacrux (`pairingchecker.py`) | no |
-| SWAR 6.65 | **no** — its `Pairing*.cpp` has no team pairing; its "team" hits are TRF `013` block handling, same as ours |
+| SWAR 6.65 | **no** — searched for `Team` AND the French `Equipe`; neither appears anywhere, and there is no team tournament type. It is an individual-tournament program, which is a surprise for the Belgian tool given the interclub is team-based |
 
-This inverts the method that made the individual engine trustworthy.
-There is no oracle to run a corpus against, so "we agree with bbpPairings
-across millions of tournaments" is simply unavailable.
+This inverts the method that made the individual engine trustworthy: there
+is no oracle to run a corpus against, so "we agree with bbpPairings across
+millions of tournaments" is unavailable here.
 
 **The good news is that the regulation hands back something stronger.**
 For the individual system, exhaustive verification was impossible in
