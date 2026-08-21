@@ -69,6 +69,43 @@ answer on both (see below).
 independently of agreement — it is the question with a right answer,
 where "does bbpPairings pair it the same way" is not.
 
+### Replication on fresh seeds, post-optimisation
+
+**5,993,000 tournaments, 44,473,264 rounds, 487,338,797 individual
+pairings, ZERO disagreements** — the 2026-08-21 run, same seventeen axes,
+same machine, ~14.7 hours.
+
+Two things differ from the run above, and both are the point of having
+done it:
+
+* **Different engine.** This ran on `adae426`, which makes `finalize_pair`
+  a pure edge removal and skips `prepare_vertex` — a matching-layer
+  optimisation, i.e. exactly the kind of change that can be correct on
+  every test and still wrong on the millionth bracket. It is not.
+* **Disjoint seeds** (from 9,000,001), so this is an independent corpus
+  rather than a re-run of the same tournaments.
+
+The round and pairing counts differ slightly from the first run for the
+same reason the seeds do: how early a small field exhausts its legal
+opponents is seed-dependent, so the same axis definition yields a
+marginally different amount of work each time.
+
+**Zero disagreements does not mean the [C2] defect is gone.** Both
+disputes above were bbpPairings defects on specific seeds; fresh seeds
+simply did not land on that configuration again. bbpPairings is unchanged
+and still wrong there, which is why all three disputes stay pinned as
+regression tests rather than being treated as resolved by this run.
+
+One caveat on the headline count, which applies to both runs equally:
+2,724,198 tournaments (45.5%) ended early because bbpPairings ran out of
+legal pairings — overwhelmingly in the 4–10 player axes, where nine rounds
+is arithmetically impossible without repeats (88.2% of `4–10, 15% byes`
+and 78.2% of `4–10, plain` terminated early). Those tournaments are
+excluded from the rates, so agreement is measured up to exhaustion and
+not about it: if this engine were willing to pair a round bbpPairings
+declines, these axes could not show it. That is the one behaviour the
+corpus is structurally blind to.
+
 ### What this run added over its predecessors
 
 It is the first corpus measured on the local-graph engine (see

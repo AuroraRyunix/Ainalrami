@@ -45,6 +45,18 @@ individual pairings, two disagreements, zero illegal rounds** (run of
 FIDE's FE1 endorsement allows one difference per 500 tournaments. This is
 one per 3 million — nearly four orders of magnitude inside the bar.
 
+The same seventeen axes were re-run on **2026-08-21** with disjoint seeds,
+against the newer matching-layer optimisation (`finalize_pair` as a pure
+edge removal): **5,993,000 tournaments, 487,338,797 individual pairings,
+zero disagreements, zero illegal rounds.** Two independent corpora of
+~488M pairings each, then — and the optimisation is correctness-neutral at
+that scale, which is the whole reason for re-running it.
+
+Zero disagreements the second time does not retire the two below: both
+were bbpPairings defects on particular seeds, and fresh seeds simply did
+not land on that configuration again. bbpPairings is unchanged and still
+wrong there, so all three known disputes stay pinned as regression tests.
+
 Both disagreements are **not defects here**: bbpPairings awards a second
 pairing-allocated bye to a player who already has one, which absolute
 criterion C2 forbids. Gacrux — a third, independent implementation —
