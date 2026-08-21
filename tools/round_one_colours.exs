@@ -93,6 +93,24 @@ gacrux =
     other -> other
   end
 
+# JaVaFo is the PRE-2026 reference. The old rule (E.5) tested the parity of
+# a "pairing number", defined in A.2 as the initial ranking "and subsequent
+# modifications depending on possible late entries or rating adjustments";
+# the 2026 rewrite replaced that with a TPN pinned to C.04.2 Article 2. If
+# JaVaFo renumbers too, the behaviour bbpPairings and Gacrux share is
+# inherited from the old wording rather than invented -- which is a very
+# different dispute from two engines independently misreading 5.2.5.
+javafo =
+  if Ainalrami.Test.Javafo.available?() do
+    case Ainalrami.Test.Javafo.pair(trf) do
+      {:ok, pairs} -> pairs
+      other -> other
+    end
+  else
+    IO.puts("javafo.jar not found at #{Ainalrami.Test.Javafo.jar_path()} -- skipping")
+    []
+  end
+
 by_board = fn pairs ->
   case pairs do
     list when is_list(list) ->
@@ -106,9 +124,10 @@ end
 ours_by = by_board.(ours)
 theirs_by = by_board.(theirs)
 gacrux_by = by_board.(gacrux)
+javafo_by = by_board.(javafo)
 
-IO.puts("\n board  | top TPN | parity | ours  | bbp   | gacrux | who follows 5.2.5?")
-IO.puts(" -------+---------+--------+-------+-------+--------+-------------------")
+IO.puts("\n board  | top TPN | parity | ours  | bbp   | gacrux | javafo | who follows 5.2.5?")
+IO.puts(" -------+---------+--------+-------+-------+--------+--------+-------------------")
 
 ours_by
 |> Map.keys()
@@ -125,16 +144,18 @@ ours_by
   ow = Map.get(ours_by, board)
   tw = Map.get(theirs_by, board)
   gw = Map.get(gacrux_by, board)
+  jw = Map.get(javafo_by, board)
 
   who =
-    [{"ours", ow}, {"bbp", tw}, {"gacrux", gw}]
+    [{"ours", ow}, {"bbp", tw}, {"gacrux", gw}, {"javafo", jw}]
     |> Enum.filter(fn {_, w} -> w == article_white end)
     |> Enum.map_join(" ", &elem(&1, 0))
 
   IO.puts(
     " #{String.pad_trailing("#{top}v#{bottom}", 6)} |   #{String.pad_leading("#{top}", 5)} |  #{parity}  |" <>
       " #{String.pad_leading("#{ow}", 5)} | #{String.pad_leading("#{tw}", 5)} |" <>
-      " #{String.pad_leading("#{gw}", 6)} | #{if who == "", do: "NOBODY", else: who}"
+      " #{String.pad_leading("#{gw}", 6)} | #{String.pad_leading("#{jw}", 6)} |" <>
+      " #{if who == "", do: "NOBODY", else: who}"
   )
 end)
 

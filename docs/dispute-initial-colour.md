@@ -66,6 +66,63 @@ The three therefore agree whenever the field is complete, because the two
 numberings coincide, and diverge only once somebody has been registered
 without ever being paired.
 
+### The rule CHANGED, and no reference followed it (2026-08-21)
+
+This is the heart of the dispute, and it was missed until someone asked
+the obvious question: did the rules change?
+
+They did, on 1 February 2026.
+
+**Before** — C.04.3 Article E.5, effective till 31 January 2026:
+
+> If the higher ranked player has an odd **pairing number**, give him the
+> initial-colour; otherwise give him the opposite colour.
+
+and A.2 defined that number as assigned by the initial ranking list **"and
+subsequent modifications depending on possible late entries or rating
+adjustments"**, with a note directing the reader to C.04.2.B/C "for the
+proper management of the pairing numbers".
+
+**After** — C.04.3 Article 5.2.5, effective 1 February 2026:
+
+> If the higher ranked player has an odd **TPN** (see Article 1.1), give
+> them the initial-colour; otherwise, give them the opposite colour.
+
+Article 1.1 defines nothing; it delegates wholly to C.04.2 Article 2,
+which allows a TPN to move for exactly two reasons — a correction to the
+ranking data, barred after the fourth round, and the closing of the
+participant list — and draws no distinction whatever between a registered
+player who has played and one who has not.
+
+So a loosely-worded "pairing number" carrying "subsequent modifications"
+in its own definition was replaced by a tightly pinned TPN. Under the OLD
+wording, renumbering is defensible. Under the new one it has no basis.
+
+**And JaVaFo does it too.** Run on the same file as the table below, the
+pre-2026 reference returns byte-identical output to bbpPairings:
+
+```
+4
+2 7      <- White = TPN 2, which is EVEN, with initial-colour White
+8 4
+5 9
+10 6
+```
+
+That reframes the whole dispute. It is not "two independent
+implementations of the 2026 rules both misread 5.2.5", which was always
+the weakest part of this document's case — three implementations agreeing
+is evidence, and it was evidence against us. It is:
+
+> The 2026 rewrite narrowed the definition, and no reference
+> implementation changed with it. bbpPairings 6.0.0 and Gacrux carry
+> pre-2026 behaviour forward into engines that claim the 2026 rules.
+
+Their agreement is shared lineage rather than independent derivation, so
+it no longer counts against the reading here. What it does show is that
+the change was easy to miss — which is a reason to have it confirmed in
+writing rather than to assume either answer.
+
 ### The references' reading is not unreasonable
 
 Worth saying plainly, because it changes what this dispute is. Skipping a
