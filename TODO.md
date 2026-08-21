@@ -157,7 +157,33 @@ million tournaments (see [docs/validation.md](docs/validation.md)).
 
       150 tournaments / 7,338 pairings at 100.00% since. `XXP`/`XXA`
       remain the default and the forms the sibling project emits.
-- [ ] Team tournaments
+- [ ] **Team tournaments (C.04.6).** Spec read and written up in
+      [docs/conformance-c0406-teams.md](docs/conformance-c0406-teams.md)
+      before any code, 2026-08-21. Three findings that change the shape of
+      the work:
+
+      It is NOT the Dutch engine applied to teams. C.04.6 has its own
+      criteria (C1-C3 absolute, C4-C10 quality — nine rungs against
+      twenty-one) and, crucially, its own procedure: Article 3.6 defines an
+      identifier, orders pairings lexicographically by it, and takes the
+      FIRST satisfying C1/C8/C9/C10. An order and a predicate, not a
+      scoring function — so `WeightedMatching` is not involved in choosing
+      a pairing at all, only in certifying [C3] completability.
+
+      NO reference implementation pairs teams. Checked: bbpPairings has no
+      team code, JaVaFo and Gacrux are individual-only, and SWAR's own
+      `Pairing*.cpp` has none either. The corpus method that made the
+      individual engine trustworthy is unavailable. The regulation hands
+      back something stronger though: 3.6 defines the answer AS the head of
+      an enumerable order, so for small brackets a test can BE the
+      definition — enumerate, sort, filter, assert the head. That is a
+      proof rather than a correlation, and it is the opposite of the
+      individual system, where exhaustive verification is impossible in
+      principle.
+
+      Article 4.3.1 is the SAME TPN-parity rule as the individual 5.2.5,
+      which is currently an open question to the SPP. Team colour
+      allocation should wait for that reply or it gets built twice.
 - [x] ~~Late entrants~~ **not a distinct axis either** (2026-08-17). A
       blank early round is indistinguishable from a zero-point bye
       everywhere the engine looks — same points, same
