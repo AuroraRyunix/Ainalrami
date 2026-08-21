@@ -98,18 +98,41 @@ What is left is one limit of method rather than a known divergence.
       one-vertex stand-in for the next group. The window-graph attempt
       that preceded it is recorded there too, reverted at 99.34%.
 
-- [ ] **The last 2.5 s at 1,000 players, and the one uncertified
-      condition.** What remains is on 200-vertex graphs: the cold solve
-      of each bracket's own graph (the greedy start pairs half), the
-      stage-4 re-solve (every remainder vertex prepared, matching
-      rediscovered), and the stage-8 per-pair solves. A smarter warm
-      start for stage 4 -- it almost always returns the stage-3 matching
-      -- is the obvious lever. And `@local_min_next_group` (16) is the
-      one condition on the local path not certified term by term: that
-      an odd bracket's float choice does not depend on which member of a
-      dense next group it lands on. The 5M run on the final engine is
-      its judge; if it ever disagrees, the fix is to raise the threshold
-      or certify the group's matching number directly.
+- [x] ~~**The one uncertified condition.**~~ **Judged 2026-08-21.**
+      `@local_min_next_group` (16) — that an odd bracket's float choice
+      does not depend on which member of a dense next group it lands on —
+      was the one condition on the local path not certified term by term,
+      and this note said "the 5M run on the final engine is its judge".
+
+      bigrun5 was that run and then some: 5,993,000 tournaments on the
+      final engine (`adae426`), 487,338,797 individual pairings, **zero
+      disagreements**. The condition has been judged and it held.
+
+- [ ] **The last ~7.7 s at 1,000 players.** Optional, and recorded as
+      such: the engine is already level with Gacrux and ~6x quicker than
+      bbpPairings on pairing work, so nothing here is waiting on it.
+
+      The old text under this heading was wrong in a way worth keeping
+      visible. It said the cold solve's greedy start "pairs half"; it
+      pairs **one pair** on every local bracket graph (992 of 1,000 on the
+      FIELD graph, 2 of 206 on a local one). That is the whole 2.3 s cold
+      solve: a local bracket reaches its optimum almost entirely through
+      augmenting search, from an almost empty matching.
+
+      The cause is the dual initialisation, not the greedy pass. `y_v`
+      starts at `max_u w(v,u)/2`, so an edge is tight only when its
+      endpoints are each other's heaviest — and the criteria make nearly
+      every vertex in a bracket point at the same few top-ranked
+      opponents. A star has one mutually-heaviest pair. Cross-bracket
+      edges spread the maxima out, which is why the field graph is fine.
+
+      So the lever is a feasible dual that makes more edges tight on a
+      star-shaped weight matrix. Real work: any replacement must keep
+      `y_u + y_v >= w` on every edge, and lowering one dual to create a
+      tight edge can violate another. `tools/matching_baseline.exs` is the
+      net. Three other levers were measured and closed — see the
+      engineering log, "Where the remaining time goes, and three levers
+      that do not move it".
 
 - [x] ~~**The last 1.5–2× at 209-400 players.**~~ **Overtaken 2026-08-19
       evening**: 209 players 0.37 s against the reference's 0.72 s, 400
