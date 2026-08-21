@@ -211,7 +211,7 @@ million tournaments (see [docs/validation.md](docs/validation.md)).
 
 ## Upstream
 
-- [ ] **File the bbpPairings C2 report.**
+- [x] ~~**File the bbpPairings C2 report.**~~ **Filed 2026-08-21.**
       [docs/bbppairings-c2-bug-report.md](docs/bbppairings-c2-bug-report.md)
       is written and submittable; it has not been submitted. **Now rests on
       THREE independent positions** (2026-08-20), from three different
@@ -224,7 +224,26 @@ million tournaments (see [docs/validation.md](docs/validation.md)).
       disagreement in a multi-million-tournament corpus is the same rule
       in the same direction is itself evidence: one defect, narrow
       trigger, not scattered edge cases.
-- [ ] **Decide what to do with the 5.2.5 dispute.**
+- [x] ~~**Decide what to do with the 5.2.5 dispute.**~~ **Raised with the
+      SPP, 2026-08-21**, awaiting a reply.
+
+      The question changed shape first, and for the better. C.04.3 was
+      rewritten on 1 February 2026: the old Article E.5 tested the parity
+      of a "pairing number", which A.2 defined as the initial ranking "and
+      subsequent modifications", while the new 5.2.5 tests a TPN and
+      Article 1.1 delegates that wholly to C.04.2 Article 2 — which allows
+      exactly two modifications and distinguishes nowhere between a player
+      who has played and one who has not.
+
+      And JaVaFo, which PREDATES the rewrite, renumbers exactly as
+      bbpPairings and Gacrux do. So this is not two implementations
+      independently misreading a 2026 sentence; it is pre-2026 behaviour
+      carried forward into engines claiming the 2026 rules, which inverts
+      the strongest argument against this engine's reading. Three
+      implementations agreeing was evidence; shared lineage is not.
+
+      Letter in [docs/spp-question-initial-colour.md](docs/spp-question-initial-colour.md).
+
       [docs/dispute-initial-colour.md](docs/dispute-initial-colour.md) is
       written. It is the stronger of the two cases — it rests on a
       definition quoted verbatim from C.04.2 rather than on an argument
