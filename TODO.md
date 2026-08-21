@@ -104,9 +104,26 @@ What is left is one limit of method rather than a known divergence.
 - [x] ~~**The last 1.5–2× at 209-400 players.**~~ **Overtaken 2026-08-19
       evening**: 209 players 0.37 s against the reference's 0.72 s, 400
       players 1.33 s against 3.05 s -- the local graph, above. The
-      per-operation levers recorded here (narrower weights, carrying the
-      forest across stages) are still untried and still the only ones
-      left on the matcher itself; "fewer solves per bracket" is closed:
+      per-operation levers recorded here are now **measured and mostly
+      closed** — see the engineering log, "Where the remaining time goes,
+      and three levers that do not move it" (2026-08-21).
+
+      Narrower weights is DEAD: the weights are 512 bits, narrowing the
+      spans to bracket size saves ~31 of them (eight limbs either way),
+      and a tuple of small integers loses to one bignum add (120 ns vs 21
+      machine-word adds plus an allocation). The packed bignum is already
+      the right representation, which is the opposite of what this note
+      used to assume.
+
+      Parallelism is DEAD too, for the record, since it is the obvious
+      idea on the BEAM: the per-pair solves thread the solver state
+      through a strict reduce and brackets cascade floats top-down, so
+      both are sequentially dependent by construction.
+
+      Carrying the forest across stages remains untried. So does the one
+      lever with order-of-magnitude potential, which is not on the matcher
+      at all: Article 3's transposition procedure as a fast path, with
+      this matcher as fallback. "Fewer solves per bracket" stays closed:
       one of 124 solves changed nothing.
 
 ## Harness

@@ -3050,3 +3050,127 @@ a real, unconditional win with no corpus cost: `mix test` (187/187),
 optimal and valid), all seven corpus axes at 100.00%, and board-for-board
 identical output at both 400 (200/200) and 1,000 (500/500) players
 against bbpPairings.
+
+## Where the remaining time goes, and three levers that do not move it (2026-08-21)
+
+Re-measured on the 36-core box against freshly generated fields (the
+2026-08-19 files were not kept), all three engines on the same input, best
+of three, cold process. **All three return identical boards at every size**
+— bbpPairings and this engine byte-for-byte, Gacrux differing only by a
+trailing tab line.
+
+| | start-up floor | 209 | 400 | 1,000 |
+|---|---|---|---|---|
+| bbpPairings 6.0.0 | 6 ms | 417 ms | 2,094 ms | 43,760 ms |
+| Ainalrami | **604 ms** | 960 ms | 1,567 ms | 8,299 ms |
+| Gacrux | 252 ms | 587 ms | 1,346 ms | 7,921 ms |
+
+The floor is measured on a 30-player file, where the pairing work is
+nil. Subtracting each engine's own:
+
+| pairing work | bbpPairings | Ainalrami | Gacrux |
+|---|---|---|---|
+| 209 | 411 ms | **356 ms** | 335 ms |
+| 400 | 2,088 ms | **963 ms** | 1,094 ms |
+| 1,000 | 43,754 ms | **7,695 ms** | 7,669 ms |
+
+So 1.15x–5.7x quicker than the C++ reference, and *level with* the Python
+one — faster at 400, within 0.3% at 1,000. The README's older "1.15x to
+1.45x slower than the Python one" no longer holds; that gap closed.
+
+At 209 players 63% of the wall clock is booting the BEAM, which is why
+the reference "wins" there and why that loss does not exist inside a host
+application that is already running.
+
+### The cost is four brackets
+
+Instrumented `pair_bracket/6` at 1,000 players. `nsgb` is the bracket's
+own size; `sgb` is its moved-down count.
+
+| nsgb | sgb | path | cost | share |
+|---|---|---|---|---|
+| 205 | 0 | local | 3.75 s | **42%** |
+| 178 | 0 | local | 1.40 s | 16% |
+| 184 | 1 | local | 1.27 s | 14% |
+| 113 | 0 | local | 0.81 s | 9% |
+| seven others | | | 0.9 s | 10% |
+
+Four brackets are 89% of the round, and cost scales steeply with bracket
+size rather than with the combined list — the three largest *combined*
+lists (1000, 992, 970) are nearly free. Anything that does not make large
+brackets cheaper is not worth doing.
+
+### `finalize_pair/3` as a pure removal: +2%
+
+A/B on the same box and files, boards identical: 209 players 947 -> 960 ms,
+400 players 1,580 -> 1,567 ms, 1,000 players 8,488 -> **8,299 ms**. Noise
+at the two smaller sizes, 2.2% at the largest. It targeted the 1.9 s
+stage-8 block and returned ~0.2 s. Correctness-neutral (the 487M-pairing
+corpus) and, it turns out, performance-neutral too.
+
+### Dead lever 1: the natural pairing is not the answer
+
+Gacrux answers every large bracket in "0.00 s" without a matcher, so the
+obvious idea is to check whether the natural S1-S2 pairing is already
+optimal and skip the solve when it is. Measured how many natural pairs
+survive into the matcher's answer:
+
+| bracket | natural pairs kept |
+|---|---|
+| 205 | 33 / 102 |
+| 178 | 15 / 89 |
+| 113 | 4 / 56 |
+| 78 | 6 / 39 |
+
+7% to 32%. By round 6 the colour and rematch constraints have rearranged
+almost everything, so the check would essentially never fire.
+
+That is not what Gacrux does either. It walks Article 3's transposition
+order and accepts the first candidate that is legal and meets a counting
+bound on the colour criteria, with completability read off a precomputed
+table. It reaches the same answer because that walk is what the
+regulations *define* the answer to be. That is a second pairing algorithm,
+not a shortcut into this one — and its own author notes it degrades past
+500 players. It remains the only lever with order-of-magnitude potential.
+
+### Dead lever 2: the weights cannot usefully be narrowed
+
+Measured, not estimated: edge weights are **512 bits** — eight limbs.
+
+The idea was that the width is load-bearing in general but not per
+bracket, so a bracket could pack only the criteria that actually vary in
+it. It does not pay. `count_span` is `length(field) + 1`; narrowing it to
+the local graph's size saves about 1.7 bits per power of `s`, roughly 31
+bits across the whole encoding. 512 -> 481 is eight limbs -> eight limbs.
+Nothing.
+
+Nor does changing the representation. Measured on the box:
+
+| | 512-bit | 58-bit |
+|---|---|---|
+| add | 120.5 ns | 47.2 ns |
+| compare | 35.4 ns | 13.5 ns |
+
+A tuple of 21 small integers with component-wise arithmetic would need 21
+machine-word adds plus a tuple allocation to replace one 120 ns bignum
+add. **The packed bignum is already the efficient representation**, which
+is the opposite of what the "narrow the weights" note in TODO.md assumed.
+
+### Dead lever 3: not parallelism either
+
+`stage_first_group_partners/1` is a strict `Enum.reduce` threading the
+solver state, each iteration finalising a pair and re-solving on the
+result, so the per-pair solves are sequentially dependent by construction.
+Brackets cascade floats top-down and are dependent for the same reason.
+The only genuinely parallel spot is the `changes` comprehension in
+`stage_exchange_weights/1` — O(remainder^2) pure `exchange_weight/4` calls
+— and the profile attributes that stage's cost to the solve, not the
+comprehension. A 36-core box buys this workload close to nothing.
+
+### What is actually left
+
+One lever, and it is a project: Article 3's transposition procedure as a
+fast path with this matcher as the fallback and the oracle. Everything
+else measured here is percentages on a round that is already level with
+the fastest implementation in existence and several times quicker than the
+FIDE-endorsed one.
