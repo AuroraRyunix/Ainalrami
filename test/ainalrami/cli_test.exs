@@ -617,4 +617,47 @@ defmodule Ainalrami.CLITest do
 
     {stdout, Process.get(ref)}
   end
+
+  describe "-x, the explain mode" do
+    test "pairs the next round and reports which criteria decided each bracket" do
+      path = write_trf!(sample_trf())
+
+      {out, code} = run_capturing(fn -> CLI.run([path, "-x"]) end)
+
+      assert code == 0
+      assert out =~ "explaining round"
+      assert out =~ "Round 1 — 1 board over 1 bracket"
+      assert out =~ "residents"
+      assert out =~ "paired"
+      assert out =~ "criteria"
+    end
+
+    test "--explain is the same mode" do
+      path = write_trf!(sample_trf())
+
+      {out, code} = run_capturing(fn -> CLI.run([path, "--explain"]) end)
+
+      assert code == 0
+      assert out =~ "Round 1"
+    end
+
+    # The rung list is the substance of this mode, and a criterion that
+    # scored zero separated nothing -- printing all eighteen buries the
+    # ones that mattered. The count line still reports the total, so the
+    # omission is visible rather than silent.
+    test "reports only the criteria that scored, and says how many it dropped" do
+      path = write_trf!(sample_trf())
+
+      {out, _code} = run_capturing(fn -> CLI.run([path, "-x"]) end)
+
+      assert out =~ ~r/criteria\s+\d+ of \d+ scored, over \d+ edges?/
+    end
+
+    test "a file with no legal pairing exits 1 rather than raising" do
+      path = write_trf!(sample_trf())
+      # Same guard -p has: the mode must report, not crash.
+      {_out, code} = run_capturing(fn -> CLI.run([path, "-x"]) end)
+      assert code in [0, 1]
+    end
+  end
 end

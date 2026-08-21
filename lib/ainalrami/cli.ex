@@ -40,7 +40,7 @@ defmodule Ainalrami.CLI do
   end
 
   defp split_flags(argv) do
-    known_bare_flags = ~w(-p -g -c -q --quiet -h --help --version)
+    known_bare_flags = ~w(-p -g -c -x --explain -q --quiet -h --help --version)
     Enum.split_with(argv, &(&1 in known_bare_flags or &1 =~ ~r/^--[a-z-]+=/))
   end
 
@@ -102,7 +102,8 @@ defmodule Ainalrami.CLI do
       positional == [] -> usage_error("missing input TRF file")
       "-p" in flags -> pair(hd(positional), tl(positional))
       "-c" in flags -> check(hd(positional))
-      true -> usage_error("missing mode flag: one of -p, -g, -c")
+      "-x" in flags or "--explain" in flags -> explain(hd(positional))
+      true -> usage_error("missing mode flag: one of -p, -g, -c, -x")
     end
   end
 
@@ -170,6 +171,106 @@ defmodule Ainalrami.CLI do
       {:error, :halt} -> 1
     end
   end
+
+  # `input.trf -x` — pair the next round and then say WHY, bracket by
+  # bracket, from the engine's own criteria rather than by reconstructing
+  # an argument from the finished boards.
+  #
+  # This exists because the reasoning was already computed and had no way
+  # of being asked for. `Pairing.explain_round/3` has been here since the
+  # adjudicator needed it, but only as a library function, so a host
+  # application that is not this project's own could pair with the engine
+  # and then had to re-derive the explanation from the results. That
+  # re-derivation is an inference; this is the thing itself.
+  #
+  # Two limits, both inherited from `explain_round/3` and both worth
+  # printing rather than hiding: it scores the pairs a bracket KEEPS plus
+  # those reaching into the next group, so a criterion reads zero when it
+  # genuinely did not separate anything; and the rung values are SUMS over
+  # a bracket's edges, so they compare across answers only when the edge
+  # counts match.
+  defp explain(input_path) do
+    Log.step("Loading #{input_path}")
+
+    with {:ok, text} <- read_input(input_path),
+         {:ok, parsed} <- parse_input(text) do
+      round_count = report_roster(parsed)
+      Log.step("Pairing engine")
+      Log.detail("explaining round #{round_count + 1}")
+      report_extensions(parsed)
+
+      case pair_next_round(parsed.players, parsed.tournament) do
+        {:ok, pairs} ->
+          reports =
+            Pairing.explain_round(parsed.players, pairs, pairing_opts(parsed.tournament))
+
+          IO.write(render_explanation(reports, pairs, round_count + 1))
+          0
+
+        {:error, :halt} ->
+          1
+      end
+    else
+      {:error, :halt} -> 1
+    end
+  end
+
+  defp render_explanation(reports, pairs, round_number) do
+    boards = Enum.count(pairs, fn {_w, b} -> b != nil end)
+
+    header =
+      "
+Round #{round_number} — #{boards} board#{plural(boards)} over " <>
+        "#{length(reports)} bracket#{plural(length(reports))}
+"
+
+    header <> Enum.map_join(Enum.with_index(reports, 1), "", &render_bracket/1)
+  end
+
+  defp render_bracket({report, index}) do
+    """
+
+    Bracket #{index} · score #{format_score(report.group)} · #{length(report.order)} player#{plural(length(report.order))}
+    #{row("moved down", report.mdps)}
+    #{row("residents", report.residents)}
+    #{row("paired", Enum.map(report.pairs, fn {a, b} -> "#{a}-#{b}" end))}
+    #{row("floats down", report.floats)}
+    #{render_rungs(report)}
+    """
+  end
+
+  defp row(label, []), do: "  #{String.pad_trailing(label, 12)} —"
+  defp row(label, values), do: "  #{String.pad_trailing(label, 12)} #{Enum.join(values, ", ")}"
+
+  # Only the rungs that actually scored. A zero means the criterion did not
+  # separate anything in this bracket, and printing nineteen of them buries
+  # the two that did.
+  defp render_rungs(%{rungs: rungs, edge_count: edges}) do
+    scored = Enum.reject(rungs, fn {_label, value} -> value == 0 end)
+
+    head =
+      "  #{String.pad_trailing("criteria", 12)} #{length(scored)} of #{length(rungs)} scored, " <>
+        "over #{edges} edge#{plural(edges)}"
+
+    case scored do
+      [] ->
+        head <> "
+                 (nothing separated this bracket)"
+
+      _ ->
+        head <>
+          Enum.map_join(scored, "", fn {label, value} ->
+            "
+                 #{String.pad_trailing(label, 30)} #{value}"
+          end)
+    end
+  end
+
+  defp format_score(score) when is_float(score), do: :erlang.float_to_binary(score, decimals: 1)
+  defp format_score(score), do: to_string(score)
+
+  defp plural(1), do: ""
+  defp plural(_), do: "s"
 
   # No legal pairing can mean the field has genuinely run out of legal
   # opponents (bbpPairings' own `NoValidPairingException` — see
@@ -444,8 +545,13 @@ defmodule Ainalrami.CLI do
     Usage:
       ainalrami <input.trf> -p [<output.trf>]   Pair the next round (writes to
                                                 stdout if <output.trf> is omitted)
-      ainalrami <input.trf> -g                  Random Tournament Generator (not yet implemented)
-      ainalrami <input.trf> -c                  Pairings Checker (not yet implemented)
+      ainalrami -g [<output.trf>]                Random Tournament Generator
+      ainalrami <input.trf> -c                   Pairings Checker: replay a
+                                                 finished tournament and diff
+                                                 every round against this engine
+      ainalrami <input.trf> -x                   Explain: pair the next round and
+                                                 report, per bracket, which
+                                                 criteria decided it
 
     Options:
       -q, --quiet    Suppress the step-by-step trace (verbose is the default)
