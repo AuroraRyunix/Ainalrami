@@ -1,6 +1,6 @@
 defmodule Ainalrami.WeightedMatching do
   @moduledoc """
-  Maximum-weight matching in a general (non-bipartite) graph — the
+  Maximum-weight matching in a general (non-bipartite) graph - the
   Galil/Micali/Gabow (1986) primal-dual algorithm, confirmed as what
   bbpPairings actually uses from its own source (`src/matching/computer.h`:
   "the basic algorithm presented in 'An O(EV log V) Algorithm for Finding
@@ -8,17 +8,17 @@ defmodule Ainalrami.WeightedMatching do
 
   This is a port of the CONTROL FLOW read directly from that source
   (`src/matching/detail/graph.cpp`, `rootblossom.cpp`, `parentblossom.cpp`,
-  `computer.cpp`) — not a reconstruction from memory. An earlier attempt
+  `computer.cpp`) - not a reconstruction from memory. An earlier attempt
   in this project WAS written from memory and was wrong in a way that
   wouldn't have announced itself (a stub main loop, a silently-overwritten
-  branch) — exactly the failure mode a weighted matcher is dangerous for,
+  branch) - exactly the failure mode a weighted matcher is dangerous for,
   since a wrong result here is a legal-looking pairing that simply isn't
   the best one, not an illegal one a legality check would catch.
 
   ## Finding the minimum without rescanning
 
   Every "find the minimum X" step in `graph.cpp` was originally reproduced
-  here as a plain `Enum` walk over the whole state — a much smaller and
+  here as a plain `Enum` walk over the whole state - a much smaller and
   more directly verifiable translation, at the cost of the asymptotics
   bbpPairings buys with its `minOuterEdges` tables and per-blossom
   `minOuterEdgeResistance`.
@@ -28,7 +28,7 @@ defmodule Ainalrami.WeightedMatching do
   so once the engine was pointed at a 209-player field, where the whole
   round is handed to this module 124 times: one round took ninety seconds.
 
-  The two dominant scans are now maintained incrementally instead — see
+  The two dominant scans are now maintained incrementally instead - see
   the "delta-scan caches" section below for what is stored and, more
   importantly, for the property that makes maintaining it sound. The
   remaining walks are over one blossom or one label class rather than over
@@ -49,24 +49,24 @@ defmodule Ainalrami.WeightedMatching do
   before something becomes tight, and reacting to whichever thing that
   is:
 
-    * an unmatched OUTER vertex's own dual variable hits zero — done,
+    * an unmatched OUTER vertex's own dual variable hits zero - done,
       matching increases by one (see `graph.cpp`'s
       `!minOuterDualVariable` branch)
     * a ZERO-labelled (already-zero-dual, unmatched) vertex becomes
-      tight against an OUTER vertex — augment directly between them
-    * two OUTER vertices in DIFFERENT trees become tight — augment
+      tight against an OUTER vertex - augment directly between them
+    * two OUTER vertices in DIFFERENT trees become tight - augment
       between them
-    * two OUTER vertices in the SAME tree become tight — that closes an
+    * two OUTER vertices in the SAME tree become tight - that closes an
       odd cycle; contract it into one blossom
     * a FREE (matched, not yet in the forest) vertex becomes tight
-      against an OUTER vertex — grow the tree: label it INNER, label its
+      against an OUTER vertex - grow the tree: label it INNER, label its
       match OUTER
-    * an INNER blossom's OWN dual variable hits zero — it has no slack
+    * an INNER blossom's OWN dual variable hits zero - it has no slack
       left to contribute; dissolve it back into its children, relabelling
       each by position relative to where the tree entered it
 
   Verified against `Ainalrami.Matching`'s exact subset-DP as an
-  independent oracle — see `weighted_matching_test.exs` — because total
+  independent oracle - see `weighted_matching_test.exs` - because total
   weight is the one thing a legality check cannot confirm.
 
   ## Doubled weights
@@ -81,7 +81,7 @@ defmodule Ainalrami.WeightedMatching do
   Maximum-weight matching over vertices `0..n-1`.
 
   `edges` is `[{i, j, weight}]` with POSITIVE integer weights (zero and
-  negative are treated as "no edge" — bbpPairings' own convention, and
+  negative are treated as "no edge" - bbpPairings' own convention, and
   safe here because `Ainalrami.Pairing`'s packed criterion weights are
   always at least 1 for any legal pair: the lowest-priority term, rank
   spread, is `abs(a.rank - b.rank)` and a pair's two ranks are always
@@ -685,7 +685,7 @@ defmodule Ainalrami.WeightedMatching do
   # This is worth far more than it looks. `Ainalrami.Pairing` packs
   # C1-C21 into a single integer by giving each criterion its own band, and
   # on a 209-player field that produces edge weights of about a HUNDRED AND
-  # THREE DIGITS — every `dual + dual - weight` inside the matcher is then
+  # THREE DIGITS - every `dual + dual - weight` inside the matcher is then
   # arbitrary-precision arithmetic, on the innermost operation of the whole
   # algorithm. In one real solve the 21,221 edges carried five distinct
   # weights sharing a ninety-digit common factor; dividing it out left
@@ -745,7 +745,7 @@ defmodule Ainalrami.WeightedMatching do
       n: n,
       max_w: max_w,
       weight: weights,
-      # Dual variable per VERTEX only — bbpPairings separately tracks a
+      # Dual variable per VERTEX only - bbpPairings separately tracks a
       # dual variable per BLOSSOM (`ParentBlossom.dualVariable`); this
       # merges that into the same map keyed by blossom id (>= n for
       # non-trivial blossoms), since nothing about the algorithm needs
@@ -753,7 +753,7 @@ defmodule Ainalrami.WeightedMatching do
       dual: dual,
       mate: %{},
       # `in_blossom[v]` is always the TOP-LEVEL blossom currently
-      # containing vertex v — the direct analogue of bbpPairings'
+      # containing vertex v - the direct analogue of bbpPairings'
       # `Vertex.rootBlossom`.
       in_blossom: Map.new(0..(n - 1), &{&1, &1}),
       # Nested structure, needed only for expansion: children in cyclic
@@ -765,7 +765,7 @@ defmodule Ainalrami.WeightedMatching do
       base: Map.new(0..(n - 1), &{&1, &1}),
       # Per TOP-LEVEL blossom, ASYMMETRIC: the external vertex this
       # blossom's base is matched to, or nil. This is the direct
-      # analogue of bbpPairings' `RootBlossom.baseVertexMatch` — a
+      # analogue of bbpPairings' `RootBlossom.baseVertexMatch` - a
       # per-blossom field, deliberately NOT required to agree with the
       # other side's own field at every instant.
       #
@@ -775,11 +775,11 @@ defmodule Ainalrami.WeightedMatching do
       # "was this blossom already matched" were read from the same
       # SYMMETRIC map the first call just wrote into, the second call
       # would see its own sibling's brand-new write and misread it as a
-      # stale match needing further walking — an infinite loop on
+      # stale match needing further walking - an infinite loop on
       # anything past the trivial one-edge case.
       blossom_match: blossom_match,
       # Connector vertex pair for every cyclically-adjacent pair of
-      # children ever formed — see `form_blossom/3`'s doc.
+      # children ever formed - see `form_blossom/3`'s doc.
       connectors: %{},
       # Per TOP-LEVEL blossom only.
       label: %{},
@@ -787,7 +787,7 @@ defmodule Ainalrami.WeightedMatching do
       # {labeling_vertex, labeled_vertex}: the edge that connected this
       # INNER blossom to its OUTER parent when the tree grew into it.
       label_edge: %{},
-      # The delta-scan caches — see the "delta-scan caches" section below.
+      # The delta-scan caches - see the "delta-scan caches" section below.
       best_outer: %{},
       cross: cross_empty(),
       shift_outer: 0,
@@ -887,8 +887,8 @@ defmodule Ainalrami.WeightedMatching do
     {dual, blossom_match}
   end
 
-  # A stage bound of `2n` is generous — the reference algorithm needs at
-  # most n stages total (one per matching-size increase) — so hitting
+  # A stage bound of `2n` is generous - the reference algorithm needs at
+  # most n stages total (one per matching-size increase) - so hitting
   # this is a bug, not a slow instance, and failing loudly beats hanging.
   defp augment_until_done(state), do: augment_until_done(state, 2 * state.n + 5)
 
@@ -912,7 +912,7 @@ defmodule Ainalrami.WeightedMatching do
   # Grows one alternating forest from every exposed vertex until either
   # the matching grows by one (returns `{:ok, state}`) or no exposed
   # OUTER vertex remains, meaning the current matching is already maximum
-  # (Berge's theorem: no augmenting path exists) — `:done`.
+  # (Berge's theorem: no augmenting path exists) - `:done`.
   defp augment_once(state) do
     state = init_labels(state)
     Process.put(:wm_grow_steps, 0)
@@ -953,7 +953,7 @@ defmodule Ainalrami.WeightedMatching do
     # A new stage relabels everything at once, which is the one moment the
     # outer set can SHRINK. The delta-scan caches are rebuilt from scratch
     # here rather than repaired, and that is the whole reason maintaining
-    # them incrementally elsewhere is sound — see the "delta-scan caches"
+    # them incrementally elsewhere is sound - see the "delta-scan caches"
     # section. O(V^2), once per stage, against O(V) stages.
     carry_caches(
       %{state | label: label, label_edge: %{}, tops: Enum.sort(top)},
@@ -961,12 +961,12 @@ defmodule Ainalrami.WeightedMatching do
     )
   end
 
-  # Every currently top-level blossom id — vertices not absorbed into a
+  # Every currently top-level blossom id - vertices not absorbed into a
   # larger blossom, plus every non-trivial blossom with no parent.
   #
   # SORTED, and that is not cosmetic. `Map.values/1` returns Erlang's
   # internal order, which changes shape at the 32-key flatmap-to-hashmap
-  # transition, and every consumer here breaks ties with a strict `<` —
+  # transition, and every consumer here breaks ties with a strict `<` -
   # first encountered wins. `min_free_or_zero_to_outer/1`, `min_outer_edge/2`,
   # `outer_vertices/1`, `min_outer_outer/1` and `grow/1`'s `Enum.find` for a
   # zero-dual outer vertex all inherit whatever order this returns. So when
@@ -978,7 +978,7 @@ defmodule Ainalrami.WeightedMatching do
   # above that), so sorting gives a total order that is stable, cheap, and
   # tied to the problem rather than to the runtime. docs/engineering-log.md's argument that
   # the refinement stages leave no ties to break is an empirical observation
-  # over one corpus, not an invariant — and an invariant is what a pairing
+  # over one corpus, not an invariant - and an invariant is what a pairing
   # engine's determinism should rest on.
   defp top_blossoms(state) do
     # The label map's keys ARE the top-level blossoms: `init_labels/1`
@@ -1076,7 +1076,7 @@ defmodule Ainalrami.WeightedMatching do
     # ONE stage would mean the search is stuck, not merely slow, since
     # each iteration makes the search strictly more constrained. Left in
     # after using it (with tracing, since removed) to localise the
-    # infinite-recursion bug in an earlier version's blossom resolution —
+    # infinite-recursion bug in an earlier version's blossom resolution -
     # failing loudly beats hanging silently if a future change
     # reintroduces something similar.
     steps = Process.get(:wm_grow_steps, 0)
@@ -1090,7 +1090,7 @@ defmodule Ainalrami.WeightedMatching do
     min_outer = min_outer_dual(state)
 
     # The smallest resistance from ANY free-or-zero vertex to an OUTER
-    # one, tracked alongside which vertex achieves it — bbpPairings'
+    # one, tracked alongside which vertex achieves it - bbpPairings'
     # `minInnerOuterEdgeResistance`. Rescanned each iteration (see
     # moduledoc); still only O(n^2) per call and there are O(n) calls per
     # stage, which is fine at bracket scale.
@@ -1114,7 +1114,7 @@ defmodule Ainalrami.WeightedMatching do
     # `Enum.EmptyError`, and `min_outer - delta` below raised `ArithmeticError`
     # on nil. The step and stage budgets catch loops, not this.
     #
-    # No matching this engine produces is known to reach it — it is guarded
+    # No matching this engine produces is known to reach it - it is guarded
     # rather than reproduced. An exhausted search is the same answer
     # `augment_once/1`'s own precheck gives: stop, and let the caller see the
     # matching as it stands.
@@ -1166,7 +1166,7 @@ defmodule Ainalrami.WeightedMatching do
         |> continue_growing()
 
       true ->
-        # Numerically shouldn't happen — one of the four must hit zero —
+        # Numerically shouldn't happen - one of the four must hit zero -
         # but guards against an infinite loop from a rounding slip rather
         # than hanging.
         {:done, state}
@@ -1190,7 +1190,7 @@ defmodule Ainalrami.WeightedMatching do
       {:ok, state}
     else
       # FREE vertex tight against OUTER: grow the tree through it. Reads
-      # v's BLOSSOM's own match field (asymmetric, per-blossom — see
+      # v's BLOSSOM's own match field (asymmetric, per-blossom - see
       # `state.blossom_match`'s doc), not a vertex-level lookup on `v`
       # itself: v may not be its blossom's current base if that blossom
       # persisted, still non-trivial, from an earlier stage.
@@ -1250,8 +1250,8 @@ defmodule Ainalrami.WeightedMatching do
   # structurally wrong, not just off by a constant: an OUTER blossom
   # comes in two kinds. The literal tree root is unmatched (found in
   # `init_labels`). Every OTHER outer blossom got there by being some
-  # INNER vertex's match partner — its base vertex's mate sits inside
-  # that INNER blossom — and only the INNER SIDE of that connection ever
+  # INNER vertex's match partner - its base vertex's mate sits inside
+  # that INNER blossom - and only the INNER SIDE of that connection ever
   # gets a `label_edge` entry (`handle_free_outer_tight` sets it on
   # `v_blossom`, never on `matched_blossom`). Treating a matched OUTER
   # blossom as a dead end, as an earlier version of this function did,
@@ -1283,10 +1283,10 @@ defmodule Ainalrami.WeightedMatching do
   # Two maps, both keyed by VERTEX rather than by blossom, which is what
   # makes blossom formation cheap to handle:
   #
-  #   * `best_outer[v]`, for v labelled `:free` or `:zero` — the
+  #   * `best_outer[v]`, for v labelled `:free` or `:zero` - the
   #     least-resistance edge from v to any outer vertex, as
   #     `{resistance, outer_vertex}`.
-  #   * `best_cross[v]`, for v labelled `:outer` — the least-resistance
+  #   * `best_cross[v]`, for v labelled `:outer` - the least-resistance
   #     edge from v to an outer vertex in a DIFFERENT top-level blossom.
   #
   # Nothing is stored for an `:inner` vertex. It would never be read, and
@@ -1304,7 +1304,7 @@ defmodule Ainalrami.WeightedMatching do
   #
   # So a cached entry can never go stale by pointing at a vertex that has
   # STOPPED being outer. It can only fall out of date by missing one that
-  # has newly joined — which is exactly what `refresh_caches/2` folds in,
+  # has newly joined - which is exactly what `refresh_caches/2` folds in,
   # in one pass over the changed vertices' own adjacency.
   #
   # Blossom formation is the one event that invalidates rather than
@@ -1438,7 +1438,7 @@ defmodule Ainalrami.WeightedMatching do
     # Driven from the OUTER vertices, not from all of them. Every entry in
     # either cache is an edge with an outer far end, so offering each outer
     # vertex to its neighbours produces exactly the same maps as asking
-    # every vertex to find its own best — and costs O(|outer| x V) instead
+    # every vertex to find its own best - and costs O(|outer| x V) instead
     # of O(V^2).
     #
     # That difference is the point at a stage boundary, which is when this
@@ -1458,7 +1458,7 @@ defmodule Ainalrami.WeightedMatching do
   # one's NEW label requires and no more.
   #
   # This used to recompute every changed vertex's own entry and then offer
-  # every changed vertex to its neighbours — two full walks of each
+  # every changed vertex to its neighbours - two full walks of each
   # adjacency row, and half of them for nothing: a vertex that has just
   # become INNER is neither a cache subject nor a candidate for anyone, so
   # offering it walked two hundred neighbours to hit `_ -> state` every
@@ -1466,12 +1466,12 @@ defmodule Ainalrami.WeightedMatching do
   #
   # Now:
   #
-  #   * newly INNER — delete its entries. No walk.
-  #   * newly OUTER — ONE walk of its row that computes its own best cross
+  #   * newly INNER - delete its entries. No walk.
+  #   * newly OUTER - ONE walk of its row that computes its own best cross
   #     edge and offers it to every neighbour in the same pass. The two
   #     jobs read the same neighbours with the same duals; fusing them is
   #     free.
-  #   * newly FREE or ZERO (only after an expansion) — recompute its
+  #   * newly FREE or ZERO (only after an expansion) - recompute its
   #     `best_outer`, which does need a walk, since its neighbours' outer
   #     status is what it depends on. Nothing to offer: it is not outer.
   #
@@ -1631,9 +1631,9 @@ defmodule Ainalrami.WeightedMatching do
   # for `best_outer` (the far end), two for `best_cross` (both ends).
   #
   # Crucially, EVERY entry in a given cache moves by the same amount. So
-  # rather than rewriting the map — O(V) allocation on every one of O(V^2)
+  # rather than rewriting the map - O(V) allocation on every one of O(V^2)
   # delta steps, which measured as costing more than the scans it replaced
-  # — the shift is carried as a running offset. Entries are stored biased
+  # - the shift is carried as a running offset. Entries are stored biased
   # by the offset at the moment they were written, and read back unbiased,
   # so they all track the duals for free.
   defp shift_caches(state, 0), do: state
@@ -1990,13 +1990,13 @@ defmodule Ainalrami.WeightedMatching do
   # Direct translation of bbpPairings' `augmentToSource`.
   #
   # An earlier version of this tried to resolve vertex-level `mate`
-  # INLINE as it walked — treating each visited blossom as needing
+  # INLINE as it walked - treating each visited blossom as needing
   # resolution "from an entry vertex to a specific exit vertex". That
   # turned out to be the wrong problem entirely, found by hand-tracing
   # the bare-triangle case against a brute-force oracle: for the
   # entry-equals-exit case (a blossom visited via its own dual variable
   # hitting zero, not via a further match), that design just returned
-  # immediately WITHOUT EVER PAIRING UP THE BLOSSOM'S OTHER CHILDREN —
+  # immediately WITHOUT EVER PAIRING UP THE BLOSSOM'S OTHER CHILDREN -
   # not a recursion bug, a real correctness gap.
   #
   # Re-reading `augmentToSource` itself settled it: bbpPairings does not
@@ -2005,14 +2005,14 @@ defmodule Ainalrami.WeightedMatching do
   # repeated for the next blossom up via `originalMatch.baseVertex =
   # originalMatch.labeledVertex`) and defers ALL internal vertex pairing
   # to one separate pass (`putVerticesInMatchingOrder`), run once after
-  # the WHOLE algorithm terminates — see `resolve_all_matching/1`. Only
+  # the WHOLE algorithm terminates - see `resolve_all_matching/1`. Only
   # ONE special point (the base) ever needs handling per blossom, which
   # is both simpler and the actual textbook blossom lemma: given any one
   # base, the remaining even number of vertices pairs up consecutively
   # around the cycle. No "exit" concept exists in the correct model.
   defp augment_to_source(state, v, new_match) do
     b = Map.fetch!(state.in_blossom, v)
-    # The asymmetric, per-blossom field — see `state.blossom_match`'s doc
+    # The asymmetric, per-blossom field - see `state.blossom_match`'s doc
     # on why this must NOT be the same symmetric map `mate` is.
     old_partner = Map.get(state.blossom_match, b)
 
@@ -2044,39 +2044,39 @@ defmodule Ainalrami.WeightedMatching do
   defp set_mate(mate, a, b), do: mate |> Map.put(a, b) |> Map.put(b, a)
 
   # `matched?/2` uses `Map.has_key?`, so an "unmatch" must DELETE the key
-  # rather than set it to nil — leaving a `b => nil` entry behind would
+  # rather than set it to nil - leaving a `b => nil` entry behind would
   # make an exposed blossom look matched.
   defp put_or_delete(map, k, nil), do: Map.delete(map, k)
   defp put_or_delete(map, k, v), do: Map.put(map, k, v)
 
   # Resolves the alternating matching WITHIN the (possibly nested)
-  # blossom containing `entry`, from `entry` to `exit_v` — both vertices
+  # blossom containing `entry`, from `entry` to `exit_v` - both vertices
   # of the SAME top-level blossom.
   #
   # Looks up `b` via `in_blossom[entry]`, which is why this must ONLY
   # ever be called with entry/exit_v that are genuinely within the
-  # TOP-level blossom — never as a way to "descend into a specific
+  # TOP-level blossom - never as a way to "descend into a specific
   # child", since `in_blossom` always resolves back to the SAME top-level
   # id regardless of nesting depth. `resolve_nontrivial/4` and
   # `pair_remaining/5` both already know exactly which CHILD they need to
   # descend into at each step, and must call `resolve_within/4` (below)
-  # directly with that child rather than this function — calling this
+  # directly with that child rather than this function - calling this
   # one instead, as an earlier version did in the `exit_idx == 0` case,
   # re-derives the SAME top-level blossom via `in_blossom` and recurses
   # into itself forever. Found by tracing the bare-triangle case, which
   # hung silently with no crash and no further trace output right after
   # blossom formation succeeded.
   # Run once, after `augment_until_done/1` has finished cascading every
-  # blossom's base to its final value — the direct analogue of
+  # blossom's base to its final value - the direct analogue of
   # bbpPairings' separate `putVerticesInMatchingOrder` pass
   # (`Computer::computeMatching()` runs it once per root blossom only
   # after `graph->computeMatching()` itself has fully converged).
   #
   # Two independent things to set, per top-level blossom: the EXTERNAL
   # pair (this blossom's base, matched to `blossom_match`, an asymmetric
-  # field — see that field's own doc) and the INTERNAL pairing (every
+  # field - see that field's own doc) and the INTERNAL pairing (every
   # other vertex in the blossom, paired up two at a time relative to
-  # that SAME base — the textbook one-special-point blossom lemma: given
+  # that SAME base - the textbook one-special-point blossom lemma: given
   # any one base, the remaining even number of vertices pairs up
   # consecutively around the odd cycle).
   # `mate` is a DERIVED view of `blossom_match`, rebuilt here from nothing
@@ -2118,7 +2118,7 @@ defmodule Ainalrami.WeightedMatching do
     n = length(rotated)
 
     # The base child's OWN base is `base_v` itself (possibly deep inside
-    # it, if base_child is non-trivial) — set explicitly before
+    # it, if base_child is non-trivial) - set explicitly before
     # recursing, since `base_v` may not already equal whatever
     # `base_child`'s own base field happens to hold.
     state = %{state | base: Map.put(state.base, base_child, base_v)}
@@ -2129,7 +2129,7 @@ defmodule Ainalrami.WeightedMatching do
 
   # Children at rotated positions 1, 2, ..., n-1 (base_child is position
   # 0 and already handled) pair up two at a time: (1,2), (3,4), and so
-  # on — always an even count, since `n` (the blossom's own child count)
+  # on - always an even count, since `n` (the blossom's own child count)
   # is always odd.
   defp pair_children(state, _rotated, i, n) when i >= n, do: state
 
@@ -2149,21 +2149,21 @@ defmodule Ainalrami.WeightedMatching do
 
   # The connector vertex pair for a cyclically-adjacent pair of children
   # `{from, to}` (a vertex in `from`, a vertex in `to`, joined by a real
-  # graph edge) — recorded once, at whichever blossom formation first
+  # graph edge) - recorded once, at whichever blossom formation first
   # made them adjacent, and read many times across however many further
   # augmentations touch that blossom before it next expands.
   defp connector(state, from, to), do: Map.fetch!(state.connectors, {from, to})
 
   # ----------------------------------------------------- blossom lifecycle
 
-  # Contract the odd cycle closed by the tight edge (v0, v1) — both
-  # OUTER, both in the same tree — into one new blossom, labelled OUTER.
+  # Contract the odd cycle closed by the tight edge (v0, v1) - both
+  # OUTER, both in the same tree - into one new blossom, labelled OUTER.
   #
   # Building `cycle` needed a second pass beyond `blossom_path_to_root`
   # once `augment_to_source` needed real connector VERTICES, not just the
   # blossom-id chain: `path_to_target/4` walks the same chain but returns
   # the actual vertex sequence, from which consecutive pairs ARE the
-  # connectors — each blossom but the last contributes an (entry, exit)
+  # connectors - each blossom but the last contributes an (entry, exit)
   # pair, and the vertex the walk continues on is exactly the next
   # blossom's own entry, by construction of the walk itself.
   defp form_blossom(state, v0, v1) do
@@ -2192,12 +2192,12 @@ defmodule Ainalrami.WeightedMatching do
       |> MapSet.new()
 
     # `add_connectors/2` needs each id list in the SAME direction its own
-    # `flat` was actually walked — `path_to_target/4` always walks UP
+    # `flat` was actually walked - `path_to_target/4` always walks UP
     # (b -> ... -> common), so that direction is `ids0_before ++
     # [common]` and `ids1_before ++ [common]`, never reversed. An earlier
     # version reversed BOTH the id list and (separately) the flat vertex
     # list here, meaning to "flip" the walk direction for the b1 side to
-    # match `cycle`'s own down-oriented listing — but a connector is the
+    # match `cycle`'s own down-oriented listing - but a connector is the
     # same edge regardless of which direction it's conceptually walked,
     # so reversing it at all was never correct, and doing it to both
     # lists independently misaligned them against each other. Found by
@@ -2230,7 +2230,7 @@ defmodule Ainalrami.WeightedMatching do
     base = Map.put(state.base, new_id, base_vertex(state, common))
 
     # The new blossom's own external connection is whatever `common` had
-    # — contracting around it doesn't change what it was matched to.
+    # - contracting around it doesn't change what it was matched to.
     blossom_match =
       put_or_delete(state.blossom_match, new_id, Map.get(state.blossom_match, common))
 
@@ -2246,7 +2246,7 @@ defmodule Ainalrami.WeightedMatching do
         dual: Map.put(state.dual, new_id, 0),
         # The children stop being top-level, so their labels go. This
         # keeps `state.label`'s KEY SET equal to the top-level blossom set,
-        # which `top_blossoms/1` now relies on — see its comment. Before
+        # which `top_blossoms/1` now relies on - see its comment. Before
         # this the stale child entries were harmless only because
         # `top_blossoms/1` was derived from `in_blossom` instead.
         label: Enum.reduce(cycle, Map.put(state.label, new_id, :outer), &Map.delete(&2, &1)),
@@ -2278,7 +2278,7 @@ defmodule Ainalrami.WeightedMatching do
   end
 
   # Flat vertex-level walk from `entry_vertex` (in blossom `b`) up to and
-  # INCLUDING the entry into `target` — the same chain
+  # INCLUDING the entry into `target` - the same chain
   # `blossom_path_to_root/2` walks at blossom-id granularity, but
   # returning the actual connecting VERTICES (two per blossom passed
   # through: how the walk entered it, and how it leaves), which is what
@@ -2302,7 +2302,7 @@ defmodule Ainalrami.WeightedMatching do
   end
 
   # Full path from `b` up to (and including) its tree root, WITHOUT
-  # skipping any blossom along the way — unlike an earlier version of
+  # skipping any blossom along the way - unlike an earlier version of
   # this function, which jumped straight from an OUTER blossom to the
   # next one up without recording the INNER blossom it passed through to
   # get there.
@@ -2313,7 +2313,7 @@ defmodule Ainalrami.WeightedMatching do
   # `form_blossom/3`, which uses this same chain to build the new
   # blossom's actual cycle: a bare triangle graph (`n=3`, all three
   # edges present) produced a two-child cycle `[0, 2]`, silently missing
-  # blossom 1 — a blossom the whole method's correctness DEPENDS on
+  # blossom 1 - a blossom the whole method's correctness DEPENDS on
   # having an odd number of children in, and `blossom_vertices/2`
   # recursing over that broken structure never terminated. Found by
   # tracing that exact minimal case after the triangle hung with no
@@ -2342,7 +2342,7 @@ defmodule Ainalrami.WeightedMatching do
   end
 
   # Dissolve blossom `b` (its dual variable just hit zero) back into its
-  # children — direct translation of `graph.cpp`'s `!minInnerDualVariable`
+  # children - direct translation of `graph.cpp`'s `!minInnerDualVariable`
   # branch (the `rootBlossomPool.construct` calls around line 680).
   #
   # Every child but the base one (`rootChild`) sits on the cycle between
@@ -2362,15 +2362,15 @@ defmodule Ainalrami.WeightedMatching do
   #
   # `connect_forward` (whether walking forward from `base_child` reaches
   # `connect_child` in an even or odd number of hops) is what the C++
-  # computes by toggling a bool once per hop starting `true` — i.e. even
-  # hop count keeps it `true` — and is what decides BOTH which arc is
+  # computes by toggling a bool once per hop starting `true` - i.e. even
+  # hop count keeps it `true` - and is what decides BOTH which arc is
   # "the tree chain" and, per INNER child, which of its two neighbours is
   # its tree-parent (`label_edge`) versus its match partner (`base`,
   # via `linksToNext`, which toggles every position regardless of arc).
   #
   # An earlier version of this function always walked forward only, never
   # set `blossom_match` for any newly-exposed child, and always treated
-  # the base child as OUTER — none of which match the source. Rewritten
+  # the base child as OUTER - none of which match the source. Rewritten
   # from a line-by-line reading of the actual construct-call ternaries
   # after two crashes downstream (a missing vertex in the final matching,
   # a `nil` leaking into a connector lookup) traced back to this gap.

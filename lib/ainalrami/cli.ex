@@ -1,22 +1,22 @@
 defmodule Ainalrami.CLI do
   @moduledoc """
   Command-line entry point. Deliberately mirrors JaVaFo's own invocation
-  shape — `java -jar javafo.jar input.trf -p output.txt` (confirmed against
-  the sibling project's real `System.cmd` call, not guessed) — as
+  shape - `java -jar javafo.jar input.trf -p output.txt` (confirmed against
+  the sibling project's real `System.cmd` call, not guessed) - as
   `ainalrami input.trf -p output.trf`, so a caller that already knows how to
   drive JaVaFo only has to swap the executable name, not rewrite its
   argument-building code. The same applies to JaVaFo's other two modes:
-  `-c` (Pairings Checker, FPC) is implemented — it replays a completed
+  `-c` (Pairings Checker, FPC) is implemented - it replays a completed
   tournament and diffs each round against what this engine would have
   paired, exiting nonzero if any round differs. `-g` (Random Tournament
-  Generator) is implemented too — it takes no input file, since it creates
+  Generator) is implemented too - it takes no input file, since it creates
   a tournament rather than reading one.
 
   Verbose trace is the default (see `Ainalrami.Log`); pass `-q`/`--quiet` to
   suppress it.
 
   `run/1` does the real work and returns a plain exit code, deliberately
-  never calling `System.halt/1` itself — that would kill the test VM if
+  never calling `System.halt/1` itself - that would kill the test VM if
   called from ExUnit. `main/1` (the actual escript entry point) is the only
   place that halts.
   """
@@ -26,7 +26,7 @@ defmodule Ainalrami.CLI do
   @doc false
   def main(argv), do: argv |> run() |> System.halt()
 
-  @doc "Runs the CLI and returns an exit code, without halting the VM — see moduledoc."
+  @doc "Runs the CLI and returns an exit code, without halting the VM - see moduledoc."
   def run(argv) do
     {flags, positional} = split_flags(argv)
 
@@ -96,11 +96,11 @@ defmodule Ainalrami.CLI do
     end
   end
 
-  # `input.trf -p [output.trf]` — input file is always the first positional
+  # `input.trf -p [output.trf]` - input file is always the first positional
   # argument, exactly like JaVaFo; the mode flag then decides what happens
   # to the rest.
-  # `-g` is the one mode that takes no input file — it creates a
-  # tournament rather than reading one — so it's dispatched before the
+  # `-g` is the one mode that takes no input file - it creates a
+  # tournament rather than reading one - so it's dispatched before the
   # missing-input check.
   defp dispatch(positional, flags) do
     cond do
@@ -178,7 +178,7 @@ defmodule Ainalrami.CLI do
     end
   end
 
-  # `input.trf -x` — pair the next round and then say WHY, bracket by
+  # `input.trf -x` - pair the next round and then say WHY, bracket by
   # bracket, from the engine's own criteria rather than by reconstructing
   # an argument from the finished boards.
   #
@@ -226,7 +226,7 @@ defmodule Ainalrami.CLI do
 
     header =
       "
-Round #{round_number} — #{boards} board#{plural(boards)} over " <>
+Round #{round_number} - #{boards} board#{plural(boards)} over " <>
         "#{length(reports)} bracket#{plural(length(reports))}
 "
 
@@ -245,7 +245,7 @@ Round #{round_number} — #{boards} board#{plural(boards)} over " <>
     """
   end
 
-  defp row(label, []), do: "  #{String.pad_trailing(label, 12)} —"
+  defp row(label, []), do: "  #{String.pad_trailing(label, 12)} -"
   defp row(label, values), do: "  #{String.pad_trailing(label, 12)} #{Enum.join(values, ", ")}"
 
   # Only the rungs that actually scored. A zero means the criterion did not
@@ -279,7 +279,7 @@ Round #{round_number} — #{boards} board#{plural(boards)} over " <>
   defp plural(_), do: "s"
 
   # No legal pairing can mean the field has genuinely run out of legal
-  # opponents (bbpPairings' own `NoValidPairingException` — see
+  # opponents (bbpPairings' own `NoValidPairingException` - see
   # `Ainalrami.Pairing.NoValidPairingError`'s doc) rather than a crash. That
   # matches how JaVaFo itself reports it: an empty pairing, not a stack
   # trace.
@@ -300,7 +300,7 @@ Round #{round_number} — #{boards} board#{plural(boards)} over " <>
       forbidden_pairs: tournament[:forbidden_pairs],
       # Article 5.1's drawing of lots. `Trf` has read `152` since
       # 2026-08-17 but the CLI never forwarded it, so `-p` and `-c` fell
-      # back to inferring the draw from round one — which works for a file
+      # back to inferring the draw from round one - which works for a file
       # that HAS a round one and is simply wrong for a fresh roster, where
       # there is nothing to infer from and the engine defaults to White.
       #
@@ -342,13 +342,13 @@ Round #{round_number} — #{boards} board#{plural(boards)} over " <>
   # an independent verifier of the rules. It clears the matches, replays,
   # and calls the SAME pairing engine to decide what each round should
   # have been. "Correct" here means "what this engine would have paired",
-  # so a disagreement is a difference, not a proof of illegality — the
+  # so a disagreement is a difference, not a proof of illegality - the
   # file may hold a perfectly legal pairing that this engine wouldn't pick.
   #
   # Composition (who plays whom) is reported as an error. Colours are
   # reported separately and never as an error, because Article 5.1 leaves
   # the first colour to a drawing of lots and this engine's convention is
-  # its own — see `Ainalrami.Pairing.pair_round_one/1`.
+  # its own - see `Ainalrami.Pairing.pair_round_one/1`.
   defp check(input_path) do
     Log.step("Loading #{input_path}")
 
@@ -367,7 +367,7 @@ Round #{round_number} — #{boards} board#{plural(boards)} over " <>
 
         Log.step(
           "#{rounds - differing}/#{rounds} round(s) match this engine's own pairing" <>
-            if(differing == 0, do: "", else: " — #{differing} differ")
+            if(differing == 0, do: "", else: " - #{differing} differ")
         )
 
         if differing == 0, do: 0, else: 1
@@ -395,7 +395,7 @@ Round #{round_number} — #{boards} board#{plural(boards)} over " <>
   rescue
     e in Pairing.NoValidPairingError ->
       Log.warn(
-        "round #{round}: this engine finds no legal pairing at all — #{Exception.message(e)}"
+        "round #{round}: this engine finds no legal pairing at all - #{Exception.message(e)}"
       )
 
       :differs
@@ -411,7 +411,7 @@ Round #{round_number} — #{boards} board#{plural(boards)} over " <>
   # The tournament as it stood immediately before `round` was paired:
   # every earlier game, plus this round's own result for anyone who did
   # NOT participate in the pairing. That last part is not an optimisation
-  # — an arbiter-assigned bye is recorded in advance precisely so the
+  # - an arbiter-assigned bye is recorded in advance precisely so the
   # engine leaves that player out, so replaying without it would ask the
   # engine to pair somebody who had already been excused.
   defp state_before_round(players, round) do
@@ -481,11 +481,11 @@ Round #{round_number} — #{boards} board#{plural(boards)} over " <>
     end
   end
 
-  defp board_description(white, nil), do: "##{white} — pairing-allocated bye"
+  defp board_description(white, nil), do: "##{white} - pairing-allocated bye"
   defp board_description(white, black), do: "##{white} (white) vs. ##{black} (black)"
 
   # Same shape as javafo.jar's own output file: a count line, then one
-  # "white black" line per pair (0 for a bye), CRLF throughout — confirmed
+  # "white black" line per pair (0 for a bye), CRLF throughout - confirmed
   # against a real javafo.jar run, not assumed.
   defp format_pairs(pairs) do
     header = "#{length(pairs)}\r\n"
@@ -519,7 +519,7 @@ Round #{round_number} — #{boards} board#{plural(boards)} over " <>
     Log.detail("#{round_count} round(s) of history in the file")
 
     for p <- parsed.players do
-      Log.detail("##{p.rank} #{p.name} (#{format_rating(p.fide_rating)}) — #{p.points} pts")
+      Log.detail("##{p.rank} #{p.name} (#{format_rating(p.fide_rating)}) - #{p.points} pts")
     end
 
     round_count
@@ -546,7 +546,7 @@ Round #{round_number} — #{boards} board#{plural(boards)} over " <>
 
   defp print_help do
     IO.puts("""
-    ainalrami — a FIDE Dutch-system Swiss pairing engine
+    ainalrami - a FIDE Dutch-system Swiss pairing engine
 
     Usage:
       ainalrami <input.trf> -p [<output.trf>]   Pair the next round (writes to

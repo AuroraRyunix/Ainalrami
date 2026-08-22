@@ -3,7 +3,7 @@ defmodule Ainalrami.Test.Bbppairings do
   Thin wrapper for invoking the real `bbpPairings.exe` (Bierema Boyz
   Programming's independent, Apache-2.0-licensed Dutch-system
   implementation) locally, purely for comparison-testing Ainalrami's own
-  pairing output against it — the second, genuinely independent reference
+  pairing output against it - the second, genuinely independent reference
   this project has always meant to check against (see docs/engineering-log.md's
   "Cross-validation against bbpPairings"), as opposed to the earlier use
   of its SOURCE to port `Ainalrami.WeightedMatching`.
@@ -12,13 +12,13 @@ defmodule Ainalrami.Test.Bbppairings do
   it's a third-party binary not ours to redistribute here. Located via
   `BBPPAIRINGS_EXE`, defaulting to the sibling OpenPairings project's own
   vendored copy (`../openpairings/priv/bbppairings/bbpPairings-windows.exe`
-  — same sibling-checkout convention `Ainalrami.Test.Javafo` already uses).
+  - same sibling-checkout convention `Ainalrami.Test.Javafo` already uses).
 
   ## Output format
 
   Confirmed by direct invocation, not assumed: `-p`'s output file is
   byte-identical in shape to javafo's own (`count\\r\\n` then one
-  `white black\\r\\n` per pair, `0` for a pairing-allocated bye) — so
+  `white black\\r\\n` per pair, `0` for a pairing-allocated bye) - so
   `parse_output/1` is the same logic as `Ainalrami.Test.Javafo`'s.
 
   ## No-valid-pairing behaviour differs from javafo
@@ -27,7 +27,7 @@ defmodule Ainalrami.Test.Bbppairings do
   bbpPairings instead exits with code 1 and writes NOTHING, per its own
   documented error codes ("1: ... no valid pairing exists for the current
   round"). `pair/1` surfaces this as `{:no_valid_pairing, message}`,
-  distinct from `{:error, {code, out}}` (an unexpected failure) — this is
+  distinct from `{:error, {code, out}}` (an unexpected failure) - this is
   also the exact case `Ainalrami.Pairing.NoValidPairingError` exists for;
   confirmed by direct comparison that both engines refuse the identical
   input.
@@ -46,11 +46,11 @@ defmodule Ainalrami.Test.Bbppairings do
   Runs bbpPairings' pairing mode (`--dutch input-file -p output-file`) on
   `trf_text` and returns:
 
-    * `{:ok, pairs}` — `[{white_rank, black_rank | nil}]`, same convention
+    * `{:ok, pairs}` - `[{white_rank, black_rank | nil}]`, same convention
       `Ainalrami.Test.Javafo.pair/1` and `Ainalrami.Pairing` both use
-    * `{:no_valid_pairing, message}` — exit code 1, the players cannot be
+    * `{:no_valid_pairing, message}` - exit code 1, the players cannot be
       simultaneously paired while satisfying the absolute criteria
-    * `{:error, {code, output}}` — anything else (a malformed TRF, a
+    * `{:error, {code, output}}` - anything else (a malformed TRF, a
       process failure)
   """
   def pair(trf_text) do
@@ -73,7 +73,7 @@ defmodule Ainalrami.Test.Bbppairings do
   end
 
   # See `Ainalrami.Test.Javafo`'s identical helper for why this retries
-  # instead of a plain `File.rm_rf!/1` — same Windows transient-handle
+  # instead of a plain `File.rm_rf!/1` - same Windows transient-handle
   # cause, same fix.
   defp remove_dir(dir, attempts_left \\ 5)
 

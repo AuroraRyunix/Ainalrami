@@ -119,6 +119,6 @@ IO.puts(
   if normalise.(ours) == normalise.(theirs) do
     "\nAGREE"
   else
-    "\nDISAGREE — worth building an axis around"
+    "\nDISAGREE - worth building an axis around"
   end
 )

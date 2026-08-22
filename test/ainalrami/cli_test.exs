@@ -17,10 +17,10 @@ defmodule Ainalrami.CLITest do
     path
   end
 
-  # Built via Trf.serialize/1 rather than hand-typed fixed-width text — a
+  # Built via Trf.serialize/1 rather than hand-typed fixed-width text - a
   # manually counted column offset is exactly the kind of mistake that's
   # bitten this TRF parser before (see the sibling project's own history).
-  # No game history — this is a round-1 roster.
+  # No game history - this is a round-1 roster.
   defp sample_trf do
     Trf.serialize(%{
       tournament: %{name: "CLI Test Open", type: "swiss"},
@@ -32,7 +32,7 @@ defmodule Ainalrami.CLITest do
   end
 
   # Same idea, but WITH a round of history already played (4 players, two
-  # round-1 boards decided) — exercises the round-2 bracket-cascade path
+  # round-1 boards decided) - exercises the round-2 bracket-cascade path
   # instead of round 1's own split-the-whole-field pairing.
   defp sample_trf_with_history do
     Trf.serialize(%{
@@ -70,7 +70,7 @@ defmodule Ainalrami.CLITest do
     })
   end
 
-  # Same roster, but round 1 has both players claiming a win — illegal per
+  # Same roster, but round 1 has both players claiming a win - illegal per
   # `Trf`'s own result-pair validation. `Trf.serialize/1` would reject this
   # outright, so it's built by serializing a *legal* round then flipping one
   # result character afterward, the same technique the sibling project's own
@@ -95,7 +95,7 @@ defmodule Ainalrami.CLITest do
         ]
       })
 
-    # Round 1's result column is 99 (base 92 + 7) — flip B's loss into a
+    # Round 1's result column is 99 (base 92 + 7) - flip B's loss into a
     # second win.
     lines = String.split(text, "\r\n")
     p2 = Enum.find(lines, &(String.starts_with?(&1, "001") and &1 =~ "B"))
@@ -108,7 +108,7 @@ defmodule Ainalrami.CLITest do
 
   test "-h prints help and exits 0" do
     out = capture_io(fn -> assert CLI.run(["-h"]) == 0 end)
-    assert out =~ "ainalrami — a FIDE Dutch-system Swiss pairing engine"
+    assert out =~ "ainalrami - a FIDE Dutch-system Swiss pairing engine"
   end
 
   test "--version prints something and exits 0" do
@@ -152,7 +152,7 @@ defmodule Ainalrami.CLITest do
 
     assert code == 0
     # javafo.jar's own output shape: a count line, then "white black" lines,
-    # CRLF throughout — confirmed against a real javafo.jar run.
+    # CRLF throughout - confirmed against a real javafo.jar run.
     assert out =~ "1\r\n1 2\r\n"
   end
 
@@ -175,15 +175,15 @@ defmodule Ainalrami.CLITest do
     assert code == 0
     assert out =~ "pairing round 2"
     # Round-1 winners A(1) and B(2) bracket together; round-1 losers C(3)
-    # and D(4) bracket together — see sample_trf_with_history/0's doc.
+    # and D(4) bracket together - see sample_trf_with_history/0's doc.
     #
     # B(2) takes White on board 1, and this asserted the opposite until
     # 2026-08-17. Both A and B played White in round 1, so both hold a strong
     # preference for Black and their colour histories are identical: 5.2.1
     # cannot grant both, 5.2.2 cannot separate two equally strong
     # preferences, and 5.2.3 has no round in which one had White and the
-    # other Black. C.04.3 5.2.4 decides — "grant the colour preference of the
-    # higher ranked player" — so A(1) gets Black.
+    # other Black. C.04.3 5.2.4 decides - "grant the colour preference of the
+    # higher ranked player" - so A(1) gets Black.
     #
     # `choose_colour/2` skipped 5.2.4 and fell through to 5.2.5's odd-TPN
     # rule, which handed A the initial colour instead. Confirmed against
@@ -301,7 +301,7 @@ defmodule Ainalrami.CLITest do
       assert length(parsed.players) == 14
       assert Enum.all?(parsed.players, &(length(&1.games) == 5))
       # The seed rides in the tournament name so the file alone reproduces
-      # the run — see Ainalrami.Generator's moduledoc on why not line one.
+      # the run - see Ainalrami.Generator's moduledoc on why not line one.
       assert parsed.tournament[:name] =~ "seed=1234"
     end
 
@@ -392,7 +392,7 @@ defmodule Ainalrami.CLITest do
 
       assert Map.keys(w) == Map.keys(b), "same field either way"
 
-      # Round one is the same set of boards with every colour inverted —
+      # Round one is the same set of boards with every colour inverted -
       # the draw decides sides, never who plays whom.
       assert Enum.all?(Map.keys(w), fn rank ->
                case {Map.fetch!(w, rank), Map.fetch!(b, rank)} do
@@ -423,7 +423,7 @@ defmodule Ainalrami.CLITest do
 
         # The RTG pairs with this very engine, so its output is by
         # construction what the checker expects. A failure here means the
-        # two modes disagree about the same rules — most likely in how a
+        # two modes disagree about the same rules - most likely in how a
         # round's pre-pairing state is reconstructed.
         assert code == 0, "generated tournament failed its own checker: #{inspect(opts)}"
       end
@@ -432,9 +432,9 @@ defmodule Ainalrami.CLITest do
     # The same round-trip, but now the file carries `XXP`/`XXA` lines. This
     # is a stronger test of those than it looks: `-c` reads the extension
     # lines back out of the generated file and hands them to the engine, so
-    # a serializer and parser that disagree about `XXA`'s columns — the
+    # a serializer and parser that disagree about `XXA`'s columns - the
     # exact mistake that makes real bbpPairings reject the sibling
-    # project's own output — fails here rather than silently pairing an
+    # project's own output - fails here rather than silently pairing an
     # unaccelerated tournament.
     test "generated tournaments carrying XXP and XXA also check clean" do
       for opts <- [
@@ -546,7 +546,7 @@ defmodule Ainalrami.CLITest do
       path = write_trf([sitting | others])
       {out, code} = run_capturing(fn -> CLI.run([path, "-c"]) end)
 
-      # Round 1 as recorded has nobody paired at all, so it differs — what
+      # Round 1 as recorded has nobody paired at all, so it differs - what
       # matters is that the engine never proposes a game for the player who
       # sat out.
       assert code == 1
@@ -601,7 +601,7 @@ defmodule Ainalrami.CLITest do
     path
   end
 
-  # Ainalrami.Log writes step/detail to stdout and warn/error to stderr —
+  # Ainalrami.Log writes step/detail to stdout and warn/error to stderr -
   # interleaving order doesn't matter for these assertions, so this just
   # concatenates both streams into one string, plus returns the CLI's own
   # return value (the would-be exit code).
@@ -626,7 +626,7 @@ defmodule Ainalrami.CLITest do
 
       assert code == 0
       assert out =~ "explaining round"
-      assert out =~ "Round 1 — 1 board over 1 bracket"
+      assert out =~ "Round 1 - 1 board over 1 bracket"
       assert out =~ "residents"
       assert out =~ "paired"
       assert out =~ "criteria"

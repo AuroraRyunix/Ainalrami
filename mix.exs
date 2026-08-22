@@ -1,7 +1,7 @@
 defmodule Ainalrami.MixProject do
   use Mix.Project
 
-  @version "0.9.0"
+  @version "0.10.0"
   @source_url "https://github.com/AuroraRyunix/Ainalrami"
 
   def project do
@@ -43,7 +43,7 @@ defmodule Ainalrami.MixProject do
     []
   end
 
-  # `mix escript.build` produces a single executable `ainalrami` file —
+  # `mix escript.build` produces a single executable `ainalrami` file -
   # matches how JaVaFo is distributed (one runnable artifact you point a TRF
   # file at), rather than requiring `mix run` or a full release.
   defp escript do

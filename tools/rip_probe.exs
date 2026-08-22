@@ -1,8 +1,8 @@
 # Does Gacrux renumber around a player who has ALREADY PLAYED but is
 # sitting this round out?
 #
-# Its condition is `rfp or rip` — ready for pairing now, OR paired at some
-# point before — which reads as "renumber only around players who have
+# Its condition is `rfp or rip` - ready for pairing now, OR paired at some
+# point before - which reads as "renumber only around players who have
 # never participated at all". bbpPairings has no such clause and skips
 # anyone not valid for the current round. If that reading is right the two
 # references part company here, and Gacrux sides with this engine.
@@ -19,7 +19,7 @@ g = fn opp, colour, result -> %{opponent_rank: opp, colour: colour, result: resu
 z = %{opponent_rank: nil, colour: nil, result: "Z"}
 
 # Round 1: 1 draws 5 and 6 draws 7. Everyone else sits it out.
-# Round 2: player 1 — who HAS played — sits out. Exactly one player is
+# Round 2: player 1 - who HAS played - sits out. Exactly one player is
 # skipped, so the renumbering shifts parity for everyone below them; an
 # even number skipped would preserve it and prove nothing.
 players = [
@@ -62,7 +62,7 @@ out = Path.join(System.tmp_dir!(), "rip_probe_out.txt")
 File.write!(path, trf)
 
 IO.puts("round 2. Player 1 has played (round 1) and sits this round out.")
-IO.puts("Never played at all: 2, 3, 4, 8 — so 5.2.5 decides any board among them.\n")
+IO.puts("Never played at all: 2, 3, 4, 8 - so 5.2.5 decides any board among them.\n")
 
 ours = Ainalrami.Pairing.pair_next_round(players, expected_rounds: 5, initial_colour: "w")
 

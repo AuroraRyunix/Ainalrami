@@ -4,10 +4,10 @@
 pairing at all.*
 
 **Reporter:** OpenPairings / Ainalrami project
-**Program:** BBP Pairings v6.0.0 (Built Feb 1 2026 17:39:15) —
+**Program:** BBP Pairings v6.0.0 (Built Feb 1 2026 17:39:15) -
 <https://github.com/BieremaBoyzProgramming/bbpPairings>
 **Rules:** FIDE Handbook C.04.3, FIDE (Dutch) System, effective 1 February
-2026 — <https://handbook.fide.com/chapter/C0403202602>
+2026 - <https://handbook.fide.com/chapter/C0403202602>
 **Severity:** produces a pairing that violates an absolute criterion, where
 a legal pairing exists.
 
@@ -17,7 +17,7 @@ a legal pairing exists.
 
 For the attached tournament files, bbpPairings allocates the
 pairing-allocated bye to a player who has already received one. C.04.3 art.
-2.1.2 [C2] forbids this absolutely, and a legal alternative exists — two
+2.1.2 [C2] forbids this absolutely, and a legal alternative exists - two
 other implementations produce it.
 
 Three independent positions are attached, found across three different
@@ -78,10 +78,10 @@ must take the PAB.
 | 1 | 2.5 | `U` in round 3 | **no** |
 | 2 | 2.0 | `U` in round 6 | **no** |
 | 3 | 1.5 | `U` in round 2 | **no** |
-| 5 | 4.5 | — | yes |
-| 7 | 3.0 | — | yes |
-| 8 | 4.0 | — | yes |
-| 9 | 3.5 | — | yes |
+| 5 | 4.5 | - | yes |
+| 7 | 3.0 | - | yes |
+| 8 | 4.0 | - | yes |
+| 9 | 3.5 | - | yes |
 
 Players 1, 2 and 3 each already received a pairing-allocated bye. Under
 [C2] the PAB must go to one of 5, 7, 8 or 9.
@@ -100,7 +100,7 @@ $ cat out.txt
 3 0
 ```
 
-`3 0` allocates the pairing-allocated bye to TPN 3 — who received one in
+`3 0` allocates the pairing-allocated bye to TPN 3 - who received one in
 round 2. Exit code 0; no diagnostic.
 
 ## Expected behaviour
@@ -117,15 +117,15 @@ $ python3 pairingchecker.py -p -m dutch -i seed735265-r7-p10.trf -f TRF -n 7
 ```
 
 **Ainalrami** (github.com/AuroraRyunix/ainalrami): `{5,1} {8,2} {3,9}`, bye to
-7 — identical, board for board.
+7 - identical, board for board.
 
 That pairing seats all seven active players, contains no rematch, and gives
 the PAB to TPN 7, who has not had one.
 
 ## Note on the mechanism
 
-bbpPairings enforces this rule correctly in general. A minimal case — three
-players, TPN 1 already holding a `U`, TPNs 2 and 3 both eligible — produces
+bbpPairings enforces this rule correctly in general. A minimal case - three
+players, TPN 1 already holding a `U`, TPNs 2 and 3 both eligible - produces
 the bye for TPN 3, avoiding the second bye, exactly as expected. Its
 `eligibleForBye` (`swisssystems/common.h:104-118`) tests
 `!match.gameWasPlayed && (getPoints(...) >= pointsForWin || ...)`, which a
@@ -144,14 +144,14 @@ the player who ends up unmatched, but it does not appear to constrain the
 engine picks an illegal assignee where a legal one is merely worse on a
 lower-ranked criterion. In the second and third it picks a pairing that
 consumes the last available opponent of a player who already holds a bye,
-and only then discovers that player has nowhere to go — by which point
+and only then discovers that player has nowhere to go - by which point
 the bye is forced on someone the rule forbids.
 
 The distinguishing feature of all three is that the ineligible player is
 *short of opponents*: a nearly-exhausted pairing graph late in a small
 event, which is where a bye is most likely to be needed twice and least
 likely to have an alternative. That would also explain why the defect is
-rare enough to survive a large corpus — it needs both an already-byed
+rare enough to survive a large corpus - it needs both an already-byed
 player and that player to be down to their last legal opponent.
 
 ## A second, independent case
@@ -175,8 +175,8 @@ already hold one, and TPN 4 has met every active player but TPN 1:
 | 7 | 5.0 | no | 3, 5, 10 |
 | 10 | 3.0 | **yes** (R1) | 2, 5, 7 |
 
-TPN 4 cannot take the bye — [C2] — and has one available opponent. So
-**1–4 is forced**, and every candidate without it strands TPN 4 into a
+TPN 4 cannot take the bye - [C2] - and has one available opponent. So
+**1-4 is forced**, and every candidate without it strands TPN 4 into a
 second bye. The bye then falls to one of the three eligible players, and
 [C5] puts it on the lowest-scoring of them, TPN 3 on 4.0.
 
@@ -186,7 +186,7 @@ Gacrux:       1-4, 5-2, 7-10, bye 3
 bbpPairings:  1-2, 3-5, 7-10, bye 4      <- second bye for TPN 4
 ```
 
-bbpPairings pairs 1–2, which removes TPN 4's only opponent, and then has
+bbpPairings pairs 1-2, which removes TPN 4's only opponent, and then has
 nowhere to put TPN 4 except the bye. This is the same defect as the case
 above seen from a different angle: there, the illegal assignee was chosen
 where a legal one scored worse; here, it is chosen because an earlier
@@ -217,9 +217,9 @@ requires every one of them to be paired:
 
 The chain is deterministic:
 
-1. TPN 8 holds a bye and has a single opponent left → **4–8**
-2. TPN 2 holds a bye and now has a single one left → **2–1**
-3. TPN 9 holds a bye and now has a single one left → **9–7**
+1. TPN 8 holds a bye and has a single opponent left → **4-8**
+2. TPN 2 holds a bye and now has a single one left → **2-1**
+3. TPN 9 holds a bye and now has a single one left → **9-7**
 4. TPN 6 is all that remains, and is the one still eligible → **bye**
 
 ```
@@ -228,13 +228,13 @@ Gacrux:       2-1, 4-8, 9-7, bye 6
 bbpPairings:  4-2, 6-1, 9-7, bye 8      <- second bye for TPN 8
 ```
 
-bbpPairings pairs 4–2, which consumes TPN 8's only remaining opponent and
+bbpPairings pairs 4-2, which consumes TPN 8's only remaining opponent and
 leaves it nowhere to go but a second pairing-allocated bye.
 
 Note also what the correct answer does NOT optimise: TPN 6 on 5.0 is the
 highest-scoring active player, and [C5] asks for the assignee's score to be
 minimised. It goes to TPN 6 regardless, because [C2] is absolute and has
-eliminated every other candidate — the criteria are lexicographic, and an
+eliminated every other candidate - the criteria are lexicographic, and an
 absolute one is not tradeable against a lower-ranked preference.
 
 ## Reproduction
@@ -248,8 +248,8 @@ behaviour". The engine that found it is at
 
 All three were found by differential testing: several million synthetic
 tournaments and hundreds of millions of individual pairings compared
-board-for-board against bbpPairings across field sizes 4–500, round counts
-6–13, arbiter byes, forfeits, `XXP` exclusions and `XXA` acceleration.
+board-for-board against bbpPairings across field sizes 4-500, round counts
+6-13, arbiter byes, forfeits, `XXP` exclusions and `XXA` acceleration.
 These three positions are the only ones in that corpus where the engines
 disagree, and Gacrux -- a third, independent implementation of the same
 2026 rules -- returns Ainalrami's answer board-for-board on all three.

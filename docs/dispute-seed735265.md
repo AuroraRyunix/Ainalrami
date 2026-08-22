@@ -1,6 +1,6 @@
 # Rules-interpretation dispute: `seed735265-r7-p10`
 
-Position paper for FE1 category 3 — a disagreement between endorsed
+Position paper for FE1 category 3 - a disagreement between endorsed
 implementations that the candidate program believes is a reading of the
 rules rather than a defect. FE1 provides for escalating these to the SPPC
 rather than requiring the candidate to change.
@@ -28,15 +28,15 @@ and one of them must take the pairing-allocated bye.
 
 | rank | pts | bye-eligible | history |
 |---|---|---|---|
-| 1 | 2.5 | **no** (`U` r3) | 6w0 10b= –U –H 7w0 –H |
-| 2 | 2.0 | **no** (`U` r6) | 7b= 5w0 10w0 –Z 3b= –U |
-| 3 | 1.5 | **no** (`U` r2) | 8w0 –U 5b0 –Z 2w= 6b0 |
+| 1 | 2.5 | **no** (`U` r3) | 6w0 10b= -U -H 7w0 -H |
+| 2 | 2.0 | **no** (`U` r6) | 7b= 5w0 10w0 -Z 3b= -U |
+| 3 | 1.5 | **no** (`U` r2) | 8w0 -U 5b0 -Z 2w= 6b0 |
 | 5 | 4.5 | yes | 10w= 2b1 3w1 8b1 4w= 9b= |
-| 7 | 3.0 | yes | 2w= –H 4b0 9w0 1b1 10b1 |
-| 8 | 4.0 | yes | 3b1 6b1 –H 5w0 –H 4b1 |
-| 9 | 3.5 | yes | 4w0 –H –H 7b1 10w1 5w= |
+| 7 | 3.0 | yes | 2w= -H 4b0 9w0 1b1 10b1 |
+| 8 | 4.0 | yes | 3b1 6b1 -H 5w0 -H 4b1 |
+| 9 | 3.5 | yes | 4w0 -H -H 7b1 10w1 5w= |
 
-Three of the seven — ranks 1, 2 and 3 — have **already taken a
+Three of the seven - ranks 1, 2 and 3 - have **already taken a
 pairing-allocated bye**, so C.04's absolute criterion barring a second one
 leaves exactly four candidates: 5, 7, 8 and 9.
 
@@ -44,12 +44,12 @@ leaves exactly four candidates: 5, 7, 8 and 9.
 
 | engine | pairing | bye to |
 |---|---|---|
-| Ainalrami | `{5,1} {8,2} {3,9}` | **7** — eligible |
-| Gacrux (`pairingchecker.py -m dutch`, rules hardcoded to 2026-02-01) | `{5,1} {8,2} {3,9}` — identical, board for board | **7** |
-| bbpPairings 6.0.0 | `{7,5} {8,1} {2,9}` | **3** — *already byed in round 2* |
+| Ainalrami | `{5,1} {8,2} {3,9}` | **7** - eligible |
+| Gacrux (`pairingchecker.py -m dutch`, rules hardcoded to 2026-02-01) | `{5,1} {8,2} {3,9}` - identical, board for board | **7** |
+| bbpPairings 6.0.0 | `{7,5} {8,1} {2,9}` | **3** - *already byed in round 2* |
 
 Both readings seat all seven players, and neither contains a rematch. The
-substantive difference is who takes the bye — and bbpPairings' choice gives
+substantive difference is who takes the bye - and bbpPairings' choice gives
 a **second** pairing-allocated bye to rank 3.
 
 Run directly against the binary rather than taken from the harness:
@@ -73,13 +73,13 @@ Three things in that document decide this case.
 **C2 is an absolute criterion, and it is the PAB rule.** The document
 enumerates the absolutes as C1 (players who already met), C2 (the PAB rule)
 and C3 (clashing absolute colour preferences), with C4 the completion
-criterion and C6–C21 the quality criteria. On the choice of PAB-assignee it
-states the requirement directly — the assignee must be a player who
+criterion and C6-C21 the quality criteria. On the choice of PAB-assignee it
+states the requirement directly - the assignee must be a player who
 
 > "did not receive a previous PAB, a forfeit win, or a Full-Point Bye ([C2])"
 
 and restates it when working an example as excluding "players who earned
-full points **without playing** — i.e., PAB, forfeits, FPBs".
+full points **without playing** - i.e., PAB, forfeits, FPBs".
 
 **A candidate violating an absolute criterion is discarded, not ranked.**
 
@@ -97,7 +97,7 @@ both times.** In its fifth-round example:
 > [C2])."
 
 In both cases the document takes the transposition that moves the PAB to an
-eligible player instead — which is structurally what Ainalrami and Gacrux do
+eligible player instead - which is structurally what Ainalrami and Gacrux do
 here and what bbpPairings does not.
 
 So bbpPairings' output for this position is not a lower-quality reading of a
@@ -105,7 +105,7 @@ tie-break. Under C.04.3 (2026) it is an illegal candidate that should have
 been discarded, and a legal alternative exists.
 
 Note also what C2 does **not** cover: it excludes full points earned
-*without playing*. An ordinary win — including TRF16's letter spelling `W` —
+*without playing*. An ordinary win - including TRF16's letter spelling `W` -
 is a played game and never costs a player their eligibility. This engine had
 `W` in its disqualifying list until 2026-08-17; the document confirms the
 removal.
@@ -113,8 +113,8 @@ removal.
 ## bbpPairings honours this rule in general
 
 Which is what makes the case worth filing rather than dismissing as a
-misreading of its intent. `tools/bye_probe.exs` builds the minimal version —
-three players, rank 1 already holding a `U`, ranks 2 and 3 both eligible —
+misreading of its intent. `tools/bye_probe.exs` builds the minimal version -
+three players, rank 1 already holding a `U`, ranks 2 and 3 both eligible -
 and bbpPairings pairs rank 1 and byes rank 3, exactly as Ainalrami does. Its
 `eligibleForBye` (`common.h:104-118`) disqualifies any unplayed game worth at
 least a win, which a pairing-allocated bye is at default point values, and
@@ -124,7 +124,7 @@ has no bearing on points.
 
 So this is not bbpPairings implementing a different rule. It is bbpPairings
 implementing the same rule and, in this position, reaching a pairing that
-breaks it while a fully legal alternative exists — the one Ainalrami and
+breaks it while a fully legal alternative exists - the one Ainalrami and
 Gacrux both produce.
 
 ## Why it is worth escalating
@@ -136,12 +136,12 @@ Gacrux both produce.
 2. **A second independent implementation agrees with the candidate.** Gacrux
    is Otto Milvang's pairing checker, the tool FIDE/TEC itself uses, and it
    is not derived from this project or from bbpPairings. In every other
-   disagreement this project has catalogued — 40 of them, across millions of
-   tournaments — Gacrux has sided with bbpPairings. This is the only case
+   disagreement this project has catalogued - 40 of them, across millions of
+   tournaments - Gacrux has sided with bbpPairings. This is the only case
    where it has not.
 3. **It is the sole survivor.** Across ~4.3 million tournaments and ~195
-   million individual pairings spanning field sizes 4–120, round counts
-   6–10, arbiter byes, forfeits, `XXP` exclusions and `XXA` acceleration,
+   million individual pairings spanning field sizes 4-120, round counts
+   6-10, arbiter byes, forfeits, `XXP` exclusions and `XXA` acceleration,
    this is the only round on which Ainalrami and bbpPairings differ at all.
    It is not a symptom of a general weakness.
 
@@ -158,7 +158,7 @@ artifact and has been withdrawn.**
 Each bracket's rungs are a SUM over the pairs it keeps plus the pairs
 reaching into the next score group, and the top rung's leading term is one
 per edge. In the first bracket where these two answers differ, Ainalrami
-contributes one edge and bbpPairings two — Ainalrami floats rank 7 onward
+contributes one edge and bbpPairings two - Ainalrami floats rank 7 onward
 where bbpPairings pairs 5 with 7. So every rung in that bracket differs by
 that accounting alone, including the top one, whose label names bye
 eligibility and whose difference here has nothing to do with bye
@@ -173,20 +173,20 @@ So there is no longer a known inconsistency between this engine and its own
 ladder on this position. What there is instead is a diagnostic that could
 not compare these two answers at all, and said something confident anyway.
 Every verdict in engineering-log.md produced by that path deserves the same scepticism
-until re-run — see the note there.
+until re-run - see the note there.
 
 ## What has to happen before submission
 
-1. ~~**Resolve the internal inconsistency.**~~ **Done** — it was the
+1. ~~**Resolve the internal inconsistency.**~~ **Done** - it was the
    diagnostic, not the engine. See above.
-2. ~~**Hand-trace the bye decision against the Handbook text.**~~ **Done** —
+2. ~~**Hand-trace the bye decision against the Handbook text.**~~ **Done** -
    see "The rules say bbpPairings' answer is illegal" above. The criterion is
    C2, it is absolute, and the primary source works the same situation twice
    and calls it illegal.
 3. ~~**Confirm Gacrux's rules edition.**~~ **Done, 2026-08-17.** It is not a
    default that could be overridden: `pairingdutch.py:72` assigns
    `self.rules = self.DUTCH_RULES[1]` unconditionally, and `DUTCH_RULES[1]`
-   is `"2026-02-01"` — the only edition it runs.
+   is `"2026-02-01"` - the only edition it runs.
 
    The agreement was also re-run rather than cited. Against this exact file:
 

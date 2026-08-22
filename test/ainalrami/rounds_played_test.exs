@@ -1,7 +1,7 @@
 defmodule Ainalrami.RoundsPlayedTest do
   @moduledoc """
   Regression cover for the last of the illegal rounds left over from the
-  100,000-tournament overnight run (`PAIRING_FUZZ_BYE_PCT=15` — see
+  100,000-tournament overnight run (`PAIRING_FUZZ_BYE_PCT=15` - see
   docs/engineering-log.md, and `crash_reports/seed4385-r5-p4.trf`, the repro this fixture
   is copied from).
 
@@ -20,19 +20,19 @@ defmodule Ainalrami.RoundsPlayedTest do
   in for the whole field is a round that is already fully decided, so it
   counts as played and the round to pair is the one after it.
 
-  This fixture is that case — all four players hold a round-5 bye
+  This fixture is that case - all four players hold a round-5 bye
   (`Z`/`Z`/`Z`/`H`). Ainalrami used to compute `rounds_played` as 4, find
   nobody active for round 5 (every player's history is already longer
-  than 4), and return `{:ok, []}` — no pairing at all, for a field with a
+  than 4), and return `{:ok, []}` - no pairing at all, for a field with a
   perfectly legal one. Real bbpPairings on this same file pairs round 6
   and returns `4 1` / `2 3`, which is what this test asserts Ainalrami now
-  produces too — not merely "returns something non-empty".
+  produces too - not merely "returns something non-empty".
 
   Worth stating plainly because docs/engineering-log.md recorded it the other way round:
   this case was filed as the ONE confirmed-genuine remaining bug, with
   four sibling cases dismissed as degenerate fuzz artifacts on the
   grounds that their whole field was pre-byed. That grouping was
-  backwards — a fully pre-byed field is precisely the input this rule
+  backwards - a fully pre-byed field is precisely the input this rule
   exists to handle, bbpPairings handles it deterministically, and all
   five were the same missing rule.
 
@@ -60,7 +60,7 @@ defmodule Ainalrami.RoundsPlayedTest do
 
   test "one player's pre-recorded bye does not advance the round for everyone else" do
     # Four players, round 1 played (1 beat 2, 3 beat 4). Only rank 4
-    # holds a pre-recorded half-point bye for round 2 — the ordinary
+    # holds a pre-recorded half-point bye for round 2 - the ordinary
     # "arbiter grants one player a bye" case. Ranks 1-3 are still owed
     # round 2, so the count must stay at 1 and pair them, leaving rank 4
     # out. Built as plain structs rather than fixed-column TRF text
@@ -70,7 +70,7 @@ defmodule Ainalrami.RoundsPlayedTest do
     # Deliberately no `U` anywhere in this history: an earlier draft of
     # this test reused the main fixture's players, where rank 1 already
     # held a pairing-allocated bye and so was barred from taking a second
-    # one (C2) — with the only legal pair among the three being {2,3},
+    # one (C2) - with the only legal pair among the three being {2,3},
     # that position is genuinely unpairable, and the engine was right to
     # refuse it. The bug being pinned here is about the ROUND NUMBER, so
     # the position has to be otherwise pairable for the assertion to mean

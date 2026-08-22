@@ -16,7 +16,7 @@ defmodule Ainalrami.Test.Field do
   finding".
 
   They could not disagree. The two functions were character-for-character
-  identical — same structure, same literals, same helper names — because they
+  identical - same structure, same literals, same helper names - because they
   are one person's port of one C++ function, written twice. An independent
   implementation is not the same thing as a second copy, and every "zero
   illegal rounds across N million pairings" claim rested on a check that
@@ -30,7 +30,7 @@ defmodule Ainalrami.Test.Field do
   `from_reference/1` reads the active set off **bbpPairings' own pairing for
   the same TRF**. bbpPairings decides which players a round seats by its own
   `playedRounds` and `evenUpMatchHistories`, compiled from C++ this project
-  did not write, and the harnesses already run it on every round — the
+  did not write, and the harnesses already run it on every round - the
   information was there all along. If Ainalrami seats a different set of
   players than the reference did, that is now a real finding rather than a
   tautology.
@@ -38,7 +38,7 @@ defmodule Ainalrami.Test.Field do
   This deliberately does NOT make legality collapse into agreement. The two
   answer different questions and the harness still asks both: agreement is
   "did we choose the same pairing", legality is "is what we produced a
-  well-formed round at all" — a partition of the right players, one bye only
+  well-formed round at all" - a partition of the right players, one bye only
   when the count is odd, no rematch, no second bye, no forbidden pair. An
   engine can seat the right people and still pair two of them illegally, and
   those checks read the players' own histories, never the active set.
@@ -53,13 +53,13 @@ defmodule Ainalrami.Test.Field do
 
   bbpPairings derives the round to pair in two steps.
 
-  1. `trf.cpp:339-342` — `playedRounds` only advances for a game the player
+  1. `trf.cpp:339-342` - `playedRounds` only advances for a game the player
      PARTICIPATED IN THE PAIRING for: a real opponent, or a `U`
      (pairing-allocated bye) / `+` (forfeit win, which still occupied a
      pairing slot). An arbiter-recorded `H`/`Z` bye does NOT advance it, so
      one player's pre-recorded bye cannot drag the round number forward and
      strand everyone else.
-  2. `trf.cpp:646-684` (`evenUpMatchHistories`) — then, in pairing mode
+  2. `trf.cpp:646-684` (`evenUpMatchHistories`) - then, in pairing mode
      (`main.cpp:452` passes `includesUnpairedRound = true`), if EVERY valid
      player already holds a game for the trailing column, that column is a
      round already fully decided, so it counts as played and the round to
@@ -80,7 +80,7 @@ defmodule Ainalrami.Test.Field do
   """
 
   @doc """
-  The ranks bbpPairings seated for this round, as a MapSet — the reference's
+  The ranks bbpPairings seated for this round, as a MapSet - the reference's
   own answer to "who is active", taken from the pairing it produced.
 
   `pairs` is `[{white_rank, black_rank | nil}]` as `Ainalrami.Test.Bbppairings`
@@ -99,7 +99,7 @@ defmodule Ainalrami.Test.Field do
   @doc """
   The players the engine's OWN rule says to seat.
 
-  Not independent of `Ainalrami.Pairing` — see the moduledoc. Use
+  Not independent of `Ainalrami.Pairing` - see the moduledoc. Use
   `from_reference/1` wherever a bbpPairings result is available.
   """
   def derive(players) do
@@ -110,7 +110,7 @@ defmodule Ainalrami.Test.Field do
   @doc "Deprecated alias for `derive/1`, kept so the older harnesses read the same."
   def active(players), do: derive(players)
 
-  @doc "How many rounds are already complete — see the moduledoc."
+  @doc "How many rounds are already complete - see the moduledoc."
   def rounds_played(players) do
     base = players |> Enum.map(&paired_through/1) |> max_or_zero()
 

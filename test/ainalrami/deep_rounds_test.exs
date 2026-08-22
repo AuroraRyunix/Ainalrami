@@ -5,7 +5,7 @@ defmodule Ainalrami.DeepRoundsTest do
   REFUSING a round that has a perfectly legal pairing.
 
   Found by running the bbpPairings harness at 39 rounds instead of 9. The
-  "illegal" column filled up — 142 of 2126 rounds — but nothing illegal
+  "illegal" column filled up - 142 of 2126 rounds - but nothing illegal
   was ever emitted. `illegality/3` reports a raised
   `NoValidPairingError` as `:raised` and the report counts it in the same
   column, so a refusal reads as an illegal pairing. Every one of those
@@ -13,7 +13,7 @@ defmodule Ainalrami.DeepRoundsTest do
   independently for rematches, repeat byes and C3 clashes).
 
   The cause was in `repair_completion/3`. It ranked cardinality above
-  everything, which finds A maximum matching but not a particular one —
+  everything, which finds A maximum matching but not a particular one -
   and several maximum matchings normally exist, leaving different players
   unmatched. When the one it happened to return left a C2-ineligible
   player over, `check_completion/3` correctly rejected it, and the round

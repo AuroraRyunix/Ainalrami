@@ -1,7 +1,7 @@
 # Validation
 
-How Ainalrami is measured, what the numbers are, and — the part that
-matters most — what the measurements could not have seen.
+How Ainalrami is measured, what the numbers are, and - the part that
+matters most - what the measurements could not have seen.
 
 The headline is in the [README](../README.md). This document is the
 methodology behind it and the reasoning that makes it worth anything.
@@ -33,53 +33,53 @@ agreed with each other on **every single one**, which bounds their mutual
 disagreement at ~0.09% and is what makes them usable as a ruler at all.
 
 Ainalrami measures **96.26%** against JaVaFo, and that is the expected
-result rather than a defect — it is the size of the rules change. An
+result rather than a defect - it is the size of the rules change. An
 engine agreeing with all three simultaneously would prove the harness was
 measuring nothing.
 
 ## The corpus
 
 **5,993,000 tournaments, 44,486,465 rounds, 488,033,862 individual
-pairings, two disagreements** — the 2026-08-20 run on a 36-core machine,
+pairings, two disagreements** - the 2026-08-20 run on a 36-core machine,
 seventeen axes, ~15 hours. Neither disagreement is a defect here: both are
 the bbpPairings [C2] second-bye defect, and Gacrux returns this engine's
 answer on both (see below).
 
 | axis | tournaments | rounds | individual pairs | disagreements |
 |---|---|---|---|---|
-| 300–500 players, byes | 3,000 | 27,000 | 4,871,001 | 0 |
-| 150–250 players, byes | 30,000 | 270,000 | 24,357,105 | 0 |
-| 150–250, byes+forfeits+`XXP`+Baku | 10,000 | 90,000 | 8,128,884 | 0 |
-| 60–120 players, byes | 200,000 | 1,800,000 | 73,378,553 | 0 |
-| 60–120, byes+forfeits+`XXP`+Baku | 100,000 | 900,000 | 36,689,898 | 0 |
-| 4–40, byes+forfeits+`XXP`+Baku | 400,000 | 3,334,635 | 35,022,819 | 0 |
-| 4–40, 15% byes | 600,000 | 5,037,730 | 50,883,196 | 0 |
-| 4–40, 10% forfeits | 300,000 | 2,518,015 | 29,805,864 | 0 |
-| 4–40, 20% forbidden (`XXP`) | 300,000 | 2,477,490 | 29,656,258 | 0 |
-| 4–40, random acceleration | 300,000 | 2,516,311 | 26,897,840 | **1** |
-| 4–40, Black drawn first | 300,000 | 2,526,740 | 25,473,925 | 0 |
-| 4–40, plain | 300,000 | 2,529,979 | 29,866,857 | 0 |
-| 4–40, 8 rounds | 300,000 | 2,270,382 | 22,727,208 | 0 |
-| 4–40, 10 rounds, combined | 200,000 | 1,825,095 | 19,327,331 | 0 |
-| 4–40, 13 rounds | 150,000 | 1,721,955 | 17,954,308 | 0 |
-| 4–10, 15% byes | 2,000,000 | 11,644,432 | 40,827,511 | **1** |
-| 4–10, plain | 500,000 | 2,996,701 | 12,165,304 | 0 |
+| 300-500 players, byes | 3,000 | 27,000 | 4,871,001 | 0 |
+| 150-250 players, byes | 30,000 | 270,000 | 24,357,105 | 0 |
+| 150-250, byes+forfeits+`XXP`+Baku | 10,000 | 90,000 | 8,128,884 | 0 |
+| 60-120 players, byes | 200,000 | 1,800,000 | 73,378,553 | 0 |
+| 60-120, byes+forfeits+`XXP`+Baku | 100,000 | 900,000 | 36,689,898 | 0 |
+| 4-40, byes+forfeits+`XXP`+Baku | 400,000 | 3,334,635 | 35,022,819 | 0 |
+| 4-40, 15% byes | 600,000 | 5,037,730 | 50,883,196 | 0 |
+| 4-40, 10% forfeits | 300,000 | 2,518,015 | 29,805,864 | 0 |
+| 4-40, 20% forbidden (`XXP`) | 300,000 | 2,477,490 | 29,656,258 | 0 |
+| 4-40, random acceleration | 300,000 | 2,516,311 | 26,897,840 | **1** |
+| 4-40, Black drawn first | 300,000 | 2,526,740 | 25,473,925 | 0 |
+| 4-40, plain | 300,000 | 2,529,979 | 29,866,857 | 0 |
+| 4-40, 8 rounds | 300,000 | 2,270,382 | 22,727,208 | 0 |
+| 4-40, 10 rounds, combined | 200,000 | 1,825,095 | 19,327,331 | 0 |
+| 4-40, 13 rounds | 150,000 | 1,721,955 | 17,954,308 | 0 |
+| 4-10, 15% byes | 2,000,000 | 11,644,432 | 40,827,511 | **1** |
+| 4-10, plain | 500,000 | 2,996,701 | 12,165,304 | 0 |
 
 **Zero illegal rounds across all seventeen.** Legality is checked
-independently of agreement — it is the question with a right answer,
+independently of agreement - it is the question with a right answer,
 where "does bbpPairings pair it the same way" is not.
 
 ### Replication on fresh seeds, post-optimisation
 
 **5,993,000 tournaments, 44,473,264 rounds, 487,338,797 individual
-pairings, ZERO disagreements** — the 2026-08-21 run, same seventeen axes,
+pairings, ZERO disagreements** - the 2026-08-21 run, same seventeen axes,
 same machine, ~14.7 hours.
 
 Two things differ from the run above, and both are the point of having
 done it:
 
 * **Different engine.** This ran on `adae426`, which makes `finalize_pair`
-  a pure edge removal and skips `prepare_vertex` — a matching-layer
+  a pure edge removal and skips `prepare_vertex` - a matching-layer
   optimisation, i.e. exactly the kind of change that can be correct on
   every test and still wrong on the millionth bracket. It is not.
 * **Disjoint seeds** (from 9,000,001), so this is an independent corpus
@@ -98,9 +98,9 @@ regression tests rather than being treated as resolved by this run.
 
 One caveat on the headline count, which applies to both runs equally:
 2,724,198 tournaments (45.5%) ended early because bbpPairings ran out of
-legal pairings — overwhelmingly in the 4–10 player axes, where nine rounds
-is arithmetically impossible without repeats (88.2% of `4–10, 15% byes`
-and 78.2% of `4–10, plain` terminated early). Those tournaments are
+legal pairings - overwhelmingly in the 4-10 player axes, where nine rounds
+is arithmetically impossible without repeats (88.2% of `4-10, 15% byes`
+and 78.2% of `4-10, plain` terminated early). Those tournaments are
 excluded from the rates, so agreement is measured up to exhaustion and
 not about it: if this engine were willing to pair a round bbpPairings
 declines, these axes could not show it. That is the one behaviour the
@@ -110,13 +110,13 @@ corpus is structurally blind to.
 
 It is the first corpus measured on the local-graph engine (see
 `docs/engineering-log.md`), and the speed is what bought the coverage:
-60–120 players ran at ~22 tournaments/s against 0.36 before, so the large
+60-120 players ran at ~22 tournaments/s against 0.36 before, so the large
 axes stopped being unaffordable.
 
-- **300–500 players had never been validated at any scale.** Neither had
-  150–250 with forfeits and forbidden pairs on top.
+- **300-500 players had never been validated at any scale.** Neither had
+  150-250 with forfeits and forbidden pairs on top.
 - **The large-field axes are 3.1 million rounds** between them, against
-  600 tournaments in the previous corpus — the dimension that was
+  600 tournaments in the previous corpus - the dimension that was
   thinnest is now among the thickest, which matters because the local
   graph only engages on brackets big enough to qualify.
 - **A Black-drawn-first axis**, exercising the 5.2.5 reading this engine
@@ -127,8 +127,8 @@ axes stopped being unaffordable.
 Both are the same bbpPairings defect, on different axes and seed ranges:
 it allocates a second pairing-allocated bye to a player who already holds
 one, which [C2] forbids absolutely. The adjudicator scores both
-`incomparable` — neither is a case where bbpPairings' answer is better on
-this engine's own ladder — and Gacrux, a third independent implementation,
+`incomparable` - neither is a case where bbpPairings' answer is better on
+this engine's own ladder - and Gacrux, a third independent implementation,
 returns this engine's answer board-for-board on both.
 
 In `seed7073463-r8-p9` the round has exactly one legal shape, reached by
@@ -149,8 +149,8 @@ colour differences.**
 |---|---|---|
 | byes + forfeits + `XXP` + `XXA`, 7 rounds | 16,605 | 165,629 |
 | 15% byes, **8** rounds | 18,920 | 189,175 |
-| plain, 4–10 players | 6,586 | 26,032 |
-| **60–120 players** | 840 | 38,717 |
+| plain, 4-10 players | 6,586 | 26,032 |
+| **60-120 players** | 840 | 38,717 |
 | 15% byes, **6** rounds | 6,990 | 68,567 |
 | 15% byes, **10** rounds | 11,015 | 112,155 |
 | **`152 B`** + byes + forfeits | 8,082 | 79,747 |
@@ -166,15 +166,15 @@ change, and is worth doing before any endorsement submission.
 
 | axis | tournaments | exact rounds | individual pairs | illegal |
 |---|---|---|---|---|
-| plain, 4–40 players | 120,000 | 100.00% | 100.00% | 0 |
-| plain, 4–10 players | 500,000 | 100.00% | 100.00% | 0 |
-| 15% arbiter byes, 4–40 | 250,000 | 100.00% | 100.00% | 0 |
-| 15% arbiter byes, 4–10 | 1,200,000 | 100.00% (1 dispute) | 100.00% | 0 |
-| 10% forfeits, 4–40 | 120,000 | 100.00% | 100.00% | 0 |
+| plain, 4-40 players | 120,000 | 100.00% | 100.00% | 0 |
+| plain, 4-10 players | 500,000 | 100.00% | 100.00% | 0 |
+| 15% arbiter byes, 4-40 | 250,000 | 100.00% | 100.00% | 0 |
+| 15% arbiter byes, 4-10 | 1,200,000 | 100.00% (1 dispute) | 100.00% | 0 |
+| 10% forfeits, 4-40 | 120,000 | 100.00% | 100.00% | 0 |
 | 20% forbidden (`XXP`) | 120,000 | 100.00% | 100.00% | 0 |
 | Baku acceleration (`XXA`) | 120,000 | 100.00% | 100.00% | 0 |
 | byes + forfeits + `XXP` + `XXA` | 120,000 | 100.00% | 100.00% | 0 |
-| 60–120 players | 600 | 100.00% | 100.00% | 0 |
+| 60-120 players | 600 | 100.00% | 100.00% | 0 |
 | **even round counts** (6, 8, 10) | 850,000 | 100.00% | 100.00% | 0 |
 | odd-round controls (7, 9) | 350,000 | 100.00% | 100.00% | 0 |
 
@@ -209,7 +209,7 @@ Every axis is a set of environment variables:
 | variable | default | meaning |
 |---|---|---|
 | `PAIRING_FUZZ_COUNT` | small | tournaments to generate |
-| `PAIRING_FUZZ_ROUNDS` | 9 | rounds per tournament — **vary this** |
+| `PAIRING_FUZZ_ROUNDS` | 9 | rounds per tournament - **vary this** |
 | `PAIRING_FUZZ_MIN_PLAYERS` / `MAX_PLAYERS` | 4 / 40 | field size range |
 | `PAIRING_FUZZ_SEED_FROM` | 1 | start of the seed range |
 | `PAIRING_FUZZ_BYE_PCT` | 0 | arbiter-assigned bye rate |
@@ -217,13 +217,13 @@ Every axis is a set of environment variables:
 | `PAIRING_FUZZ_FORBIDDEN_PCT` | 0 | `XXP` density |
 | `PAIRING_FUZZ_ACCEL` | none | `baku` or random `XXA` |
 | `PAIRING_FUZZ_INITIAL_COLOUR` | `w` | TRF `152` header |
-| `PAIRING_FUZZ_DUMP` | — | directory for failing cases |
-| `COLOUR_DEBUG` | — | report colour mismatches per pair |
+| `PAIRING_FUZZ_DUMP` | - | directory for failing cases |
+| `COLOUR_DEBUG` | - | report colour mismatches per pair |
 
 `overnight_run/run.sh` drives the long batches.
 
 **Seeds are independent**, and `PAIRING_FUZZ_SEED_FROM` starts the range
-anywhere — so any catalogued case regenerates in about a second rather
+anywhere - so any catalogued case regenerates in about a second rather
 than requiring the 735,264 tournaments before it. That knob not existing
 is a large part of why early catalogued cases were adjudicated once and
 never revisited.
@@ -239,7 +239,7 @@ nine-round tournament pairs its final round with **eight** played, and
 `div(8, 2) == 8 / 2`.
 
 So a topscorer threshold that *floors* the half-point is invisible. It can
-only differ when the played-round count is odd — that is, when the
+only differ when the played-round count is odd - that is, when the
 tournament has an **even** number of rounds. `final_round_topscorers?/2`
 had exactly that bug. Re-measured at 8 rounds, 2,000 tournaments:
 
@@ -253,14 +253,14 @@ eight- and ten-round Swisses are ordinary events; this was never an exotic
 corner.
 
 **Corpus size bought nothing here.** The axes varied field size, bye rate,
-forfeit rate and extension lines — and held constant the one parameter the
+forfeit rate and extension lines - and held constant the one parameter the
 bug was a function of.
 
 > When adding an axis, ask what the existing ones hold **constant**, not
 > what they vary.
 
 The even-round axis is now first-class: 1,800,000 tournaments across
-rounds 6/7/8/9/10, zero disagreements. The odd controls are the point —
+rounds 6/7/8/9/10, zero disagreements. The odd controls are the point -
 had 7 and 9 also moved, the fix would have been wrong in a way the small
 local run could not have shown.
 
@@ -273,8 +273,8 @@ active field and none in an even one.
 That held at every sample size up to ~5,500 rounds. At 839,776 rounds it
 did not: the first 100,000-tournament bye-rate run found **102 illegal
 rounds (0.012%)**. Ninety-five raised `ArgumentError` from a range
-`0..-1` — Elixir's default step for a descending range walks `0, -1`, and
-`elem(arr, -1)` is an invalid index — reachable only when exactly one
+`0..-1` - Elixir's default step for a descending range walks `0, -1`, and
+`elem(arr, -1)` is an invalid index - reachable only when exactly one
 player was left needing a bye. Five returned the wrong bye count, two a
 non-partition.
 
@@ -289,18 +289,18 @@ code. Re-running the identical configuration over 250,000 tournaments /
 Found while chasing the above, and worth listing because three engine bugs
 were found *by* fixing the instrument rather than by the instrument:
 
-- **`explain_round/3` never stamped float history**, so C14–C21 scored a
+- **`explain_round/3` never stamped float history**, so C14-C21 scored a
   constant on both sides of every verdict the adjudicator ever printed. It
-  could not invent a disagreement — both sides were scored blank, so a tie
-  stayed a tie — but it could *misattribute* one. It had no test of any
+  could not invent a disagreement - both sides were scored blank, so a tie
+  stayed a tie - but it could *misattribute* one. It had no test of any
   kind until `explain_round_test.exs`.
 - **The legality oracle was a copy of the engine.** An enumerator that
   checks C1 but neither C2 nor C3 reports "legal pairings the engine
-  refused" — it has admitted illegal ones. A weaker oracle accusing a
+  refused" - it has admitted illegal ones. A weaker oracle accusing a
   stronger implementation is the expected result, not a finding.
 - **Every axis pinned `ROUNDS=9`**, as above.
 - **The harness never compared colours.** Colour agreement was simply not
-  measured until `colour_mismatches/5` was added — 4.3 million tournaments
+  measured until `colour_mismatches/5` was added - 4.3 million tournaments
   and 195 million pairings had validated who plays whom and never once
   checked Article 5. Turning it on immediately found a missing 5.2.4 and
   then the 5.2.5 dispute below.
@@ -313,8 +313,8 @@ identical round is not the same finding as a different round.
 
 They are then split again, into the known
 [Article 5.2.5 dispute](dispute-initial-colour.md) and **unexplained**.
-Without that split the dispute's volume — hundreds of boards per few
-hundred bye-heavy tournaments — would bury a real colour regression
+Without that split the dispute's volume - hundreds of boards per few
+hundred bye-heavy tournaments - would bury a real colour regression
 completely.
 
 A board is filed under the dispute when 5.2.5 is what decides it (neither
@@ -322,7 +322,7 @@ player holds any colour preference) **and this engine's answer is the one
 the article gives**. That deliberately tests our own conformance rather
 than matching a model of bbpPairings' internals: an earlier version did
 the latter and mis-filed a genuine case, because predicting the
-references' numbering means implementing a rule this project rejects —
+references' numbering means implementing a rule this project rejects -
 twice, and in a test.
 
 The axes without byes are the control that makes the rest meaningful:
@@ -331,14 +331,14 @@ so this is not a general disagreement about Article 5.
 
 The adjudication tables in [engineering-log.md](engineering-log.md) were
 produced with the blank float history and have **not** been re-run. They
-are not wrong about *whether* the engines differed — that comes from the
-harness, not the scorer — but their "first differing rung" column is only
+are not wrong about *whether* the engines differed - that comes from the
+harness, not the scorer - but their "first differing rung" column is only
 trustworthy where the winning rung outranks C14.
 
 ## Legality, independent of any reference
 
-When no legal pairing can exist at all — a genuine structural deadlock,
-not a search failure — the engine raises
+When no legal pairing can exist at all - a genuine structural deadlock,
+not a search failure - the engine raises
 `Ainalrami.Pairing.NoValidPairingError` rather than emitting a
 best-effort illegal result, matching bbpPairings' own
 `NoValidPairingException`. bbpPairings has independently confirmed these
@@ -352,7 +352,7 @@ because bbpPairings implements both and reads the same file: **1,789,554
 rounds and 8,536,147 individual pairs carrying at least one extension
 line, 100.00% agreement, zero illegal rounds**, across eleven axes.
 
-Every previously-measured axis was byte-identical after that change — the
+Every previously-measured axis was byte-identical after that change - the
 same numerators and denominators, not merely the same percentages.
 
 What the old line-dropping behaviour actually cost, before they were
@@ -364,7 +364,7 @@ the wrong scores.
 
 Stated so the claim's boundary is explicit:
 
-- ~~**`260` and `250`**~~ — **implemented 2026-08-18.** These are
+- ~~**`260` and `250`**~~ - **implemented 2026-08-18.** These are
   bbpPairings' round-limited siblings of `XXP` and `XXA`, and they were
   listed here as "deliberately absent rather than stubbed". That was wrong
   in a specific way: absent meant the lines fell through to the header
@@ -372,11 +372,11 @@ Stated so the claim's boundary is explicit:
   never meet in rounds 1-3" produced a complete, legal-looking round that
   seated 1 against 3. Verified happening before the fix. Both are now read,
   both raise on a malformed line, and every case was checked against the
-  real binary — including a `260` whose range excludes the round being
+  real binary - including a `260` whose range excludes the round being
   paired, which must do nothing.
 - **bbpPairings' own Baku flag**, which sizes Group A as `ceil(n/2)` where
   FIDE C.04.7 uses `2 * ceil(n/4)`. Reached only through its own flag,
-  never through `XXA`, so it cannot make the two engines disagree here —
+  never through `XXA`, so it cannot make the two engines disagree here -
   both read identical `XXA` lines from an identical file.
 - **Team tournaments, unrated players, late entrants**, and files where
   `rounds_count` disagrees with `XXR`. The harness generates none of
@@ -395,7 +395,7 @@ of a real 209-player tournament, cut down to size:
 | 160 | 13 s | 24 s |
 | 209 | **38 s** | 90 s |
 
-**2.4× overall, and the growth rate barely moved** — still somewhere
+**2.4× overall, and the growth rate barely moved** - still somewhere
 between n³ and n⁴. That is worth saying plainly, because the work was
 undertaken to change the exponent and mostly did not. What it bought was
 a large constant factor, three times over.
@@ -414,8 +414,8 @@ being outer.
 
 **Edge weights are divided by their greatest common divisor first.** This
 turned out to matter more than the caches. `Ainalrami.Pairing` packs
-C1–C21 into a single integer by giving each criterion its own band, and on
-a 209-player field that produces weights of **103 digits** — so every
+C1-C21 into a single integer by giving each criterion its own band, and on
+a 209-player field that produces weights of **103 digits** - so every
 `dual + dual − weight`, the innermost operation in the algorithm, was
 arbitrary-precision arithmetic. In one real solve, 21,221 edges carried
 just **five distinct weights sharing a ninety-digit common factor**.
@@ -432,7 +432,7 @@ replaced by adjacency, so the innermost lookup stopped allocating a tuple.
 
 Profiling the finished version on a real solve: the scans that were the
 whole problem are down to 10% of the time, and cache *maintenance* is the
-other 90% — 46% rebuilding at stage boundaries, 44% refreshing after
+other 90% - 46% rebuilding at stage boundaries, 44% refreshing after
 structural changes. The work moved rather than vanished. Getting past that
 needs the maintenance itself to be incremental across stages, which the
 labels being recomputed wholesale by `init_labels/1` currently prevents.
@@ -444,8 +444,8 @@ error yields a wrong pairing rather than an obvious failure. Three
 independent checks:
 
 - **`tools/matching_baseline.exs`** replays `solve/2` over 460 random
-  graphs — 400 small, where blossoms are easy to hit by chance, and 60 at
-  40–90 vertices — across three densities and both weight scales. Every
+  graphs - 400 small, where blossoms are easy to hit by chance, and 60 at
+  40-90 vertices - across three densities and both weight scales. Every
   one is checked for **total weight** and matched count, not byte
   identity: 460/460 optimal.
 - **Byte identity is deliberately not required.** 86% of delta steps have
@@ -455,7 +455,7 @@ independent checks:
   is not unique.
 - **That this is safe was measured before the caches were written.**
   Inverting the tie-break of the old linear scans left the engine agreeing
-  with bbpPairings on 1358/1358 rounds — so the pairing is determined by
+  with bbpPairings on 1358/1358 rounds - so the pairing is determined by
   the weights, not by the order equal-slack edges happen to be visited in.
 - **The corpus**, which is the check that actually matters. With the
   caches in place, **39,371 rounds and 435,294 individual pairings at
@@ -465,7 +465,7 @@ independent checks:
   |---|---|---|
   | byes + forfeits + `XXP` + Baku, 2,000 tournaments | 13,252 | 132,065 |
   | 15% byes, **10** rounds, 2,000 tournaments | 18,332 | 186,645 |
-  | **60–120 players** | 1,050 | 48,132 |
+  | **60-120 players** | 1,050 | 48,132 |
   | plain / byes / combined / 8-round, 250 each | 6,737 | 68,452 |
 
   The large-field row is the one to look at. It is where a matcher change
@@ -474,7 +474,7 @@ independent checks:
 ### Against bbpPairings and Gacrux, on the same files
 
 The reference is not instant either, which is worth knowing before
-treating any target as obvious. Same tournaments, same machine —
+treating any target as obvious. Same tournaments, same machine -
 bbpPairings' own generator produced every file, so no side is favoured.
 
 **Cold process, start to finish**, which is how an arbiter's tool
@@ -487,7 +487,7 @@ actually invokes any of the three:
 | 400 | 3.05 s | 1.22 s | **1.35 s** |
 | 1,000 | 50.1 s | **5.14 s** | 7.12 s |
 
-Each engine pays a fixed start-up it cannot avoid — a C++ binary 0.18 s,
+Each engine pays a fixed start-up it cannot avoid - a C++ binary 0.18 s,
 CPython plus networkx 0.68 s, the BEAM 0.63 s. Subtracting each one's own
 floor leaves the **pairing work**:
 
@@ -498,7 +498,7 @@ floor leaves the **pairing work**:
 | 1,000 | 49.9 s | **4.46 s** | 6.45 s |
 
 On every one of these rounds all three engines return the **identical
-boards** — 105 of 105, 200 of 200, 500 of 500, colours included.
+boards** - 105 of 105, 200 of 200, 500 of 500, colours included.
 
 **Read honestly: this engine is faster than the C++ reference and a
 little slower than the Python one.** Against bbpPairings the pairing work
@@ -512,7 +512,7 @@ That ordering is not about the languages, and the morning's numbers show
 why: 209 players took 9.5 s here yesterday evening and 85 s at 1,000
 players this morning, which is 24× and 11× behind Gacrux. What changed
 was how much of the whole-field matcher each bracket has to run.
-bbpPairings runs all of it, every bracket, eight refinement stages deep —
+bbpPairings runs all of it, every bracket, eight refinement stages deep -
 ~n³ a round, and that is the 50 s. Gacrux runs almost none of it: its
 `BI` path walks Article 3's transposition procedure directly and accepts
 the first candidate that is legal and meets a counting bound on the
@@ -524,11 +524,11 @@ matching, and the rest of the field pairable without it, certified by a
 sparse cardinality oracle), with a one-vertex stand-in for the next score
 group on odd brackets, and on the whole field otherwise. Same destination
 as Gacrux's, reached from the matcher side rather than the procedure
-side — so the eight stages, and the 100.00% they carry, are unchanged.
+side - so the eight stages, and the 100.00% they carry, are unchanged.
 
 **Correctness is not what degrades.** Every step was held to 100.00% on
-seven corpus axes — 4–10, 4–40, 60–120 and 150–250 players, with byes,
-forfeits, forbidden pairs, acceleration and round counts of 7, 8 and 13 —
+seven corpus axes - 4-10, 4-40, 60-120 and 150-250 players, with byes,
+forfeits, forbidden pairs, acceleration and round counts of 7, 8 and 13 -
 and both differential nets before it was committed, and the large-field
 axes are where the local graph does its work. The 5-million-tournament
 run on the Photon box was restarted on the final engine and is the judge
@@ -538,9 +538,9 @@ lands on (`@local_min_next_group`).
 
 ### What it means in practice
 
-Club and national events — up to ~150 players — pair in well under a
+Club and national events - up to ~150 players - pair in well under a
 second including start-up. A 200-player open is about a second, a
 400-player open two, and a Moscow-Open-sized event of 1,000 players
-seven — against the C++ reference's fifty. Inside a long-lived process
+seven - against the C++ reference's fifty. Inside a long-lived process
 (the sibling OpenPairings app, or any server) the 0.63 s BEAM start-up is
 paid once rather than per round, which is most of the small-field cost.

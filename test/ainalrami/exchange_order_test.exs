@@ -7,7 +7,7 @@ defmodule Ainalrami.ExchangeOrderTest do
   pairing, then transpositions of S2 (4.2), and when those are exhausted,
   exchange players between S1 and S2 and start over (4.3), taking the first
   candidate that works. `Ainalrami.Pairing` solves a maximum-weight matching
-  instead, which reaches the same optimum without enumerating — so the two
+  instead, which reaches the same optimum without enumerating - so the two
   can only part company over candidates that tie on every criterion, where
   the regulations' tie-break is generation order.
 
@@ -29,15 +29,15 @@ defmodule Ainalrami.ExchangeOrderTest do
   are commensurable.
 
   Most positions are a single homogeneous bracket holding the whole field.
-  The last describe block is **heterogeneous** — one moved-down player plus
-  seven residents — which is where 3.7.2 alters the MDP-Pairing and which
+  The last describe block is **heterogeneous** - one moved-down player plus
+  seven residents - which is where 3.7.2 alters the MDP-Pairing and which
   was carried as the uncovered residue of this gap until 2026-08-18.
 
   ## Keeping the oracle honest
 
   The other way this test goes wrong is a weak legality check. The discarded
   round-level enumerator tested C1 and neither C2 nor C3, so it "found"
-  legal pairings the engine had refused — it had admitted illegal ones.
+  legal pairings the engine had refused - it had admitted illegal ones.
 
   These positions are built so that **C1 is provably the only binding
   criterion**, and that is asserted rather than assumed: no player is ever
@@ -55,7 +55,7 @@ defmodule Ainalrami.ExchangeOrderTest do
 
       # The position: 1-4 have each played all of 5-8, so every one of the
       # 16 S1xS2 pairs is a rematch and no TRANSPOSITION can produce a legal
-      # candidate — a transposition only ever re-orders S2, so it can never
+      # candidate - a transposition only ever re-orders S2, so it can never
       # pair two S1 members together. Only an exchange reaches the legal
       # pairings, which makes 4.3 the sole decider.
       assert every_cross_pair_met?(players)
@@ -89,7 +89,7 @@ defmodule Ainalrami.ExchangeOrderTest do
       # pass vacuously by agreeing with a wrong engine.
       #
       # Only intra-half pairs are legal here, so a candidate exists only when
-      # S1 holds as many original-top players as S2 does — which needs an
+      # S1 holds as many original-top players as S2 does - which needs an
       # exchange of exactly 2. Among size-2 exchanges 4.3.2 ranks by the
       # smallest difference between the sums moved each way: out {3,4} (7)
       # against in {5,6} (11) is the closest available, at 4.
@@ -147,7 +147,7 @@ defmodule Ainalrami.ExchangeOrderTest do
       # 3.8.1 says: take the best candidate on the criteria, and break a
       # remaining tie by which was GENERATED EARLIER. So the engine's answer
       # must be the first candidate, in Article 4's order, that ties for the
-      # best rung vector. Scoring uses the engine's own ladder — that half is
+      # best rung vector. Scoring uses the engine's own ladder - that half is
       # not independent and is not meant to be. What is independent is the
       # ORDER, which comes from `Ainalrami.Sequence`, and the order is the
       # entire question 4.3 raises.
@@ -198,7 +198,7 @@ defmodule Ainalrami.ExchangeOrderTest do
         end
 
       # Guards against the whole loop silently skipping everything, which
-      # would leave a green test that checked nothing at all — the failure
+      # would leave a green test that checked nothing at all - the failure
       # mode this project has already hit once, with an XXP regression test
       # that asserted two players were not paired in a round where they
       # could never have met.
@@ -207,7 +207,7 @@ defmodule Ainalrami.ExchangeOrderTest do
       # leaving somebody with an absolute colour preference. The floor is set
       # well below that so ordinary drift does not fail the build, but a
       # generator that stops producing positions at all will.
-      assert checked >= 20, "only #{checked} usable positions — the generator has drifted"
+      assert checked >= 20, "only #{checked} usable positions - the generator has drifted"
     end
   end
 
@@ -222,7 +222,7 @@ defmodule Ainalrami.ExchangeOrderTest do
     # It is testable here for one reason: this bracket is the LAST one.
     # Nothing sits below it, so no candidate can reach an edge into a next
     # group, every candidate contributes the same four edges, and the rung
-    # vectors are commensurable — the condition that makes a per-bracket
+    # vectors are commensurable - the condition that makes a per-bracket
     # comparison meaningful at all.
     test "the engine returns the first candidate the sequence reaches" do
       players = heterogeneous_field()
@@ -254,8 +254,8 @@ defmodule Ainalrami.ExchangeOrderTest do
 
     test "and the remainder is altered before the MDP-Pairing, per 3.7" do
       # Pinned so the ORDER of the two loops is explicit rather than
-      # implied by the result. The MDP takes resident 2 — the first
-      # transposition of S2 — and it is the REMAINDER that has to move,
+      # implied by the result. The MDP takes resident 2 - the first
+      # transposition of S2 - and it is the REMAINDER that has to move,
       # because 3v6 and 4v7 are both rematches. Had the loops been nested
       # the other way, the sequence would have reached "give the MDP a
       # different opponent" before "re-order the remainder", and the
@@ -278,7 +278,7 @@ defmodule Ainalrami.ExchangeOrderTest do
   describe "when a transposition already works, exchanges are never reached" do
     test "an unobstructed bracket takes the identity pairing" do
       # The control. Nobody has met anybody, so S1[i] vs S2[i] is legal and
-      # 3.3's very first candidate stands — if the engine reached for an
+      # 3.3's very first candidate stands - if the engine reached for an
       # exchange here it would be generating out of order in the other
       # direction, which the forced position above cannot detect.
       players = for rank <- 1..8, do: player(rank, 0.0, [])
@@ -372,7 +372,7 @@ defmodule Ainalrami.ExchangeOrderTest do
   # The field is a single score group, so there is exactly one bracket and
   # its rung vector is the whole answer. Every candidate pairs the entire
   # field, so `edge_count` is constant across them and the vectors are
-  # commensurable — the condition the adjudicator's `incomparable` verdict
+  # commensurable - the condition the adjudicator's `incomparable` verdict
   # exists to detect when it does not hold.
   defp score_of(players, pairs) do
     [bracket] = Pairing.explain_round(players, pairs, expected_rounds: 6)
@@ -433,7 +433,7 @@ defmodule Ainalrami.ExchangeOrderTest do
 
       # Alternation first, since repeating a colour is what creates an
       # ABSOLUTE preference (1.7.1) and an absolute preference is what makes
-      # C3 bind — which would leave C1 no longer the only binding criterion
+      # C3 bind - which would leave C1 no longer the only binding criterion
       # and the position unusable. Colour balance only breaks the tie.
       {white, black} =
         case {last.(a), last.(b)} do
@@ -483,7 +483,7 @@ defmodule Ainalrami.ExchangeOrderTest do
   #
   # Only PLAYED games count (1.7.4 via `points_for`-style results): a bye
   # carries no colour and cannot create or break a run. Written to hold for
-  # short histories too — a player with one game or none has a colour
+  # short histories too - a player with one game or none has a colour
   # difference of at most one and no repeated pair, so they never hold an
   # absolute preference.
   defp no_absolute_colour_clash(players) do

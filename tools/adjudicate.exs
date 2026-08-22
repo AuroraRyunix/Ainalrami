@@ -5,11 +5,11 @@
 # Classifying a disagreement says WHAT differs; this says WHO IS RIGHT by
 # our own rules, which is the part that tells you where to look:
 #
-#   * reference scores better — our search failed to reach a pairing our
+#   * reference scores better - our search failed to reach a pairing our
 #     own ladder prefers.
-#   * we score better — the LADDER is wrong, since the reference would
+#   * we score better - the LADDER is wrong, since the reference would
 #     not violate a criterion it implements.
-#   * they tie — the criteria cannot separate them and something below
+#   * they tie - the criteria cannot separate them and something below
 #     decides (FIDE section 3's transposition order).
 #
 # Get the dumps first, then adjudicate them:

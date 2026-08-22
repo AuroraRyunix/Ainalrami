@@ -1,6 +1,6 @@
 defmodule Ainalrami.ExplainRoundTest do
   @moduledoc """
-  `Ainalrami.Pairing.explain_round/3` — the diagnostic behind
+  `Ainalrami.Pairing.explain_round/3` - the diagnostic behind
   `tools/adjudicate.exs`, and the tool every "ours scores better" / "theirs
   scores better" verdict in docs/engineering-log.md was produced with.
 
@@ -9,14 +9,14 @@ defmodule Ainalrami.ExplainRoundTest do
   float history over the whole roster before accelerating it; the
   diagnostic stamped acceleration and colour stats only. `float_of/2` then
   read `:none` for every player in every position, so **C14-C21 scored the
-  same constant on both sides of every comparison** — C14/C16 pinned at
+  same constant on both sides of every comparison** - C14/C16 pinned at
   zero, C15/C17 pinned at one per in-bracket pair.
 
   Why that is worth a test rather than a shrug: it could never invent a
   disagreement, since both engines' answers were scored with the identical
   blank history and a tie stayed a tie. It could only MISATTRIBUTE one. A
   round genuinely decided on a float rung was reported as tying there and
-  differing further down the ladder — and "the rung a disagreement
+  differing further down the ladder - and "the rung a disagreement
   surfaces on is not the rung that caused it" is already this project's
   most expensive recurring lesson.
   """
@@ -36,7 +36,7 @@ defmodule Ainalrami.ExplainRoundTest do
   #
   # That leaves round 3 with brackets {1,5} on 2.0, {3,4} on 1.0, {2,6} on
   # 0.0, and rank 5 sitting in the top bracket holding a `:down` stamp for
-  # r-1 — which is the only way any C14 term can be non-zero.
+  # r-1 - which is the only way any C14 term can be non-zero.
   defp roster do
     [
       player(1, 2.0, [win(2, "w"), win(3, "w")]),
@@ -128,4 +128,46 @@ defmodule Ainalrami.ExplainRoundTest do
 
   defp loss(opponent, colour),
     do: %{result: "0", colour: colour, opponent_rank: opponent}
+
+  describe "per-edge rungs" do
+    test "a bracket's rungs are exactly the column-wise sum of its edges'" do
+      # This is the property the whole feature rests on. If it ever stops
+      # holding, a caller attributing a criterion's cost to a board is
+      # attributing something that is not there.
+      report = Pairing.explain_round(roster(), [{1, 5}, {3, 4}, {2, 6}], expected_rounds: 9)
+
+      for bracket <- report do
+        summed =
+          bracket.edge_rungs
+          |> Enum.map(fn {_edge, rungs} -> Enum.map(rungs, &elem(&1, 1)) end)
+          |> Enum.zip_with(&Enum.sum/1)
+
+        assert summed == Enum.map(bracket.rungs, &elem(&1, 1)), """
+        bracket #{bracket.group}: the per-edge rungs do not add up to the
+        bracket's own totals.
+
+          per-edge sum: #{inspect(summed)}
+          bracket:      #{inspect(Enum.map(bracket.rungs, &elem(&1, 1)))}
+        """
+
+        # Same labels, same order, so a caller can zip them positionally.
+        for {_edge, rungs} <- bracket.edge_rungs do
+          assert Enum.map(rungs, &elem(&1, 0)) == Enum.map(bracket.rungs, &elem(&1, 0))
+        end
+      end
+    end
+
+    test "there is one entry per edge, in `pairs` order then the cross edges" do
+      report = Pairing.explain_round(roster(), [{1, 5}, {3, 4}, {2, 6}], expected_rounds: 9)
+
+      for bracket <- report do
+        assert length(bracket.edge_rungs) == bracket.edge_count
+
+        # The kept pairs come first and in the same order, so a caller can
+        # line an entry up with the board it belongs to.
+        leading = bracket.edge_rungs |> Enum.take(length(bracket.pairs)) |> Enum.map(&elem(&1, 0))
+        assert leading == bracket.pairs
+      end
+    end
+  end
 end

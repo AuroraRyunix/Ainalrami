@@ -1,7 +1,7 @@
 defmodule Ainalrami.ByeAssigneeScoreTest do
   @moduledoc """
   Regression cover for a crash found by a 100,000-tournament overnight
-  run (`PAIRING_FUZZ_BYE_PCT=15` — see docs/engineering-log.md's account, and
+  run (`PAIRING_FUZZ_BYE_PCT=15` - see docs/engineering-log.md's account, and
   `crash_reports/seed4886-r5-p5.trf`, the original repro this fixture is
   copied from).
 
@@ -9,20 +9,20 @@ defmodule Ainalrami.ByeAssigneeScoreTest do
   `0..(n - 2)`, where `n` is how many players are still candidates for
   the round's pairing-allocated bye. That's fine when `n >= 2`, but this
   fixture is the case where exactly ONE candidate is left (everyone else
-  in the round already resolved elsewhere) — `n == 1` makes the range
+  in the round already resolved elsewhere) - `n == 1` makes the range
   `0..-1`, and Elixir's default step for a descending range walks
   `0, -1`: `elem(arr, -1)` is an invalid tuple index, so the whole round
   raised `ArgumentError` instead of pairing. Confirmed with real
   bbpPairings on the same input: it pairs this round fine and assigns
   the bye to rank 3, which is what this test asserts Ainalrami also does
-  now — not just "doesn't crash".
+  now - not just "doesn't crash".
 
   102 illegal rounds (0.012%) turned up in that overnight run's larger
   839,776-round sample; 95 were this exact crash. Every smaller sample
   ever run against this engine (up to ~5,500 rounds) had shown zero
   illegal rounds, which is the reason this fixture exists as an explicit
   regression test rather than trusting the fuzz harness to hit it again
-  — at a roughly 1-in-8,800-round rate, relying on a fresh random sample
+  - at a roughly 1-in-8,800-round rate, relying on a fresh random sample
   to keep catching it would be exactly the kind of luck this project's
   own history warns against.
   """
@@ -57,13 +57,13 @@ defmodule Ainalrami.ByeAssigneeScoreTest do
   # Copied from `/root/triage/seed940641-r4-p5.trf`, one of the 40 residual
   # disagreements catalogued in docs/engineering-log.md. Five players, round 4, score
   # groups 2.0 = {3,4,5}, 1.5 = {1}, 1.0 = {2}. The bootstrap matching has
-  # a genuine three-way tie on eligibility and score — leaving out 4 or 5
-  # scores identically, and `{1-5, 2-3}` ties them both — and only the
+  # a genuine three-way tie on eligibility and score - leaving out 4 or 5
+  # scores identically, and `{1-5, 2-3}` ties them both - and only the
   # top-score-group field separates them. Without it the matcher happened
   # to return `{1-5, 2-3}`, whose top-group player 3 is tentatively matched
   # BELOW the top group, so the gate scan cleared the flag and C9 was dead
   # for the whole first bracket. bbpPairings and Gacrux both bye rank 4,
-  # who has played all three rounds, over rank 5, who sat out round 1 —
+  # who has played all three rounds, over rank 5, who sat out round 1 -
   # which is C9 exactly.
   test "the C9 gate survives a tie in the bootstrap matching" do
     %{players: players} = Ainalrami.Trf.parse(File.read!(@c9_fixture))
@@ -71,7 +71,7 @@ defmodule Ainalrami.ByeAssigneeScoreTest do
     pairs = Pairing.pair_next_round(players, expected_rounds: 9)
 
     assert {4, nil} in pairs,
-           "rank 4 has no unplayed games and rank 5 has one, so C9 puts the bye on 4 — " <>
+           "rank 4 has no unplayed games and rank 5 has one, so C9 puts the bye on 4 - " <>
              "the answer real bbpPairings and Gacrux both give"
 
     assert Enum.sort(Enum.map(pairs, fn {w, b} -> {min(w, b || w), b && max(w, b)} end)) ==

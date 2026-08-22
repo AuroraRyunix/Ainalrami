@@ -13,7 +13,7 @@ defmodule Ainalrami.FailureTaxonomyTest do
 
   It earned its keep immediately. Ranking the 164 failures by cause, and
   then adjudicating them with `tools/adjudicate.exs`, is what isolated
-  the peek-budget defect — brackets could not see far enough to evaluate
+  the peek-budget defect - brackets could not see far enough to evaluate
   C8, the criterion whose whole job is to protect the bracket below. That
   one fix took the engine from 90.29% to 95.97% of exact rounds, and from
   82.22% to 99.44% on the 60-80 player fields an open actually has.
@@ -24,10 +24,10 @@ defmodule Ainalrami.FailureTaxonomyTest do
   reports the FIRST one where the two engines part company, and the way
   they part:
 
-    * `:bye_assignee` — a different player is left unpaired. C5/C2.
-    * `:float_set` — a score group sends a different SET of players out
+    * `:bye_assignee` - a different player is left unpaired. C5/C2.
+    * `:float_set` - a score group sends a different SET of players out
       of it. C6/C7/C8, the downfloater choice.
-    * `:internal_pairing` — identical float sets everywhere, but a group
+    * `:internal_pairing` - identical float sets everywhere, but a group
       pairs its own members differently. That is FIDE C.04.3 section 3's
       transposition/exchange procedure, which the default path only
       approximates (`deviation`/`spread`, see docs/fide-criteria.md).
@@ -92,7 +92,7 @@ defmodule Ainalrami.FailureTaxonomyTest do
   # than crash).
   defp byes(pairs), do: for({w, nil} <- pairs, do: w)
 
-  # The pairs, as unordered {low, high} rank tuples, colour discarded —
+  # The pairs, as unordered {low, high} rank tuples, colour discarded -
   # the comparison harness is deliberately colour-blind and so is this.
   defp seated(pairs), do: for({w, b} <- pairs, b != nil, do: Enum.min_max([w, b]))
 
@@ -118,7 +118,7 @@ defmodule Ainalrami.FailureTaxonomyTest do
   # `floats/3`, which is only the SET of players who leave: two engines
   # can float the identical players and still send them to different
   # partners, and an earlier version of this classifier called those
-  # rounds indistinguishable — 27% of them — because it never looked at
+  # rounds indistinguishable - 27% of them - because it never looked at
   # where a floater landed.
   defp cross(pairs_seated, group, score_of) do
     for {a, b} <- pairs_seated,
@@ -150,8 +150,8 @@ defmodule Ainalrami.FailureTaxonomyTest do
   # rest of it pairs: a difference higher up is the cause, and anything
   # below it is that cause's consequence.
   #
-  # The three tests together are exhaustive — every pair is either
-  # internal to some group or crosses two of them — so a round that
+  # The three tests together are exhaustive - every pair is either
+  # internal to some group or crosses two of them - so a round that
   # reaches `:indistinguishable` means this classifier and the comparison
   # harness disagree about what a disagreement is, which is a bug here
   # rather than a finding.
@@ -183,7 +183,7 @@ defmodule Ainalrami.FailureTaxonomyTest do
   #
   # Read this with care for `:float_partner`. The divergence is DETECTED
   # at the group the floater leaves, but the choice of who receives them
-  # is made when the group BELOW is paired — as a heterogeneous bracket
+  # is made when the group BELOW is paired - as a heterogeneous bracket
   # with that floater as its MDP. So a "homogeneous" float_partner still
   # implicates the MDP-opponent machinery, just one bracket further down.
   defp bracket_shape(theirs, group, players) do
@@ -198,7 +198,7 @@ defmodule Ainalrami.FailureTaxonomyTest do
     if upfloated_in?, do: :heterogeneous, else: :homogeneous
   end
 
-  ## ---------- replay (a deliberate copy — see moduledoc) ----------
+  ## ---------- replay (a deliberate copy - see moduledoc) ----------
 
   defp run_tournament(seed, rounds, player_range) do
     :rand.seed(:exsss, {seed, seed * 7919, seed * 104_729})
@@ -289,7 +289,7 @@ defmodule Ainalrami.FailureTaxonomyTest do
 
   # Both of these must stay identical to the comparison harness's, or the
   # replayed tournaments diverge and the buckets describe a different
-  # population — which is what `EXPECTED_DISAGREEMENTS` exists to catch.
+  # population - which is what `EXPECTED_DISAGREEMENTS` exists to catch.
   defp assign_requested_byes(players) do
     pct = env_int("PAIRING_FUZZ_BYE_PCT", 0)
 
@@ -419,7 +419,7 @@ defmodule Ainalrami.FailureTaxonomyTest do
       top = Enum.filter(failures, &(&1.depth == 1))
 
       if top != [] do
-        IO.puts("  TOP BRACKET ONLY (#{length(top)} of #{total}) — no inherited state:")
+        IO.puts("  TOP BRACKET ONLY (#{length(top)} of #{total}) - no inherited state:")
         section("    by cause", top, &"#{&1.cause}", length(top))
 
         IO.puts("    first 8 to trace:")

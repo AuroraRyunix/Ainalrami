@@ -2,7 +2,7 @@ defmodule Ainalrami.BbppairingsComparisonTest do
   @moduledoc """
   Cross-checks `Ainalrami.Pairing.pair_next_round/1` against the real
   `bbpPairings.exe` (Bierema Boyz Programming's independent, Apache-2.0
-  Dutch-system implementation) over a whole tournament, every round —
+  Dutch-system implementation) over a whole tournament, every round -
   the second reference this project has always meant to check against
   (see docs/engineering-log.md's "Cross-validation against bbpPairings"), distinct from
   the earlier use of its SOURCE to port `Ainalrami.WeightedMatching`. That
@@ -21,12 +21,12 @@ defmodule Ainalrami.BbppairingsComparisonTest do
   javafo signals "no legal pairing left" by writing an EMPTY pairs file
   and exiting 0. bbpPairings signals the identical situation with exit
   code 1 and no output file at all (its own documented error code 1:
-  "no valid pairing exists for the current round") — see
+  "no valid pairing exists for the current round") - see
   `Ainalrami.Test.Bbppairings`'s moduledoc. Handled the same way either
   way: the tournament ends early and the round is excluded from the
   rates, not counted as a disagreement.
 
-  A disagreement here is a research question, not an automatic verdict —
+  A disagreement here is a research question, not an automatic verdict -
   bbpPairings and javafo don't always agree with each other either (both
   are independent readings of the same rulebook). Treat it as "which
   one, if either, matches the current Handbook text", the same standard
@@ -44,7 +44,7 @@ defmodule Ainalrami.BbppairingsComparisonTest do
   on this project until 2026-08-17 used `ROUNDS=9`, whose final round is
   paired with 8 rounds played. `final_round_topscorers?/2` compares against
   half the played-round count, so a threshold that floors that half is
-  identical to an exact one whenever the count is even — the bug lived
+  identical to an exact one whenever the count is even - the bug lived
   through 2.5 million tournaments because every one of them held this
   parameter at the same odd value. At `ROUNDS=8` it surfaced in 2,000.
   Six-, eight- and ten-round Swisses are ordinary events.
@@ -62,23 +62,23 @@ defmodule Ainalrami.BbppairingsComparisonTest do
   Every seed is independent (`run_tournament!/3` reseeds `:rand` from it
   alone), so seed *n* generates the same tournament whether it is reached
   first or 735,264 tournaments in. Without this, revisiting one dumped
-  disagreement meant re-running everything before it — which is why the
+  disagreement meant re-running everything before it - which is why the
   cases catalogued in docs/engineering-log.md were adjudicated once, from dumps, and never
   re-checked when the adjudicator itself changed. The seed, round and
   player count in a dump's filename are all that is needed; the rest of the
   configuration has to match what produced it.
 
   Three more cover the extension lines, and they work because
-  bbpPairings implements both — the same file is handed to both engines, so
+  bbpPairings implements both - the same file is handed to both engines, so
   the oracle validates them exactly as it validates every other axis:
 
-    * `PAIRING_FUZZ_NUMERIC_EXT` — `1` to write forbidden pairs and
+    * `PAIRING_FUZZ_NUMERIC_EXT` - `1` to write forbidden pairs and
       acceleration as bbpPairings' fixed-column `260`/`250` instead of
       JaVaFo's `XXP`/`XXA`. Same tournament, different lines on both
       sides: a different writer here, a different reader there.
-    * `PAIRING_FUZZ_FORBIDDEN_PCT` — percentage of players given one
+    * `PAIRING_FUZZ_FORBIDDEN_PCT` - percentage of players given one
       arbiter-forbidden opponent, emitted as `XXP`.
-    * `PAIRING_FUZZ_ACCEL` — `baku` or `random`, emitted as `XXA`.
+    * `PAIRING_FUZZ_ACCEL` - `baku` or `random`, emitted as `XXA`.
 
   Both are fixed per TOURNAMENT, not per round: an exclusion and an
   acceleration record are properties of the event, and `XXA` in particular
@@ -116,7 +116,7 @@ defmodule Ainalrami.BbppairingsComparisonTest do
 
     assert mismatches == [], """
     #{length(mismatches)} disagreement(s) across #{length(comparisons)} compared round(s) \
-    of #{count} tournament(s) — a legal-but-different pairing, or a genuine gap in Ainalrami's \
+    of #{count} tournament(s) - a legal-but-different pairing, or a genuine gap in Ainalrami's \
     bracket cascade, not necessarily a bug in the sense that bbpPairings is "right" and \
     Ainalrami is "wrong". Each needs its own look against the Handbook text.
 
@@ -180,7 +180,7 @@ defmodule Ainalrami.BbppairingsComparisonTest do
 
   # One forbidden opponent for each selected player, as a two-id `XXP`
   # group. Chosen once for the whole tournament and deliberately allowed to
-  # over-constrain the field — bbpPairings answers an impossible round with
+  # over-constrain the field - bbpPairings answers an impossible round with
   # its own no-valid-pairing exit, which the harness already treats as "the
   # tournament ends here", so an unpairable draw is measured rather than
   # avoided.
@@ -198,7 +198,7 @@ defmodule Ainalrami.BbppairingsComparisonTest do
   end
 
   # `XXA` virtual points, stamped onto the roster once and carried by every
-  # round's TRF unchanged — the full round-by-round record JaVaFo's manual
+  # round's TRF unchanged - the full round-by-round record JaVaFo's manual
   # requires, and the same list `Ainalrami.Trf.parse/1` hands the engine.
   # `:baku` is FIDE C.04.7; `:random` exists because Baku alone only ever
   # produces two distinct acceleration values in one flat block, which
@@ -257,7 +257,7 @@ defmodule Ainalrami.BbppairingsComparisonTest do
     }
 
     case Bbppairings.pair(trf) do
-      # bbpPairings' own equivalent of javafo's empty-pairs-file case — see
+      # bbpPairings' own equivalent of javafo's empty-pairs-file case - see
       # this module's moduledoc on the exit-code-vs-empty-file difference.
       {:no_valid_pairing, _message} ->
         {:error,
@@ -275,7 +275,7 @@ defmodule Ainalrami.BbppairingsComparisonTest do
 
         # The active set comes from bbpPairings' OWN pairing, not from a rule
         # this project wrote. It used to come from `Test.Field.active/1`,
-        # which was character-for-character `Pairing.rounds_played/1` — so the
+        # which was character-for-character `Pairing.rounds_played/1` - so the
         # legality check shared its central assumption with the engine it was
         # checking and could not have caught a wrong round number. See
         # `Ainalrami.Test.Field`'s moduledoc.
@@ -351,8 +351,8 @@ defmodule Ainalrami.BbppairingsComparisonTest do
       end)
 
     # Split the disagreements into the one we have a diagnosis for and
-    # everything else. Without this the known dispute's volume — nearly two
-    # thousand boards per six hundred bye-heavy tournaments — would bury a
+    # everything else. Without this the known dispute's volume - nearly two
+    # thousand boards per six hundred bye-heavy tournaments - would bury a
     # genuine colour regression completely, which is the whole reason a
     # count on its own is a weak instrument.
     {disputed, unexplained} =
@@ -361,7 +361,7 @@ defmodule Ainalrami.BbppairingsComparisonTest do
     if System.get_env("COLOUR_DEBUG") do
       for {w, b} <- unexplained do
         IO.puts("
-seed #{seed} round #{round}: UNEXPLAINED — we say #{w} White, bbpPairings says #{b} White")
+seed #{seed} round #{round}: UNEXPLAINED - we say #{w} White, bbpPairings says #{b} White")
 
         # Deciding WHICH of Article 5.2's five steps applies needs both
         # players' full colour history, unplayed rounds included: 5.2.3
@@ -389,14 +389,14 @@ seed #{seed} round #{round}: UNEXPLAINED — we say #{w} White, bbpPairings says
   # Is this board one that Article 5.2.5 decides, and did we apply it?
   #
   # 5.2.5 is the last resort, reached only when neither player holds a
-  # colour preference at all — which per Article 1.7.4 means neither has
+  # colour preference at all - which per Article 1.7.4 means neither has
   # ever played a game with a colour. It hands the initial colour to the
   # higher ranked player on an odd TPN.
   #
   # C.04.2 Article 2 fixes a TPN for the tournament and provides nothing
   # that renumbers it around players who are not paired in a round. Both
   # reference implementations renumber anyway, so every board 5.2.5 decides
-  # on a field where somebody has sat out is expected to differ — see
+  # on a field where somebody has sat out is expected to differ - see
   # `docs/dispute-initial-colour.md`.
   #
   # Deliberately phrased as "did WE follow the article", not "does their
@@ -425,7 +425,7 @@ seed #{seed} round #{round}: UNEXPLAINED — we say #{w} White, bbpPairings says
     b = Map.get(by_rank, black)
 
     if a && b && no_colour_preference?(a) && no_colour_preference?(b) do
-      # Article 1.2's order: score first, then TPN ascending — over the
+      # Article 1.2's order: score first, then TPN ascending - over the
       # score the engine actually pairs on, which INCLUDES virtual points.
       #
       # Using raw points here mis-filed a board on the accelerated axis:
@@ -458,7 +458,7 @@ seed #{seed} round #{round}: UNEXPLAINED — we say #{w} White, bbpPairings says
   # bbpPairings sets `gameWasPlayed = false` for `+ - H F U Z` and blank
   # (`trf.cpp:277-291`), which is the same set.
   #
-  # Testing `colour != nil` instead — as this did until 2026-08-17 —
+  # Testing `colour != nil` instead - as this did until 2026-08-17 -
   # mis-filed every forfeited round as "has a preference", so seven boards
   # decided by 5.2.5 were reported as unexplained Article 5 disagreements.
   # They were the known dispute all along, and only surfaced on an axis
@@ -489,7 +489,7 @@ seed #{seed} round #{round}: UNEXPLAINED — we say #{w} White, bbpPairings says
           )
       end)
 
-    # C2: nobody receives a SECOND pairing-allocated bye — see the
+    # C2: nobody receives a SECOND pairing-allocated bye - see the
     # identical check's doc in javafo_comparison_test.exs.
     repeat_bye? =
       Enum.any?(pairs, fn
@@ -542,7 +542,7 @@ seed #{seed} round #{round}: UNEXPLAINED — we say #{w} White, bbpPairings says
   end
 
   # `152 W` (TRF-2026's native initial-piece-colour field): unlike javafo,
-  # bbpPairings does not choose the very first round's colour on its own —
+  # bbpPairings does not choose the very first round's colour on its own -
   # it requires the initial colour to be specified whenever no player has
   # one recorded yet, or it refuses to pair at all ("Please configure the
   # initial piece colors"). Which colour is picked doesn't matter here:
@@ -744,7 +744,7 @@ seed #{seed} round #{round}: UNEXPLAINED — we say #{w} White, bbpPairings says
 
       IO.puts(
         "\n  LEGALITY: #{length(illegal)}/#{length(comparisons)} Ainalrami rounds were not legal " <>
-          "pairings at all (#{Enum.join(by_kind, ", ")}) — independent of whether bbpPairings agreed. " <>
+          "pairings at all (#{Enum.join(by_kind, ", ")}) - independent of whether bbpPairings agreed. " <>
           "`raised` means Ainalrami REFUSED to pair the round, which is a different failure from " <>
           "emitting a wrong one: check whether bbpPairings paired it before assuming the round " <>
           "was genuinely impossible."
@@ -753,14 +753,14 @@ seed #{seed} round #{round}: UNEXPLAINED — we say #{w} White, bbpPairings says
 
     if exhausted != [] do
       IO.puts(
-        "\n  (#{length(exhausted)} tournament(s) ended early — bbpPairings found no legal " <>
+        "\n  (#{length(exhausted)} tournament(s) ended early - bbpPairings found no legal " <>
           "pairing left, i.e. the field ran out of opponents. Excluded from the rates above.)"
       )
     end
 
     if errors != [] do
       IO.puts(
-        "\n  WARNING: #{length(errors)} bbpPairings process error(s) — this run was likely " <>
+        "\n  WARNING: #{length(errors)} bbpPairings process error(s) - this run was likely " <>
           "resource-starved and the rates above are not trustworthy. Re-run it alone."
       )
     end
@@ -800,7 +800,7 @@ seed #{seed} round #{round}: UNEXPLAINED — we say #{w} White, bbpPairings says
     # Refusing to pair and emitting a wrong pairing are different
     # failures and want different responses, so they get their own
     # columns. Counting them together is how 142 refusals once read as
-    # 142 illegal pairings — see `Ainalrami.DeepRoundsTest`.
+    # 142 illegal pairings - see `Ainalrami.DeepRoundsTest`.
     refused = Enum.count(measurements, &(&1.illegal == :raised))
     illegal = Enum.count(measurements, &(&1.illegal not in [nil, :raised]))
 

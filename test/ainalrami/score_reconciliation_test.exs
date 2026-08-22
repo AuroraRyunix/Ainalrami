@@ -4,8 +4,8 @@ defmodule Ainalrami.ScoreReconciliationTest do
   and every float criterion C14-C21 is decided by comparing two of those
   against each other. It needs a base to wind back FROM.
 
-  It used `player.points` raw. That field is TRF columns 81-84 — the
-  arbiter's recorded total — and is not derived from the games at all. Where
+  It used `player.points` raw. That field is TRF columns 81-84 - the
+  arbiter's recorded total - and is not derived from the games at all. Where
   the two disagree, every reconstructed historic score was wrong by the
   difference, silently, and no measurement could see it: the fuzz generator
   computes points by summing the games, so in 195 million pairings the two
@@ -24,7 +24,7 @@ defmodule Ainalrami.ScoreReconciliationTest do
   alias Ainalrami.Pairing
 
   # Four players, two rounds played, pairing round 3. Ranks 1 and 2 are level
-  # and rank 1 downfloated in round 2 — the float history the C14/C16 rungs
+  # and rank 1 downfloated in round 2 - the float history the C14/C16 rungs
   # read, and the thing a wrong base corrupts.
   defp roster(points_for_rank_1) do
     [
@@ -64,7 +64,7 @@ defmodule Ainalrami.ScoreReconciliationTest do
   test "a total inflated by an already-credited future full-point bye is corrected" do
     # The case the raw field got wrong. Rank 1 has 2.0 from two wins, plus a
     # full-point bye for the round being paired that the arbiter has ALREADY
-    # credited — so the recorded total reads 3.0 while only 2.0 was earned in
+    # credited - so the recorded total reads 3.0 while only 2.0 was earned in
     # the rounds actually played.
     #
     # `reconciled_points/2` recognises 3.0 - 1.0 (the future round) as the
@@ -86,8 +86,8 @@ defmodule Ainalrami.ScoreReconciliationTest do
   end
 
   test "an arbiter's hand-adjusted total is left alone" do
-    # Nothing reconciles here — 2.5 is not the sum of the games under any of
-    # bbpPairings' three corrections — so the recorded total stands. It is the
+    # Nothing reconciles here - 2.5 is not the sum of the games under any of
+    # bbpPairings' three corrections - so the recorded total stands. It is the
     # arbiter's authority on a hand-adjusted score, and bbpPairings' own final
     # fallback is the same.
     pairs = Pairing.pair_next_round(roster(2.5), expected_rounds: 5)
@@ -105,7 +105,7 @@ defmodule Ainalrami.ScoreReconciliationTest do
       # looks entirely legal is the exact failure the feature exists to stop.
       # Everyone has met everyone except 1-3 and 2-4, so that is the only
       # legal partition and the control pins it. Forbidding 1-3 therefore
-      # leaves the position genuinely unpairable — which is the sharpest
+      # leaves the position genuinely unpairable - which is the sharpest
       # possible assertion, since an engine ignoring the option pairs it
       # happily and returns two pairs.
       players = roster(2.0)

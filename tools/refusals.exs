@@ -4,7 +4,7 @@
 # throws NoValidPairingException otherwise (dutch.cpp:828); Gacrux
 # constrains bracket choices with precomputed feasibility; Ainalrami
 # repairs after the fact. All three are meant to answer "is this round
-# pairable at all" identically — this checks whether they do.
+# pairable at all" identically - this checks whether they do.
 #
 # Plays tournaments forward on bbpPairings' own answers. When bbpPairings
 # refuses a round, Ainalrami is asked the same question and its answer is

@@ -1,12 +1,12 @@
 defmodule Ainalrami.Generator do
   @moduledoc """
-  Random Tournament Generator (RTG) — JaVaFo's `-g` role.
+  Random Tournament Generator (RTG) - JaVaFo's `-g` role.
 
   Builds a random roster, then plays it forward: each round is paired by
   `Ainalrami.Pairing` itself and given random results. That the generator
   pairs with the engine under test is deliberate and matches bbpPairings'
   own RTG (`tournament/generator.cpp` calls `computeMatching` inside its
-  round loop) — the point of an RTG in FIDE's FE1 auto-test is to produce
+  round loop) - the point of an RTG in FIDE's FE1 auto-test is to produce
   tournaments whose pairings a *reference checker* can then verify, so the
   pairings have to be the candidate program's own.
 
@@ -18,14 +18,14 @@ defmodule Ainalrami.Generator do
   bbpPairings writes the seed as the literal first line of the output,
   before generating anything, so a crash still leaves it recoverable. That
   would make the file invalid TRF, so this writes it into the tournament
-  name (`012`) instead — the first line of a TRF anyway, valid, and
+  name (`012`) instead - the first line of a TRF anyway, valid, and
   carried by every parser. The recoverable-on-crash property is kept by
   choosing the seed before any generation work happens.
 
   ## What it varies
 
   Roster size, round count, ratings, and results. Optionally forfeits,
-  arbiter-assigned byes, `XXP` forbidden pairings and `XXA` acceleration —
+  arbiter-assigned byes, `XXP` forbidden pairings and `XXA` acceleration -
   all four off by default, see `generate/1`.
 
   Retirements are NOT modelled: a retired player is expressed as a run of
@@ -41,16 +41,16 @@ defmodule Ainalrami.Generator do
 
   Options, all optional:
 
-    * `:seed` — integer seed; a random one is chosen and reported if absent
-    * `:players` — roster size (default: random 10..60)
-    * `:rounds` — rounds to play (default: random 5..11, capped so the
+    * `:seed` - integer seed; a random one is chosen and reported if absent
+    * `:players` - roster size (default: random 10..60)
+    * `:rounds` - rounds to play (default: random 5..11, capped so the
       field can't run out of legal opponents)
-    * `:forfeit_pct` — percentage of games forfeited (default 0)
-    * `:requested_bye_pct` — percentage of players granted an
+    * `:forfeit_pct` - percentage of games forfeited (default 0)
+    * `:requested_bye_pct` - percentage of players granted an
       arbiter-assigned half- or zero-point bye each round (default 0)
-    * `:forbidden_pct` — percentage of players given one arbiter-forbidden
+    * `:forbidden_pct` - percentage of players given one arbiter-forbidden
       opponent, emitted as `XXP` lines (default 0)
-    * `:acceleration` — `:baku` for FIDE C.04.7's virtual points, or
+    * `:acceleration` - `:baku` for FIDE C.04.7's virtual points, or
       `:random` for arbitrary per-player-per-round ones; emitted as `XXA`
       lines (default: none)
 
@@ -81,13 +81,13 @@ defmodule Ainalrami.Generator do
     forbidden = forbidden_pairs(players, Keyword.get(opts, :forbidden_pct, 0))
     accelerations = accelerations(players, rounds, Keyword.get(opts, :acceleration))
 
-    # A round can have no legal completion at all — not the engine failing
+    # A round can have no legal completion at all - not the engine failing
     # to search hard enough, but a proven deadlock (`Ainalrami.Pairing`'s
     # `repair_bye_count/3` only raises `NoValidPairingError` after its own
     # maximum-weight-matching repair pass already confirmed no better
     # pairing exists). Realistic with arbiter-assigned byes stacking
     # colour-absolute exclusions on top of an already near-exhausted small
-    # field. Same philosophy as the `players - 1` cap above — stop the
+    # field. Same philosophy as the `players - 1` cap above - stop the
     # tournament at the last round that actually completed rather than
     # letting one bad round crash the whole generation.
     {final, played_rounds} =
@@ -113,7 +113,7 @@ defmodule Ainalrami.Generator do
           # Written as TRF16's own `142` field AND as JaVaFo's `XXR`
           # extension below. Emitting only the latter meant a reader that
           # knew just `142` got no round count at all, which silently
-          # changed the final-round pairing — see `Ainalrami.Trf`'s
+          # changed the final-round pairing - see `Ainalrami.Trf`'s
           # `parse_xxr/2`.
           number_of_rounds: played_rounds,
           initial_colour: initial_colour,
@@ -143,14 +143,14 @@ defmodule Ainalrami.Generator do
   end
 
   # One `XXP` group of two per selected player. Groups are emitted verbatim
-  # and may overlap, which is fine and realistic — an arbiter separating a
+  # and may overlap, which is fine and realistic - an arbiter separating a
   # family of three writes three lines (or one of three ids, which
   # `Ainalrami.Trf` also reads).
   #
   # Deliberately allowed to make the tournament unpairable. bbpPairings
   # answers that with its own no-valid-pairing exit and the comparison
   # harness ends the tournament there, so an over-constrained field is a
-  # measured case rather than a generator bug — and the alternative,
+  # measured case rather than a generator bug - and the alternative,
   # filtering the pairs down to a provably-satisfiable set, would build the
   # very rule under test into the fixture.
   defp forbidden_pairs(_count, pct) when pct <= 0, do: []
@@ -174,9 +174,9 @@ defmodule Ainalrami.Generator do
   # a full virtual point and the rest a half.
   #
   # Worth recording that bbpPairings' OWN Baku (`applyBakuAcceleration`,
-  # `trf.cpp:708-753`) sizes Group A differently — `(n - 1) / 2` as a
+  # `trf.cpp:708-753`) sizes Group A differently - `(n - 1) / 2` as a
   # 0-based last rank, i.e. `ceil(n/2)` players, so 5 rather than 6 on a
-  # 10-player field — while agreeing exactly on the round split. That path
+  # 10-player field - while agreeing exactly on the round split. That path
   # is only reached through its own Baku flag, never through `XXA`, so it
   # cannot make the two engines disagree here: both read the identical
   # `XXA` lines out of the identical file. The generator follows the
@@ -211,7 +211,7 @@ defmodule Ainalrami.Generator do
 
   # An arbiter-assigned bye is granted BEFORE the round is paired and
   # recorded in advance, which is exactly how the engine knows to leave
-  # that player out — see `Ainalrami.Pairing`'s `active_this_round?/2`.
+  # that player out - see `Ainalrami.Pairing`'s `active_this_round?/2`.
   defp grant_requested_byes(players, 0), do: players
 
   defp grant_requested_byes(players, pct) do

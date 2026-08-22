@@ -2,9 +2,9 @@ defmodule Ainalrami.Test.Javafo do
   @moduledoc """
   Thin wrapper for invoking the real `javafo.jar` (FIDE's own reference
   Dutch-system implementation) locally, purely for comparison-testing
-  Ainalrami's own pairing output against it. NOT vendored into this repo —
+  Ainalrami's own pairing output against it. NOT vendored into this repo -
   it's a third-party binary not ours to redistribute (same reasoning as the
-  sibling project OpenPairings' own `test_helper.exs`) — located via
+  sibling project OpenPairings' own `test_helper.exs`) - located via
   `JAVAFO_JAR`, defaulting to that sibling project's own vendored copy
   (`../openpairings/priv/javafo/javafo.jar`, i.e. this repo and
   `openpairings` checked out as sibling directories).
@@ -20,7 +20,7 @@ defmodule Ainalrami.Test.Javafo do
   Runs javafo.jar's pairing mode (`-p`) on `trf_text` (a full TRF file,
   including any `XXR`/`XXA`/`XXP` extension lines the caller wants) and
   returns `{:ok, pairs}` where each pair is `{white_rank, black_rank | nil}`
-  — `nil` for a pairing-allocated bye (javafo's own `0`), same convention
+  - `nil` for a pairing-allocated bye (javafo's own `0`), same convention
   `Ainalrami.Pairing` uses.
   """
   def pair(trf_text) do
@@ -45,7 +45,7 @@ defmodule Ainalrami.Test.Javafo do
   # of these run concurrently (confirmed at real scale, PAIRING_FUZZ_COUNT
   # in the tens of thousands: an antivirus/indexer transiently holding a
   # handle on a just-closed file is the likely cause, not a bug in the
-  # directory-naming scheme — `System.unique_integer/1` already guarantees
+  # directory-naming scheme - `System.unique_integer/1` already guarantees
   # each run gets its own dir). A failed cleanup only leaks a few KB of temp
   # files, so it's worth a couple of retries but never worth crashing the
   # whole comparison run over.

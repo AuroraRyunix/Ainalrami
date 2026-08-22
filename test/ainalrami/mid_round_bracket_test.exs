@@ -1,14 +1,14 @@
 defmodule Ainalrami.MidRoundBracketTest do
   @moduledoc """
   The residue `exchange_order_test.exs` deliberately leaves: a bracket in
-  the MIDDLE of a round — one that both inherits moved-down players and
+  the MIDDLE of a round - one that both inherits moved-down players and
   floats players onward.
 
   Every position in that file makes the bracket under test the **last**
   one, because that is what makes candidates commensurable: with nothing
   below it, no candidate can reach an edge into a lower group, so every
   candidate contributes the same edges and the rung vectors line up term
-  for term. A middle bracket breaks exactly that — candidates that float
+  for term. A middle bracket breaks exactly that - candidates that float
   different players change the composition of the NEXT bracket, and the
   regulations define no ordering over those (see
   `docs/conformance-c0403-2026.md`).
@@ -22,7 +22,7 @@ defmodule Ainalrami.MidRoundBracketTest do
 
   ## What this file can and cannot check
 
-  It cannot ask "is the engine's answer the best of ALL candidates" — that
+  It cannot ask "is the engine's answer the best of ALL candidates" - that
   question has no defined answer for a middle bracket, for the reason
   above. Asking it anyway is how the discarded round-level enumerator
   produced verdicts it could not support.
@@ -120,7 +120,7 @@ defmodule Ainalrami.MidRoundBracketTest do
   # The exchanges are not optional detail. Leaving them out was this
   # file's SECOND wrong oracle: a remainder answer pairing two S2 members
   # with each other is unreachable by transposition alone and perfectly
-  # reachable once an exchange has moved one of them into S1 — so the test
+  # reachable once an exchange has moved one of them into S1 - so the test
   # "found" the engine off-sequence when it was the generator that could
   # not express the move.
   defp homogeneous(members) do
@@ -154,7 +154,7 @@ defmodule Ainalrami.MidRoundBracketTest do
         mdp_pairs = Enum.zip(mdps, Enum.take(o, m)),
         # The remainder is a bracket in its own right, so it is re-sorted
         # into BSN order and then paired by the FULL homogeneous generator
-        # — transpositions and exchanges both.
+        # - transpositions and exchanges both.
         remainder = o |> Enum.drop(m) |> Enum.sort(),
         rem_pairs <- homogeneous(remainder),
         uniq: true do
@@ -210,7 +210,7 @@ defmodule Ainalrami.MidRoundBracketTest do
       # reason: a loop that silently skips every position is a green test
       # that checked nothing.
       assert checked >= 25,
-             "only #{checked} positions had a real middle bracket — the generator has drifted"
+             "only #{checked} positions had a real middle bracket - the generator has drifted"
     end
   end
 

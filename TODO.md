@@ -1,12 +1,12 @@
 # TODO
 
-Open work only. The history — including everything closed, and the changes
-that looked obviously correct and measured *worse* — is in
+Open work only. The history - including everything closed, and the changes
+that looked obviously correct and measured *worse* - is in
 [docs/engineering-log.md](docs/engineering-log.md).
 
 ## Conformance
 
-Both of the gaps carried here are now closed — 4.3 against the article
+Both of the gaps carried here are now closed - 4.3 against the article
 itself, 5.2.5 against the handbook and AGAINST both reference engines.
 What is left is one limit of method rather than a known divergence.
 
@@ -21,10 +21,10 @@ What is left is one limit of method rather than a known divergence.
       The trick for the heterogeneous case was making the bracket the
       **last** one. Nothing below it means no candidate reaches an edge
       into a lower group, so every candidate contributes the same edges and
-      the rung vectors are commensurable — which is what the earlier
+      the rung vectors are commensurable - which is what the earlier
       "incommensurable structures" objection was really about.
 
-- [x] ~~**A bracket in the MIDDLE of a round**~~ — **narrowed 2026-08-21**
+- [x] ~~**A bracket in the MIDDLE of a round**~~ - **narrowed 2026-08-21**
       by `mid_round_bracket_test.exs`, which checks REACHABILITY: the
       engine's answer for a middle bracket is a candidate Article 4's
       sequence actually generates. Previously corpus-only.
@@ -37,11 +37,11 @@ What is left is one limit of method rather than a known divergence.
       brackets per run.
 
       The oracle was wrong twice first, both times by being weaker than
-      the engine — no remainder stage, then no exchanges in the remainder.
+      the engine - no remainder stage, then no exchanges in the remainder.
       Recorded in the conformance doc, since that is the failure mode this
       whole area keeps producing.
 
-- [x] ~~**Article 5.2.5 — which number the parity applies to.**~~
+- [x] ~~**Article 5.2.5 - which number the parity applies to.**~~
       **Settled 2026-08-17, in this engine's favour, from the handbook.**
       C.04.2 Article 2 fixes a TPN for the tournament; nothing renumbers
       it around players sitting a round out. Both references renumber
@@ -50,12 +50,12 @@ What is left is one limit of method rather than a known divergence.
 
       Now a filed dispute rather than an open question:
       [docs/dispute-initial-colour.md](docs/dispute-initial-colour.md).
-      Gacrux did not break the tie — it renumbers too. What broke it was
+      Gacrux did not break the tie - it renumbers too. What broke it was
       reading C.04.2, which nobody had done.
 
 ## Performance
 
-- [x] ~~**Implement the incremental caches.**~~ **Done 2026-08-18** — and
+- [x] ~~**Implement the incremental caches.**~~ **Done 2026-08-18** - and
       then most of the rest of the reference's bookkeeping with it. One
       round of 209 players went **90 s → 9.5 s** and 400 players
       **498 s → 69.8 s**.
@@ -68,7 +68,7 @@ What is left is one limit of method rather than a known divergence.
 
       What it was, in order of effect: the resumed solves prepared the
       lower-indexed end of each changed edge instead of the MODIFIED
-      vertex (`computer.cpp:69` — cost is O(k n²) in the number of
+      vertex (`computer.cpp:69` - cost is O(k n²) in the number of
       modified vertices, and `finalize_pair` was making k the bracket
       rather than three); cold solves ran a hundred stages where a greedy
       tight start leaves seven exposed vertices; every bracket rescored
@@ -99,8 +99,8 @@ What is left is one limit of method rather than a known divergence.
       that preceded it is recorded there too, reverted at 99.34%.
 
 - [x] ~~**The one uncertified condition.**~~ **Judged 2026-08-21.**
-      `@local_min_next_group` (16) — that an odd bracket's float choice
-      does not depend on which member of a dense next group it lands on —
+      `@local_min_next_group` (16) - that an odd bracket's float choice
+      does not depend on which member of a dense next group it lands on -
       was the one condition on the local path not certified term by term,
       and this note said "the 5M run on the final engine is its judge".
 
@@ -121,14 +121,14 @@ What is left is one limit of method rather than a known divergence.
 
       The cause is the dual initialisation, not the greedy pass. `y_v`
       starts at `max_u w(v,u)/2`, so an edge is tight only when its
-      endpoints are each other's heaviest — and the criteria make nearly
+      endpoints are each other's heaviest - and the criteria make nearly
       every vertex in a bracket point at the same few top-ranked
       opponents. A star has one mutually-heaviest pair. Cross-bracket
       edges spread the maxima out, which is why the field graph is fine.
 
       That lever was then built and measured, and it makes the engine
-      **twice as slow** (1,000 players 8.0 s -> 15.9 s). It is correct —
-      same total weight and matched count on all 460 baseline graphs — and
+      **twice as slow** (1,000 players 8.0 s -> 15.9 s). It is correct -
+      same total weight and matched count on all 460 baseline graphs - and
       it loses anyway, for a reason worth keeping: the sequential dual
       cascades into an alternating 0/`w2` pattern, so the starting dual
       objective goes from 1.85e12 to ~1.4e170, and walking that down is
@@ -142,11 +142,11 @@ What is left is one limit of method rather than a known divergence.
       written up as "Dead lever 4" in the engineering log alongside the
       other three.
 
-- [x] ~~**The last 1.5–2× at 209-400 players.**~~ **Overtaken 2026-08-19
+- [x] ~~**The last 1.5-2× at 209-400 players.**~~ **Overtaken 2026-08-19
       evening**: 209 players 0.37 s against the reference's 0.72 s, 400
       players 1.33 s against 3.05 s -- the local graph, above. The
       per-operation levers recorded here are now **measured and mostly
-      closed** — see the engineering log, "Where the remaining time goes,
+      closed** - see the engineering log, "Where the remaining time goes,
       and three levers that do not move it" (2026-08-21).
 
       Narrower weights is DEAD: the weights are 512 bits, narrowing the
@@ -170,7 +170,7 @@ What is left is one limit of method rather than a known divergence.
 ## Harness
 
 The corpus is large but not wide. Each of these is a dimension it holds
-constant — which is the failure mode that let a real bug survive 2.5
+constant - which is the failure mode that let a real bug survive 2.5
 million tournaments (see [docs/validation.md](docs/validation.md)).
 
 - [x] ~~TRF `260` / `250`~~ **implemented 2026-08-18.** They were listed as
@@ -184,11 +184,11 @@ million tournaments (see [docs/validation.md](docs/validation.md)).
       binary a `250` we wrote found two bugs the unit tests could not.
 
       Our parser reads every `250` field one column WIDER than
-      `readAccelerations250` does — the C++ reads half-open 0-based
+      `readAccelerations250` does - the C++ reads half-open 0-based
       ranges with a blank separator between fields. Harmless reading (the
       separator trims away), fatal writing: the digit lands in the
       separator and the binary rejects the line. Same shape as the `XXA`
-      column bug. The parser is left as it is on purpose — correct for
+      column bug. The parser is left as it is on purpose - correct for
       every well-formed file, and exercised by the whole corpus.
 
       And `XXP` has no round limit while `260` must state one, so bounding
@@ -204,11 +204,11 @@ million tournaments (see [docs/validation.md](docs/validation.md)).
       the work:
 
       It is NOT the Dutch engine applied to teams. C.04.6 has its own
-      criteria (C1-C3 absolute, C4-C10 quality — nine rungs against
+      criteria (C1-C3 absolute, C4-C10 quality - nine rungs against
       twenty-one) and, crucially, its own procedure: Article 3.6 defines an
       identifier, orders pairings lexicographically by it, and takes the
       FIRST satisfying C1/C8/C9/C10. An order and a predicate, not a
-      scoring function — so `WeightedMatching` is not involved in choosing
+      scoring function - so `WeightedMatching` is not involved in choosing
       a pairing at all, only in certifying [C3] completability.
 
       NO reference implementation pairs teams. Checked: bbpPairings has no
@@ -217,7 +217,7 @@ million tournaments (see [docs/validation.md](docs/validation.md)).
       individual engine trustworthy is unavailable. The regulation hands
       back something stronger though: 3.6 defines the answer AS the head of
       an enumerable order, so for small brackets a test can BE the
-      definition — enumerate, sort, filter, assert the head. That is a
+      definition - enumerate, sort, filter, assert the head. That is a
       proof rather than a correlation, and it is the opposite of the
       individual system, where exhaustive verification is impossible in
       principle.
@@ -227,9 +227,9 @@ million tournaments (see [docs/validation.md](docs/validation.md)).
       allocation should wait for that reply or it gets built twice.
 - [x] ~~Late entrants~~ **not a distinct axis either** (2026-08-17). A
       blank early round is indistinguishable from a zero-point bye
-      everywhere the engine looks — same points, same
+      everywhere the engine looks - same points, same
       `participated_in_pairing?/1`, same float direction under 1.4.3, same
-      C2 eligibility — so a generated axis would re-run the arbiter-bye
+      C2 eligibility - so a generated axis would re-run the arbiter-bye
       axis under another name. That is a consequence of four rules
       agreeing, so it is pinned in `late_entrant_test.exs` (with a
       half-point bye as the control) rather than merely concluded.
@@ -243,7 +243,7 @@ million tournaments (see [docs/validation.md](docs/validation.md)).
       resolved, because every implementation resolved it differently and
       the loser is a wrong final round nothing downstream can detect.
 - [x] ~~Unrated players~~ **not an axis.** `fide_rating` never reaches
-      `Ainalrami.Pairing` at all — the Dutch system runs on TPN, score and
+      `Ainalrami.Pairing` at all - the Dutch system runs on TPN, score and
       colour history, and the initial ranking is given in the file rather
       than derived. Checked rather than assumed; recorded so it is not
       re-proposed.
@@ -253,22 +253,22 @@ million tournaments (see [docs/validation.md](docs/validation.md)).
 - [x] ~~**A CLI explain mode.**~~ **Done 2026-08-21.** `explain_round/3`
       had been library-only since the adjudicator needed it, so a host
       application could pair with this engine and then had to reconstruct
-      the reasoning from the finished boards — an inference, when the
+      the reasoning from the finished boards - an inference, when the
       engine had already computed the thing itself. `ainalrami input.trf
       -x` now reports, per bracket, who moved down, who lives there, what
       was paired, who floats on, and which criteria actually scored.
 
 - [x] ~~**Re-run the adjudication tables.**~~ **Cannot be, and no longer
       needs to be** (checked 2026-08-18). They were produced while
-      `explain_round/3` stamped no float history, so C14–C21 scored a
-      constant on both sides of every verdict — which could misattribute a
+      `explain_round/3` stamped no float history, so C14-C21 scored a
+      constant on both sides of every verdict - which could misattribute a
       disagreement but never invent one.
 
       Re-running them is impossible: they catalogue 40 disagreements, 39 of
       which were one missing field in the bootstrap matching and no longer
       occur at all. There is no position left to re-score. The single
       survivor, `seed735265-r7-p10`, IS kept as a fixture and HAS been
-      re-adjudicated with the fixed instrument — twice, in fact, since the
+      re-adjudicated with the fixed instrument - twice, in fact, since the
       `edge_count` guard later changed its verdict from
       `theirs_scores_better` to `incomparable`.
 
@@ -298,7 +298,7 @@ million tournaments (see [docs/validation.md](docs/validation.md)).
       rewritten on 1 February 2026: the old Article E.5 tested the parity
       of a "pairing number", which A.2 defined as the initial ranking "and
       subsequent modifications", while the new 5.2.5 tests a TPN and
-      Article 1.1 delegates that wholly to C.04.2 Article 2 — which allows
+      Article 1.1 delegates that wholly to C.04.2 Article 2 - which allows
       exactly two modifications and distinguishes nowhere between a player
       who has played and one who has not.
 
@@ -312,9 +312,9 @@ million tournaments (see [docs/validation.md](docs/validation.md)).
       Letter in [docs/spp-question-initial-colour.md](docs/spp-question-initial-colour.md).
 
       [docs/dispute-initial-colour.md](docs/dispute-initial-colour.md) is
-      written. It is the stronger of the two cases — it rests on a
+      written. It is the stronger of the two cases - it rests on a
       definition quoted verbatim from C.04.2 rather than on an argument
-      about one position — and it affects two reference implementations at
+      about one position - and it affects two reference implementations at
       once, which is worth weighing before raising it.
 
 ## Deferred, deliberately

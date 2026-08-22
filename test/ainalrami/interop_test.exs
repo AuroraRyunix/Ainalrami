@@ -8,8 +8,8 @@ defmodule Ainalrami.InteropTest do
   whatever about whether this one can read a file it did not write.
 
   It could not. bbpPairings' own generator terminates its lines with a
-  BARE carriage return — 212 of them in this fixture, and not one newline
-  — and `parse/1` split on `~r/\\r?\\n/`, which matches neither. The whole
+  BARE carriage return - 212 of them in this fixture, and not one newline
+  - and `parse/1` split on `~r/\\r?\\n/`, which matches neither. The whole
   29KB parsed as a single line and returned zero players, with no error:
   `ainalrami their_file.trf -p` answered with an empty pairing.
 
@@ -85,8 +85,8 @@ defmodule Ainalrami.InteropTest do
     @tag :interop
     test "replays every recorded round to the same pairing" do
       # The `-c` path over a tournament this engine did not produce. Colour
-      # differences are not errors — Article 5.1 leaves the first colour to
-      # a drawing of lots, and the fixture records none — so this compares
+      # differences are not errors - Article 5.1 leaves the first colour to
+      # a drawing of lots, and the fixture records none - so this compares
       # who plays whom.
       parsed = Trf.parse(fixture_with_rounds())
       players = parsed.players

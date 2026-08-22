@@ -40,7 +40,7 @@ defmodule Ainalrami.PairingTest do
 
   # Our own documented colour convention (Article 5.2.5 applied with a
   # fixed initial-colour, since Article 5.1's "drawing of lots" has no
-  # deterministic rule to replicate — see Pairing.pair_round_one/1's doc):
+  # deterministic rule to replicate - see Pairing.pair_round_one/1's doc):
   # the better-ranked player of each pair gets white when their rank is
   # odd, black when even.
   test "colour follows the documented odd/even-rank rule, not JaVaFo's own arbitrary draw" do
@@ -50,7 +50,7 @@ defmodule Ainalrami.PairingTest do
   end
 
   test "colour rule is independent of which half the odd-ranked player is in" do
-    # Rank 6 (even) is the better-ranked half of pair {2,6}? No — 2 is
+    # Rank 6 (even) is the better-ranked half of pair {2,6}? No - 2 is
     # better-ranked (lower number) than 6, so rank 2 (even) decides colour
     # for this pair, same case as above. This test instead confirms the
     # rule reads the BETTER-ranked player's parity, not literally "s1 vs

@@ -4,7 +4,7 @@ defmodule Ainalrami.DegenerateFieldsTest do
 
   `PAIRING_FUZZ_MIN_PLAYERS` bottoms out at 4, and every generated
   tournament has a complete round-one history, so none of the shapes below
-  has ever been measured against bbpPairings — they are checked here
+  has ever been measured against bbpPairings - they are checked here
   against the regulations directly.
 
   They are the shapes a real caller reaches first: an arbiter opens a
@@ -45,7 +45,7 @@ defmodule Ainalrami.DegenerateFieldsTest do
   describe "fields where nobody, or almost nobody, has played" do
     test "a round where every player's only history is a bye still pairs" do
       # Round two of a tournament whose round one was entirely byes. Nobody
-      # holds a colour preference, so every board falls to Article 5.2.5 —
+      # holds a colour preference, so every board falls to Article 5.2.5 -
       # and nobody is disqualified from the next bye either, since `Z` is
       # not in C2's `U F +`.
       players = for rank <- 1..4, do: %{player(rank) | games: [@bye]}
@@ -57,9 +57,9 @@ defmodule Ainalrami.DegenerateFieldsTest do
 
     test "one unpaired player among players who already hold a result for the round" do
       # Player 1 has no history at all; 2-4 each hold a round-one bye. So
-      # round one is NOT complete — bbpPairings counts a round as played
+      # round one is NOT complete - bbpPairings counts a round as played
       # only once every player has an entry for it (`evenUpMatchHistories`)
-      # — and the round being paired is still round one.
+      # - and the round being paired is still round one.
       #
       # Which means 2-4 already have their round-one result and are not
       # available, leaving player 1 alone and taking the bye. Pinned
@@ -75,7 +75,7 @@ defmodule Ainalrami.DegenerateFieldsTest do
     test "raises NoValidPairingError rather than emitting an illegal round" do
       # Two players who have already met, twice over, with nobody else to
       # pair with. There is no legal round, and the engine must say so
-      # rather than seat the rematch — matching bbpPairings' own
+      # rather than seat the rematch - matching bbpPairings' own
       # `NoValidPairingException` and its exit code 1.
       met = fn rank, opponent, colour ->
         %{

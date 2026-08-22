@@ -15,7 +15,7 @@ defmodule Ainalrami.Trf do
 
   All column positions are 1-indexed and inclusive, exactly as printed in the
   spec. This is Ainalrami's file format for both directions: the roster/result
-  history it's asked to pair, and the paired output it writes back — same
+  history it's asked to pair, and the paired output it writes back - same
   format JaVaFo itself reads and writes, so a TRF file built for one engine
   works unmodified for the other.
 
@@ -24,11 +24,11 @@ defmodule Ainalrami.Trf do
   unrecognized code or an illegal combination between two opponents (see
   `validate_games!/2`). Validation only cross-checks a pairing when both
   sides are present in the given player set and mutually reference each
-  other for that round — a lone/dangling reference is not itself an error.
+  other for that round - a lone/dangling reference is not itself an error.
 
   Ported from the sibling project (`AuroraRyunix/openpairings`)'s own
   `PairingsEngine.Trf`, which fixed two real bugs against FIDE's actual
-  archived TRF06 specs (Annexure-B/2006, Annexure-C/2016) — the
+  archived TRF06 specs (Annexure-B/2006, Annexure-C/2016) - the
   `allow_dangling_playing_code` tolerance and the `parse_games/1` blank-round
   handling below both come directly from that work, not reinvented here.
 
@@ -36,16 +36,16 @@ defmodule Ainalrami.Trf do
 
   Three of JaVaFo's own `XX` extension codes are read; two of them are written:
 
-    * `XXR n` — the round count (see `parse_xxr/2`), which is the same field
+    * `XXR n` - the round count (see `parse_xxr/2`), which is the same field
       as TRF16's `142`. A file may carry both spellings, but they must
       AGREE: two different counts are refused rather than silently resolved,
       since every implementation resolves them differently. READ ONLY:
       `serialize/1` emits the count as the standard `142` header, so a file
       that came in with `XXR` goes out with `142`. The value round-trips;
       the spelling does not.
-    * `XXP a b [c ...]` — a mutually-forbidden GROUP of players
+    * `XXP a b [c ...]` - a mutually-forbidden GROUP of players
       (see `parse_xxp/2`), surfaced as `tournament[:forbidden_pairs]`.
-    * `XXA` — per-player acceleration/virtual points, round by round
+    * `XXA` - per-player acceleration/virtual points, round by round
       (see `parse_xxa/2`), surfaced as each player's `:accelerations`.
 
   Anything else beginning `XX` still falls through `parse_header_line/3`'s
@@ -58,12 +58,12 @@ defmodule Ainalrami.Trf do
   non-`XXR` `XX` line at all.
 
   For the same reason, a MALFORMED `XXP`/`XXA` line raises
-  `Ainalrami.Trf.ValidationError` rather than being skipped — see
+  `Ainalrami.Trf.ValidationError` rather than being skipped - see
   `parse_xxp/2`. bbpPairings does the same (`InvalidLineException`, exit
   code 3); a MALFORMED `XXR` is the exception, and can afford to be
   ignored, because a missing round count has a fallback and a missing
   exclusion does not. A CONTRADICTED round count is a different thing
-  again and does raise — see `check_round_count_agreement!/2`.
+  again and does raise - see `check_round_count_agreement!/2`.
   """
 
   alias Ainalrami.Trf.ValidationError
@@ -98,7 +98,7 @@ defmodule Ainalrami.Trf do
     deputy_arbiter: "112",
     time_control: "122",
     # Not in the official TRF16 spec, but real-world precedent from
-    # Swiss-Manager (which already emits both) — optional/additive, an
+    # Swiss-Manager (which already emits both) - optional/additive, an
     # unrecognized header code is already silently ignored by
     # `parse_header_line/3`, so including them never breaks a TRF16-only
     # reader.
@@ -154,7 +154,7 @@ defmodule Ainalrami.Trf do
   having a result recorded for them without being paired.
 
   This is what distinguishes an arbiter-assigned bye (half-point,
-  zero-point, full-point — granted before the round is paired, so the
+  zero-point, full-point - granted before the round is paired, so the
   player is left out of it) from a pairing-allocated bye, which the
   pairing itself produced. bbpPairings expresses the same test as
   `opponent != id || resultChar == 'U' || resultChar == '+'`
@@ -167,7 +167,7 @@ defmodule Ainalrami.Trf do
   # TRF16 result codes for an actually-contested game (win/draw/loss/forfeit)
   # vs. an unpaired round (byes of every kind). A forfeit is legally
   # "unplayed" per FIDE Art. 16, but it still occupies a pairing slot (an
-  # opponent), unlike a bye — so the two groups get different validation.
+  # opponent), unlike a bye - so the two groups get different validation.
   @playing_codes ~w(1 = 0 + -)
   @bye_codes ~w(H F U Z)
 
@@ -175,10 +175,10 @@ defmodule Ainalrami.Trf do
   # ("1") only pairs with a loss ("0"); a played "0-0" (both players lose,
   # e.g. both defaulted after making moves) is two losses, so "0" also
   # legally pairs with "0". A double forfeit is "-"/"-"; a single forfeit is
-  # "+"/"-". A draw ("=") also legally pairs with a loss ("0") — an
+  # "+"/"-". A draw ("=") also legally pairs with a loss ("0") - an
   # asymmetric ½-0/0-½ (an arbiter's disciplinary point adjustment on an
   # otherwise-drawn game, not a chess outcome the TRF spec itself
-  # distinguishes with its own code — it's still just "=" and "0" per
+  # distinguishes with its own code - it's still just "=" and "0" per
   # player, only no longer required to mirror). Anything else (both win,
   # both forfeit-win, a win against a draw, etc.) is impossible and
   # rejected.
@@ -213,7 +213,7 @@ defmodule Ainalrami.Trf do
   # next to it, and the columns are not negotiable in either direction.
   #
   # bbpPairings' `readPlayerAccelerationsXxa` (`trf.cpp:487-514`) reads the
-  # starting rank from `line[4]..line[8)` — 0-indexed, so columns 5-8 — and
+  # starting rank from `line[4]..line[8)` - 0-indexed, so columns 5-8 - and
   # then walks `startIndex = 9; startIndex += 5`, reading four characters at
   # each stop: columns 10-13, 15-18, 20-23, i.e. `10 + 5*(r-1)` for round
   # `r`, with a single separator column between fields. That is exactly the
@@ -222,7 +222,7 @@ defmodule Ainalrami.Trf do
   #
   # The sibling project confirmed by direct experiment that free-form `XXA`
   # crashes real javafo with a bare NullPointerException while the
-  # fixed-column form runs clean — see `acceleration_lines/4`'s docs in
+  # fixed-column form runs clean - see `acceleration_lines/4`'s docs in
   # `../openpairings`. Its own emitter, however, right-aligns the rank in a
   # FIVE-column field (cols 5-9) and each value in a five-column field
   # (10-14, 15-19, ...), which is one column wider than the spec at every
@@ -250,7 +250,7 @@ defmodule Ainalrami.Trf do
 
   `opts[:column_legend]`: when true, inserts the ruler/field-code lines
   Swiss-Manager prepends to its own TRF exports (a `DDD SSSS sTTT NNN...`
-  legend plus two column-position rulers) right before the player rows —
+  legend plus two column-position rulers) right before the player rows -
   purely a human-readability courtesy, no header code of its own, and
   safely ignored by any TRF16 reader (including `parse/1`, since these
   lines don't start with a recognized 3-digit code). Off by default.
@@ -278,7 +278,7 @@ defmodule Ainalrami.Trf do
 
   # `XXA`/`XXP` are JaVaFo's spellings and what the sibling project emits,
   # so they stay the default. `250`/`260` are bbpPairings' own fixed-column,
-  # round-limited siblings — and it is the implementation that DEFINES them,
+  # round-limited siblings - and it is the implementation that DEFINES them,
   # which is exactly why generating them matters. Until now they were
   # covered by unit tests written from its source, and never by a file the
   # real binary had to read back.
@@ -296,7 +296,7 @@ defmodule Ainalrami.Trf do
   # One `250` per player per round carrying non-zero virtual points.
   #
   # A `250` says "these players, over these rounds, get these points", so a
-  # single line can cover a whole accelerated group — but only when that
+  # single line can cover a whole accelerated group - but only when that
   # group is contiguous by rank AND flat across the rounds, which is true of
   # Baku and false of the random axis. The degenerate range (one player, one
   # round) is correct for both, and for a corpus that is the better trade:
@@ -307,8 +307,8 @@ defmodule Ainalrami.Trf do
         points != 0 do
       # Widths taken from `readAccelerations250` (trf.cpp:418) rather than
       # from `parse_250/2` below, and they are NOT the same. The C++ reads
-      # half-open 0-based ranges — [4,8) match points, [9,13) game points,
-      # [14,17) and [18,21) the rounds, [22,26) and [27,31) the players —
+      # half-open 0-based ranges - [4,8) match points, [9,13) game points,
+      # [14,17) and [18,21) the rounds, [22,26) and [27,31) the players -
       # so every field is separated from the next by one blank column.
       #
       # `parse_250/2` reads each field one column wider, swallowing that
@@ -316,14 +316,14 @@ defmodule Ainalrami.Trf do
       # On the way OUT it is fatal: right-aligning into the wider field puts
       # the digit in the separator, and the real binary then reads a blank
       # round and rejects the line. Verified by feeding both to
-      # bbpPairings — the wide form is `Invalid line`, this one pairs.
+      # bbpPairings - the wide form is `Invalid line`, this one pairs.
       #
       # Same shape as the `XXA` column bug: a field written one column too
       # wide, tolerated by the reader we happened to test against and
       # rejected by the one that defines the format.
       []
       |> place({1, 3}, "250")
-      # 5–8 is MATCH points and must stay blank; bbpPairings rejects a `250`
+      # 5-8 is MATCH points and must stay blank; bbpPairings rejects a `250`
       # that carries any, and `parse_250/2` enforces the same on the way in.
       |> place({10, 13}, format_points(points), align: :right)
       |> place({15, 17}, round, align: :right)
@@ -336,14 +336,14 @@ defmodule Ainalrami.Trf do
 
   # One `260` per forbidden group, spanning every round.
   #
-  # `XXP` carries no round limit at all — it means "never pair these" — so
+  # `XXP` carries no round limit at all - it means "never pair these" - so
   # the equivalent `260` has to name a range that outlives the tournament,
   # not just the rounds already played. Bounding it at `number_of_rounds`
   # is the subtle version of getting this wrong: on a file whose declared
   # round count is behind the round actually being paired, the ban expires
   # exactly when it is needed and the two spellings pair differently.
   # Caught by diffing bbpPairings' own output on both forms of one
-  # tournament, which is the only way it shows up — each file is
+  # tournament, which is the only way it shows up - each file is
   # individually valid and parses without complaint.
   defp numeric_forbidden_lines(nil, _rounds), do: []
   defp numeric_forbidden_lines([], _rounds), do: []
@@ -445,7 +445,7 @@ defmodule Ainalrami.Trf do
 
   # `:tens` marks every 10th column with its running count (e.g. "1" ending
   # at column 10, "18" ending at column 180); `:units` repeats "1234567890"
-  # across the full width — together, a standard fixed-width column ruler.
+  # across the full width - together, a standard fixed-width column ruler.
   defp ruler_line(width, :tens) do
     Enum.reduce(10..width//10, List.duplicate(" ", width), fn col, acc ->
       label = col |> div(10) |> Integer.to_string()
@@ -490,7 +490,7 @@ defmodule Ainalrami.Trf do
 
   # Article 5.1's drawing of lots. Parsed since 2026-08-17 but never
   # written until now, so `serialize/2` silently dropped it and a
-  # round-trip lost the draw — and a file with no round one played has
+  # round-trip lost the draw - and a file with no round one played has
   # nothing to infer it back from, which real bbpPairings treats as fatal
   # rather than guessable ("Please configure the initial piece colors",
   # exit 3). Round one is exactly when the field decides every board.
@@ -510,7 +510,7 @@ defmodule Ainalrami.Trf do
   defp round_dates_line([]), do: nil
 
   defp round_dates_line(dates) do
-    # Only emit the line at all if at least one round actually has a date —
+    # Only emit the line at all if at least one round actually has a date -
     # a list of all-nil/blank entries means "no round dates", same as [].
     if Enum.all?(dates, &(&1 in [nil, ""])) do
       nil
@@ -586,7 +586,7 @@ defmodule Ainalrami.Trf do
 
   # TRF is line- and column-oriented: a newline, carriage return or tab
   # inside a field (a player name has no format check beyond length) would
-  # split or shift the fixed-width row — control characters are flattened
+  # split or shift the fixed-width row - control characters are flattened
   # to spaces before the value is placed.
   defp strip_controls(text), do: String.replace(text, ~r/[\x00-\x1F\x7F]/, " ")
 
@@ -634,18 +634,18 @@ defmodule Ainalrami.Trf do
   #      for that round is resolvable in `players` *and* mutually references
   #      this player back, the two codes must be a legal pair (see
   #      `@legal_result_pairs`). An unresolvable/dangling opponent reference
-  #      is not itself flagged — the caller may be validating a partial
+  #      is not itself flagged - the caller may be validating a partial
   #      roster.
   #
   # `opts[:allow_dangling_playing_code]` relaxes the "opponent 0000 needs a
-  # bye code (F/H/Z/U)" rule below — those four codes didn't exist before
+  # bye code (F/H/Z/U)" rule below - those four codes didn't exist before
   # TRF16 (FIDE's Annexure-B, the 2006 spec: only 1/=/0/+/-/blank, a bye
   # represented as a dangling playing code against 0000, no dedicated bye
   # code at all). That rule protects OUR OWN pairing-output construction (a
   # dangling playing code there is a real crash risk downstream), which only
   # matters on the way OUT (`serialize/1`); a file we're reading FROM
   # someone else, possibly TRF06-vintage, is exactly what this option
-  # exists for — `parse/1` passes it, `serialize/1` never does.
+  # exists for - `parse/1` passes it, `serialize/1` never does.
   defp validate_games!(players, opts \\ []) do
     by_rank = Map.new(players, &{&1[:rank], &1})
 
@@ -673,7 +673,7 @@ defmodule Ainalrami.Trf do
         raise ValidationError,
           message:
             "#{player_label(player)}, round #{round}: opponent 0000 cannot carry played-game result " <>
-              "#{inspect(result)} — opponentless games must use a bye code (F/H/Z/U)"
+              "#{inspect(result)} - opponentless games must use a bye code (F/H/Z/U)"
 
       result in @playing_codes ->
         validate_playing_pair!(player, round, game, by_rank, result)
@@ -710,7 +710,7 @@ defmodule Ainalrami.Trf do
   Tolerates a TRF06-vintage file (FIDE's Annexure-B, 2006): before TRF16
   added the F/H/U/Z bye codes, a bye was just a dangling playing code
   against opponent 0000 (see `validate_games!/2`'s
-  `allow_dangling_playing_code` option) — column positions are otherwise
+  `allow_dangling_playing_code` option) - column positions are otherwise
   byte-identical between the two versions, so no separate TRF06 parser is
   needed, just this one relaxed rule.
 
@@ -718,7 +718,7 @@ defmodule Ainalrami.Trf do
   attach an `:accelerations` list to the player they name. Neither key is
   added at all when the file carries no such line, so a plain TRF parses
   to exactly the same shape it always did. A malformed one of either
-  raises `Ainalrami.Trf.ValidationError` — see the moduledoc.
+  raises `Ainalrami.Trf.ValidationError` - see the moduledoc.
   """
   def parse(text) do
     lines =
@@ -767,7 +767,7 @@ defmodule Ainalrami.Trf do
   end
 
   # An `XXA` line may legally precede the `001` line of the player it names
-  # — bbpPairings handles the same ordering problem by pre-sizing
+  # - bbpPairings handles the same ordering problem by pre-sizing
   # `tournament.players` in `readPlayerAccelerationsXxa` and then MOVING the
   # accelerations onto the real player record when its `001` line arrives
   # (`trf.cpp:369-372`). Collecting them in a rank-keyed map and merging at
@@ -782,14 +782,14 @@ defmodule Ainalrami.Trf do
     # Appending looks odd and is what the reference does:
     # `readPlayerAccelerationsXxa` (`trf.cpp:487-514`) calls `push_back` on
     # the player's acceleration vector, so an `XXA` line lands after
-    # whatever a `250` already filled in — round 3 onwards, not round 1.
+    # whatever a `250` already filled in - round 3 onwards, not round 1.
     # This engine's own `parse_xxa/2` already appends when two `XXA` lines
     # name the same player, so the two are consistent.
     #
     # Overwriting instead put `XXA`'s values at rounds 1-2 and produced a
     # different bracket from bbpPairings on the same bytes. A file carrying
-    # both forms is exotic — `XXA` is JaVaFo's spelling and `250` is
-    # bbpPairings' — but "exotic" is not a reason to diverge silently.
+    # both forms is exotic - `XXA` is JaVaFo's spelling and `250` is
+    # bbpPairings' - but "exotic" is not a reason to diverge silently.
     expanded = Enum.reduce(ranges, %{}, &expand_acceleration_range/2)
 
     merged =
@@ -844,14 +844,14 @@ defmodule Ainalrami.Trf do
   end
 
   # `XXR n` is JaVaFo's own extension for the number of rounds, and it is
-  # what JaVaFo actually consumes — plenty of real files carry it INSTEAD
+  # what JaVaFo actually consumes - plenty of real files carry it INSTEAD
   # of TRF16's `142`, not as well as. Read as a fallback so both spellings
   # land in the same field; an explicit `142` always wins.
   #
   # Missing this was a real defect, not a tidiness issue. The round count
   # feeds the final-round exception in `Ainalrami.Pairing`'s
   # `colour_compatible?/2`, so a file carrying only `XXR` was paired with a
-  # round count and re-checked without one — the two disagreeing on
+  # round count and re-checked without one - the two disagreeing on
   # exactly the last round, and no other. Found by fuzzing `-g` output
   # through `-c`: 4 failures in 250, every one of them the final round.
   defp parse_xxr(acc, line) do
@@ -865,7 +865,7 @@ defmodule Ainalrami.Trf do
     end
   end
 
-  # A file may carry both spellings — `142` is TRF16's, `XXR` is JaVaFo's,
+  # A file may carry both spellings - `142` is TRF16's, `XXR` is JaVaFo's,
   # and a file that has passed through both toolchains can hold each. Two
   # copies of the same number are fine; two DIFFERENT numbers are not, and
   # this refuses rather than picking one.
@@ -881,7 +881,7 @@ defmodule Ainalrami.Trf do
   # count feeds the final-round exception in `colour_compatible?/2` and the
   # topscorer threshold in `final_round_topscorers?/2`, so the wrong value
   # yields a complete, perfectly legal-LOOKING round that applies the
-  # last-round rules to the wrong round — with nothing downstream able to
+  # last-round rules to the wrong round - with nothing downstream able to
   # tell. A self-contradictory file has no correct pairing, only two
   # plausible ones.
   defp check_round_count_agreement!(nil, _rounds), do: :ok
@@ -893,14 +893,14 @@ defmodule Ainalrami.Trf do
             "`142` and `XXR` are the same field and must agree"
   end
 
-  # `XXP a b [c ...]` — a mutually-forbidden GROUP of players, JaVaFo's own
+  # `XXP a b [c ...]` - a mutually-forbidden GROUP of players, JaVaFo's own
   # extension for an arbiter's "these must never meet" (family members, the
   # same club, a federation exclusion rule).
   #
   # A port of `readForbiddenPairsXxp` (`trf.cpp:554-568`), which takes
   # `line.substr(3)` and tokenizes on space/tab into a LIST of player ids.
   # So one line is an N-player group in which EVERY pair is forbidden, not
-  # just a pair — the sibling project only ever emits two ids per line, but
+  # just a pair - the sibling project only ever emits two ids per line, but
   # the general form is what the reference reads and so is what this reads.
   # bbpPairings then files each list under rounds `[0, expectedRounds)`
   # (`trf.cpp:1344-1347`), i.e. universally, which is why no round range is
@@ -911,7 +911,7 @@ defmodule Ainalrami.Trf do
   # `XXR` has a safe fallback (the `142` header, or no round count at all),
   # while a dropped `XXP` produces a complete, perfectly legal-LOOKING
   # pairing that seats two players an arbiter said must never meet, with
-  # nothing downstream able to tell. bbpPairings takes the same view —
+  # nothing downstream able to tell. bbpPairings takes the same view -
   # `readPlayerId` throws `InvalidLineException` and the whole file is
   # rejected (exit code 3, confirmed by direct invocation).
   #
@@ -937,7 +937,7 @@ defmodule Ainalrami.Trf do
     end
   end
 
-  # `250` — bbpPairings' ROUND-LIMITED acceleration, the fixed-column
+  # `250` - bbpPairings' ROUND-LIMITED acceleration, the fixed-column
   # sibling of `XXA`. One line hands the same number of virtual points to a
   # RANGE of players over a RANGE of rounds, where `XXA` spells out one
   # player's whole row.
@@ -947,7 +947,7 @@ defmodule Ainalrami.Trf do
   # zero; game points in 10-14, which must be non-zero; the round range in
   # 15-18 and 19-22; the player range in 23-27 and 28-32. Shorter than 31
   # characters, either range inverted, or a zero round index, and the line
-  # is refused — every one of those is an `InvalidLineException` there.
+  # is refused - every one of those is an `InvalidLineException` there.
   #
   # Silently discarding it was the same defect `260` had: acceleration
   # changes a player's score for bracketing purposes, so a dropped line
@@ -994,7 +994,7 @@ defmodule Ainalrami.Trf do
     )
   end
 
-  # `260` — bbpPairings' ROUND-LIMITED forbidden pairs, the fixed-column
+  # `260` - bbpPairings' ROUND-LIMITED forbidden pairs, the fixed-column
   # sibling of `XXP`. Same meaning, but confined to a range of rounds:
   # "these players must not meet in rounds 3 to 7".
   #
@@ -1072,7 +1072,7 @@ defmodule Ainalrami.Trf do
     end
   end
 
-  # `XXA` — per-player acceleration ("virtual points", FIDE C.04.7 Baku
+  # `XXA` - per-player acceleration ("virtual points", FIDE C.04.7 Baku
   # Acceleration and anything else an arbiter chooses to hand out), one
   # value per round from round 1. Fixed-column; see `@xxa_rank_cols`.
   #
@@ -1085,7 +1085,7 @@ defmodule Ainalrami.Trf do
   # silently discarding it changes which bracket a player is paired in and
   # produces a wrong answer that looks entirely well-formed. It is also
   # the concrete way a caller finds out its `XXA` columns are wrong, which
-  # is not hypothetical — the sibling project's own emitter is one column
+  # is not hypothetical - the sibling project's own emitter is one column
   # wide at every field, and bbpPairings rejects those lines outright
   # (`Invalid line "XXA     1  1.0 ..."`, exit 3, reproduced directly).
   # Reading the rank out of columns 5-8 of such a line finds four blanks,
@@ -1100,7 +1100,7 @@ defmodule Ainalrami.Trf do
               "@xxa_rank_cols for the fixed-column layout): #{inspect(line)}"
 
     # APPENDS rather than replaces, matching `push_back` onto a player's
-    # existing `accelerations` (`trf.cpp:510`) — `tournament.players[id]`
+    # existing `accelerations` (`trf.cpp:510`) - `tournament.players[id]`
     # persists between lines, so two `XXA` lines for one player continue
     # the same record rather than the second one winning.
     update_in(acc.accelerations[rank], &((&1 || []) ++ parse_xxa_points(line)))
@@ -1194,7 +1194,7 @@ defmodule Ainalrami.Trf do
   end
 
   # Stops on where the line's real content actually ends, not on the first
-  # blank round — a fully-blank round block (FIDE's own "not paired", see
+  # blank round - a fully-blank round block (FIDE's own "not paired", see
   # Annexure-B, the 2006 TRF06 spec) is a real, legal "no game recorded this
   # round" for a late entrant, and can legitimately be followed by real
   # games in later rounds. Stopping at the first one silently drops every
@@ -1234,8 +1234,8 @@ defmodule Ainalrami.Trf do
   # They are NOT "unplayed" results, which is what this file assumed by
   # omitting them. Checked against bbpPairings' own reader rather than
   # inferred: it sets `gameWasPlayed = false` for exactly "+", "-", "H", "F",
-  # "U", "Z" and space (`trf.cpp:278-286`) — W/D/L are absent, so they are
-  # played games against a real opponent — and it scores them through the
+  # "U", "Z" and space (`trf.cpp:278-286`) - W/D/L are absent, so they are
+  # played games against a real opponent - and it scores them through the
   # same WIN/DRAW/LOSS branch as "1"/"="/"0" (`trf.cpp:252-270`). Omitting
   # them meant `parse/1` raised `ValidationError` on a legal TRF16 file.
   #

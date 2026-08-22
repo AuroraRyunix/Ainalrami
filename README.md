@@ -3,12 +3,12 @@
 A FIDE Dutch-system Swiss pairing engine, written in Elixir. No JVM, no
 external binary, no runtime dependencies.
 
-> **Ainalrami** — ν¹ Sagittarii A, from the Arabic *Ain al Rami*, "the eye
+> **Ainalrami** - ν¹ Sagittarii A, from the Arabic *Ain al Rami*, "the eye
 > of the archer". A pairing engine's whole value is aiming exactly where
 > the regulations point, rather than somewhere reasonable nearby.
 
 Ainalrami implements **C.04.3, the FIDE (Dutch) System, effective
-1 February 2026** — the current rules, not the 2022 edition most engines
+1 February 2026** - the current rules, not the 2022 edition most engines
 still ship. It reads and writes TRF16, mirrors JaVaFo's command-line
 shape, and is verified against two independent reference implementations.
 
@@ -17,22 +17,22 @@ bbpPairings 6.0.0 exactly across 6 million generated tournaments.
 Article 4's candidate ordering is verified against the regulations
 directly, and one point of Article 5 is settled *against* both reference
 engines, from the handbook's own text. Both are documented rather than
-hidden — see [What is not settled](#what-is-not-settled).
+hidden - see [What is not settled](#what-is-not-settled).
 
 ---
 
 ## Where it stands
 
 Measured against **bbpPairings 6.0.0**, which implements the same 2026
-rules — **5,993,000 tournaments, 44.5 million rounds, 488 million
+rules - **5,993,000 tournaments, 44.5 million rounds, 488 million
 individual pairings, two disagreements, zero illegal rounds** (run of
 2026-08-20, seventeen axes):
 
 | axis | tournaments | exact rounds | individual pairs | illegal |
 |---|---|---|---|---|
-| 300–500 players | 3,000 | **100.00%** | **100.00%** | 0 |
-| 150–250 players | 40,000 | **100.00%** | **100.00%** | 0 |
-| 60–120 players | 300,000 | **100.00%** | **100.00%** | 0 |
+| 300-500 players | 3,000 | **100.00%** | **100.00%** | 0 |
+| 150-250 players | 40,000 | **100.00%** | **100.00%** | 0 |
+| 60-120 players | 300,000 | **100.00%** | **100.00%** | 0 |
 | plain | 800,000 | **100.00%** | **100.00%** | 0 |
 | arbiter byes (15%) | 2,600,000 | **100.00%** (1 dispute) | **100.00%** | 0 |
 | forfeits (10%) | 300,000 | **100.00%** | **100.00%** | 0 |
@@ -43,13 +43,13 @@ individual pairings, two disagreements, zero illegal rounds** (run of
 | Black drawn first | 300,000 | **100.00%** | **100.00%** | 0 |
 
 FIDE's FE1 endorsement allows one difference per 500 tournaments. This is
-one per 3 million — nearly four orders of magnitude inside the bar.
+one per 3 million - nearly four orders of magnitude inside the bar.
 
 The same seventeen axes were re-run on **2026-08-21** with disjoint seeds,
 against the newer matching-layer optimisation (`finalize_pair` as a pure
 edge removal): **5,993,000 tournaments, 487,338,797 individual pairings,
 zero disagreements, zero illegal rounds.** Two independent corpora of
-~488M pairings each, then — and the optimisation is correctness-neutral at
+~488M pairings each, then - and the optimisation is correctness-neutral at
 that scale, which is the whole reason for re-running it.
 
 Zero disagreements the second time does not retire the two below: both
@@ -59,7 +59,7 @@ wrong there, so all three known disputes stay pinned as regression tests.
 
 Both disagreements are **not defects here**: bbpPairings awards a second
 pairing-allocated bye to a player who already has one, which absolute
-criterion C2 forbids. Gacrux — a third, independent implementation —
+criterion C2 forbids. Gacrux - a third, independent implementation -
 pairs both the way this engine does. In one of them the round has exactly
 one legal shape, reached by pure elimination, so there is no scoring
 argument to be had. Written up in
@@ -78,7 +78,7 @@ Full methodology, per-axis detail and the reasoning behind each number:
 [docs/validation.md](docs/validation.md).
 
 **Speed**, re-measured 2026-08-21 on freshly generated fields, all three
-engines on the same input, best of three, cold process — and all three
+engines on the same input, best of three, cold process - and all three
 returning **identical boards** at every size. Discounting each engine's
 own start-up floor (6 ms for the C++ reference, 252 ms for the Python
 one, 604 ms for the BEAM), the pairing work is:
@@ -90,7 +90,7 @@ one, 604 ms for the BEAM), the pairing work is:
 | 1,000 | 43,754 ms | **7,695 ms** | 7,669 ms |
 
 So **1.15x to 5.7x quicker than the C++ reference**, and **level with the
-Python one** — quicker at 400, within 0.3% at 1,000. At 209 players 63% of
+Python one** - quicker at 400, within 0.3% at 1,000. At 209 players 63% of
 the BEAM's wall clock is VM start-up, which is why it trails end-to-end
 there and why that does not apply inside a host application already
 running. A
@@ -144,12 +144,12 @@ ainalrami -g out.trf --seed=42 --players=30 --rounds=9 --forfeit-pct=10 --bye-pc
 ```
 
 `--initial-colour` is Article 5.1's drawing of lots, and it is written into
-the file as `152`. It defaults to White — which is what the generator
+the file as `152`. It defaults to White - which is what the generator
 always used, implicitly, before the option existed.
 
 `--rounds` is capped at `players - 1`, past which a Swiss has no legal
 opponents left. It can stop earlier still if some round turns out to have
-no legal pairing at all — a real, if rare, possibility for a small field
+no legal pairing at all - a real, if rare, possibility for a small field
 deep into a Swiss (`Ainalrami.Pairing.NoValidPairingError`).
 
 **`-c`** replays a completed tournament round by round, re-pairing each
@@ -159,7 +159,7 @@ reported but never counted as errors: Article 5.1 leaves the first colour
 to a drawing of lots, so this engine's convention is its own.
 
 > **A checker is not an independent verifier of the rules.** It re-runs the
-> same engine and calls that the correct answer — exactly as bbpPairings'
+> same engine and calls that the correct answer - exactly as bbpPairings'
 > own `-c` does. A reported difference means "this engine would have paired
 > it differently", not "the file is illegal".
 
@@ -180,7 +180,7 @@ extension codes:
 
 | line | meaning |
 |---|---|
-| `XXR n` | number of rounds — JaVaFo's spelling of TRF16's `142` |
+| `XXR n` | number of rounds - JaVaFo's spelling of TRF16's `142` |
 | `XXP a b [c …]` | a mutually-forbidden **group**: no two of these players may ever meet |
 | `XXA` | per-player acceleration ("virtual points"), round by round |
 | `260` | forbidden pairs, limited to a range of rounds |
@@ -193,16 +193,16 @@ that choice is a final round paired under the wrong rules.
 
 `260` and `250` are bbpPairings' fixed-column, round-limited siblings of
 `XXP` and `XXA`. They were unimplemented until 2026-08-18, which meant
-*silently discarded* — a file saying two players must never meet produced
+*silently discarded* - a file saying two players must never meet produced
 a complete, legal-looking round that seated them together.
 
 `XXP` carries exactly the standing of the no-rematch rule, which is how
-bbpPairings expresses it too — one `forbiddenPairs` set, with no-rematch
+bbpPairings expresses it too - one `forbiddenPairs` set, with no-rematch
 inserted into it. One line names a group, not a pair, so `XXP 4 9 17`
-forbids all three of 4–9, 4–17 and 9–17.
+forbids all three of 4-9, 4-17 and 9-17.
 
 `XXA` is **fixed-column** and the columns are load-bearing: `XXA` at
-column 1, starting rank right-aligned in columns 5–8, each round's `pp.p`
+column 1, starting rank right-aligned in columns 5-8, each round's `pp.p`
 right-aligned at column `10 + 5*(r-1)`. A line one column off is rejected
 outright by real bbpPairings (`Invalid line`, exit 3), and free-form `XXA`
 crashes real JaVaFo with a bare `NullPointerException`.
@@ -232,8 +232,8 @@ account of where it could still be wrong:
   identical to the engine's tie-break key; 4.3's exchange order is tested
   on a position where exchanges are the only route to a legal pairing and
   over forty random brackets enumerated in full Article 4 order; and 3.7's
-  two-stage **heterogeneous** case — MDP-Pairing outside, remainder inside
-  — is tested too. The engine returns the earliest-generated best candidate
+  two-stage **heterogeneous** case - MDP-Pairing outside, remainder inside
+  - is tested too. The engine returns the earliest-generated best candidate
   every time.
 
   Each of those holds the bracket fixed by making it the **last** one, so
@@ -249,25 +249,25 @@ one could come from.
 
 ### A second dispute, settled from the handbook
 
-**Article 5.2.5 — which number the parity is taken on.** The article gives
+**Article 5.2.5 - which number the parity is taken on.** The article gives
 the initial colour to the higher-ranked player when their **TPN** is odd,
 and C.04.2 Article 2 fixes a TPN for the tournament: it moves only for a
 ranking-data correction (barred after round four) or the closing of the
 participant list. Nothing renumbers it around players sitting a round out.
 
 Both references renumber anyway, skipping players who have never
-participated — measured, and they agree with each other, so Gacrux does
+participated - measured, and they agree with each other, so Gacrux does
 not break this tie the way it breaks the other one. On a full field all
 three engines agree; they diverge once somebody has been registered
 without ever being paired.
 
 Their reading is not unreasonable: 2.5 makes TPNs provisional until the
-participant list closes. What decides it the other way is 2.4 — a late
+participant list closes. What decides it the other way is 2.4 - a late
 entry is *"given an appropriate TPN and paired only when they actually
 arrive"*, so the TPN exists first and the pairing waits. This engine
 follows the article.
 
-Measured over 200 seven-round tournaments — note the axes without byes,
+Measured over 200 seven-round tournaments - note the axes without byes,
 which are the control:
 
 | axis | boards differing |
@@ -289,7 +289,7 @@ reproducible probe, in
 | [docs/architecture.md](docs/architecture.md) | how the engine is put together, module by module |
 | [docs/validation.md](docs/validation.md) | the measurement record and how it was produced |
 | [docs/conformance-c0403-2026.md](docs/conformance-c0403-2026.md) | article-by-article verification against the 2026 rules text |
-| [docs/fide-criteria.md](docs/fide-criteria.md) | the maintained rules-to-code map (C1–C21) |
+| [docs/fide-criteria.md](docs/fide-criteria.md) | the maintained rules-to-code map (C1-C21) |
 | [docs/dispute-seed735265.md](docs/dispute-seed735265.md) | the one disagreement, argued from the regulations |
 | [docs/bbppairings-c2-bug-report.md](docs/bbppairings-c2-bug-report.md) | that dispute as a submittable upstream report |
 | [docs/engineering-log.md](docs/engineering-log.md) | the dated build history, including what measured worse |
@@ -302,7 +302,7 @@ mix test
 ```
 
 133 tests. Comparison tests against JaVaFo and Gacrux are tagged and
-excluded by default — neither is vendored, and both must be supplied
+excluded by default - neither is vendored, and both must be supplied
 locally. See [docs/validation.md](docs/validation.md) for how to point the
 harness at them and how to run the large fuzz axes.
 
@@ -322,14 +322,14 @@ independent data point for cross-checking pairing correctness.
 
 ## License
 
-[Apache License 2.0](LICENSE) — deliberately the same licence as
+[Apache License 2.0](LICENSE) - deliberately the same licence as
 [bbpPairings](https://github.com/BieremaBoyzProgramming/bbpPairings),
 because parts of this engine are derived from it. `Ainalrami.Pairing`'s
 bracket cascade is a stage-for-stage port of `dutch.cpp`, and
 `Ainalrami.WeightedMatching`'s control flow was read directly from
 bbpPairings' matching sources while writing the Elixir equivalent.
 
-No bbpPairings code is reproduced here — it is C++ and this is Elixir —
+No bbpPairings code is reproduced here - it is C++ and this is Elixir -
 but the algorithm and structure are theirs, originating file and line
 numbers are cited inline throughout, and matching their licence is the
 cleanest way to honour that rather than leaving it ambiguous.

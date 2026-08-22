@@ -2,7 +2,7 @@ defmodule Ainalrami.JavafoComparisonTest do
   @moduledoc """
   Cross-checks `Ainalrami.Pairing.pair_next_round/1` against the real
   `javafo.jar` (FIDE's own reference Dutch-system implementation) over a
-  whole tournament — every round, not just the first or second.
+  whole tournament - every round, not just the first or second.
 
   This replaces the former `javafo_comparison_test.exs` (round 1) and
   `javafo_comparison_round2_test.exs` (round 2) pair, which were the same
@@ -26,19 +26,19 @@ defmodule Ainalrami.JavafoComparisonTest do
   count with knock-on divergence. It also means an Ainalrami crash or
   mismatch mid-tournament doesn't cost the measurements after it.
 
-  Deliberately colour-blind (see `normalize/1`) — JaVaFo's own choice of
+  Deliberately colour-blind (see `normalize/1`) - JaVaFo's own choice of
   the very first round's colour is not a function of the roster or round
   count alone (confirmed empirically: identical rosters under different
   tournament *names* produced opposite initial colours), so it can't be
   replicated without reverse-engineering JaVaFo's internal seed.
   `Ainalrami.Pairing`'s own fixed colour convention is spec-legal but not
-  expected to match JaVaFo's on every run — see that module's doc.
+  expected to match JaVaFo's on every run - see that module's doc.
   Pairing *composition* is the thing under test.
 
   ## Result variety
 
   `simulate_results/1` generates wins, losses, draws, pairing-allocated
-  byes, and — with `PAIRING_FUZZ_FORFEIT_PCT` — forfeits, including
+  byes, and - with `PAIRING_FUZZ_FORFEIT_PCT` - forfeits, including
   double forfeits. Forfeits earn their own switch because they found four
   engine bugs of one family on the first run: a forfeit carries both an
   opponent and a colour in the TRF yet is legally unplayed (Art. 16), so
@@ -59,7 +59,7 @@ defmodule Ainalrami.JavafoComparisonTest do
   ## Running it
 
   Each round of each tournament spawns a real JVM (~0.2s), so cost is
-  `count * rounds` JVM launches — run large sweeps deliberately, not on
+  `count * rounds` JVM launches - run large sweeps deliberately, not on
   every `mix test`. Run them *alone*: a previous 100,000-roster attempt
   run alongside other fuzz batches reported a meaningless 6.29% that was
   entirely javafo processes failing to launch under load (Windows
@@ -70,9 +70,9 @@ defmodule Ainalrami.JavafoComparisonTest do
 
   Tunables (all optional):
 
-    * `PAIRING_FUZZ_COUNT` — tournaments to play (default 20)
-    * `PAIRING_FUZZ_ROUNDS` — rounds per tournament (default 2)
-    * `PAIRING_FUZZ_MIN_PLAYERS` / `PAIRING_FUZZ_MAX_PLAYERS` — roster size
+    * `PAIRING_FUZZ_COUNT` - tournaments to play (default 20)
+    * `PAIRING_FUZZ_ROUNDS` - rounds per tournament (default 2)
+    * `PAIRING_FUZZ_MIN_PLAYERS` / `PAIRING_FUZZ_MAX_PLAYERS` - roster size
       range (default 4..40)
 
   The historical round-1 measurement (20,000 rosters, 2..60 players,
@@ -110,8 +110,8 @@ defmodule Ainalrami.JavafoComparisonTest do
 
     assert mismatches == [], """
     #{length(mismatches)} disagreement(s) across #{length(comparisons)} compared round(s) \
-    of #{count} tournament(s) — a legal-but-different pairing, or a genuine gap in Ainalrami's \
-    bracket cascade (see `Pairing.pair_round/1`'s documented simplifications) — not necessarily \
+    of #{count} tournament(s) - a legal-but-different pairing, or a genuine gap in Ainalrami's \
+    bracket cascade (see `Pairing.pair_round/1`'s documented simplifications) - not necessarily \
     a bug in the sense that JaVaFo is "right" and Ainalrami is "wrong". Each needs its own look.
 
     #{length(errors)} javafo process error(s) are counted separately and are NOT included above; \
@@ -170,7 +170,7 @@ defmodule Ainalrami.JavafoComparisonTest do
       %{rank: i, name: "P#{i}", fide_rating: Enum.random(1000..2800), points: 0.0, games: []}
     end
     # Rating isn't necessarily rank-monotonic in a real tournament, and
-    # round 1's pairing rule only ever consults rank — shuffling before
+    # round 1's pairing rule only ever consults rank - shuffling before
     # assigning ranks incidentally covers "ratings don't determine the
     # pairing, rank does".
     |> Enum.shuffle()
@@ -197,7 +197,7 @@ defmodule Ainalrami.JavafoComparisonTest do
     }
 
     case Javafo.pair(trf) do
-      # javafo emits a zero-pair file when no legal pairing exists at all —
+      # javafo emits a zero-pair file when no legal pairing exists at all -
       # a small field simply runs out of legal opponents (4 players are
       # exhausted after 3 rounds, C1 forbidding rematches). That's the
       # tournament ending early, not a disagreement: stop this tournament
@@ -240,7 +240,7 @@ defmodule Ainalrami.JavafoComparisonTest do
   end
 
   # An Ainalrami crash is a disagreement, not a reason to lose the rest of
-  # the tournament's measurements — `Task.async_stream` would otherwise
+  # the tournament's measurements - `Task.async_stream` would otherwise
   # propagate the raise as an :exit and kill the whole stream.
   defp safely_pair(players, total_rounds) do
     Pairing.pair_next_round(players, expected_rounds: total_rounds)
@@ -270,7 +270,7 @@ defmodule Ainalrami.JavafoComparisonTest do
   # pairing-allocated bye in an odd field and none in an even one.
   #
   # Worth measuring separately because the largest defect the depth work
-  # found was not a disagreement at all — it was this engine emitting two
+  # found was not a disagreement at all - it was this engine emitting two
   # byes in an even field, which no amount of "javafo would have done it
   # differently" describes properly.
   defp illegality({:raised, _}, _active, _players), do: :raised
@@ -298,7 +298,7 @@ defmodule Ainalrami.JavafoComparisonTest do
       end)
 
     # C2: nobody receives a SECOND pairing-allocated bye. Was never
-    # actually checked here — a real gap, closed after finding that
+    # actually checked here - a real gap, closed after finding that
     # Ainalrami's own `repair_bye_count/3` could silently violate it too
     # (see that function's doc in lib/ainalrami/pairing.ex).
     repeat_bye? =
@@ -338,7 +338,7 @@ defmodule Ainalrami.JavafoComparisonTest do
   # BEFORE the round is paired, recorded in the TRF so the engine leaves
   # that player out. bbpPairings implements exactly this
   # (`dutch.cpp:658`), and it is the only way a real tournament expresses
-  # "this player is not playing this round" — there is no TRF flag for it.
+  # "this player is not playing this round" - there is no TRF flag for it.
   #
   # This is what caught the engine pairing a player who had asked not to
   # play. Note these must NOT advance the round number, unlike a
@@ -374,7 +374,7 @@ defmodule Ainalrami.JavafoComparisonTest do
   # the TRF, yet is legally unplayed under FIDE Art. 16. So it must not
   # count toward colour balance, must not extend a repeated-colour run,
   # and counts as an unplayed game for float and bye-eligibility purposes
-  # — every one of which is a separate place the engine can get it wrong.
+  # - every one of which is a separate place the engine can get it wrong.
   #
   # Defaults to 0 so every earlier measurement stays reproducible.
   defp simulate_results(pairs) do
@@ -404,7 +404,7 @@ defmodule Ainalrami.JavafoComparisonTest do
         {:ok, game} ->
           %{p | points: p.points + game.points, games: p.games ++ [Map.delete(game, :points)]}
 
-        # Sat this round out on a requested bye — their result for it was
+        # Sat this round out on a requested bye - their result for it was
         # recorded before the round was paired, which is the whole point.
         :error ->
           p
@@ -440,8 +440,8 @@ defmodule Ainalrami.JavafoComparisonTest do
     }
   end
 
-  # Forfeits keep the colour they were paired with — that is what a real
-  # TRF records — even though the game counts as unplayed.
+  # Forfeits keep the colour they were paired with - that is what a real
+  # TRF records - even though the game counts as unplayed.
   defp games_for(white, black, :white_forfeits) do
     {
       %{opponent_rank: black, colour: "w", result: "-", points: 0.0},
@@ -470,7 +470,7 @@ defmodule Ainalrami.JavafoComparisonTest do
     }
   end
 
-  # Colour/board-order is presentation, not the thing under test — sort
+  # Colour/board-order is presentation, not the thing under test - sort
   # each pair's own two members (bye's `nil` sorts last) then the whole set.
   defp normalize(pairs) do
     pairs
@@ -505,20 +505,20 @@ defmodule Ainalrami.JavafoComparisonTest do
 
       IO.puts(
         "\n  LEGALITY: #{length(illegal)}/#{length(comparisons)} Ainalrami rounds were not legal " <>
-          "pairings at all (#{Enum.join(by_kind, ", ")}) — independent of whether javafo agreed."
+          "pairings at all (#{Enum.join(by_kind, ", ")}) - independent of whether javafo agreed."
       )
     end
 
     if exhausted != [] do
       IO.puts(
-        "\n  (#{length(exhausted)} tournament(s) ended early — javafo found no legal pairing " <>
+        "\n  (#{length(exhausted)} tournament(s) ended early - javafo found no legal pairing " <>
           "left, i.e. the field ran out of opponents. Excluded from the rates above.)"
       )
     end
 
     if errors != [] do
       IO.puts(
-        "\n  WARNING: #{length(errors)} javafo process error(s) — this run was likely " <>
+        "\n  WARNING: #{length(errors)} javafo process error(s) - this run was likely " <>
           "resource-starved and the rates above are not trustworthy. Re-run it alone."
       )
     end

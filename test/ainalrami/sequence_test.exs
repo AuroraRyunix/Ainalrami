@@ -27,7 +27,7 @@ defmodule Ainalrami.SequenceTest do
       # Every anchor the regulations state, in order.
       assert length(seq) == 720
       assert Enum.take(prefixes, 2) == [[6, 7, 8, 9, 10], [6, 7, 8, 9, 11]]
-      # "..., 6-11-10-9-8, 7-6-8-9-10, ..." — the handover from prefixes
+      # "..., 6-11-10-9-8, 7-6-8-9-10, ..." - the handover from prefixes
       # starting with 6 to those starting with 7.
       assert Enum.at(prefixes, 119) == [6, 11, 10, 9, 8]
       assert Enum.at(prefixes, 120) == [7, 6, 8, 9, 10]
@@ -43,7 +43,7 @@ defmodule Ainalrami.SequenceTest do
       # between them.
       #
       # Five of the six anchors the example states DO match a strict reading
-      # — the count (720), the first two entries, the 6-to-7 handover
+      # - the count (720), the first two entries, the 6-to-7 handover
       # ("6-11-10-9-8, 7-6-8-9-10") and the final entry ("11-10-9-8-7"), all
       # asserted above. Only the third does not. Read as an elision or a
       # typo in the published example rather than a different ordering,
@@ -146,7 +146,7 @@ defmodule Ainalrami.SequenceTest do
     end
   end
 
-  # The raw (pre-application) exchange list, in order — what `exchanges/2`
+  # The raw (pre-application) exchange list, in order - what `exchanges/2`
   # sorts before applying. Rebuilt here rather than exposed, so the module's
   # public surface stays the two orderings themselves.
   defp raw_exchanges(s1, s2) do

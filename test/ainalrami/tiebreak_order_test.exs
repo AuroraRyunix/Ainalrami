@@ -3,14 +3,14 @@ defmodule Ainalrami.TiebreakOrderTest do
   Does the engine's final tie-break agree with Article 4?
 
   3.8.1 breaks a tie below every criterion by which candidate was **generated
-  earlier** in the sequence of 3.6/3.7 — transpositions of S2 first, then
+  earlier** in the sequence of 3.6/3.7 - transpositions of S2 first, then
   exchanges between S1 and S2. `Ainalrami.Pairing` never walks that sequence;
   it solves a matching and breaks the tie with `transposition_key/3`.
 
   Whether those two orders agree has been carried as an open question and an
   assumed approximation. This decides it, for the transposition half, by
-  generating candidates in Article 4.2 order with `Ainalrami.Sequence` — a
-  module that knows nothing about the engine — and checking the engine's key
+  generating candidates in Article 4.2 order with `Ainalrami.Sequence` - a
+  module that knows nothing about the engine - and checking the engine's key
   increases along it.
   """
 
@@ -38,7 +38,7 @@ defmodule Ainalrami.TiebreakOrderTest do
 
       assert keys == Enum.uniq(keys), "distinct transpositions must get distinct keys"
 
-      # And the identity — S1[i] vs S2[i], the candidate 3.3.1 builds first —
+      # And the identity - S1[i] vs S2[i], the candidate 3.3.1 builds first -
       # must come first under the key, since it is the one the regulations try
       # before any alteration at all.
       assert hd(keys) == [0, 1, 2, 3]
@@ -63,7 +63,7 @@ defmodule Ainalrami.TiebreakOrderTest do
 
     test "a heterogeneous bracket orders on its MDPs, per 3.2.2" do
       # Two MDPs at a higher score plus five residents. 3.2.2 puts the MDPs in
-      # S1 and the residents in S2, so the key ranks MDP-Pairings — which is
+      # S1 and the residents in S2, so the key ranks MDP-Pairings - which is
       # what 3.7.2 alters once the remainder is exhausted.
       bracket =
         for(rank <- 1..2, do: player(rank, 3.0)) ++ for rank <- 3..7, do: player(rank, 2.0)
@@ -85,8 +85,8 @@ defmodule Ainalrami.TiebreakOrderTest do
   describe "what the key does not order" do
     test "an exchange reaches a candidate no transposition can" do
       # 4.3: once transpositions are exhausted, players are swapped BETWEEN S1
-      # and S2. The engine considers those candidates — its matcher searches
-      # every matching — but has no generation-order ranking for them, which
+      # and S2. The engine considers those candidates - its matcher searches
+      # every matching - but has no generation-order ranking for them, which
       # is the whole of the remaining divergence from 3.8.1.
       #
       # Pinned so the boundary of the claim above is explicit rather than

@@ -106,7 +106,7 @@ defmodule Ainalrami.TrfTest do
     # A player name has no format check beyond length, so it can carry a
     # newline/CR/tab. TRF is line- and column-oriented and this text is
     # written to a pairing engine's input file, so an unstripped newline
-    # would break the row into two — corrupting the parse or injecting a
+    # would break the row into two - corrupting the parse or injecting a
     # line.
     data = put_in(sample(), [:players, Access.at(0), :name], "Ev\r\nil\t001 injected")
 
@@ -289,7 +289,7 @@ defmodule Ainalrami.TrfTest do
     trf = two_player_round("=", "0") |> Trf.serialize()
     assert trf =~ "001"
 
-    # And the mirror image — the other side gets the ½.
+    # And the mirror image - the other side gets the ½.
     trf2 = two_player_round("0", "=") |> Trf.serialize()
     assert trf2 =~ "001"
   end
@@ -310,7 +310,7 @@ defmodule Ainalrami.TrfTest do
   end
 
   test "serialize/1 does not flag a dangling/unresolvable opponent reference as illegal" do
-    # Round 1's opponent (rank 2) doesn't exist in this single-player roster —
+    # Round 1's opponent (rank 2) doesn't exist in this single-player roster -
     # that's a caller concern (e.g. a partial player card), not a result
     # validation error.
     data = %{
@@ -328,7 +328,7 @@ defmodule Ainalrami.TrfTest do
     lines = String.split(text, "\r\n")
     p2 = Enum.find(lines, &(String.starts_with?(&1, "001") and &1 =~ "B"))
 
-    # Round 1's result column is 99 (base 92 + 7) — see round_cols/1. Flip
+    # Round 1's result column is 99 (base 92 + 7) - see round_cols/1. Flip
     # player B's loss into a second win, making the round illegal.
     bad_p2 = set_char(p2, 99, "1")
     bad_text = lines |> Enum.map(&if &1 == p2, do: bad_p2, else: &1) |> Enum.join("\r\n")
@@ -383,14 +383,14 @@ defmodule Ainalrami.TrfTest do
   end
 
   # ---------------------------------------------------------------------
-  # TRF06 (FIDE's Annexure-B, 2006) — column-identical to TRF16, but
+  # TRF06 (FIDE's Annexure-B, 2006) - column-identical to TRF16, but
   # predates the F/H/U/Z bye codes: a bye is a dangling playing code
   # against opponent 0000, and a "not paired" round is left fully blank
   # rather than carrying any code at all.
   # ---------------------------------------------------------------------
 
   # Places `text` at 1-indexed `col` in `line`, padding with spaces as
-  # needed — exact column math, so these fixtures can't suffer the same
+  # needed - exact column math, so these fixtures can't suffer the same
   # off-by-a-few-spaces mistake a hand-typed fixed-width string risks.
   defp place_col(line, position, text) do
     text = to_string(text)
@@ -423,7 +423,7 @@ defmodule Ainalrami.TrfTest do
     parsed = Trf.parse(line <> "\r\n")
     assert [%{games: [%{opponent_rank: nil, colour: nil, result: "1"}]}] = parsed.players
 
-    # The exact same shape is still correctly rejected on the way OUT — our
+    # The exact same shape is still correctly rejected on the way OUT - our
     # own pairing-input construction must never write this.
     assert_raise Trf.ValidationError, fn ->
       Trf.serialize(%{
@@ -462,7 +462,7 @@ defmodule Ainalrami.TrfTest do
 
   describe "line endings" do
     # Real bbpPairings writes its generated TRFs with a BARE `\r` and no
-    # `\n` at all — 212 of them in a 209-player file, zero newlines. The
+    # `\n` at all - 212 of them in a 209-player file, zero newlines. The
     # splitter was `~r/\r?\n/`, which matches neither, so the whole file
     # parsed as ONE line and `parse/1` returned zero players without
     # complaint.
@@ -470,7 +470,7 @@ defmodule Ainalrami.TrfTest do
     # So this engine could not read the reference implementation's own
     # output, and no test could have seen it: the comparison harness only
     # ever feeds OUR files to THEM. Found by generating a tournament with
-    # `bbpPairings --dutch -g -o` and reading it back — on which, once
+    # `bbpPairings --dutch -g -o` and reading it back - on which, once
     # fixed, the two engines agree on all 105 boards including colour.
     for {label, ending} <- [{"CRLF", "\r\n"}, {"LF", "\n"}, {"bare CR", "\r"}] do
       test "a file terminated with #{label} parses" do
@@ -549,7 +549,7 @@ defmodule Ainalrami.TrfTest do
     end
 
     # This used to assert `142` silently won, which was deliberate and
-    # documented — and wrong. Every implementation picks a winner and they
+    # documented - and wrong. Every implementation picks a winner and they
     # do not agree on which: bbpPairings takes whichever line comes LAST
     # (`trf.cpp:1117-1124` assigns `expectedRounds` from either prefix), so
     # `142 5` plus `XXR 9` was read here as 5 and there as 9.
@@ -630,7 +630,7 @@ defmodule Ainalrami.TrfTest do
   end
 
   describe "XXA (JaVaFo's acceleration extension)" do
-    # The columns are the whole story here — see `@xxa_rank_cols`. Asserted
+    # The columns are the whole story here - see `@xxa_rank_cols`. Asserted
     # explicitly because a one-column drift is invisible to a round-trip
     # test (this parser and this serializer would simply agree on the wrong
     # answer) and is exactly the mistake the sibling project made.
@@ -679,7 +679,7 @@ defmodule Ainalrami.TrfTest do
     end
 
     # `push_back` onto the player's existing record (`trf.cpp:510`), and
-    # `tournament.players[id]` persists between lines — so a second line
+    # `tournament.players[id]` persists between lines - so a second line
     # for the same player CONTINUES the record rather than replacing it.
     test "two XXA lines for one player append rather than the second winning" do
       parsed = Ainalrami.Trf.parse(roster_trf("XXA    1  1.0\r\nXXA    1  0.5\r\n"))

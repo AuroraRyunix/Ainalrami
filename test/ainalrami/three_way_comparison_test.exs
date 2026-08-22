@@ -11,7 +11,7 @@ defmodule Ainalrami.ThreeWayComparisonTest do
 
   324 rounds with zero disagreements does not establish that. Zero
   observed failures in n trials bounds the true rate at roughly `3/n` with
-  95% confidence — here about **0.9%**. So the references could disagree
+  95% confidence - here about **0.9%**. So the references could disagree
   with each other on nearly one round in a hundred and that measurement
   would very likely still have come back clean.
 
@@ -24,8 +24,8 @@ defmodule Ainalrami.ThreeWayComparisonTest do
 
   So this runs all three, at whatever scale is asked for, and reports the
   pairwise rates plus the three-way split. Two things come out of it: a
-  tight bound on how far the references actually agree, and — for the
-  rounds where this engine differs — whether the other two agree with each
+  tight bound on how far the references actually agree, and - for the
+  rounds where this engine differs - whether the other two agree with each
   other (this engine is wrong) or disagree (nobody's ground truth).
 
   ## Cost

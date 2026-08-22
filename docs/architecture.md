@@ -44,7 +44,7 @@ every step by default.
 ### `Ainalrami.Trf`
 
 FIDE's published TRF16 specification (C.04 Annex 2), plus the three
-JaVaFo `XX` extension lines. Not derived from bbpPairings — adapted from
+JaVaFo `XX` extension lines. Not derived from bbpPairings - adapted from
 the author's own OpenPairings project.
 
 Two things here are load-bearing beyond ordinary parsing:
@@ -53,15 +53,15 @@ Two things here are load-bearing beyond ordinary parsing:
   is worth, across five spellings of a win (`1 + F U W`) and three of a
   draw (`= H D`). Several bugs in this engine's history came from a second
   place deciding the same question differently.
-- **`parse/1` raises** on an inconsistent result — both sides claiming a
-  win, both marked forfeit-win — rather than accepting it. A tournament
+- **`parse/1` raises** on an inconsistent result - both sides claiming a
+  win, both marked forfeit-win - rather than accepting it. A tournament
   file that disagrees with itself has no correct pairing.
 
 ### `Ainalrami.Pairing`
 
 The bulk of the engine. Round one is its own path (`pair_round_one/1`);
 everything after goes through `pair_later_round/1` into `global_cascade/2`,
-a stage-for-stage port of bbpPairings' bracket algorithm — eight matchings
+a stage-for-stage port of bbpPairings' bracket algorithm - eight matchings
 per bracket, not one.
 
 **There is no second pairing path.** The per-bracket cascade that used to
@@ -72,7 +72,7 @@ repair's guard was a predicate implied by its own parent, so the branch
 could not execute, and the dead path would itself have produced illegal
 colours had it ever run).
 
-The criteria ladder C1–C21 is encoded as **packed edge weights** in
+The criteria ladder C1-C21 is encoded as **packed edge weights** in
 priority order, so one matching solves the whole ordering rather than
 filtering candidates criterion by criterion.
 
@@ -80,7 +80,7 @@ filtering candidates criterion by criterion.
 pairing and the engine's own with the same ladder and reports the first
 rung where they part. It carries an `edge_count` guard and an
 `incomparable` verdict because rungs sum over edges, so two answers
-contributing different numbers of edges cannot be compared rung by rung —
+contributing different numbers of edges cannot be compared rung by rung -
 an accounting artifact that produced a wrong verdict before the guard
 existed.
 
@@ -90,7 +90,7 @@ Two matchers, for two different jobs.
 
 `Matching` is memoized bitmask dynamic programming over a whole bracket,
 allowing some players to go unmatched as floaters. It is not restricted to
-a bipartite S1/S2 split — which matters, because Article 4.3's exchanges
+a bipartite S1/S2 split - which matters, because Article 4.3's exchanges
 reach pairings no bipartite split can express.
 
 `WeightedMatching` is the Galil/Micali/Gabow (1986) primal-dual algorithm,
@@ -104,7 +104,7 @@ verifiable translation. That was fine while brackets were small and became
 the engine's binding constraint once a 209-player field took ninety
 seconds a round.
 
-It now maintains equivalent caches — per vertex rather than per blossom —
+It now maintains equivalent caches - per vertex rather than per blossom -
 and divides every edge weight by the greatest common divisor of all of
 them before solving, which matters because `Ainalrami.Pairing`'s packed
 criteria produce weights of about a hundred digits and made the innermost
@@ -115,8 +115,8 @@ are in [validation.md](validation.md#performance).
 
 ### `Ainalrami.Sequence`
 
-Article 4's candidate generation order — transpositions of S2, then
-exchanges between S1 and S2 — implemented independently of the engine, and
+Article 4's candidate generation order - transpositions of S2, then
+exchanges between S1 and S2 - implemented independently of the engine, and
 checked against every worked example the article gives.
 
 It exists as an **oracle, not a code path.** The engine does not enumerate
@@ -127,7 +127,7 @@ the article sorts by "the lexicographic value of their first N1 BSN(s)",
 the key sorts by S2 index, and since S2 is sorted by Article 1.2 and BSNs
 are assigned in that order, the two lexicographic orders are identical.
 
-Wiring it in for **4.3** — where no such proof exists yet — is the
+Wiring it in for **4.3** - where no such proof exists yet - is the
 remaining conformance work. See [TODO.md](../TODO.md).
 
 ### `Ainalrami.Generator`
@@ -154,11 +154,11 @@ flag will not be trusted at the board.
 ### Matching, not enumeration
 
 The regulations describe pairing a bracket by *generating candidates in a
-defined sequence* (Articles 3.5–3.8 and 4) and taking the first perfect
+defined sequence* (Articles 3.5-3.8 and 4) and taking the first perfect
 one, or the best under 3.8.1.
 
 This engine solves a maximum-weight matching whose edge weights pack
-C1–C21 in priority order. It reaches the same optimum without ever
+C1-C21 in priority order. It reaches the same optimum without ever
 enumerating a candidate. The two agree on which pairing is *best*; the
 only question has ever been how they break a tie below every criterion,
 since 3.8.1's last resort is generation order.
@@ -197,4 +197,4 @@ this project's standing rule is that **insurance nothing has exercised is
 a guess**. `repair_completion/3` is the engine's real completion fallback,
 it is reached in normal operation, and it is fault-injected here so its
 behaviour is measured rather than assumed. The bye-count repair that was
-deleted had no such injection — which is part of why it was deleted.
+deleted had no such injection - which is part of why it was deleted.

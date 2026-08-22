@@ -17,7 +17,7 @@ defmodule Ainalrami.InitialColourTest do
   (2.3) and the closing of the participant list after late entries (2.5).
   **Nothing renumbers TPNs around players who are not paired in a given
   round**, and this file exists because both reference implementations do
-  exactly that — see `docs/dispute-initial-colour.md`.
+  exactly that - see `docs/dispute-initial-colour.md`.
 
   The distinction is invisible on a full field, where position and TPN
   coincide. It appears the moment anyone sits a round out, which is why
@@ -34,7 +34,7 @@ defmodule Ainalrami.InitialColourTest do
 
       # Board by board: the higher-ranked player of each pair takes White on
       # an odd TPN and Black on an even one. This is the uncontroversial
-      # case — both references agree here, and it is pinned so a change that
+      # case - both references agree here, and it is pinned so a change that
       # breaks it cannot be mistaken for the dispute below.
       for {white, black} <- pairs, black != nil do
         [top, bottom] = Enum.sort([white, black])
@@ -48,7 +48,7 @@ defmodule Ainalrami.InitialColourTest do
 
     test "a player sitting out does NOT renumber the players below them" do
       # TPN 1 takes a bye. TPN 2 is now the first player actually paired,
-      # but their TPN is still 2 — an even number — so they take the
+      # but their TPN is still 2 - an even number - so they take the
       # opposite of the initial colour, exactly as on a full field.
       #
       # Both references answer White here, by numbering from the first
@@ -60,7 +60,7 @@ defmodule Ainalrami.InitialColourTest do
 
       assert black == 2,
              "TPN 2 is even, so 5.2.5 gives them the opposite of the " <>
-               "initial colour — their position among the players being " <>
+               "initial colour - their position among the players being " <>
                "paired is not the TPN"
 
       refute white == 2
@@ -73,7 +73,7 @@ defmodule Ainalrami.InitialColourTest do
       # leaves 4, 5 and 6 alone (positions 2, 3, 4).
       #
       # So this field disagrees with them on exactly one board and agrees on
-      # the rest — a sharper signature than "the colours are all wrong", and
+      # the rest - a sharper signature than "the colours are all wrong", and
       # the one actually measured against the real binary.
       pairs = Pairing.pair_next_round(field(10, [1, 3]), expected_rounds: 5, initial_colour: "w")
 

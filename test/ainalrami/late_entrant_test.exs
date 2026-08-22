@@ -1,6 +1,6 @@
 defmodule Ainalrami.LateEntrantTest do
   @moduledoc """
-  Late entrants (C.04.2 Article 2.4) — a participant admitted after round
+  Late entrants (C.04.2 Article 2.4) - a participant admitted after round
   one, whose early rounds carry no entry at all.
 
   > **2.4** A Late Entry is a participant who is only taken into account
@@ -13,13 +13,13 @@ defmodule Ainalrami.LateEntrantTest do
   is not one, and this file is the reason why: **a blank early round is
   indistinguishable from a zero-point bye**, everywhere the engine looks.
 
-  - `points_for/1` — a blank result and `Z` are both worth nothing, which
+  - `points_for/1` - a blank result and `Z` are both worth nothing, which
     is 2.4's "no points for unplayed rounds".
-  - `participated_in_pairing?/1` — false for both, so neither counts as
+  - `participated_in_pairing?/1` - false for both, so neither counts as
     having been paired.
-  - Article 1.4.3 — a downfloat is given to a player who scores more than a
+  - Article 1.4.3 - a downfloat is given to a player who scores more than a
     loss without playing. Both score zero, so neither floats.
-  - C2 — `~w(U F +)` disqualifies from a pairing-allocated bye. Neither
+  - C2 - `~w(U F +)` disqualifies from a pairing-allocated bye. Neither
     blank nor `Z` is in it.
 
   So a generated late-entrant axis would re-run the arbiter-bye axis under
@@ -27,7 +27,7 @@ defmodule Ainalrami.LateEntrantTest do
   the equivalence is a consequence of four separate rules agreeing, and a
   change to any one of them would break it silently.
 
-  What is genuinely NOT modelled here is 2.5 — TPNs are provisional until
+  What is genuinely NOT modelled here is 2.5 - TPNs are provisional until
   the participant list closes, so a real late entry can renumber everyone.
   This engine takes TPNs as given in the file and never assigns them, so
   that is the caller's job and out of scope. See
@@ -115,7 +115,7 @@ defmodule Ainalrami.LateEntrantTest do
     build(1..10, histories)
   end
 
-  # Nine players, so the round being paired must allocate a bye — the path
+  # Nine players, so the round being paired must allocate a bye - the path
   # where C2 and C5 engage and a latecomer could be treated differently
   # from a bye-taker if the two shapes were not equivalent.
   defp odd_field(marker) do

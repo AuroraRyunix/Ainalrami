@@ -1,6 +1,6 @@
 # javafo.jar and bbpPairings.exe are third-party binaries not vendored
 # into this repo (see Ainalrami.Test.Javafo's and Ainalrami.Test.Bbppairings'
-# moduledocs) — anywhere one isn't present (a fresh checkout without the
+# moduledocs) - anywhere one isn't present (a fresh checkout without the
 # sibling openpairings project, CI), its comparison tests are excluded
 # rather than failing outright.
 javafo_present? = Ainalrami.Test.Javafo.available?()
@@ -60,8 +60,8 @@ exclude_tags = [:three_way | exclude_tags]
 #
 #     mix test --only interop
 #
-# The cheap half of that file's coverage — that it parses at all, with its
-# bare carriage returns — is deliberately NOT tagged, so a fresh `mix test`
+# The cheap half of that file's coverage - that it parses at all, with its
+# bare carriage returns - is deliberately NOT tagged, so a fresh `mix test`
 # still catches the regression it was written for.
 exclude_tags = [:interop | exclude_tags]
 

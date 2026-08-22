@@ -1,6 +1,6 @@
 defmodule Ainalrami.Log do
   @moduledoc """
-  Ainalrami's trace output. Verbose is the DEFAULT, not an opt-in flag —
+  Ainalrami's trace output. Verbose is the DEFAULT, not an opt-in flag -
   unlike JaVaFo (which prints almost nothing beyond the paired result),
   every meaningful step Ainalrami takes gets printed unless `-q`/`--quiet`
   is passed. The idea: an arbiter or a developer chasing down a pairing
@@ -11,12 +11,12 @@ defmodule Ainalrami.Log do
 
   Three, quietest to loudest, set once per CLI invocation:
 
-    * `:quiet` (`-q`/`--quiet`) — warnings and errors only. For scripts and
+    * `:quiet` (`-q`/`--quiet`) - warnings and errors only. For scripts and
       for the corpus harness, which runs millions of tournaments and wants
       nothing on stdout but the pairing.
-    * `:normal` — the default. `step/1` and `detail/1`: the phases of the
+    * `:normal` - the default. `step/1` and `detail/1`: the phases of the
       run and the reasoning inside them.
-    * `:debug` (`-d`/`--debug`) — adds `debug/1` on top: per-bracket
+    * `:debug` (`-d`/`--debug`) - adds `debug/1` on top: per-bracket
       internals, the path each bracket took, candidate counts and timings.
       Reaches into the engine's own decisions rather than describing them.
 
@@ -39,11 +39,11 @@ defmodule Ainalrami.Log do
   output file writes the paired result to stdout, so a warning has to go
   somewhere a caller redirecting stdout to a file will still see it. It
   also means `ainalrami in.trf -p > out.txt` produces a clean file at
-  `:quiet` and a file with a trace in it at any louder level — which is
+  `:quiet` and a file with a trace in it at any louder level - which is
   why quiet exists.
 
   The level is process-global for the lifetime of one CLI invocation (set
-  once, read many times from deep inside whatever's running) — an
+  once, read many times from deep inside whatever's running) - an
   `Application.env` flag rather than threading an option through every
   call site, since a single escript run is single-purpose and
   single-threaded from the caller's perspective.
@@ -65,7 +65,7 @@ defmodule Ainalrami.Log do
 
   @doc """
   Back-compatible switch for the two-state world this module started in.
-  `true` is `:quiet`; `false` is `:normal` — note it therefore CLEARS
+  `true` is `:quiet`; `false` is `:normal` - note it therefore CLEARS
   `:debug`, which is the sane reading of "turn verbose off".
   """
   def set_quiet(quiet?) when is_boolean(quiet?),
@@ -106,9 +106,9 @@ defmodule Ainalrami.Log do
     if at_least?(:debug), do: IO.puts("    [dbg] #{message}")
   end
 
-  @doc "Always shown, whatever the level — printed to stderr so -p's output on stdout stays clean."
+  @doc "Always shown, whatever the level - printed to stderr so -p's output on stdout stays clean."
   def warn(message), do: IO.puts(:stderr, "warning: #{message}")
 
-  @doc "Always shown, whatever the level — printed to stderr, same reasoning as warn/1."
+  @doc "Always shown, whatever the level - printed to stderr, same reasoning as warn/1."
   def error(message), do: IO.puts(:stderr, "error: #{message}")
 end

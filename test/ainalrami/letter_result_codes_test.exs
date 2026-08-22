@@ -35,7 +35,7 @@ defmodule Ainalrami.LetterResultCodesTest do
 
   describe "Trf.parse/1" do
     test "accepts a file whose results are spelled with letters, and normalises them" do
-      # Two players, one round, "W" against "L" — the letter form of 1 v 0.
+      # Two players, one round, "W" against "L" - the letter form of 1 v 0.
       # The old parser raised on this outright.
       trf = """
       012 Letter codes\r
@@ -62,7 +62,7 @@ defmodule Ainalrami.LetterResultCodesTest do
       # each hold a full-point bye ("F"), which genuinely does disqualify. An
       # earlier draft left another eligible player in the field, so the engine
       # simply gave the bye to them and the test passed with `W` still in the
-      # disqualifying list — proving nothing.
+      # disqualifying list - proving nothing.
       #
       # Round 1: 1 beat 2, 3 sat out. Round 2: 1 beat 3, 2 sat out. Both wins
       # spelled with letters. Ranks 2 and 3 have not met, so the only legal
@@ -93,7 +93,7 @@ defmodule Ainalrami.LetterResultCodesTest do
       assert Enum.sort(seated) == [1, 2, 3]
     end
 
-    test "a forfeit win still does disqualify — the rule itself is intact" do
+    test "a forfeit win still does disqualify - the rule itself is intact" do
       players = [
         player(1, 1.0, [%{result: "+", colour: nil, opponent_rank: 2}]),
         player(2, 0.0, [%{result: "-", colour: nil, opponent_rank: 1}]),
@@ -103,13 +103,13 @@ defmodule Ainalrami.LetterResultCodesTest do
       pairs = Pairing.pair_next_round(players, expected_rounds: 5)
 
       assert {byer, nil} = Enum.find(pairs, fn {_w, b} -> is_nil(b) end)
-      refute byer == 1, "a forfeit win is an unplayed win worth a full point — C2 bars it"
+      refute byer == 1, "a forfeit win is an unplayed win worth a full point - C2 bars it"
     end
   end
 
   describe "Trf.result_codes/0" do
     test "the published code table is complete and self-consistent" do
-      # Public, with no caller inside this repo — it exists for the sibling
+      # Public, with no caller inside this repo - it exists for the sibling
       # app, which means nothing here pinned its shape and it could have been
       # renamed or thinned without anything noticing. Pinned now.
       codes = Trf.result_codes()
@@ -127,7 +127,7 @@ defmodule Ainalrami.LetterResultCodesTest do
              }
 
       # Every published code must be one `points_for/1` actually scores, and
-      # every one must be distinct — a duplicate would silently collapse two
+      # every one must be distinct - a duplicate would silently collapse two
       # outcomes for any caller building a file from this table.
       values = Map.values(codes)
       assert length(Enum.uniq(values)) == length(values)

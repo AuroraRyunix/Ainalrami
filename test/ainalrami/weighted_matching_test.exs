@@ -74,7 +74,7 @@ defmodule Ainalrami.WeightedMatchingTest do
     test "reaches the DP-oracle maximum on denser random graphs, exercising blossom expansion" do
       # Wider (n up to 10) and denser (edge probability 0.45) than the test
       # above specifically to reach blossom EXPANSION, not just formation
-      # — a blossom's own dual variable hitting zero mid-search only
+      # - a blossom's own dual variable hitting zero mid-search only
       # happens when a graph is dense/large enough that a blossom forms
       # and then needs to be dissolved again before the stage finishes.
       # `n` and the edge probability here were picked empirically (during
@@ -106,7 +106,7 @@ defmodule Ainalrami.WeightedMatchingTest do
   # `Ainalrami.Matching`'s bracket DP is a genuinely INDEPENDENT
   # implementation (different algorithm, memoized subset DP over ANY
   # subset rather than a primal-dual blossom search) already relied on
-  # elsewhere in this codebase — exactly the oracle `WeightedMatching`'s
+  # elsewhere in this codebase - exactly the oracle `WeightedMatching`'s
   # own moduledoc says it was checked against. `float_weight_fun` returns
   # 0 so leaving a vertex unmatched is free, matching `solve/2`'s own
   # semantics of simply omitting unmatched vertices at no cost.

@@ -1,7 +1,7 @@
 defmodule Ainalrami.Matching do
   @moduledoc """
   Maximum-weight matching over a bracket, allowing some players to go
-  unmatched (floaters) — via memoized bitmask dynamic programming over
+  unmatched (floaters) - via memoized bitmask dynamic programming over
   the *whole* bracket, not restricted to any bipartite split.
 
   An earlier version restricted pairing to a strict "better half (S1) vs
@@ -11,7 +11,7 @@ defmodule Ainalrami.Matching do
   histories) proved that wrong: only 10.7% matched, including a
   regression on a case that matched exactly before the bipartite
   restriction was introduced. Re-reading bbpPairings' own source
-  (`swisssystems/dutch.cpp`'s `computeEdgeWeight`) confirms why — it
+  (`swisssystems/dutch.cpp`'s `computeEdgeWeight`) confirms why - it
   computes a weight for ANY two compatible players, using bracket
   membership as a WEIGHTED BONUS in that computation, not as a hard
   exclusion of cross-bracket or non-S1/S2 pairs. The genuinely correct
@@ -25,7 +25,7 @@ defmodule Ainalrami.Matching do
   where n is the WHOLE bracket size (not half, unlike the bipartite
   version) is worse in the worst case, but real tournament brackets after
   round 1 split into multiple score groups (not one giant tied bracket),
-  keeping n small in practice — see `max_weight_matching/3`'s doc for the
+  keeping n small in practice - see `max_weight_matching/3`'s doc for the
   actual complexity trade-off and where this could still be too slow.
   """
 
@@ -36,7 +36,7 @@ defmodule Ainalrami.Matching do
   returns an integer weight for pairing `a` with `b`, or `nil` if they can
   never be paired (an absolute-criterion violation, e.g. a rematch).
   `float_weight_fun.(player)` returns the (typically deeply negative)
-  weight of leaving `player` unmatched instead — see
+  weight of leaving `player` unmatched instead - see
   the note below for how a caller makes floating
   always cost less than any legal pairing.
 
@@ -48,13 +48,13 @@ defmodule Ainalrami.Matching do
   Returns `{pairs, floaters}` for the maximum-total-weight matching:
   `pairs` is `[{a, b}, ...]`, `floaters` is the unmatched players.
 
-  O(2^n * n) time/space, n = bracket size — exponential in the WHOLE
+  O(2^n * n) time/space, n = bracket size - exponential in the WHOLE
   bracket (unlike a bipartite formulation's O(k * 2^k) in half of it),
   because pairing is no longer restricted to a bipartite split at all.
   Fine for realistic tournament brackets (a score group rarely exceeds a
   few dozen players even in a large field, since round 1 already spread
   the roster across multiple scores); a bracket approaching the whole
-  field (everyone still tied) would be genuinely slow — not yet capped or
+  field (everyone still tied) would be genuinely slow - not yet capped or
   guarded against here.
   """
   def max_weight_matching(players, pair_weight_fun, float_weight_fun) do
@@ -100,8 +100,8 @@ defmodule Ainalrami.Matching do
 
   Maximising a single bracket in isolation is not the same as maximising
   the round. A bracket that pairs as many of its own players as possible
-  can strand a later one — two players left holding nothing but a rematch
-  with each other — and the cascade then has no way to produce a legal
+  can strand a later one - two players left holding nothing but a rematch
+  with each other - and the cascade then has no way to produce a legal
   round at all. Traced on a real 10-player case (seed 14, round 5): this
   engine emitted TWO pairing-allocated byes in an even field, which is not
   a legal pairing under any reading, while javafo floated an extra pair of
@@ -199,7 +199,7 @@ defmodule Ainalrami.Matching do
     else
       # Appended, NOT prepended. `Enum.sort_by/2` is stable, so a
       # prepended candidate would overtake an equal-weight incumbent and
-      # silently invert the tie-break the single-candidate version had —
+      # silently invert the tie-break the single-candidate version had -
       # which is exactly what happened: ties are everywhere in this weight
       # scheme, and flipping them cost round 2 forty points while leaving
       # the reported weights identical.

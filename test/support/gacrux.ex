@@ -1,7 +1,7 @@
 defmodule Ainalrami.Test.Gacrux do
   @moduledoc """
   Thin wrapper for invoking Otto Milvang's `pairingchecker.py` (the pairing
-  half of the FIDE Tie Break Server, gacrux.no) locally — the THIRD
+  half of the FIDE Tie Break Server, gacrux.no) locally - the THIRD
   independent Dutch implementation this project compares against, after
   `Ainalrami.Test.Javafo` and `Ainalrami.Test.Bbppairings`.
 
@@ -22,7 +22,7 @@ defmodule Ainalrami.Test.Gacrux do
   and the reference simply picked one; with two references a tie is a
   coin-toss between them, with three it is a majority.
 
-  NOT vendored, same reasoning as the other two — third-party source that
+  NOT vendored, same reasoning as the other two - third-party source that
   is not ours to redistribute. Located via `GACRUX_DIR`, defaulting to a
   sibling checkout of <https://github.com/OttoMilvang/TieBreakServer>.
   Its only dependency is `networkx`.
@@ -30,8 +30,8 @@ defmodule Ainalrami.Test.Gacrux do
   ## Output format
 
   Confirmed by direct invocation, not assumed: `-p -dT` writes the same
-  shape javafo and bbpPairings do — a count line, then one `white black`
-  per pair, `0` for a pairing-allocated bye — so `parse_output/1` is the
+  shape javafo and bbpPairings do - a count line, then one `white black`
+  per pair, `0` for a pairing-allocated bye - so `parse_output/1` is the
   same logic as theirs.
   """
 
@@ -46,11 +46,11 @@ defmodule Ainalrami.Test.Gacrux do
   @doc """
   Runs the pairing mode (`-p -dT -m dutch`) on `trf_text` and returns:
 
-    * `{:ok, pairs}` — `[{white_rank, black_rank | nil}]`, the same
+    * `{:ok, pairs}` - `[{white_rank, black_rank | nil}]`, the same
       convention the other two wrappers and `Ainalrami.Pairing` all use
-    * `{:no_valid_pairing, output}` — it produced no pairs at all, which
+    * `{:no_valid_pairing, output}` - it produced no pairs at all, which
       is how it reports a round with no legal completion
-    * `{:error, {code, output}}` — anything else
+    * `{:error, {code, output}}` - anything else
   """
   def pair(trf_text) do
     dir = Path.join(System.tmp_dir!(), "ainalrami-gacrux-#{System.unique_integer([:positive])}")
@@ -82,7 +82,7 @@ defmodule Ainalrami.Test.Gacrux do
   defp classify(pairs, _out), do: {:ok, pairs}
 
   # See `Ainalrami.Test.Javafo`'s identical helper for why this retries
-  # instead of a plain `File.rm_rf!/1` — same Windows transient-handle
+  # instead of a plain `File.rm_rf!/1` - same Windows transient-handle
   # cause, same fix.
   defp remove_dir(dir, attempts_left \\ 5)
 

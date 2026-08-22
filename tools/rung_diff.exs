@@ -22,7 +22,7 @@ Enum.zip(o, t)
   same_floats? = Enum.sort(ob.floats) == Enum.sort(tb.floats)
 
   IO.puts(
-    "bracket #{i} (score #{ob.group})#{if same_pairs? and same_floats?, do: " — identical", else: ""}"
+    "bracket #{i} (score #{ob.group})#{if same_pairs? and same_floats?, do: " - identical", else: ""}"
   )
 
   IO.puts("  ours   pairs=#{inspect(ob.pairs)} floats=#{inspect(ob.floats)}")

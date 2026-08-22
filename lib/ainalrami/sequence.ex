@@ -5,8 +5,8 @@ defmodule Ainalrami.Sequence do
 
   The regulations pair a bracket by *enumeration*. Split it into S1 and S2
   (3.2), pair S1[i] with S2[i] (3.3), and if the result is not perfect,
-  alter the composition in a defined sequence (3.5-3.7) — transpositions of
-  S2 first, then exchanges between S1 and S2 — taking the first perfect
+  alter the composition in a defined sequence (3.5-3.7) - transpositions of
+  S2 first, then exchanges between S1 and S2 - taking the first perfect
   candidate. When no perfect candidate exists, 3.8.1 picks the best on C5
   then C6-C21, and breaks a remaining tie by **which was generated earlier**.
 
@@ -24,12 +24,12 @@ defmodule Ainalrami.Sequence do
 
   ## What is implemented
 
-    * `transpositions/2` — 4.2. All orderings of S2, sorted by the
+    * `transpositions/2` - 4.2. All orderings of S2, sorted by the
       lexicographic value of their first N1 entries, where N1 is the size of
       S1. The remaining entries are ignored for ordering purposes, because
       they represent players bound for the remainder or for downfloating.
 
-    * `exchanges/1` — 4.3. All swaps of equally sized groups between the
+    * `exchanges/1` - 4.3. All swaps of equally sized groups between the
       original S1 and S2, sorted by 4.3.2's four comparison rules in order:
       fewest BSNs exchanged; then smallest difference between the sums moved
       each way; then largest differing BSN moved S1->S2; then smallest
@@ -63,7 +63,7 @@ defmodule Ainalrami.Sequence do
   `{new_s1, new_s2}` pairs already re-sorted per Article 1.2 (here: ascending
   BSN, since BSNs are assigned in that order).
 
-  The identity (exchanging nothing) is not included — 3.6 reaches exchanges
+  The identity (exchanging nothing) is not included - 3.6 reaches exchanges
   only after transpositions are exhausted, and the unexchanged composition
   has already been tried.
   """

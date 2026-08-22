@@ -5,7 +5,7 @@ defmodule Ainalrami.C2SecondByeTest do
   that would do it is discarded rather than scored.
 
   Both fixtures here are positions where bbpPairings 6.0.0 does it anyway
-  and Gacrux — a third, independent 2026 implementation — pairs them the way
+  and Gacrux - a third, independent 2026 implementation - pairs them the way
   this engine does. They are kept as tests, not just as files, because the
   thing they pin is not a preference: if a change ever made this engine
   agree with bbpPairings here, that would be a regression into an illegal
@@ -39,7 +39,7 @@ defmodule Ainalrami.C2SecondByeTest do
 
     assert bye == 3,
            "of the three players C2 leaves eligible (1, 3, 7), C5 puts the bye on " <>
-             "the lowest-scoring — rank 3 on 4.0. Gacrux agrees; bbpPairings byes rank 4."
+             "the lowest-scoring - rank 3 on 4.0. Gacrux agrees; bbpPairings byes rank 4."
   end
 
   # The original case, kept for the same reason.
@@ -80,7 +80,7 @@ defmodule Ainalrami.C2SecondByeTest do
     for pair <- [[4, 8], [1, 2], [7, 9]] do
       assert pair in played,
              "#{inspect(pair)} is forced by elimination once C2 rules out the bye for " <>
-               "ranks 1, 2, 8 and 9 — got #{inspect(MapSet.to_list(played))}"
+               "ranks 1, 2, 8 and 9 - got #{inspect(MapSet.to_list(played))}"
     end
 
     assert bye == 6, "rank 6 is the only player left, and the only one still bye-eligible"

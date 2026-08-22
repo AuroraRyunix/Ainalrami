@@ -22,20 +22,20 @@ defmodule Ainalrami.RuleDeltaTest do
   This engine targets the 2026 rulebook (see `docs/fide-criteria.md`), so
   every fixture should eventually pair the 2026 way. It does not yet:
   `@matches_2026_floor` records how many currently do, and the test fails
-  if that number drops. Raise the floor whenever a criterion lands — the
+  if that number drops. Raise the floor whenever a criterion lands - the
   point is that progress is recorded and regressions are caught, not that
   the target is already met.
 
   History of the floor, so the trend is legible:
 
-    * 2 of 8 — after C5 (the PAB Criterion) was enforced absolutely. C5
+    * 2 of 8 - after C5 (the PAB Criterion) was enforced absolutely. C5
       alone fixed fixture 2, a 5-player round-2 case where the bye had to
       move from a 0.5 player to a 0.0 one.
 
   Of the six that still pair the 2022 way, four (fixtures 1, 4, 6, 7)
   share a shape: the 2026 answer keeps adjacent top seeds together
   ([1,2] or [2,3]) where JaVaFo splits them across the field. Pairing the
-  top two changes WHICH players downfloat, which is what C8 governs — so
+  top two changes WHICH players downfloat, which is what C8 governs - so
   they are the natural test of C8 once it stops being approximated.
   """
   use ExUnit.Case, async: true
@@ -83,7 +83,7 @@ defmodule Ainalrami.RuleDeltaTest do
     matched = Map.get(tally, :rules_2026, 0)
 
     detail =
-      Enum.map_join(results, "\n", fn {file, verdict} -> "  #{file} — #{verdict}" end)
+      Enum.map_join(results, "\n", fn {file, verdict} -> "  #{file} - #{verdict}" end)
 
     assert matched >= @matches_2026_floor, """
     #{matched}/#{length(manifest)} fixtures pair the 2026 way, below the recorded floor of \
@@ -95,7 +95,7 @@ defmodule Ainalrami.RuleDeltaTest do
     #{detail}
     """
 
-    # Not an assertion — the run is the report.
+    # Not an assertion - the run is the report.
     IO.puts(
       "\n  rule-delta fixtures: #{inspect(tally)} (floor #{@matches_2026_floor})\n#{detail}"
     )

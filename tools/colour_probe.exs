@@ -106,12 +106,12 @@ results
   {w, b} = r.ours
 
   IO.puts("seed #{r.seed}: we say #{w} White / #{b} Black; bbp says the reverse")
-  IO.puts("  ##{r.a.rank}  colours=#{inspect(Probe.colours(r.a))}  prefers #{pa} — #{wa}")
-  IO.puts("  ##{r.b.rank}  colours=#{inspect(Probe.colours(r.b))}  prefers #{pb} — #{wb}")
+  IO.puts("  ##{r.a.rank}  colours=#{inspect(Probe.colours(r.a))}  prefers #{pa} - #{wa}")
+  IO.puts("  ##{r.b.rank}  colours=#{inspect(Probe.colours(r.b))}  prefers #{pb} - #{wb}")
 
   decider =
     cond do
-      pa != pb -> "5.2.1 (different preferences — both grantable)"
+      pa != pb -> "5.2.1 (different preferences - both grantable)"
       wa != wb -> "5.2.2 (one preference is stronger)"
       Probe.most_recent_difference(r.a, r.b) -> "5.2.3 (histories differ at some round)"
       true -> "5.2.4 / 5.2.5 (identical histories)"

@@ -3,8 +3,8 @@ defmodule Ainalrami.CompletionRepairTest do
   Fault injection for `repair_completion/3`, the engine's only completion
   safety net.
 
-  It never fires in normal running — measured zero times across plain
-  fields, 8% and 15% arbiter-bye rates and 10% forfeits — because
+  It never fires in normal running - measured zero times across plain
+  fields, 8% and 15% arbiter-bye rates and 10% forfeits - because
   `bracket_loop/6` stopped ending rounds a group early. That is the right
   outcome and the wrong situation to leave alone: a safety net nothing has
   ever exercised is a guess, and the one time it matters would be the
