@@ -2960,6 +2960,76 @@ and 1.45x. Against bbpPairings' (0.54 / 2.87 / 49.9 s), 2.3x, 4x and
 because the skip's guard turns on `odd_field?` and every existing axis
 mixes parities.
 
+## The cross-axis run (2026-08-23)
+
+**25 axes / 35,436,044 rounds / 474,685,328 individual pairings / 9.7 hours.
+Zero disagreements. Zero illegal rounds.** Engine v0.10.0 (e3ae30a).
+
+The round sweep earlier the same day closed the round count and named its
+own gap in the same breath: it held forfeits, forbidden pairs,
+acceleration, initial colour, numeric extensions and field size constant
+while varying only rounds. That is the exact shape of the bug that started
+all this - a corpus varying a great deal while holding still the one
+parameter the defect was a function of.
+
+So every axis here is <something previously fixed> x <round count>, at
+three counts chosen for shape: **4** (short and EVEN, the parity that hid
+`final_round_topscorers?/2`), **9** (the historical default, as a control)
+and **16** (deeper than anything measured before this week).
+
+Three axes run everything at once - byes, forfeits, forbidden pairs, random
+acceleration and Black-first together - because a bug needing three
+conditions simultaneously appears on no single-parameter axis.
+
+| axis | rounds | individual pairings | agreement |
+|---|---|---|---|
+| `forfeit-r4` | 1,598,287 | 18,778,447 | 100.00% |
+| `forfeit-r9` | 1,978,408 | 25,718,415 | 100.00% |
+| `forfeit-r16` | 1,987,334 | 29,346,916 | 100.00% |
+| `forbidden-r4` | 1,595,378 | 18,766,085 | 100.00% |
+| `forbidden-r9` | 1,979,853 | 25,752,483 | 100.00% |
+| `forbidden-r16` | 1,996,740 | 29,419,953 | 100.00% |
+| `baku-r4` | 1,595,529 | 18,782,959 | 100.00% |
+| `baku-r9` | 1,979,993 | 25,733,829 | 100.00% |
+| `baku-r16` | 1,998,711 | 29,461,263 | 100.00% |
+| `randaccel-r4` | 1,596,489 | 18,787,951 | 100.00% |
+| `randaccel-r9` | 1,979,997 | 25,719,246 | 100.00% |
+| `randaccel-r16` | 1,998,594 | 29,489,842 | 100.00% |
+| `black-r4` | 1,595,475 | 18,770,241 | 100.00% |
+| `black-r9` | 1,979,997 | 25,758,882 | 100.00% |
+| `black-r16` | 1,998,690 | 29,457,792 | 100.00% |
+| `numeric-r4` | 1,196,407 | 14,084,109 | 100.00% |
+| `numeric-r9` | 1,529,850 | 19,868,382 | 100.00% |
+| `kitchensink-r4` | 1,198,893 | 12,037,418 | 100.00% |
+| `kitchensink-r9` | 1,529,208 | 16,969,773 | 100.00% |
+| `kitchensink-r16` | 1,599,611 | 20,134,813 | 100.00% |
+| `big60-r4` | 120,000 | 4,613,804 | 100.00% |
+| `big60-r9` | 180,000 | 6,914,780 | 100.00% |
+| `big60-r16` | 192,000 | 7,391,030 | 100.00% |
+| `big150-r9` | 27,000 | 2,312,182 | 100.00% |
+| `big300-r9` | 3,600 | 614,733 | 100.00% |
+
+The one worth naming: **`black-*`**. Article 5.2.5 is the only place this
+engine parts from JaVaFo, it turns on the initial colour, and every corpus
+before this had drawn White. Three axes of it, 4/9/16 rounds, clean.
+
+### Cumulative
+
+With the round sweep and the 2026-08-20 run, the engine now stands at
+**1.16 billion individual pairings against bbpPairings across 95 million
+rounds, with two disagreements** - both the bbpPairings C2 second-bye
+defect, both answered this engine's way by Gacrux.
+
+### Still held constant, and worth saying out loud
+
+`initial_roster/1` draws `fide_rating` uniformly from 1000..2800. So every
+player in every corpus this project has ever run is RATED, and rating ties
+are rare and incidental. Real chess is the opposite: unrated juniors on 0,
+and whole club fields clustered on a handful of rounded ratings. Equal
+ratings put the initial ranking on a different tiebreak path entirely, and
+two engines disagreeing there would disagree about every pairing that
+follows. That is the next axis.
+
 ## The round-count sweep, R=1..20 (2026-08-23)
 
 **10,793,215 tournaments / 59,966,505 rounds / 684,901,202 individual

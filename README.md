@@ -24,9 +24,28 @@ hidden - see [What is not settled](#what-is-not-settled).
 ## Where it stands
 
 Measured against **bbpPairings 6.0.0**, which implements the same 2026
-rules - **5,993,000 tournaments, 44.5 million rounds, 488 million
-individual pairings, two disagreements, zero illegal rounds** (run of
-2026-08-20, seventeen axes):
+rules.
+
+**Cumulative to 2026-08-23: 1.16 billion individual pairings compared,
+across 95 million rounds. Two disagreements, both a defect in bbpPairings
+that Gacrux resolves this engine's way. Zero illegal rounds.**
+
+| run | axes | rounds | individual pairings | disagreements |
+|---|---|---|---|---|
+| Round sweep, R=1..20 (08-23) | 20 | 59,966,505 | **684,901,202** | 0 |
+| Cross-axis (08-23) | 25 | 35,436,044 | **474,685,328** | 0 |
+| Six-million run (08-20) | 17 | 44,486,465 | 488,033,862 | 2 |
+
+The two newer runs exist because size alone proves little. Every corpus
+before 2026-08-17 held the round count at 9, and that one fixed parameter
+hid a real defect that 2.55M tournaments could not produce and 2,000 at
+eight rounds found immediately. The round sweep therefore varies rounds
+from 1 to 20; the cross-axis run then crosses every parameter that sweep
+held still - forfeits, forbidden pairs, acceleration, initial colour,
+numeric extensions and field size - against short, classical and deep round
+counts, including axes with all of them firing at once.
+
+The 2026-08-20 run's own table follows, seventeen axes:
 
 | axis | tournaments | exact rounds | individual pairs | illegal |
 |---|---|---|---|---|
