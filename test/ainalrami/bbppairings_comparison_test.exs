@@ -92,6 +92,37 @@ defmodule Ainalrami.BbppairingsComparisonTest do
   @moduletag :bbppairings
   @moduletag timeout: :infinity
 
+  # Guards the rating axis against going quietly inert.
+  #
+  # A mode that stopped taking effect would still report 100% agreement -
+  # the run would simply be another "spread" corpus wearing a different
+  # name, and the axis it claims to test would be untested while looking
+  # green. The board COUNTS cannot catch that, because the number of
+  # pairings does not depend on rating at all; only the roster can.
+  test "each rating mode actually shapes the roster it claims to" do
+    roster = fn mode ->
+      Process.put(:fuzz_rating_mode, mode)
+      :rand.seed(:exsss, {11, 22, 33})
+      initial_roster(40) |> Enum.map(& &1.fide_rating)
+    end
+
+    spread = roster.("spread")
+    equal = roster.("equal")
+    clustered = roster.("clustered")
+    none = roster.("all_unrated")
+    some = roster.("unrated")
+
+    assert Enum.uniq(equal) |> length() == 1, "equal should give one rating, got #{length(Enum.uniq(equal))}"
+    assert Enum.all?(none, &(&1 == 0)), "all_unrated should be every player at 0"
+    assert Enum.any?(some, &(&1 == 0)) and Enum.any?(some, &(&1 > 0)), "unrated should mix"
+
+    # The point of "clustered" is TIES, which spread almost never produces.
+    assert length(Enum.uniq(clustered)) < length(Enum.uniq(spread)),
+           "clustered should collide far more than spread: #{length(Enum.uniq(clustered))} vs #{length(Enum.uniq(spread))} distinct"
+
+    assert length(Enum.uniq(spread)) > 30, "spread should stay near-distinct"
+  end
+
   test "Ainalrami and bbpPairings.exe agree on who plays whom, in every round of a tournament" do
     count = env_int("PAIRING_FUZZ_COUNT", 20)
     rounds = env_int("PAIRING_FUZZ_ROUNDS", 2)
@@ -170,6 +201,8 @@ defmodule Ainalrami.BbppairingsComparisonTest do
     Process.put(:fuzz_initial_colour, resolve_initial_colour())
     Process.put(:fuzz_accel, resolve_accel())
     Process.put(:fuzz_numeric, resolve_numeric())
+    Process.put(:fuzz_rating_mode, resolve_rating_mode())
+    Process.put(:fuzz_withdrawn, MapSet.new())
     rounds = resolve_rounds(rounds)
 
     player_count = Enum.random(player_range)
@@ -178,6 +211,8 @@ defmodule Ainalrami.BbppairingsComparisonTest do
 
     {measurements, _final} =
       Enum.reduce_while(1..rounds, {[], roster}, fn round, {acc, players} ->
+        withdraw_some(round, player_count)
+
         case play_round(players, seed, round, rounds, player_count, forbidden) do
           {:ok, measurement, next_players} -> {:cont, {[measurement | acc], next_players}}
           {:error, measurement} -> {:halt, {[measurement | acc], players}}
@@ -187,9 +222,37 @@ defmodule Ainalrami.BbppairingsComparisonTest do
     Enum.reverse(measurements)
   end
 
+  # Rating shape, which every corpus before 2026-08-23 held constant at
+  # "uniform 1000..2800". That draw makes every player RATED and makes ties
+  # incidental - roughly the opposite of real chess, where a junior event is
+  # entirely unrated and a club field sits on a handful of rounded numbers.
+  #
+  # It matters because equal ratings put the INITIAL RANKING on a different
+  # path: not "sort by rating" but whatever breaks the tie. That ranking is
+  # the foundation of every bracket in every round, so two engines breaking
+  # it differently disagree about everything afterwards.
+  defp rating_for(mode) do
+    case mode do
+      "equal" -> 1600
+      "clustered" -> Enum.random(1580..1620)
+      "unrated" -> if(:rand.uniform(2) == 1, do: 0, else: Enum.random(1000..2800))
+      "all_unrated" -> 0
+      _spread -> Enum.random(1000..2800)
+    end
+  end
+
+  defp resolve_rating_mode do
+    case System.get_env("PAIRING_FUZZ_RATING_MODE") do
+      "mixed" -> Enum.random(~w(spread clustered equal unrated all_unrated))
+      other -> other || "spread"
+    end
+  end
+
   defp initial_roster(player_count) do
+    mode = Process.get(:fuzz_rating_mode, "spread")
+
     for i <- 1..player_count do
-      %{rank: i, name: "P#{i}", fide_rating: Enum.random(1000..2800), points: 0.0, games: []}
+      %{rank: i, name: "P#{i}", fide_rating: rating_for(mode), points: 0.0, games: []}
     end
     |> Enum.shuffle()
     |> Enum.with_index(1)
@@ -596,14 +659,58 @@ seed #{seed} round #{round}: UNEXPLAINED - we say #{w} White, bbpPairings says #
     ) <> "152 W\r\nXXR #{total_rounds}\r\n"
   end
 
+  # A withdrawal is a Z for every remaining round - the same shape as a
+  # requested zero-point bye, which is why it reuses this machinery rather
+  # than inventing a second one. Real events have them (someone drops out
+  # after round 3) and no corpus here has ever generated one, so the TRF
+  # construct that expresses it has never been read by bbpPairings from a
+  # file this project produced.
+  # Players drop out DURING an event, never before it - a withdrawal in
+  # round 1 is just a smaller tournament and tests nothing. From round 2 on,
+  # each remaining player may leave; once gone they stay gone, which is what
+  # makes this different from a run of requested byes.
+  #
+  # Capped at half the field: past that the tail rounds have nobody left to
+  # pair and the run measures deadlock handling rather than pairing.
+  defp withdraw_some(round, player_count) do
+    pct = env_int("PAIRING_FUZZ_WITHDRAW_PCT", 0)
+
+    if pct > 0 and round > 1 do
+      withdrawn = Process.get(:fuzz_withdrawn, MapSet.new())
+      cap = div(player_count, 2)
+
+      new =
+        Enum.reduce(1..player_count, withdrawn, fn rank, acc ->
+          if MapSet.size(acc) < cap and not MapSet.member?(acc, rank) and
+               :rand.uniform(100) <= pct do
+            MapSet.put(acc, rank)
+          else
+            acc
+          end
+        end)
+
+      Process.put(:fuzz_withdrawn, new)
+    end
+  end
+
   defp assign_requested_byes(players) do
     pct = env_int("PAIRING_FUZZ_BYE_PCT", 0)
+    withdrawn = Process.get(:fuzz_withdrawn, MapSet.new())
+
+    players =
+      Enum.map(players, fn player ->
+        if MapSet.member?(withdrawn, player.rank) do
+          %{player | games: player.games ++ [%{opponent_rank: nil, colour: nil, result: "Z"}]}
+        else
+          player
+        end
+      end)
 
     if pct == 0 do
       players
     else
       Enum.map(players, fn player ->
-        if :rand.uniform(100) <= pct do
+        if not MapSet.member?(withdrawn, player.rank) and :rand.uniform(100) <= pct do
           {result, points} = Enum.random([{"H", 0.5}, {"Z", 0.0}])
 
           %{

@@ -214,6 +214,8 @@ Every axis is a set of environment variables:
 | `PAIRING_FUZZ_ACCEL=mixed` | - | draws none/baku/random per tournament |
 | `PAIRING_FUZZ_INITIAL_COLOUR=mixed` | - | draws W/B per tournament |
 | `PAIRING_FUZZ_NUMERIC_EXT=mixed` | - | draws XXA/XXP vs 250/260 per tournament |
+| `PAIRING_FUZZ_RATING_MODE` | `spread` | `spread`/`clustered`/`equal`/`unrated`/`all_unrated`/`mixed` - see below |
+| `PAIRING_FUZZ_WITHDRAW_PCT` | 0 | chance per player per round of dropping out for good, from round 2 |
 | `PAIRING_FUZZ_MIN_PLAYERS` / `MAX_PLAYERS` | 4 / 40 | field size range |
 | `PAIRING_FUZZ_SEED_FROM` | 1 | start of the seed range |
 | `PAIRING_FUZZ_BYE_PCT` | 0 | arbiter-assigned bye rate |
@@ -237,6 +239,22 @@ never revisited.
 This is the section worth reading.
 
 ### 2.5 million tournaments held one parameter constant
+
+**Rating shape** was held constant until 2026-08-23 at "uniform
+1000..2800", which makes every player rated and rating ties incidental -
+close to the opposite of real chess, where a junior event is entirely
+unrated and a club field sits on a handful of rounded numbers. Equal
+ratings put the INITIAL RANKING on a different path: not "sort by rating"
+but whatever breaks the tie. That ranking is the foundation of every
+bracket in every round, so two engines breaking it differently disagree
+about everything afterwards. `PAIRING_FUZZ_RATING_MODE` varies it, and
+`bbppairings_comparison_test.exs` carries a test asserting each mode really
+does reshape the roster - a mode that went inert would still report 100%
+agreement while testing nothing.
+
+**Withdrawals** likewise: no corpus before that date ever generated one,
+so the TRF construct expressing "this player has left" had never been read
+by bbpPairings from a file this project produced.
 
 **Closed as of 2026-08-23**: the round count has now been swept end to end,
 R=1 through R=20, at ~3M rounds per axis - 10,793,215 tournaments,
