@@ -154,6 +154,24 @@ defmodule Ainalrami.BbppairingsComparisonTest do
 
   defp run_tournament!(seed, rounds, player_range) do
     :rand.seed(:exsss, {seed, seed * 7919, seed * 104_729})
+
+    # Modes that used to be fixed for a whole run can now be drawn PER
+    # TOURNAMENT. Resolved here, once, and stashed in the process dictionary:
+    # every tournament runs in its own Task (see `Task.async_stream` above),
+    # so a stash is private to it and every helper reading it inside that
+    # tournament sees one consistent set of values. Resolving them at each
+    # call site instead would let a single tournament be built as White and
+    # scored as Black.
+    #
+    # This exists because a grid of fixed-value axes only tests the
+    # combinations somebody thought to write down. Drawing per tournament
+    # explores the space, which is what finds a bug that needs a forfeit AND
+    # an upfloat AND a short tournament at once.
+    Process.put(:fuzz_initial_colour, resolve_initial_colour())
+    Process.put(:fuzz_accel, resolve_accel())
+    Process.put(:fuzz_numeric, resolve_numeric())
+    rounds = resolve_rounds(rounds)
+
     player_count = Enum.random(player_range)
     forbidden = forbidden_pairs(player_count)
     roster = player_count |> initial_roster() |> accelerate(rounds)
@@ -205,7 +223,7 @@ defmodule Ainalrami.BbppairingsComparisonTest do
   # exercises far less of the bracket machinery than arbitrary per-player
   # histories do.
   defp accelerate(players, rounds) do
-    case System.get_env("PAIRING_FUZZ_ACCEL") do
+    case Process.get(:fuzz_accel, System.get_env("PAIRING_FUZZ_ACCEL")) do
       nil -> players
       "baku" -> baku(players, rounds)
       "random" -> Enum.map(players, &random_acceleration(&1, rounds))
@@ -558,7 +576,11 @@ seed #{seed} round #{round}: UNEXPLAINED - we say #{w} White, bbpPairings says #
   # The first attempt was rejected outright (`Invalid line`), which is
   # the whole argument for generating them rather than asserting them.
   defp build_trf(players, total_rounds, forbidden) do
-    numeric? = System.get_env("PAIRING_FUZZ_NUMERIC_EXT") in ["1", "true"]
+    numeric? =
+      case Process.get(:fuzz_numeric) do
+        nil -> System.get_env("PAIRING_FUZZ_NUMERIC_EXT") in ["1", "true"]
+        stashed -> stashed
+      end
 
     Ainalrami.Trf.serialize(
       %{
@@ -834,7 +856,50 @@ seed #{seed} round #{round}: UNEXPLAINED - we say #{w} White, bbpPairings says #
   # branch was only ever exercised one way round -- and the engine's own
   # hardcoded assumption of White agreed with it by accident rather than by
   # reading the field.
-  defp initial_colour, do: System.get_env("PAIRING_FUZZ_INITIAL_COLOUR", "W")
+  # Each of these reads the value stashed for THIS tournament, falling back
+  # to the environment so a run that sets nothing behaves exactly as before.
+  defp initial_colour, do: Process.get(:fuzz_initial_colour) || env_initial_colour()
+
+  defp env_initial_colour, do: System.get_env("PAIRING_FUZZ_INITIAL_COLOUR", "W")
+
+  # "mixed" draws per tournament. Anything else is used as-is, so W/B still
+  # pin a whole run the way they always did.
+  defp resolve_initial_colour do
+    case String.downcase(env_initial_colour()) do
+      "mixed" -> Enum.random(["W", "B"])
+      _ -> env_initial_colour()
+    end
+  end
+
+  defp resolve_accel do
+    case System.get_env("PAIRING_FUZZ_ACCEL") do
+      "mixed" -> Enum.random([nil, "baku", "random"])
+      other -> other
+    end
+  end
+
+  defp resolve_numeric do
+    case System.get_env("PAIRING_FUZZ_NUMERIC_EXT") do
+      "mixed" -> Enum.random([true, false])
+      other -> other in ["1", "true"]
+    end
+  end
+
+  # `PAIRING_FUZZ_ROUNDS_MAX` turns the round count into a RANGE drawn per
+  # tournament. Unset keeps the single fixed value, so every previous run
+  # description still means what it said.
+  defp resolve_rounds(rounds) do
+    case System.get_env("PAIRING_FUZZ_ROUNDS_MAX") do
+      nil ->
+        rounds
+
+      raw ->
+        case Integer.parse(raw) do
+          {max, ""} when max >= rounds -> Enum.random(rounds..max)
+          _ -> raise "PAIRING_FUZZ_ROUNDS_MAX must be an integer >= PAIRING_FUZZ_ROUNDS"
+        end
+    end
+  end
 
   defp env_int(name, default) do
     name |> System.get_env(to_string(default)) |> String.to_integer()

@@ -210,6 +210,10 @@ Every axis is a set of environment variables:
 |---|---|---|
 | `PAIRING_FUZZ_COUNT` | small | tournaments to generate |
 | `PAIRING_FUZZ_ROUNDS` | 9 | rounds per tournament - **vary this** |
+| `PAIRING_FUZZ_ROUNDS_MAX` | unset | makes rounds a RANGE drawn per tournament, `ROUNDS..ROUNDS_MAX` |
+| `PAIRING_FUZZ_ACCEL=mixed` | - | draws none/baku/random per tournament |
+| `PAIRING_FUZZ_INITIAL_COLOUR=mixed` | - | draws W/B per tournament |
+| `PAIRING_FUZZ_NUMERIC_EXT=mixed` | - | draws XXA/XXP vs 250/260 per tournament |
 | `PAIRING_FUZZ_MIN_PLAYERS` / `MAX_PLAYERS` | 4 / 40 | field size range |
 | `PAIRING_FUZZ_SEED_FROM` | 1 | start of the seed range |
 | `PAIRING_FUZZ_BYE_PCT` | 0 | arbiter-assigned bye rate |
