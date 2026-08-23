@@ -234,6 +234,13 @@ This is the section worth reading.
 
 ### 2.5 million tournaments held one parameter constant
 
+**Closed as of 2026-08-23**: the round count has now been swept end to end,
+R=1 through R=20, at ~3M rounds per axis - 10,793,215 tournaments,
+684,901,202 pairings, zero disagreements, zero illegal rounds. See "The
+round-count sweep" in docs/engineering-log.md. Round count is no longer an
+untested dimension; what remains untested is that dimension CROSSED with the
+others (forfeits, forbidden pairs, acceleration, large fields).
+
 Every axis measured before 2026-08-17 ran `PAIRING_FUZZ_ROUNDS=9`. A
 nine-round tournament pairs its final round with **eight** played, and
 `div(8, 2) == 8 / 2`.

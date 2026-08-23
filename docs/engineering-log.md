@@ -2960,6 +2960,80 @@ and 1.45x. Against bbpPairings' (0.54 / 2.87 / 49.9 s), 2.3x, 4x and
 because the skip's guard turns on `odd_field?` and every existing axis
 mixes parities.
 
+## The round-count sweep, R=1..20 (2026-08-23)
+
+**10,793,215 tournaments / 59,966,505 rounds / 684,901,202 individual
+pairings / 20 axes / 12.5 hours on the 36-core box. Zero disagreements.
+Zero illegal rounds.** Engine v0.10.0 (e3ae30a).
+
+The largest run this project has done, and the one that closes the axis
+that caused its most expensive bug.
+
+### Why this axis and not another
+
+Every corpus before 2026-08-17 held `PAIRING_FUZZ_ROUNDS=9`, and that
+constant hid a real defect in `final_round_topscorers?/2`: the threshold is
+`floor((expectedRounds - 1) / 2)`, which only differs from the wrong
+spelling when the played count is ODD, i.e. when the tournament has an EVEN
+number of rounds. At 9 rounds, 8 are played and the floor rounds nothing.
+2.55M tournaments could not produce a single instance.
+
+The even-round axis was added that day and measured 6, 8 and 10. The
+2026-08-20 six-million run reached 13. **Nothing had ever compared 1-5, and
+nothing had ever gone past 13** - so the commonest events in club chess (a
+four-round weekend Swiss, a five-round rapid) sat entirely outside the
+corpus, as did anything deeper than a large open.
+
+Equal ROUND volume per axis, roughly 3M rounds each, rather than equal
+tournament counts: the work is per round, so this gives every round count
+the same statistical weight instead of starving the deep end. `MIN_PLAYERS`
+scales with R, because a Swiss exhausts its field after `players - 1` rounds
+and a 20-round run over a 6-player field deadlocks at round 6 and measures
+nothing.
+
+### Result
+
+| rounds | players | rounds compared | pairings compared | agreement | illegal |
+|---|---|---|---|---|---|
+| 1 | 4-40 | 2,999,955 | 28,804,307 | 100.00% | 0 |
+| 2 | 4-40 | 2,998,651 | 28,801,091 | 100.00% | 0 |
+| 3 | 5-40 | 2,999,286 | 29,410,586 | 100.00% | 0 |
+| 4 | 6-40 | 2,998,444 | 30,077,539 | 100.00% | 0 |
+| 5 | 7-40 | 2,998,401 | 30,720,809 | 100.00% | 0 |
+| 6 | 8-40 | 2,998,215 | 31,365,901 | 100.00% | 0 |
+| 7 | 9-40 | 2,998,115 | 31,956,092 | 100.00% | 0 |
+| 8 | 10-40 | 2,998,101 | 32,650,455 | 100.00% | 0 |
+| 9 | 11-40 | 2,998,195 | 33,263,772 | 100.00% | 0 |
+| 10 | 12-40 | 2,998,092 | 33,911,049 | 100.00% | 0 |
+| 11 | 13-40 | 2,998,141 | 34,538,597 | 100.00% | 0 |
+| 12 | 14-40 | 2,998,181 | 35,156,850 | 100.00% | 0 |
+| 13 | 15-40 | 2,998,180 | 35,809,145 | 100.00% | 0 |
+| 14 | 16-40 | 2,998,158 | 36,421,254 | 100.00% | 0 |
+| 15 | 17-40 | 2,998,239 | 37,090,738 | 100.00% | 0 |
+| 16 | 18-40 | 2,998,074 | 37,701,758 | 100.00% | 0 |
+| 17 | 19-40 | 2,998,086 | 38,346,982 | 100.00% | 0 |
+| 18 | 20-40 | 2,998,002 | 38,985,080 | 100.00% | 0 |
+| 19 | 21-40 | 2,998,014 | 39,624,940 | 100.00% | 0 |
+| 20 | 22-40 | 2,997,975 | 40,264,257 | 100.00% | 0 |
+
+Every one of the twenty logs ends `legality: every Ainalrami round was a
+legal pairing.`
+
+### What it does and does not establish
+
+It closes the round count as a variable, from a single round to twenty. In
+FE1's units - one difference per 500 tournaments allowed - this run alone is
+10.8 million tournaments with none.
+
+It does NOT make the engine "fully tested", and the lesson from the 9-round
+bug is exactly why it would be wrong to say so. This run holds other things
+constant: 15% requested byes, no forfeits, no forbidden pairs, no
+acceleration, fields capped at 40. Those axes have been measured separately,
+at 9 rounds. They have not been measured CROSSED with unusual round counts.
+
+The question to ask of the next corpus is still the one that found this bug:
+not what does it vary, but what does it hold still.
+
 ## The 6-million-tournament run (2026-08-20)
 
 The validation run for the local-graph engine, and the largest this
