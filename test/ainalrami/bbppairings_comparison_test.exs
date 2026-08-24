@@ -593,7 +593,14 @@ seed #{seed} round #{round}: UNEXPLAINED - we say #{w} White, bbpPairings says #
       dir ->
         File.mkdir_p!(dir)
 
-        Enum.each(mismatches, fn m ->
+        # An axis that disagrees on a few per cent of two million rounds
+        # produces tens of thousands of these, and the hundredth example of
+        # one pattern is worth nothing the first ten were not. Capped, and
+        # the cap SAYS what it dropped - a silent truncation reads as
+        # "that is all of them", which is how a rate gets misread later.
+        {kept, dropped} = Enum.split(mismatches, dump_limit())
+
+        Enum.each(kept, fn m ->
           stem = Path.join(dir, "seed#{m.seed}-r#{m.round}-p#{m.player_count}")
           File.write!(stem <> ".trf", m.trf)
 
@@ -606,9 +613,18 @@ seed #{seed} round #{round}: UNEXPLAINED - we say #{w} White, bbpPairings says #
           )
         end)
 
-        IO.puts("\n  Dumped #{length(mismatches)} disagreement(s) to #{dir}")
+        IO.puts("\n  Dumped #{length(kept)} disagreement(s) to #{dir}")
+
+        if dropped != [] do
+          IO.puts(
+            "  #{length(dropped)} further disagreement(s) NOT dumped " <>
+              "(PAIRING_FUZZ_DUMP_LIMIT=#{dump_limit()}); the rates above count all of them"
+          )
+        end
     end
   end
+
+  defp dump_limit, do: env_int("PAIRING_FUZZ_DUMP_LIMIT", 200)
 
   defp row(measurements) do
     rounds_matched = Enum.count(measurements, & &1.match?)

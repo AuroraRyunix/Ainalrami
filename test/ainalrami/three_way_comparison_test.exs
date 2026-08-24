@@ -319,14 +319,24 @@ three-way comparison over #{n} compared round(s):
         disputes = Enum.reject(compared, & &1.bbp_gac)
         File.mkdir_p!(dir)
 
-        Enum.each(disputes, &write_dispute(dir, &1))
-        Enum.each(splits, &write_split(dir, &1))
+        # Capped, and the cap reports what it dropped - a directory listing
+        # gets read as the finding, so it must not quietly be a sample.
+        limit = env_int("PAIRING_FUZZ_DUMP_LIMIT", 200)
+        {kept_disputes, dropped_disputes} = Enum.split(disputes, limit)
+        {kept_splits, dropped_splits} = Enum.split(splits, limit)
 
-        total = length(disputes) + length(splits)
+        Enum.each(kept_disputes, &write_dispute(dir, &1))
+        Enum.each(kept_splits, &write_split(dir, &1))
+
+        total = length(kept_disputes) + length(kept_splits)
+        dropped = length(dropped_disputes) + length(dropped_splits)
 
         if total > 0 do
-          IO.puts("  #{total} reference dispute(s) written to #{dir}
-")
+          IO.puts("  #{total} reference dispute(s) written to #{dir}")
+        end
+
+        if dropped > 0 do
+          IO.puts("  #{dropped} further dispute(s) NOT dumped (limit #{limit} per kind)")
         end
     end
   end
