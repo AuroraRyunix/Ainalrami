@@ -26,14 +26,16 @@ hidden - see [What is not settled](#what-is-not-settled).
 Measured against **bbpPairings 6.0.0**, which implements the same 2026
 rules.
 
-**Cumulative to 2026-08-23: 1.16 billion individual pairings compared,
-across 95 million rounds. Two disagreements, both a defect in bbpPairings
+**Cumulative to 2026-08-24: 2.05 billion individual pairings compared,
+across 173 million rounds. Two disagreements, both a defect in bbpPairings
 that Gacrux resolves this engine's way. Zero illegal rounds.**
 
 | run | axes | rounds | individual pairings | disagreements |
 |---|---|---|---|---|
 | Round sweep, R=1..20 (08-23) | 20 | 59,966,505 | **684,901,202** | 0 |
 | Cross-axis (08-23) | 25 | 35,436,044 | **474,685,328** | 0 |
+| Rating shape / withdrawals / tiny fields (08-24) | 16 | 25,209,754 | **285,118,044** | 0 |
+| Randomised corpus (08-23) | 4 | 7,898,024 | **116,251,032** | 0 |
 | Six-million run (08-20) | 17 | 44,486,465 | 488,033,862 | 2 |
 
 The two newer runs exist because size alone proves little. Every corpus
@@ -44,6 +46,18 @@ from 1 to 20; the cross-axis run then crosses every parameter that sweep
 held still - forfeits, forbidden pairs, acceleration, initial colour,
 numeric extensions and field size - against short, classical and deep round
 counts, including axes with all of them firing at once.
+
+The last two go after the INPUT rather than the run parameters. The
+randomised corpus draws rounds, colour, acceleration and extension format
+per tournament instead of per axis, so it explores combinations nobody
+wrote down. The rating run attacks the oldest assumption of all: every
+corpus before it drew ratings uniformly from 1000..2800, making every
+player rated and ties incidental - the inverse of real chess, where a
+junior event is entirely unrated and a club field sits on a handful of
+rounded numbers. Equal ratings put the initial ranking on a different
+tiebreak path, and that ranking is the foundation of every bracket in every
+round. It also covers withdrawals mid-event and fields as small as two
+players, neither of which any corpus had ever generated.
 
 The 2026-08-20 run's own table follows, seventeen axes:
 
