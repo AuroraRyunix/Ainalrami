@@ -63,12 +63,15 @@ defmodule Ainalrami.Test.Gacrux do
 
       args = [script_path(), "-i", input, "-o", output, "-p", "-dT", "-m", "dutch"]
 
-      case System.cmd(python_bin(), args, stderr_to_stdout: true) do
+      case run(args) do
         {out, 0} ->
           case File.read(output) do
             {:ok, text} -> classify(text, out)
             {:error, _} -> {:no_valid_pairing, out}
           end
+
+        {out, 124} ->
+          {:error, {:timeout, "no answer in #{timeout_seconds()}s: " <> String.trim(out)}}
 
         {out, code} ->
           {:error, {code, out}}
@@ -77,6 +80,43 @@ defmodule Ainalrami.Test.Gacrux do
       remove_dir(dir)
     end
   end
+
+  # Two things `System.cmd/3` cannot express on its own, both learned the
+  # expensive way: a validation run wedged silently at 19:50 and was still
+  # wedged two hours later, having produced nothing and reported nothing.
+  #
+  # **stdin must be at EOF.** `System.cmd` gives the child a pipe for stdin
+  # and never closes the write end, so any read on fd 0 blocks forever.
+  # Gacrux reads stdin on paths this harness does not deliberately take -
+  # `commonmain.py` does it whenever it decides the input file is `-` - and
+  # 36 workers each blocked in `read(0, ...)` is a run that never finishes
+  # and never fails. Confirmed from `/proc/<pid>/syscall`: syscall 0, fd 0,
+  # a pipe.
+  #
+  # **A single invocation must not be able to stall the run.** `timeout`
+  # bounds it and exit 124 becomes a reported error, so a hang costs one
+  # round and a loud failure instead of a whole night.
+  #
+  # Both are POSIX, which is fine: Gacrux needs `networkx` and only ever
+  # runs on the Linux box. The direct call stays as the fallback so the
+  # module still loads and still reports honestly anywhere else.
+  defp run(args) do
+    if File.exists?("/bin/sh") do
+      wrapper = "exec timeout #{timeout_seconds()} \"$0\" \"$@\" < /dev/null"
+      System.cmd("/bin/sh", ["-c", wrapper, python_bin() | args], stderr_to_stdout: true)
+    else
+      System.cmd(python_bin(), args, stderr_to_stdout: true)
+    end
+  end
+
+  @doc """
+  How long a single Gacrux invocation may take before it is killed.
+
+  Generous by default - a 120-player field genuinely takes it a while - and
+  raiseable for a large-field axis via `GACRUX_TIMEOUT`. It exists to bound
+  a HANG, not to police slowness.
+  """
+  def timeout_seconds, do: System.get_env("GACRUX_TIMEOUT", "180")
 
   # Gacrux reports failure INSIDE the output file, with exit status 0:
   # `commonmain.py:289` writes `### Error <code>` there and leaves the
