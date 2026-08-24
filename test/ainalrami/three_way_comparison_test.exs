@@ -220,7 +220,11 @@ defmodule Ainalrami.ThreeWayComparisonTest do
     Pairing.pair_next_round(players,
       expected_rounds: rounds,
       forbidden_pairs: forbidden,
-      initial_colour: String.downcase(initial_colour())
+      initial_colour: String.downcase(initial_colour()),
+      # `nil` on every run that does not set the axis, which is what
+      # `Pairing` already defaults to - so this changes nothing until a file
+      # carries `BB*` lines saying otherwise.
+      point_system: point_system()
     )
   rescue
     _ -> :raised

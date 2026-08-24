@@ -298,6 +298,11 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
     [
       expected_rounds: tournament[:number_of_rounds],
       forbidden_pairs: tournament[:forbidden_pairs],
+      # What a result is worth (`BBW`/`BBD`/`BBL`/`BBZ`/`BBF`/`BBU`, or a
+      # `162` line). Absent from a file means the standard system, which is
+      # what `Pairing` defaults to - but when a file DOES say, the scores
+      # every bracket is built from depend on it.
+      point_system: tournament[:point_system],
       # Article 5.1's drawing of lots. `Trf` has read `152` since
       # 2026-08-17 but the CLI never forwarded it, so `-p` and `-c` fell
       # back to inferring the draw from round one - which works for a file
@@ -378,7 +383,7 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
   end
 
   defp check_round(parsed, round) do
-    before = state_before_round(parsed.players, round)
+    before = state_before_round(parsed.players, round, parsed.tournament[:point_system])
 
     expected = Pairing.pair_next_round(before, pairing_opts(parsed.tournament))
     actual = recorded_pairs(parsed.players, round)
@@ -414,7 +419,9 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
   # - an arbiter-assigned bye is recorded in advance precisely so the
   # engine leaves that player out, so replaying without it would ask the
   # engine to pair somebody who had already been excused.
-  defp state_before_round(players, round) do
+  defp state_before_round(players, round, point_system) do
+    points = point_system || Trf.default_point_system()
+
     Enum.map(players, fn player ->
       earlier = Enum.take(player.games, round - 1)
 
@@ -424,7 +431,11 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
           game -> if Trf.participated_in_pairing?(game), do: earlier, else: earlier ++ [game]
         end
 
-      %{player | games: games, points: Enum.sum(Enum.map(games, &Trf.points_for(&1.result)))}
+      %{
+        player
+        | games: games,
+          points: Enum.sum(Enum.map(games, &Trf.points_for(&1.result, points)))
+      }
     end)
   end
 

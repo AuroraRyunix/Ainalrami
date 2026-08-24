@@ -138,16 +138,82 @@ defmodule Ainalrami.Trf do
 
   def result_codes, do: @result_codes
 
-  @doc """
-  What a single result code is worth under the standard 1 / ½ / 0 system.
+  @bb_codes ~w(BBW BBD BBL BBZ BBF BBU)
 
-  Byes differ: a pairing-allocated bye (`U`), a full-point bye (`F`) and a
-  forfeit win (`+`) all pay a full point, a half-point bye (`H`) pays a
-  half, and a zero-point bye (`Z`) or forfeit loss (`-`) pays nothing.
+  @bb_fields %{
+    "BBW" => :win,
+    "BBD" => :draw,
+    "BBL" => :loss,
+    "BBZ" => :zero_point_bye,
+    "BBF" => :forfeit_loss,
+    "BBU" => :pairing_allocated_bye
+  }
+
+  @doc """
+  The standard 1 / ½ / 0 point system, and what every caller gets unless a
+  file says otherwise.
+
+  `pairing_allocated_bye` is separate from `win` even though both are 1.0
+  here, because it is the one an organiser is most likely to move: FIDE
+  permits valuing the bye at a half point, and bbpPairings exposes it as
+  its own `BBU` directive for exactly that reason.
   """
-  def points_for(result) when result in ~w(1 + F U W), do: 1.0
-  def points_for(result) when result in ~w(= H D), do: 0.5
-  def points_for(_result), do: 0.0
+  def default_point_system do
+    %{
+      win: 1.0,
+      draw: 0.5,
+      loss: 0.0,
+      pairing_allocated_bye: 1.0,
+      forfeit_loss: 0.0,
+      zero_point_bye: 0.0
+    }
+  end
+
+  @doc """
+  What a single result code is worth.
+
+  With one argument, under the standard 1 / ½ / 0 system. With a point
+  system (see `default_point_system/0`), under that one.
+
+  The split follows bbpPairings' `getPoints` (`tournament.h:310-322`)
+  exactly, because the two engines have to agree on a player's SCORE before
+  they can agree on a bracket:
+
+    * `1` `W` `+` `F` - a win, a forfeit win, and an arbiter's full-point
+      bye all pay `:win`. `F` looks like a bye but is not the pairing's:
+      its `participatedInPairing` is false, so it misses the
+      pairing-allocated branch and falls through to the ordinary win.
+    * `U` - the PAIRING's own bye, and the only code that pays
+      `:pairing_allocated_bye`.
+    * `=` `D` `H` - a draw and a half-point bye are the same value; there is
+      no separate half-point-bye setting in this system.
+    * `0` `L` - a played loss pays `:loss`.
+    * `-` - a forfeit loss pays `:forfeit_loss`, which an organiser may set
+      above zero even though a played loss is zero.
+    * anything else, `Z` and a blank included - `:zero_point_bye`.
+  """
+  def points_for(result), do: points_for(result, default_point_system())
+
+  def points_for(result, points) when result in ~w(1 + F W), do: points.win
+  def points_for("U", points), do: points.pairing_allocated_bye
+  def points_for(result, points) when result in ~w(= H D), do: points.draw
+  def points_for(result, points) when result in ~w(0 L), do: points.loss
+  def points_for("-", points), do: points.forfeit_loss
+  def points_for(_result, points), do: points.zero_point_bye
+
+  @doc """
+  Whether a result code represents a game that was actually PLAYED.
+
+  bbpPairings sets `gameWasPlayed = false` for exactly `+ - H F U Z` and a
+  blank (`trf.cpp:278-286`); `W`, `D` and `L` are absent from that list, so
+  they are letter spellings of ordinary played results rather than unplayed
+  ones. Several rules turn on this distinction, C2's bye eligibility among
+  them.
+  """
+  def game_was_played?(nil), do: false
+
+  def game_was_played?(result),
+    do: result not in ~w(+ - H F U Z) and String.trim(result) != ""
 
   @doc """
   Whether the player took part in the PAIRING for this game, as opposed to
@@ -269,11 +335,48 @@ defmodule Ainalrami.Trf do
     max_round = Enum.reduce(players, 0, &max(&2, length(&1[:games] || [])))
 
     header_lines(t, players, teams)
+    |> Kernel.++(point_system_lines(t[:point_system]))
     |> Kernel.++(legend_lines(opts[:column_legend], max_round))
     |> Kernel.++(Enum.map(players, &player_line/1))
     |> Kernel.++(Enum.map(teams, &team_line/1))
     |> Kernel.++(extension_lines(t, players, max_round, opts[:numeric_extensions]))
     |> Enum.map_join("", &(&1 <> "\r\n"))
+  end
+
+  # Written as `BB*` rather than as a `162` line: the `BB` directives are one
+  # value per line, so a file carrying them says exactly which settings were
+  # deliberate, and a reader that supports only some of them fails on the
+  # line it cannot take rather than misreading a packed record.
+  #
+  # Only the values that DIFFER from the standard system are emitted, so an
+  # ordinary tournament serialises byte-identically to before this existed.
+  # `BBU` comes last on purpose - `BBW` drags the pairing-allocated bye with
+  # it unless the bye has already been pinned, which is the reference's own
+  # `usePairingAllocatedByeScore` behaviour and depends on the file's order.
+  defp point_system_lines(nil), do: []
+
+  defp point_system_lines(system) do
+    default = default_point_system()
+
+    order = [
+      {:win, "BBW"},
+      {:draw, "BBD"},
+      {:loss, "BBL"},
+      {:zero_point_bye, "BBZ"},
+      {:forfeit_loss, "BBF"},
+      {:pairing_allocated_bye, "BBU"}
+    ]
+
+    for {field, code} <- order,
+        value = Map.get(system, field),
+        value != Map.fetch!(default, field) do
+      # Fixed columns, not free-form. `readPoints` (trf.cpp:637-644) demands
+      # a line of at least 8 characters and reads the value from column 5
+      # onwards, so `BBW 2.0` - the obvious spelling, and 7 characters - is
+      # rejected outright as an invalid line. Right-aligned in columns 5-8,
+      # matching how every other point field in TRF16 is written.
+      code <> " " <> String.pad_leading(:erlang.float_to_binary(value / 1, decimals: 1), 4)
+    end
   end
 
   # `XXA`/`XXP` are JaVaFo's spellings and what the sibling project emits,
@@ -758,12 +861,119 @@ defmodule Ainalrami.Trf do
           "XXA" -> parse_xxa(acc, line)
           "250" -> parse_250(acc, line)
           "260" -> parse_260(acc, line)
+          "162" -> parse_point_system(acc, line)
+          code when code in @bb_codes -> parse_bb_points(acc, code, line)
           code -> parse_header_line(acc, code, line)
         end
       end)
 
     validate_games!(result.players, allow_dangling_playing_code: true)
     attach_accelerations(result)
+  end
+
+  # bbpPairings' point-system directives (`trf.cpp:1203-1232`) plus TRF16's
+  # own `162` line, which says the same thing in fixed columns.
+  #
+  # ## Why an engine needs these at all
+  #
+  # They set what a result is WORTH, and a player's score is what decides
+  # which bracket they are paired in. Every score group in the Dutch system
+  # is built from these numbers, so an engine that ignores them does not
+  # merely report the wrong totals - it pairs a different tournament. The
+  # one an organiser is most likely to change is `BBU`: FIDE permits valuing
+  # the pairing-allocated bye at half a point rather than a full one, and
+  # that moves its recipient into a different score group for every
+  # remaining round.
+  #
+  # Unread until 2026-08-24, which meant they fell through to the header
+  # parser and were silently discarded - the same failure mode `250`/`260`
+  # had, and with the same consequence: a legal-looking round paired on
+  # scores the file did not ask for.
+  defp parse_bb_points(acc, code, line) do
+    value = read_points!(String.slice(line, 3..-1//1), line)
+    field = Map.fetch!(@bb_fields, code)
+
+    acc
+    |> put_point(field, value)
+    |> then(fn acc ->
+      # `BBW` moves the pairing-allocated bye with it unless `BBU` has
+      # already pinned it - bbpPairings' `usePairingAllocatedByeScore` flag.
+      # Order matters, and it is the FILE's order, not ours.
+      if field == :win and not Map.get(acc, :pab_pinned?, false) do
+        put_point(acc, :pairing_allocated_bye, value)
+      else
+        acc
+      end
+    end)
+    |> then(fn acc ->
+      if field == :pairing_allocated_bye, do: Map.put(acc, :pab_pinned?, true), else: acc
+    end)
+  end
+
+  # `162 <char><score> <char><score> ...`, nine columns per entry starting at
+  # column 6 (`readPointSystem`, trf.cpp:573-631). `A` is a synonym for `Z`
+  # and sets the forfeit loss along with it; `X` is explicitly unsupported by
+  # the reference, so it is refused here rather than guessed at.
+  defp parse_point_system(acc, line) do
+    line
+    |> String.slice(5..-1//1)
+    |> to_string()
+    |> chunk_point_entries()
+    |> Enum.reduce(acc, fn {char, score_text}, acc ->
+      score = read_points!(score_text, line)
+
+      case char do
+        "W" ->
+          acc = put_point(acc, :win, score)
+
+          if Map.get(acc, :pab_pinned?, false),
+            do: acc,
+            else: put_point(acc, :pairing_allocated_bye, score)
+
+        "D" ->
+          put_point(acc, :draw, score)
+
+        "L" ->
+          put_point(acc, :loss, score)
+
+        c when c in ["Z", "A"] ->
+          acc |> put_point(:zero_point_bye, score) |> put_point(:forfeit_loss, score)
+
+        "P" ->
+          acc |> put_point(:pairing_allocated_bye, score) |> Map.put(:pab_pinned?, true)
+
+        "X" ->
+          raise ValidationError,
+            message: "162 line uses symbol X, which no reference implements: #{line}"
+
+        other ->
+          raise ValidationError,
+            message: "162 line has unknown result symbol #{inspect(other)}: #{line}"
+      end
+    end)
+  end
+
+  defp chunk_point_entries(rest) do
+    rest
+    |> String.graphemes()
+    |> Enum.chunk_every(9)
+    |> Enum.map(&Enum.join/1)
+    |> Enum.reject(&(String.trim(&1) == ""))
+    |> Enum.map(fn entry ->
+      {String.slice(entry, 0, 1), String.slice(entry, 1, 4)}
+    end)
+  end
+
+  defp put_point(acc, field, value) do
+    system = acc.tournament[:point_system] || default_point_system()
+    put_in(acc.tournament[:point_system], Map.put(system, field, value))
+  end
+
+  defp read_points!(text, line) do
+    case text |> to_string() |> String.trim() |> Float.parse() do
+      {value, ""} when value >= 0 -> value
+      _ -> raise ValidationError, message: "unreadable point value: #{line}"
+    end
   end
 
   # An `XXA` line may legally precede the `001` line of the player it names

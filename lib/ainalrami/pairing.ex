@@ -95,6 +95,16 @@ defmodule Ainalrami.Pairing do
   # unconditionally until the TRF's `152` field was read at all.
   @initial_colour_key :ainalrami_initial_colour
 
+  # What a result is WORTH. Stashed for the same reason as the others: it is
+  # read deep in the historic-score reconstruction, which the bracket cascade
+  # reaches from several directions.
+  #
+  # This is not cosmetic. Score decides bracket, and bracket decides
+  # everything, so an engine running the standard 1/=/0 against a file that
+  # says otherwise does not report the wrong totals - it pairs a different
+  # tournament and reports it confidently.
+  @point_system_key :ainalrami_point_system
+
   @doc """
   Pairs the next round, dispatching to `pair_round_one/1` when no game
   history exists yet, or the bracket cascade below otherwise.
@@ -117,6 +127,8 @@ defmodule Ainalrami.Pairing do
       @initial_colour_key,
       opts[:initial_colour] || infer_initial_colour(players) || "w"
     )
+
+    Process.put(@point_system_key, opts[:point_system] || Ainalrami.Trf.default_point_system())
 
     try do
       played = rounds_played(players)
@@ -148,6 +160,7 @@ defmodule Ainalrami.Pairing do
     after
       Process.delete(@expected_rounds_key)
       Process.delete(@initial_colour_key)
+      Process.delete(@point_system_key)
       Process.delete(@played_key)
       Process.delete(@forbidden_key)
     end
@@ -1080,7 +1093,16 @@ defmodule Ainalrami.Pairing do
   # to prevent. `Pairing` aliases nothing from `Trf` by design (the engine
   # runs on plain maps and does not require a parsed file), so this is the
   # one call rather than a module-wide alias.
-  defp result_points(result), do: Ainalrami.Trf.points_for(result)
+  defp result_points(result) do
+    case Process.get(@point_system_key) do
+      nil -> Ainalrami.Trf.points_for(result)
+      system -> Ainalrami.Trf.points_for(result, system)
+    end
+  end
+
+  defp point_system do
+    Process.get(@point_system_key) || Ainalrami.Trf.default_point_system()
+  end
 
   defp float_of(player, rounds_back) do
     player |> Map.get(:floats, %{}) |> Map.get(rounds_back, :none)
@@ -4017,7 +4039,13 @@ defmodule Ainalrami.Pairing do
         # strictly more than half. Kept as a float and compared with `>`, so
         # 3.5 > 3.5 is false - which is what `(points * 2) > playedRounds`
         # gives in the reference's own units.
-        threshold = played_rounds / 2
+        # `pointsForWin` is the missing factor whenever a win is not worth
+        # 1.0: the reference's expression is
+        # `(playedRounds * pointsForWin) >> 1`, i.e. half of what a player
+        # COULD have scored so far, and scores are in the file's own units.
+        # Dividing rounds by two alone silently assumed the standard system.
+        points_for_win = point_system().win
+        threshold = played_rounds * points_for_win / 2
 
         played_rounds >= expected_rounds - 1 and
           (a.points > threshold or b.points > threshold)
@@ -4054,10 +4082,21 @@ defmodule Ainalrami.Pairing do
   # Enforced as a hard requirement on the cascade's final state rather
   # than scored, so the search has to find a legal bye assignee or report
   # that none exists.
-  @bye_disqualifying_results ~w(U F +)
+  # Under the standard system this is exactly `~w(U F +)`, which is what
+  # this was: `+` and `F` are unplayed and worth a win, and `U` is the
+  # pairing's own bye. Written as the reference writes it - a comparison
+  # against `pointsForWin` rather than a fixed list - because the list stops
+  # being right the moment a file sets its own point values. With
+  # `BBF 1.0`, a forfeit LOSS is worth a win and disqualifies its holder;
+  # with `BBW 2.0`, a half-point bye still does not.
 
   defp eligible_for_bye?(player) do
-    not Enum.any?(player.games, &(&1.result in @bye_disqualifying_results))
+    not Enum.any?(player.games, &bye_disqualifying?/1)
+  end
+
+  defp bye_disqualifying?(%{result: result}) do
+    not Ainalrami.Trf.game_was_played?(result) and
+      (result == "U" or result_points(result) >= point_system().win)
   end
 
   defp assign_colour_with_history({a, b}) do

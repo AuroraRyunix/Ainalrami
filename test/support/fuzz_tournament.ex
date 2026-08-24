@@ -81,6 +81,10 @@ defmodule Ainalrami.Test.FuzzTournament do
     forbidden = forbidden_pairs(player_count)
     roster = player_count |> initial_roster() |> accelerate(rounds)
 
+    # Last, and only drawing when the axis is switched on: everything above
+    # has to keep consuming `:rand` in exactly the order it did before.
+    Process.put(:fuzz_point_system, resolve_point_system())
+
     {rounds, player_count, forbidden, roster}
   end
 
@@ -186,15 +190,91 @@ defmodule Ainalrami.Test.FuzzTournament do
 
   defp ceil_div(a, b), do: div(a + b - 1, b)
 
-  # `152 W` (TRF-2026's native initial-piece-colour field): unlike javafo,
+  # What a result is WORTH, which every corpus before 2026-08-24 held at the
+  # standard 1 / 0.5 / 0 without ever saying so.
+  #
+  # It is the deepest constant this harness had left. Points decide a
+  # player's score, score decides which bracket they are paired in, and the
+  # bracket decides everything after that - so an engine reading these
+  # differently does not report different totals, it pairs a different
+  # tournament. `half_bye` is the one a real organiser reaches for: FIDE
+  # permits valuing the pairing-allocated bye at half a point, which moves
+  # its recipient into a different score group for every remaining round.
+  #
+  # `double` is deliberately a no-op in disguise: scaling everything by two
+  # cannot reorder anybody, so any disagreement it produces is a unit bug
+  # rather than a rules one - `(playedRounds * pointsForWin) >> 1` is
+  # exactly the kind of expression that gets written as `rounds / 2`.
+  @point_systems %{
+    "standard" => nil,
+    "half_bye" => %{pairing_allocated_bye: 0.5},
+    "double" => %{win: 2.0, draw: 1.0, pairing_allocated_bye: 2.0},
+    "football" => %{win: 3.0, draw: 1.0, pairing_allocated_bye: 3.0},
+    "paid_loss" => %{loss: 0.5},
+    "paid_forfeit" => %{forfeit_loss: 0.5, zero_point_bye: 0.5}
+  }
+
+  @doc "The named point systems this harness can generate."
+  def point_system_names, do: Map.keys(@point_systems)
+
+  @doc """
+  This tournament's point system, or `nil` for the standard one.
+
+  `nil` rather than the default map so that a run which sets nothing
+  serialises byte-identically to before this axis existed - no `BB*` lines,
+  no change to any file bbpPairings has already validated.
+  """
+  def point_system, do: Process.get(:fuzz_point_system)
+
+  def result_points(result) do
+    case point_system() do
+      nil -> Ainalrami.Trf.points_for(result)
+      system -> Ainalrami.Trf.points_for(result, system)
+    end
+  end
+
+  # Consumes randomness ONLY for "mixed". Unset or a fixed name makes no
+  # `:rand` call at all, so every seed in every existing corpus still
+  # produces the tournament it produced before this was added - the
+  # constraint described in the moduledoc.
+  defp resolve_point_system do
+    case System.get_env("PAIRING_FUZZ_POINT_SYSTEM") do
+      nil -> nil
+      "mixed" -> named_point_system(Enum.random(Enum.sort(Map.keys(@point_systems))))
+      name -> named_point_system(name)
+    end
+  end
+
+  defp named_point_system(name) do
+    case Map.fetch(@point_systems, name) do
+      {:ok, nil} ->
+        nil
+
+      {:ok, overrides} ->
+        Map.merge(Ainalrami.Trf.default_point_system(), overrides)
+
+      :error ->
+        raise "PAIRING_FUZZ_POINT_SYSTEM must be one of " <>
+                Enum.join(Enum.sort(Map.keys(@point_systems)), ", ") <>
+                " or \"mixed\", got #{inspect(name)}"
+    end
+  end
+
+  # `152` (TRF-2026's native initial-piece-colour field): unlike javafo,
   # bbpPairings does not choose the very first round's colour on its own -
   # it requires the initial colour to be specified whenever no player has
   # one recorded yet, or it refuses to pair at all ("Please configure the
-  # initial piece colors"). Which colour is picked doesn't matter here:
-  # `normalize/1` already strips colour from the comparison entirely, the
-  # same "deliberately colour-blind" stance `Ainalrami.JavafoComparisonTest`
-  # takes and for the identical reason (Article 5.1's drawing of lots has
-  # no deterministic rule either engine's fixed convention needs to match).
+  # initial piece colors").
+  #
+  # It carries `initial_colour/0`, and did NOT until 2026-08-24. The colour
+  # axis was added on 08-17 to stop this line being hardcoded to White, and
+  # only half of it landed: the drawn colour reached `Pairing` through the
+  # harness's options and never reached the FILE, so on every Black
+  # tournament the reference was told White while this engine was told
+  # Black. Pairing rates survived that - `normalize/1` sorts colour out of
+  # the comparison, and each round's recorded colours come from the
+  # reference's own answer - but the separate colour-mismatch instrument was
+  # counting a disagreement the harness had manufactured.
   # `PAIRING_FUZZ_NUMERIC_EXT=1` swaps JaVaFo's free-form `XXA`/`XXP` for
   # bbpPairings' own fixed-column `250`/`260`. Worth an axis because
   # bbpPairings is the implementation that DEFINES those two lines, and
@@ -215,12 +295,13 @@ defmodule Ainalrami.Test.FuzzTournament do
           name: "Fuzz",
           type: "swiss",
           forbidden_pairs: forbidden,
-          number_of_rounds: total_rounds
+          number_of_rounds: total_rounds,
+          point_system: point_system()
         },
         players: players
       },
       numeric_extensions: numeric?
-    ) <> "152 W\r\nXXR #{total_rounds}\r\n"
+    ) <> "152 #{initial_colour()}\r\nXXR #{total_rounds}\r\n"
   end
 
   # A withdrawal is a Z for every remaining round - the same shape as a
@@ -275,11 +356,11 @@ defmodule Ainalrami.Test.FuzzTournament do
     else
       Enum.map(players, fn player ->
         if not MapSet.member?(withdrawn, player.rank) and :rand.uniform(100) <= pct do
-          {result, points} = Enum.random([{"H", 0.5}, {"Z", 0.0}])
+          result = Enum.random(~w(H Z))
 
           %{
             player
-            | points: player.points + points,
+            | points: player.points + result_points(result),
               games: player.games ++ [%{opponent_rank: nil, colour: nil, result: result}]
           }
         else
@@ -314,7 +395,7 @@ defmodule Ainalrami.Test.FuzzTournament do
     Enum.map(players, fn p ->
       case Map.fetch(games_by_rank, p.rank) do
         {:ok, game} ->
-          %{p | points: p.points + game.points, games: p.games ++ [Map.delete(game, :points)]}
+          %{p | points: p.points + result_points(game.result), games: p.games ++ [game]}
 
         :error ->
           p
@@ -333,48 +414,48 @@ defmodule Ainalrami.Test.FuzzTournament do
   end
 
   defp games_for(_white, nil, :bye) do
-    {%{opponent_rank: nil, colour: nil, result: "U", points: 1.0}, nil}
+    {%{opponent_rank: nil, colour: nil, result: "U"}, nil}
   end
 
   defp games_for(white, black, :white_win) do
     {
-      %{opponent_rank: black, colour: "w", result: "1", points: 1.0},
-      %{opponent_rank: white, colour: "b", result: "0", points: 0.0}
+      %{opponent_rank: black, colour: "w", result: "1"},
+      %{opponent_rank: white, colour: "b", result: "0"}
     }
   end
 
   defp games_for(white, black, :black_win) do
     {
-      %{opponent_rank: black, colour: "w", result: "0", points: 0.0},
-      %{opponent_rank: white, colour: "b", result: "1", points: 1.0}
+      %{opponent_rank: black, colour: "w", result: "0"},
+      %{opponent_rank: white, colour: "b", result: "1"}
     }
   end
 
   defp games_for(white, black, :white_forfeits) do
     {
-      %{opponent_rank: black, colour: "w", result: "-", points: 0.0},
-      %{opponent_rank: white, colour: "b", result: "+", points: 1.0}
+      %{opponent_rank: black, colour: "w", result: "-"},
+      %{opponent_rank: white, colour: "b", result: "+"}
     }
   end
 
   defp games_for(white, black, :black_forfeits) do
     {
-      %{opponent_rank: black, colour: "w", result: "+", points: 1.0},
-      %{opponent_rank: white, colour: "b", result: "-", points: 0.0}
+      %{opponent_rank: black, colour: "w", result: "+"},
+      %{opponent_rank: white, colour: "b", result: "-"}
     }
   end
 
   defp games_for(white, black, :double_forfeit) do
     {
-      %{opponent_rank: black, colour: "w", result: "-", points: 0.0},
-      %{opponent_rank: white, colour: "b", result: "-", points: 0.0}
+      %{opponent_rank: black, colour: "w", result: "-"},
+      %{opponent_rank: white, colour: "b", result: "-"}
     }
   end
 
   defp games_for(white, black, :draw) do
     {
-      %{opponent_rank: black, colour: "w", result: "=", points: 0.5},
-      %{opponent_rank: white, colour: "b", result: "=", points: 0.5}
+      %{opponent_rank: black, colour: "w", result: "="},
+      %{opponent_rank: white, colour: "b", result: "="}
     }
   end
 
@@ -385,11 +466,9 @@ defmodule Ainalrami.Test.FuzzTournament do
   end
 
   # C.04.3 5.1's initial colour. `PAIRING_FUZZ_INITIAL_COLOUR=B` runs the
-  # corpus with Black drawn instead, which no axis did before 2026-08-17: the
-  # line was hardcoded `152 W`, so 5.2.5's "give them the initial-colour"
-  # branch was only ever exercised one way round -- and the engine's own
-  # hardcoded assumption of White agreed with it by accident rather than by
-  # reading the field.
+  # corpus with Black drawn instead, which no axis did before 2026-08-17 -
+  # and, because `build_trf/3` kept writing `152 W` until 2026-08-24, no axis
+  # put Black in front of BOTH engines before then.
   # Each of these reads the value stashed for THIS tournament, falling back
   # to the environment so a run that sets nothing behaves exactly as before.
   def initial_colour, do: Process.get(:fuzz_initial_colour) || env_initial_colour()
