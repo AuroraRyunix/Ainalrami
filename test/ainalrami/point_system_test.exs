@@ -13,6 +13,7 @@ defmodule Ainalrami.PointSystemTest do
   """
   use ExUnit.Case, async: true
 
+  alias Ainalrami.Pairing
   alias Ainalrami.Trf
 
   describe "what each result code is worth" do
@@ -255,6 +256,71 @@ defmodule Ainalrami.PointSystemTest do
       assert Trf.game_was_played?("W")
       assert Trf.game_was_played?("D")
       assert Trf.game_was_played?("L")
+    end
+
+    # `getFloat` (dutch.cpp:110-129) decides whether an UNPLAYED round was a
+    # downfloat by asking whether it paid more than a LOSS:
+    #
+    #     getPoints(player, match) > tournament.pointsForLoss
+    #
+    # `float_direction/4` read that as `> 0.0`, which is the same number
+    # only while a loss is worth nothing. The two readings agree under the
+    # standard system and under every other named system this harness runs -
+    # `half_bye`, `football`, `double`, `paid_forfeit` all leave a loss at
+    # zero - so 2.5 billion cross-checked pairings could not reach it. Set
+    # `BBL 0.5` and a half-point bye stops being better than losing: it is
+    # no longer a downfloat, and C14-C21 read a float history the reference
+    # does not have for every player who ever sat a round out. Measured at
+    # 88.62% of rounds against the reference on a 300-tournament range, and
+    # 100.00% with the threshold read from the file.
+    @half_point_bye_fixture "test/fixtures/point_system/paid-loss-half-point-bye-float.trf"
+
+    test "an unplayed round is a downfloat only if it beat a LOSS, not zero" do
+      %{players: players, tournament: t} = Trf.parse(File.read!(@half_point_bye_fixture))
+
+      assert t[:point_system].loss == 0.5, "the fixture is the BBL 0.5 case"
+
+      pairs =
+        Pairing.pair_next_round(players,
+          expected_rounds: t[:rounds],
+          point_system: t[:point_system]
+        )
+
+      # Nine players, round 3. Score groups 1.5 = {2,3,5,9}, 1.0 = {4,7,8},
+      # 0.5 = {1,6}; rank 1 takes the bye and the whole question is the 1.0
+      # bracket, which pairs one board and floats one player. Rank 7 sat out
+      # round 2 with `H`: worth 0.5, which is a draw's value and also a
+      # LOSS's value here, so it is FLOAT_NONE. Reading it as a downfloat
+      # made "pair 7, float 4" score a point of C14 it has not earned, and
+      # this engine took it. Real bbpPairings pairs 4 v 8 and floats 7.
+      assert normalise(pairs) == [[1], [2, 3], [4, 8], [5, 9], [6, 7]]
+    end
+
+    @float_history_fixture "test/fixtures/point_system/paid-loss-float-history.trf"
+
+    test "a half-point bye under BBL 0.5 leaves no float history behind it" do
+      %{players: players, tournament: t} = Trf.parse(File.read!(@float_history_fixture))
+
+      pairs =
+        Pairing.pair_next_round(players,
+          expected_rounds: t[:rounds],
+          point_system: t[:point_system]
+        )
+
+      # The same threshold, reached through C14 and C18 rather than a bare
+      # tie-break: ranks 4 and 9 both hold `H` results, and with them read as
+      # downfloats the 1.5 bracket {2,4,7} preferred to pair 4 and float 2.
+      # bbpPairings pairs 2 v 7 and floats 4.
+      assert normalise(pairs) == [[1, 3], [2, 7], [4, 9], [6, 8]]
+    end
+
+    defp normalise(pairs) do
+      pairs
+      |> Enum.map(fn
+        {w, nil} -> [w]
+        {w, b} -> Enum.sort([w, b])
+      end)
+      |> Enum.sort()
     end
   end
 end

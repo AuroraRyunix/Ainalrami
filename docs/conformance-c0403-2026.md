@@ -19,19 +19,19 @@ were compared term by term, not merely observed to agree.
 | article | rule | implementation | verdict |
 |---|---|---|---|
 | 1.2 | Order: score, then TPN ascending | `Enum.sort_by(&{-&1.points, &1.rank})` | exact |
-| 1.4.3 | A downfloat is given to a PAB recipient, or to anyone who without playing scores more than a loss | `float_direction/4`: an unplayed round is `:down` when `result_points > 0.0` | exact |
+| 1.4.3 | A downfloat is given to a PAB recipient, or to anyone who without playing scores more than a loss | `float_direction/4`: an unplayed round is `:down` when `result_points > point_system().loss` | exact - see note 6 |
 | 1.7.1 | Absolute preference: CD > +1 or < −1, **or** same colour in the two latest rounds played | `absolute? = imbalance > 1 or not is_nil(repeated)`, `repeated` set when `consecutive > 1` | exact |
 | 1.7.2 | Strong preference: CD = ±1 | `strong? = not absolute? and imbalance > 0` | exact |
 | 1.7.3 | Mild preference: CD = 0, alternate from the previous game | `preference` ladder falls through to `invert(last)` | exact |
 | 1.7.4 | A player with no games has no preference | `preference` is `nil` only for a never-played player | exact |
-| 1.8 | Topscorer: **over** 50% of the maximum possible score, final round only | `points > played_rounds / 2`, gated on `played_rounds >= expected_rounds - 1` | exact - see note 1 |
+| 1.8 | Topscorer: **over** 50% of the maximum possible score, final round only | `points > played_rounds * point_system().win / 2`, gated on `played_rounds >= expected_rounds - 1` | exact - see notes 1 and 6 |
 
 ## Absolute criteria (2.1)
 
 | article | rule | implementation | verdict |
 |---|---|---|---|
 | C1 | Two participants shall not play each other more than once | `legal_pair?/2`, gated on `played?/1` | exact |
-| C2 | A participant who has already received a PAB, **or has already scored in one single round, without playing, as many points as rewarded for a win**, shall not receive the PAB | `@bye_disqualifying_results ~w(U F +)` | exact - see note 2 |
+| C2 | A participant who has already received a PAB, **or has already scored in one single round, without playing, as many points as rewarded for a win**, shall not receive the PAB | `bye_disqualifying?/1`: unplayed **and** (`U`, or `result_points >= point_system().win`) | exact - see notes 2 and 6 |
 | C3 | **Non-topscorers** with the same absolute colour preference shall not meet | `colour_compatible?/2` refuses the pair unless `final_round_topscorers?/2` | exact |
 
 ## Completion, PAB, and quality criteria
@@ -79,6 +79,34 @@ are equivalent **provided the precomputed minimum is genuinely achievable**,
 which is what `bye_assignee_score/2`'s bootstrap matching establishes. It is
 the same shape bbpPairings uses. Recorded here because it is a deliberate
 divergence in mechanism, not in outcome.
+
+**6 - three articles quote a POINT VALUE, and the file sets it.** 1.4.3
+says "more than a loss", 1.8 says "the maximum possible score", and C2 says
+"as many points as rewarded for a win". Under the standard 1 / ½ / 0 system
+those read 0, half the rounds played, and 1 - and an implementation that
+writes the number rather than the setting is right, silently, for as long
+as nobody changes the system. bbpPairings does not write the numbers: its
+three conditions are `> pointsForLoss` (dutch.cpp:118), `(playedRounds *
+max(pointsForWin, pointsForDraw)) >> 1` (dutch.cpp:52-56) and `>=
+pointsForWin` (common.h:112), all read from `BBW`/`BBD`/`BBL`/`BBZ`/`BBF`/
+`BBU` or TRF16's `162`.
+
+All three were baked in here. 1.8 and C2 were fixed on 2026-08-24 with the
+directives themselves; 1.4.3 was missed and fixed on 2026-08-25, after a
+`BBL 0.5` corpus put round agreement at 88.62% and the adjudicator
+(`explain_round/3`) reported this engine's own answer scoring BETTER than
+the reference's on C14 in 108 of 200 dumped positions and on C16 in 76 more
+- the signature of a criterion the ladder is computing wrongly rather than
+a search that failed to reach the right answer. With a loss worth half a
+point, a half-point bye is no longer better than losing, so it is not a
+downfloat; reading it as one gave every player who had ever sat a round out
+a float history the reference does not have, and C14-C21 then priced their
+pairings wrongly. 100.00% after the fix, on the same corpus.
+
+One term is still narrower than the reference's: 1.8's threshold uses
+`point_system().win` where bbpPairings uses `max(pointsForWin,
+pointsForDraw)`. The two differ only in a system where a draw outscores a
+win, which no named system does and no sane file would.
 
 ## Colour allocation (Article 5)
 

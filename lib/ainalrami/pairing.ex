@@ -963,6 +963,19 @@ defmodule Ainalrami.Pairing do
   # An unplayed round counts as a downfloat whenever it scored better than
   # a loss, so a pairing-allocated bye is a downfloat - which is what makes
   # this criterion bite in odd-sized tournaments.
+  #
+  # "Better than a LOSS", not "better than nothing": `getFloat`
+  # (dutch.cpp:117-120) reads `getPoints(player, match) >
+  # tournament.pointsForLoss`, and `pointsForLoss` is whatever the file's
+  # `BBL`/`162 L` says. The two readings coincide under the standard 1 /
+  # 1/2 / 0 system, where a loss pays zero, and only there - which is why a
+  # hardcoded `> 0.0` survived 2.5 billion pairings of standard-scored
+  # cross-checking and then collapsed to 88.62% of rounds the moment
+  # `BBL 0.5` was added as an axis. With a loss worth a half point a
+  # half-point bye is no longer better than losing, so it is NOT a
+  # downfloat, and C14-C21 read a float history the reference does not
+  # have for every player who ever sat one out.
+  #
   # Indexed by the TOURNAMENT's played-round count, not by the player's own
   # game count - bbpPairings reads `player.matches[tournament.playedRounds
   # - roundsBack]`. The two are the same only while every player has an
@@ -981,7 +994,7 @@ defmodule Ainalrami.Pairing do
 
       cond do
         not played?(game) ->
-          if result_points(game.result) > 0.0, do: :down, else: :none
+          if result_points(game.result) > point_system().loss, do: :down, else: :none
 
         not is_map_key(by_rank, game.opponent_rank) ->
           :none
