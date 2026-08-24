@@ -66,7 +66,7 @@ defmodule Ainalrami.Test.Gacrux do
       case System.cmd(python_bin(), args, stderr_to_stdout: true) do
         {out, 0} ->
           case File.read(output) do
-            {:ok, text} -> classify(parse_output(text), out)
+            {:ok, text} -> classify(text, out)
             {:error, _} -> {:no_valid_pairing, out}
           end
 
@@ -78,8 +78,38 @@ defmodule Ainalrami.Test.Gacrux do
     end
   end
 
-  defp classify([], out), do: {:no_valid_pairing, out}
-  defp classify(pairs, _out), do: {:ok, pairs}
+  # Gacrux reports failure INSIDE the output file, with exit status 0:
+  # `commonmain.py:289` writes `### Error <code>` there and leaves the
+  # process successful. Reading that as a pairing is what
+  # `binary_to_integer("Program")` was - a crash that took a whole run down,
+  # found on seed 21 with byes on.
+  #
+  # 510 is deliberately treated as "no legal pairing here" rather than as a
+  # process failure, and it is worth being explicit about why, because 510
+  # is a CATCH-ALL: `do_command` turns any exception raised inside the
+  # checker into `error(510, "Program error")`, so it means "Gacrux raised",
+  # not "the position is unpairable". The two coincide on the case that
+  # found this - bbpPairings answers the same position with its own
+  # no-valid-pairing exit - and the three-way harness records every round
+  # where one reference refuses while the other pairs, so treating it this
+  # way MEASURES the assumption rather than hiding it. If 510 meant
+  # something else, it would surface as a pile of exhaustion splits instead
+  # of as silence.
+  #
+  # Every other code is a real failure - a bad command line, an unreadable
+  # input, a method it does not implement - and stays an error, so a harness
+  # stops rather than quoting a rate built on whatever survived.
+  defp classify(text, out) do
+    case Regex.run(~r/^###\s+Error\s+(\d+)/m, text) do
+      nil -> classify_pairs(parse_output(text), out)
+      [_, "510"] -> {:no_valid_pairing, String.trim(text)}
+      [_, code] -> {:error, {String.to_integer(code), String.trim(text) <> out}}
+    end
+  end
+
+  defp classify_pairs({:error, reason}, _out), do: {:error, {0, reason}}
+  defp classify_pairs([], out), do: {:no_valid_pairing, out}
+  defp classify_pairs(pairs, _out), do: {:ok, pairs}
 
   # See `Ainalrami.Test.Javafo`'s identical helper for why this retries
   # instead of a plain `File.rm_rf!/1` - same Windows transient-handle
@@ -105,12 +135,30 @@ defmodule Ainalrami.Test.Gacrux do
         []
 
       [_count | lines] ->
-        Enum.map(lines, fn line ->
-          [w, b] = line |> String.trim() |> String.split(~r/\s+/)
-          white = String.to_integer(w)
-          black = String.to_integer(b)
-          {white, if(black == 0, do: nil, else: black)}
+        lines
+        |> Enum.reduce_while([], fn line, acc ->
+          case parse_pair(line) do
+            {:ok, pair} -> {:cont, [pair | acc]}
+            :error -> {:halt, {:error, "unreadable pairing line: " <> inspect(line)}}
+          end
         end)
+        |> case do
+          {:error, _} = error -> error
+          pairs -> Enum.reverse(pairs)
+        end
+    end
+  end
+
+  # Returns `{:ok, pair}` or `:error` rather than matching and converting
+  # inline. The inline version raised from inside a `Task`, which killed the
+  # whole run instead of reporting one bad round.
+  defp parse_pair(line) do
+    with [w, b] <- line |> String.trim() |> String.split(~r/\s+/),
+         {white, ""} <- Integer.parse(w),
+         {black, ""} <- Integer.parse(b) do
+      {:ok, {white, if(black == 0, do: nil, else: black)}}
+    else
+      _ -> :error
     end
   end
 end
