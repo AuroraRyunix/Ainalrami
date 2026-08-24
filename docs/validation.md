@@ -37,6 +37,35 @@ result rather than a defect - it is the size of the rules change. An
 engine agreeing with all three simultaneously would prove the harness was
 measuring nothing.
 
+## The corpora
+
+Six of them now, run between 2026-08-20 and 2026-08-24. The totals every
+other number on this page sits inside:
+
+| run | axes | rounds | individual pairings | disagreements |
+|---|---|---|---|---|
+| Round sweep, R=1..20 (08-23) | 20 | 59,966,505 | 684,901,202 | 0 |
+| Cross-axis (08-23) | 25 | 35,436,044 | 474,685,328 | 0 |
+| Rating shape / withdrawals / tiny fields (08-24) | 16 | 25,209,754 | 285,118,044 | 0 |
+| Randomised corpus (08-23) | 4 | 7,898,024 | 116,251,032 | 0 |
+| Six-million run (08-20) | 17 | 44,486,465 | 488,033,862 | 2 |
+| Same axes, disjoint seeds (08-21) | 17 | 44,473,264 | 487,338,797 | 0 |
+| **total** | **82** | **217,470,056** | **2,536,328,265** | **2** |
+
+The last row is a replication, not new coverage: the same seventeen axes
+on a different build of this engine, which is evidence that the matching
+optimisation is correctness-neutral rather than evidence about the rules.
+
+The 08-20 corpus is written up in full below. Per-axis detail for the four
+later runs is in [engineering-log.md](engineering-log.md), under their own
+dates.
+
+**The limit of all of it.** Every one of those 2.5 billion pairings is
+measured against a SINGLE oracle, and agreement with one reference cannot
+detect a rule both engines read the same wrong way. The only instrument
+that can is the three-way harness, and it has run over 3,352 rounds - see
+[The references](#the-references) for what that does and does not bound.
+
 ## The corpus
 
 **5,993,000 tournaments, 44,486,465 rounds, 488,033,862 individual
@@ -407,9 +436,26 @@ Stated so the claim's boundary is explicit:
   FIDE C.04.7 uses `2 * ceil(n/4)`. Reached only through its own flag,
   never through `XXA`, so it cannot make the two engines disagree here -
   both read identical `XXA` lines from an identical file.
-- **Team tournaments, unrated players, late entrants**, and files where
-  `rounds_count` disagrees with `XXR`. The harness generates none of
-  these; see [TODO.md](../TODO.md).
+- ~~**Unrated players**~~ - **covered 2026-08-24.** The rating run varies
+  the shape of the field's ratings across five modes, two of which put some
+  or all players at 0. 285 million pairings, zero disagreements.
+- **Team tournaments and late entrants**, and files where `rounds_count`
+  disagrees with `XXR`. The harness generates none of these; see
+  [TODO.md](../TODO.md). Late entrants are the one of the three that a
+  normal club event actually produces.
+- **Non-default point configuration.** Every corpus scores a win at 1, a
+  draw at 0.5 and a pairing-allocated bye at 1. bbpPairings can be told
+  otherwise (`BBW`/`BBD`/`BBU`/`BBZ`/`BBF`), and FIDE permits an organiser
+  to value the bye at 0.5. Points decide the score groups, and score groups
+  are the foundation of every bracket in the system - so this is a
+  constant that reaches further into the algorithm than most of the ones
+  already varied.
+- **Fields above 500 players and round counts above 20.** Both are
+  boundaries of the harness rather than of the engine, but nothing has
+  measured past them.
+- **Three-way agreement at scale.** 3,352 rounds, against 217 million
+  two-way. This is the weakest number on the page and the one worth
+  raising.
 
 ## Performance
 

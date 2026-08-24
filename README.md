@@ -13,7 +13,8 @@ still ship. It reads and writes TRF16, mirrors JaVaFo's command-line
 shape, and is verified against two independent reference implementations.
 
 **Status: beta.** The engine is functionally complete and reproduces
-bbpPairings 6.0.0 exactly across 6 million generated tournaments.
+bbpPairings 6.0.0 exactly across 2.5 billion compared pairings, in six
+separate corpora that between them vary every input the harness can vary.
 Article 4's candidate ordering is verified against the regulations
 directly, and one point of Article 5 is settled *against* both reference
 engines, from the handbook's own text. Both are documented rather than
@@ -26,9 +27,10 @@ hidden - see [What is not settled](#what-is-not-settled).
 Measured against **bbpPairings 6.0.0**, which implements the same 2026
 rules.
 
-**Cumulative to 2026-08-24: 2.05 billion individual pairings compared,
-across 173 million rounds. Two disagreements, both a defect in bbpPairings
-that Gacrux resolves this engine's way. Zero illegal rounds.**
+**Cumulative to 2026-08-24: 2,536,328,265 individual pairings compared,
+across 217,470,056 rounds, in 6 corpora over 82 axes. Two disagreements,
+both a defect in bbpPairings that Gacrux resolves this engine's way. Zero
+illegal rounds.**
 
 | run | axes | rounds | individual pairings | disagreements |
 |---|---|---|---|---|
@@ -37,8 +39,13 @@ that Gacrux resolves this engine's way. Zero illegal rounds.**
 | Rating shape / withdrawals / tiny fields (08-24) | 16 | 25,209,754 | **285,118,044** | 0 |
 | Randomised corpus (08-23) | 4 | 7,898,024 | **116,251,032** | 0 |
 | Six-million run (08-20) | 17 | 44,486,465 | 488,033,862 | 2 |
+| Same axes, disjoint seeds (08-21) | 17 | 44,473,264 | 487,338,797 | 0 |
+| **total** | **82** | **217,470,056** | **2,536,328,265** | **2** |
 
-The two newer runs exist because size alone proves little. Every corpus
+The four runs above the 08-20 corpus exist because size alone proves
+little, and the last row is a replication rather than new coverage:
+the same seventeen axes on a different build of this engine, which is
+evidence about the optimisation, not about the rules. Every corpus
 before 2026-08-17 held the round count at 9, and that one fixed parameter
 hid a real defect that 2.55M tournaments could not produce and 2,000 at
 eight rounds found immediately. The round sweep therefore varies rounds
@@ -47,10 +54,10 @@ held still - forfeits, forbidden pairs, acceleration, initial colour,
 numeric extensions and field size - against short, classical and deep round
 counts, including axes with all of them firing at once.
 
-The last two go after the INPUT rather than the run parameters. The
-randomised corpus draws rounds, colour, acceleration and extension format
-per tournament instead of per axis, so it explores combinations nobody
-wrote down. The rating run attacks the oldest assumption of all: every
+The randomised and rating runs go after the INPUT rather than the run
+parameters. The randomised corpus draws rounds, colour, acceleration and
+extension format per tournament instead of per axis, so it explores
+combinations nobody wrote down. The rating run attacks the oldest assumption of all: every
 corpus before it drew ratings uniformly from 1000..2800, making every
 player rated and ties incidental - the inverse of real chess, where a
 junior event is entirely unrated and a club field sits on a handful of
@@ -77,6 +84,17 @@ The 2026-08-20 run's own table follows, seventeen axes:
 
 FIDE's FE1 endorsement allows one difference per 500 tournaments. This is
 one per 3 million - nearly four orders of magnitude inside the bar.
+
+**What 2.5 billion pairings do not buy.** Almost all of them are measured
+against ONE oracle, and agreement with a single reference cannot detect a
+rule both engines read the same wrong way. The check on that is the
+three-way harness, where Gacrux gives a genuinely independent third
+opinion - and it has run over 3,352 rounds, not 217 million, because it
+is a Python implementation roughly 35x the cost per round. Those 3,352
+bound the two references' mutual disagreement at about 0.09%, which is
+the real precision of the ruler every other number here is measured with.
+Raising that bound is worth more now than another billion two-way
+pairings.
 
 The same seventeen axes were re-run on **2026-08-21** with disjoint seeds,
 against the newer matching-layer optimisation (`finalize_pair` as a pure
