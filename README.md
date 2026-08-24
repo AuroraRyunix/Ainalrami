@@ -28,9 +28,9 @@ Measured against **bbpPairings 6.0.0**, which implements the same 2026
 rules.
 
 **Cumulative to 2026-08-24: 2,536,328,265 individual pairings compared,
-across 217,470,056 rounds, in 6 corpora over 82 axes. Two disagreements,
-both a defect in bbpPairings that Gacrux resolves this engine's way. Zero
-illegal rounds.**
+across 217,470,056 rounds, in 6 corpora over 99 axis-runs - 82 of them
+distinct. Two disagreements, both a defect in bbpPairings that Gacrux
+resolves this engine's way. Zero illegal rounds.**
 
 | run | axes | rounds | individual pairings | disagreements |
 |---|---|---|---|---|
@@ -40,12 +40,13 @@ illegal rounds.**
 | Randomised corpus (08-23) | 4 | 7,898,024 | **116,251,032** | 0 |
 | Six-million run (08-20) | 17 | 44,486,465 | 488,033,862 | 2 |
 | Same axes, disjoint seeds (08-21) | 17 | 44,473,264 | 487,338,797 | 0 |
-| **total** | **82** | **217,470,056** | **2,536,328,265** | **2** |
+| **total** | **99** | **217,470,056** | **2,536,328,265** | **2** |
 
 The four runs above the 08-20 corpus exist because size alone proves
-little, and the last row is a replication rather than new coverage:
-the same seventeen axes on a different build of this engine, which is
-evidence about the optimisation, not about the rules. Every corpus
+little, and the last row is a replication rather than new coverage: the
+same seventeen axes on a different build of this engine, which is why 99
+axis-runs are only 82 distinct ones. It is evidence about the
+optimisation, not about the rules. Every corpus
 before 2026-08-17 held the round count at 9, and that one fixed parameter
 hid a real defect that 2.55M tournaments could not produce and 2,000 at
 eight rounds found immediately. The round sweep therefore varies rounds

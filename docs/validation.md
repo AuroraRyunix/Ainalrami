@@ -50,11 +50,12 @@ other number on this page sits inside:
 | Randomised corpus (08-23) | 4 | 7,898,024 | 116,251,032 | 0 |
 | Six-million run (08-20) | 17 | 44,486,465 | 488,033,862 | 2 |
 | Same axes, disjoint seeds (08-21) | 17 | 44,473,264 | 487,338,797 | 0 |
-| **total** | **82** | **217,470,056** | **2,536,328,265** | **2** |
+| **total** | **99** | **217,470,056** | **2,536,328,265** | **2** |
 
 The last row is a replication, not new coverage: the same seventeen axes
-on a different build of this engine, which is evidence that the matching
-optimisation is correctness-neutral rather than evidence about the rules.
+on a different build of this engine - so the 99 axis-runs are 82 distinct
+ones. It is evidence that the matching optimisation is correctness-neutral,
+not evidence about the rules.
 
 The 08-20 corpus is written up in full below. Per-axis detail for the four
 later runs is in [engineering-log.md](engineering-log.md), under their own
