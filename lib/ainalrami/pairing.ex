@@ -4051,13 +4051,23 @@ defmodule Ainalrami.Pairing do
         # more of those than the tournament has played rounds.
         played_rounds = Process.get(@played_key, length(a.games))
 
-        # `>> 1` in bbpPairings is a shift on DOUBLED point units, so it is an
-        # exact half, not a floor. `div/2` here rounded it down: at
-        # playedRounds 7 the real threshold is 3.5 and this used 3, admitting
-        # a player on exactly 3.5 as a topscorer where the reference requires
-        # strictly more than half. Kept as a float and compared with `>`, so
-        # 3.5 > 3.5 is false - which is what `(points * 2) > playedRounds`
-        # gives in the reference's own units.
+        # `div/2` here rounded the threshold down: at playedRounds 7 the
+        # real threshold is 3.5 and this used 3, admitting a player on
+        # exactly 3.5 as a topscorer where the reference requires strictly
+        # more than half. Kept as a float and compared with `>`, so
+        # 3.5 > 3.5 is false.
+        #
+        # `>> 1` in the reference IS an integer shift that truncates, and
+        # not on doubled units as this comment used to claim - points are
+        # TENTHS there (`pointsForWin{ 10u }`, `tournament.h:299`), so
+        # `playedRounds * maxPerRound` is odd, and the shift loses 0.05,
+        # whenever the per-round maximum has an odd tenths digit: a win
+        # worth 0.5, or 1.5. The float here does not truncate, and does not
+        # need to: every score is itself a whole number of tenths, so the
+        # only values the two thresholds disagree about lie strictly
+        # between T and T + 0.05, and no score can land there. Equivalent
+        # for every input a TRF can state - but for that reason, not
+        # because the shift is exact.
         # `pointsForWin` is the missing factor whenever a win is not worth
         # 1.0: the reference's expression is
         # `(playedRounds * pointsForWin) >> 1`, i.e. half of what a player
