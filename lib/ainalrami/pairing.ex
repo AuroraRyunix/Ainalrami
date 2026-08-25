@@ -872,12 +872,11 @@ defmodule Ainalrami.Pairing do
     |> max_or_zero()
   end
 
-  # bbpPairings' `opponent != id || resultChar == 'U' || resultChar == '+'`
-  # - a bye counts as having been paired only when it's the
-  # pairing-allocated one (or a forfeit win, which still occupied a slot).
-  defp participated_in_pairing?(game) do
-    not is_nil(game.opponent_rank) or game.result in ["U", "+"]
-  end
+  # `Ainalrami.Trf.participated_in_pairing?/1`, not a private copy of its
+  # body. There WAS a private copy - identical, and identical is how these
+  # start; `played?/1` was a private copy too, and by the time anyone looked
+  # it recognised three result codes where the shared one recognised six.
+  defp participated_in_pairing?(game), do: Ainalrami.Trf.participated_in_pairing?(game)
 
   defp max_or_zero([]), do: 0
   defp max_or_zero(values), do: Enum.max(values)
