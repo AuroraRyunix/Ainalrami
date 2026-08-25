@@ -44,10 +44,10 @@ defmodule Ainalrami.ThreeWayComparisonTest do
   Both harnesses now generate through `Ainalrami.Test.FuzzTournament`, so
   an axis added for one is available to the other.
 
-  ## Two axes Gacrux cannot take, and why they are refused rather than run
+  ## Three axes Gacrux cannot take, and why they are refused rather than run
 
-  `PAIRING_FUZZ_FORBIDDEN_PCT` and `PAIRING_FUZZ_NUMERIC_EXT` raise here
-  instead of being quietly ignored.
+  `PAIRING_FUZZ_FORBIDDEN_PCT`, `PAIRING_FUZZ_NUMERIC_EXT` and
+  `PAIRING_FUZZ_ACCEL` raise here instead of being quietly ignored.
 
   Gacrux has **no forbidden-pairs concept at all** - no `XXP`, no `260`,
   nothing in `trf2json.py` that reads one - and it does not read `250`
@@ -58,9 +58,43 @@ defmodule Ainalrami.ThreeWayComparisonTest do
   other, which is the one thing this harness exists to measure, so a silent
   skip here would corrupt the only number it produces.
 
-  Acceleration IS passed through: Gacrux parses `XXA`. If a run shows
-  disagreement concentrated on accelerated tournaments, suspect the reader
-  before the rules.
+  **Acceleration is now the third, and it was added the hard way.** This
+  moduledoc used to say acceleration was passed through because Gacrux
+  parses `XXA`, and it ended with a prediction:
+
+  > If a run shows disagreement concentrated on accelerated tournaments,
+  > suspect the reader before the rules.
+
+  It happened. The 2026-08-24 run put the accelerated axis at **42.23%**
+  bbpPairings-vs-Gacrux over 98,323 rounds, against 100.00% on every axis
+  without acceleration, and dragged the combined `everything` axis down to
+  49.96%. It is not a rules disagreement. On
+  `dumps/3way-everything/seed30700002_r1_p20.trf` - a round-1 position with
+  Baku acceleration - bbpPairings and Ainalrami both pair inside the
+  accelerated groups while Gacrux produces the textbook UNACCELERATED
+  top-half-against-bottom-half pairing. Gacrux is pairing a different
+  tournament, so the number measures its reader, not the rules, exactly as
+  with `250`/`260`. Run this axis two-way.
+
+  Note what the prediction bought: because it was written down before the
+  run, the 42% was diagnosed in one position instead of being reported as
+  the references contradicting each other on half of all accelerated rounds.
+
+  ## A crashed reference is missing data, not a disagreement
+
+  Gacrux reports failure INSIDE its output file with exit status 0, and
+  `### Error 510` is its catch-all for "an exception escaped the checker".
+  `Ainalrami.Test.Gacrux` used to map that to "no legal pairing", which is
+  wrong, and this harness is where the wrongness showed: 203 of the 234
+  exhaustion splits the 2026-08-24 run dumped were 510 crashes rather than
+  Gacrux refusing a position - one single bug, `crosstabledutch.py:253`
+  `KeyError: 'n'`, in every one of the 60 sampled.
+
+  A `{:crashed, _}` round is now its own kind. It is counted, reported and
+  dumped, and it is excluded from every rate, because a reference that fell
+  over is evidence for neither side. The crash count is printed on its own
+  line whether or not it is zero, so a future run cannot quietly turn
+  crashes back into disagreements the way this one did.
 
   ## Cost
 
@@ -71,7 +105,7 @@ defmodule Ainalrami.ThreeWayComparisonTest do
 
       PAIRING_FUZZ_COUNT=200 PAIRING_FUZZ_ROUNDS=9 mix test --only three_way
 
-  Same tunables as the other harnesses, minus the two above.
+  Same tunables as the other harnesses, minus the three above.
   """
 
   use ExUnit.Case
@@ -100,10 +134,11 @@ defmodule Ainalrami.ThreeWayComparisonTest do
       |> Enum.flat_map(fn {:ok, r} -> r end)
 
     {errors, rest} = Enum.split_with(rows, &(&1.kind == :error))
+    {crashes, rest} = Enum.split_with(rest, &(&1.kind == :reference_crash))
     {splits, compared} = Enum.split_with(rest, &(&1.kind == :exhaustion_split))
 
-    report(compared, splits, errors)
-    dump(compared, splits)
+    report(compared, splits, crashes, errors)
+    dump(compared, splits, crashes)
 
     assert errors == [], """
     #{length(errors)} round(s) where a reference engine failed to run at all.
@@ -128,6 +163,23 @@ defmodule Ainalrami.ThreeWayComparisonTest do
   defp refuse_unsupported_axes! do
     forbidden = env_int("PAIRING_FUZZ_FORBIDDEN_PCT", 0)
     numeric = System.get_env("PAIRING_FUZZ_NUMERIC_EXT")
+    accel = System.get_env("PAIRING_FUZZ_ACCEL")
+
+    if accel not in [nil, "", "0", "false"] do
+      raise """
+      PAIRING_FUZZ_ACCEL=#{accel} cannot be measured three-way.
+
+      Gacrux parses `XXA` but does not ACT on it: on an accelerated round-1
+      position it pairs top-half against bottom-half as though the
+      acceleration were not there, while bbpPairings and Ainalrami both pair
+      inside the accelerated groups. Measured 2026-08-24 at 42.23%
+      bbpPairings-vs-Gacrux over 98,323 accelerated rounds, against 100.00%
+      on every unaccelerated axis.
+
+      Every one of those is Gacrux pairing a DIFFERENT tournament, not the
+      references contradicting each other. Run this axis two-way.
+      """
+    end
 
     if forbidden != 0 do
       raise """
@@ -201,6 +253,24 @@ defmodule Ainalrami.ThreeWayComparisonTest do
           {{:no_valid_pairing, _}, {:no_valid_pairing, _}} ->
             {:halt, {acc, ps}}
 
+          # Gacrux fell over. That is not a refusal and not a disagreement -
+          # it is one missing answer - so the round is recorded as a crash,
+          # left out of every rate, and the TOURNAMENT CONTINUES on
+          # bbpPairings' pairing. Truncating here is what the old
+          # no-valid-pairing reading did, and it silently biased the corpus
+          # towards short tournaments: crashes need a last round, so every
+          # one of them cut a tournament off at exactly the point the
+          # topscorer rules start to matter.
+          {{:ok, bbp}, {:crashed, detail}} ->
+            row = Map.merge(base, %{kind: :reference_crash, who: :gacrux, detail: detail})
+            {:cont, {[row | acc], apply_round(ps, bbp, simulate_results(bbp))}}
+
+          # Nothing left to continue on, so this one does stop - but it is
+          # still a crash rather than a split, because Gacrux never answered.
+          {_, {:crashed, detail}} ->
+            row = Map.merge(base, %{kind: :reference_crash, who: :gacrux, detail: detail})
+            {:halt, {[row | acc], ps}}
+
           {bbp_result, gac_result} ->
             row =
               Map.merge(base, %{
@@ -234,7 +304,7 @@ defmodule Ainalrami.ThreeWayComparisonTest do
   defp same?(_, :raised), do: false
   defp same?(a, b), do: normalize(a) == normalize(b)
 
-  defp report(compared, splits, errors) do
+  defp report(compared, splits, crashes, errors) do
     n = length(compared)
     pct = fn k -> "#{Float.round(k * 100 / max(n, 1), 4)}%" end
 
@@ -275,6 +345,39 @@ three-way comparison over #{n} compared round(s):
       )
     end
 
+    # PRINTED WHETHER OR NOT IT IS ZERO, and deliberately so. The 510
+    # crashes spent a whole validation run disguised as exhaustion splits
+    # because nothing ever counted them; a line that only appears when the
+    # count is nonzero is a line a reader never learns to look for.
+    crashed = length(crashes)
+    attempted = n + length(splits) + crashed
+
+    IO.puts(
+      "
+  Gacrux crashed on #{crashed}/#{attempted} attempted round(s)  " <>
+        "#{Float.round(crashed * 100 / max(attempted, 1), 4)}% - " <>
+        "excluded from every rate above, being neither a pairing nor a refusal"
+    )
+
+    crashes
+    |> Enum.frequencies_by(& &1.detail)
+    |> Enum.sort_by(fn {_detail, k} -> -k end)
+    |> Enum.take(3)
+    |> Enum.each(fn {detail, k} ->
+      IO.puts("    #{k}x #{detail |> String.split(~r/\r?\n/) |> List.first()}")
+    end)
+
+    # The same shape as the two-way harness' resource-starvation warning:
+    # past a few percent the surviving rounds are a filtered sample, and a
+    # rate computed on them is not the rate that was asked for.
+    if crashed > 0 and crashed * 100 / max(attempted, 1) > 5.0 do
+      IO.puts(
+        "    WARNING: that is over 5% of attempted rounds. The rates above are " <>
+          "computed on the rounds Gacrux survived, which is not a random sample " <>
+          "of positions - treat them as untrustworthy until the crash is understood."
+      )
+    end
+
     if errors != [] do
       IO.puts("
   #{length(errors)} round(s) where a reference failed to run - see the failure below")
@@ -310,7 +413,7 @@ three-way comparison over #{n} compared round(s):
   # each other. Those are the whole point: each is a case where the two
   # implementations this project calls ground truth cannot both be right,
   # and no two-way harness can ever surface one.
-  defp dump(compared, splits) do
+  defp dump(compared, splits, crashes) do
     case System.get_env("PAIRING_FUZZ_DUMP") do
       nil ->
         :ok
@@ -324,12 +427,14 @@ three-way comparison over #{n} compared round(s):
         limit = env_int("PAIRING_FUZZ_DUMP_LIMIT", 200)
         {kept_disputes, dropped_disputes} = Enum.split(disputes, limit)
         {kept_splits, dropped_splits} = Enum.split(splits, limit)
+        {kept_crashes, dropped_crashes} = Enum.split(crashes, limit)
 
         Enum.each(kept_disputes, &write_dispute(dir, &1))
         Enum.each(kept_splits, &write_split(dir, &1))
+        Enum.each(kept_crashes, &write_crash(dir, &1))
 
-        total = length(kept_disputes) + length(kept_splits)
-        dropped = length(dropped_disputes) + length(dropped_splits)
+        total = length(kept_disputes) + length(kept_splits) + length(kept_crashes)
+        dropped = length(dropped_disputes) + length(dropped_splits) + length(dropped_crashes)
 
         if total > 0 do
           IO.puts("  #{total} reference dispute(s) written to #{dir}")
@@ -368,6 +473,25 @@ three-way comparison over #{n} compared round(s):
     The other reference paired it as: #{inspect(Enum.sort(paired))}
 
     One of the two is wrong about whether this round is pairable at all.
+    """)
+  end
+
+  defp write_crash(dir, r) do
+    base = Path.join(dir, "crash_seed#{r.seed}_r#{r.round}_p#{r.player_count}")
+    File.write!(base <> ".trf", r.trf)
+
+    File.write!(base <> ".txt", """
+    seed #{r.seed}, round #{r.round}, #{r.player_count} players
+
+    #{r.who} raised inside the checker and wrote `### Error 510` to its own
+    output file, exiting 0. It gave no answer for this position, so this
+    round is in NO rate - it is not a refusal and not a disagreement.
+
+    #{r.detail}
+
+    Reproduce (`-v` makes it re-raise instead of swallowing):
+      python3 $GACRUX_DIR/pairingchecker.py -i #{Path.basename(base)}.trf \\
+        -o /tmp/out.txt -p -dT -m dutch -v
     """)
   end
 

@@ -50,6 +50,9 @@ defmodule Ainalrami.Test.Gacrux do
       convention the other two wrappers and `Ainalrami.Pairing` all use
     * `{:no_valid_pairing, output}` - it produced no pairs at all, which
       is how it reports a round with no legal completion
+    * `{:crashed, detail}` - it raised inside the checker and wrote
+      `### Error 510` into its output file. Missing data, not an answer;
+      see `classify/3`
     * `{:error, {code, output}}` - anything else
   """
   def pair(trf_text) do
@@ -66,7 +69,7 @@ defmodule Ainalrami.Test.Gacrux do
       case run(args) do
         {out, 0} ->
           case File.read(output) do
-            {:ok, text} -> classify(text, out)
+            {:ok, text} -> classify(text, out, input)
             {:error, _} -> {:no_valid_pairing, out}
           end
 
@@ -124,27 +127,85 @@ defmodule Ainalrami.Test.Gacrux do
   # `binary_to_integer("Program")` was - a crash that took a whole run down,
   # found on seed 21 with byes on.
   #
-  # 510 is deliberately treated as "no legal pairing here" rather than as a
-  # process failure, and it is worth being explicit about why, because 510
-  # is a CATCH-ALL: `do_command` turns any exception raised inside the
-  # checker into `error(510, "Program error")`, so it means "Gacrux raised",
-  # not "the position is unpairable". The two coincide on the case that
-  # found this - bbpPairings answers the same position with its own
-  # no-valid-pairing exit - and the three-way harness records every round
-  # where one reference refuses while the other pairs, so treating it this
-  # way MEASURES the assumption rather than hiding it. If 510 meant
-  # something else, it would surface as a pile of exhaustion splits instead
-  # of as silence.
+  # 510 USED to be treated as "no legal pairing here", on the argument that
+  # the assumption was being measured rather than hidden: the three-way
+  # harness records every round where one reference refuses while the other
+  # pairs, so a wrong reading would surface as a pile of exhaustion splits.
+  #
+  # It did, and the assumption is now falsified. The 2026-08-24 validation
+  # run produced 234 such splits; re-running Gacrux by hand on every one of
+  # them found 203 were `### Error 510` and 31 were a genuinely empty
+  # pairing list. Under `-v` Gacrux re-raises instead of swallowing, and all
+  # 60 sampled 510s were the SAME exception:
+  #
+  #     crosstabledutch.py:253  KeyError: 'n'
+  #
+  #     opp = {"w": "bb", "b":"ww", " ":"nc"}[acop[0]]
+  #
+  # `color_preference` (`crosstable.py:80`) returns the STRING `"nc"` when a
+  # player has no colour preference, so `acop[0]` is `?n` and the lookup -
+  # whose only no-preference key is `" "`, written for the `"  "` default -
+  # raises. The line is dead code: `opp` is recomputed two lines later
+  # inside the guard that actually needs it. It fires only in the topscorer
+  # branch, so it takes a last round plus a topscorer with no colour
+  # history, which is why an unpaired player is usually nearby and why this
+  # looked like an exhaustion split for so long.
+  #
+  # 510 is a CATCH-ALL - `do_command` turns any exception raised inside the
+  # checker into `error(510, "Program error")` - so it means "Gacrux fell
+  # over", full stop. A reference that fell over is MISSING DATA. It is not
+  # evidence that the position is unpairable and it is not evidence that the
+  # references disagree, so it gets its own outcome and every caller must
+  # decide what to do with it rather than silently folding it into a rate.
   #
   # Every other code is a real failure - a bad command line, an unreadable
   # input, a method it does not implement - and stays an error, so a harness
   # stops rather than quoting a rate built on whatever survived.
-  defp classify(text, out) do
+  defp classify(text, out, input) do
     case Regex.run(~r/^###\s+Error\s+(\d+)/m, text) do
       nil -> classify_pairs(parse_output(text), out)
-      [_, "510"] -> {:no_valid_pairing, String.trim(text)}
+      [_, "510"] -> {:crashed, crash_detail(input, text)}
       [_, code] -> {:error, {String.to_integer(code), String.trim(text) <> out}}
     end
+  end
+
+  # Being able to say WHICH crash is what turned "Gacrux refuses a lot of
+  # positions" into "Gacrux has one bug at a known line", so it is worth a
+  # second invocation - but only on the crash path, which has already
+  # produced nothing. The normal path never runs this. `GACRUX_TRACEBACK=0`
+  # switches it off for an axis where crashes are expected to be common.
+  defp crash_detail(input, text) do
+    if System.get_env("GACRUX_TRACEBACK", "1") in ["1", "true"] do
+      traceback(input) || String.trim(text)
+    else
+      String.trim(text)
+    end
+  end
+
+  # `-v` makes `do_command` re-raise instead of writing the error page, so
+  # the exception reaches stderr. Anything unexpected here returns `nil` and
+  # the caller falls back to the error page: a failure to explain a crash
+  # must not become a second crash.
+  defp traceback(input) do
+    args = [script_path(), "-i", input, "-o", input <> ".v.out", "-p", "-dT", "-m", "dutch", "-v"]
+
+    {out, _code} = run(args)
+
+    lines = out |> String.split(~r/\r?\n/) |> Enum.map(&String.trim/1) |> Enum.reject(&(&1 == ""))
+
+    frame =
+      lines
+      |> Enum.filter(&String.starts_with?(&1, "File \""))
+      |> List.last()
+
+    with frame when is_binary(frame) <- frame,
+         [_, file, line] <- Regex.run(~r/File "(?:.*[\/\\])?([^\/\\"]+)", line (\d+)/, frame) do
+      "#{file}:#{line}  #{List.last(lines)}"
+    else
+      _ -> nil
+    end
+  rescue
+    _ -> nil
   end
 
   defp classify_pairs({:error, reason}, _out), do: {:error, {0, reason}}
