@@ -3819,14 +3819,20 @@ defmodule Ainalrami.Pairing do
 
   defp bit(true), do: 1
   defp bit(false), do: 0
-  # Only these three mean a game was actually contested. A forfeit carries
-  # an opponent AND a colour but is legally unplayed, which is why every
-  # caller has to ask whether the game HAPPENED rather than whether there
-  # was an opponent - four separate call sites had that wrong until the
-  # harness started generating forfeits.
-  @played_results ~w(1 = 0)
-
-  defp played?(game), do: game.result in @played_results
+  # A forfeit carries an opponent AND a colour but is legally unplayed,
+  # which is why every caller has to ask whether the game HAPPENED rather
+  # than whether there was an opponent - four separate call sites had that
+  # wrong until the harness started generating forfeits.
+  #
+  # Defined by the same table as `Trf.game_was_played?/1` rather than by a
+  # private list of its own. The list said `1 = 0`, which is right for
+  # anything that came through `Trf.parse/1` - that normalises the letter
+  # spellings `W`, `D` and `L` on the way in - and wrong for a caller who
+  # builds player maps directly, which the engine's public API invites.
+  # Such a caller's played, unrated game would have been read as unplayed:
+  # no colour, no float. Two definitions of "played" that disagreed on the
+  # same input is the bug, and one of them is the reference's.
+  defp played?(game), do: Ainalrami.Trf.game_was_played?(game.result)
 
   # A player's full colour state, ported from bbpPairings'
   # `tournament.cpp` `computePlayerData`. This replaces a one-line
@@ -4057,8 +4063,18 @@ defmodule Ainalrami.Pairing do
         # `(playedRounds * pointsForWin) >> 1`, i.e. half of what a player
         # COULD have scored so far, and scores are in the file's own units.
         # Dividing rounds by two alone silently assumed the standard system.
-        points_for_win = point_system().win
-        threshold = played_rounds * points_for_win / 2
+        # `std::max(pointsForWin, pointsForDraw)`, not `pointsForWin`
+        # alone (`dutch.cpp:55`, read from the 6.0.0 source rather than
+        # inferred). The two differ only in a point system where a draw
+        # outscores a win, which FIDE would never publish but a TRF can
+        # state outright: `BBW` and `BBD` are free-form numbers, so
+        # `BBW 1.0` with `BBD 2.0` parses. The reference takes the larger
+        # of the two as "the most a round can be worth", and the whole
+        # conformance claim here is that we compute what it computes.
+        # Cheap insurance besides: the last point-system bug found this
+        # way (a half-point loss) cost 87% agreement on that axis.
+        points_per_round = max(point_system().win, point_system().draw)
+        threshold = played_rounds * points_per_round / 2
 
         played_rounds >= expected_rounds - 1 and
           (a.points > threshold or b.points > threshold)
