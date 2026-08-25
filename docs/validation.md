@@ -311,6 +311,38 @@ Nine wrong rounds that 2.5 million tournaments could not produce. Six-,
 eight- and ten-round Swisses are ordinary events; this was never an exotic
 corner.
 
+**The same expression was wrong a second time, and the same lesson caught
+it (2026-08-25).** The threshold reads
+`playedRounds * std::max(pointsForWin, pointsForDraw) >> 1` in the
+reference (`dutch.cpp:55`); this engine read `pointsForWin` alone. Every
+point system the harness could generate had the win worth at least as much
+as the draw, so the two factors were the same number and no axis could tell
+them apart - the same shape as the floor bug above, one line lower.
+
+`BBW` and `BBD` are free-form in the file, so a draw worth more than a win
+parses even though FIDE would never publish one. A `draw_heavy` axis
+(win 1.0, draw 2.0) was added and run in TWO ARMS over identical seeds -
+one with the fix, one with that single line reverted - because a fix that
+cannot be measured is a fix that has not been tested:
+
+| axis | with `max` | with `pointsForWin` alone |
+|---|---|---|
+| 4-10, 9 rounds | 1,163,034/1,163,034 = **100.00%** | 1,162,583 = 99.96% |
+| 4-40, 9 rounds | 1,006,012/1,006,012 = **100.00%** | 1,002,565 = 99.66% |
+| 4-40, 8 rounds | 907,227/907,227 = **100.00%** | 904,339 = 99.68% |
+| 4-40, 6 rounds | 698,901/698,901 = **100.00%** | 697,506 = 99.80% |
+| **total** | **3,775,174 rounds / 31,184,698 pairings, 100.00%** | 8,181 wrong rounds |
+
+Zero illegal rounds in either arm, which is the point: the control arm does
+not crash or refuse, it quietly pairs 8,181 rounds differently from the
+reference. Without the second arm the first arm's 100% would have been
+indistinguishable from an axis that never reaches the exception at all.
+
+The axis was also checked for inertness before being trusted - a generated
+file carries a real `BBD 2.0` line, and bbpPairings reads it. An axis that
+goes quietly inert reports 100% while testing nothing, which this project
+has been bitten by before.
+
 **Corpus size bought nothing here.** The axes varied field size, bye rate,
 forfeit rate and extension lines - and held constant the one parameter the
 bug was a function of.
