@@ -211,7 +211,17 @@ defmodule Ainalrami.Test.FuzzTournament do
     "double" => %{win: 2.0, draw: 1.0, pairing_allocated_bye: 2.0},
     "football" => %{win: 3.0, draw: 1.0, pairing_allocated_bye: 3.0},
     "paid_loss" => %{loss: 0.5},
-    "paid_forfeit" => %{forfeit_loss: 0.5, zero_point_bye: 0.5}
+    "paid_forfeit" => %{forfeit_loss: 0.5, zero_point_bye: 0.5},
+    # A draw worth MORE than a win. FIDE would never publish it, but
+    # `BBW`/`BBD` are free-form numbers and bbpPairings guards for exactly
+    # this: the final-round topscorer threshold is
+    # `playedRounds * std::max(pointsForWin, pointsForDraw) >> 1`
+    # (`dutch.cpp:55`). This engine read `pointsForWin` alone until
+    # 2026-08-25, and no axis could tell, because on every system above
+    # the win is the larger of the two. The axis exists to make that
+    # `std::max` observable rather than taken on trust - and, incidentally,
+    # to point the score ordering somewhere it has never been.
+    "draw_heavy" => %{win: 1.0, draw: 2.0, pairing_allocated_bye: 1.0}
   }
 
   @doc "The named point systems this harness can generate."
