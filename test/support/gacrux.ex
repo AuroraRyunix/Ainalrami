@@ -163,6 +163,19 @@ defmodule Ainalrami.Test.Gacrux do
   #     pairingdutch.py:465    KeyError `rem_hamilton`. Rare; both observed
   #                            were positions bbpPairings also refuses.
   #
+  #     pairing.py:216         `breakpoint()` then a bare `raise` - the same
+  #                            idiom as 314, and a STRAY DEBUGGER CALL left
+  #                            in the shipped code. There are 28 of them
+  #                            across the tree. It drops the process into
+  #                            pdb, which reads stdin; with stdin at
+  #                            /dev/null pdb hits EOF and the run dies with
+  #                            no traceback, which is why these arrive as a
+  #                            bare "### Error 510". WITHOUT the /dev/null
+  #                            guard in `run/1` it would block on fd 0
+  #                            forever - so that guard is load-bearing, and
+  #                            this is very likely what wedged the first
+  #                            validation attempt for two silent hours.
+  #
   # 510 is a CATCH-ALL - `do_command` turns any exception raised inside the
   # checker into `error(510, "Program error")` - so at THIS layer it means
   # "Gacrux fell over", full stop, and nothing more may be inferred here.
@@ -205,6 +218,12 @@ defmodule Ainalrami.Test.Gacrux do
 
     lines = out |> String.split(~r/\r?\n/) |> Enum.map(&String.trim/1) |> Enum.reject(&(&1 == ""))
 
+    exception_frame(lines) || pdb_frame(lines)
+  rescue
+    _ -> nil
+  end
+
+  defp exception_frame(lines) do
     frame =
       lines
       |> Enum.filter(&String.starts_with?(&1, "File \""))
@@ -216,8 +235,19 @@ defmodule Ainalrami.Test.Gacrux do
     else
       _ -> nil
     end
-  rescue
-    _ -> nil
+  end
+
+  # A stray `breakpoint()` is not an exception, so it leaves no traceback -
+  # just pdb's banner. Naming the frame anyway is what turns 600 identical
+  # "### Error 510" lines into one actionable sentence.
+  defp pdb_frame(lines) do
+    lines
+    |> Enum.find_value(fn line ->
+      case Regex.run(~r/^> (?:.*[\/\\])?([^\/\\(]+\.py)\((\d+)\)(\S*)/, line) do
+        [_, file, num, fun] -> "#{file}:#{num}  breakpoint() dropped into pdb in #{fun}"
+        _ -> nil
+      end
+    end)
   end
 
   defp classify_pairs({:error, reason}, _out), do: {:error, {0, reason}}

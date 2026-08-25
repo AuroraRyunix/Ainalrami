@@ -494,11 +494,24 @@ three-way comparison over #{n} compared round(s):
         dropped = length(dropped_disputes) + length(dropped_splits) + length(dropped_crashes)
 
         if total > 0 do
-          IO.puts("  #{total} reference dispute(s) written to #{dir}")
+          IO.puts("  #{total} dispute/split/crash file(s) written to #{dir}")
         end
 
+        # "dispute" was the word here until crashes joined the same cap, and
+        # it then printed "2276 further dispute(s) NOT dumped" on an axis
+        # with ZERO disputes - a line that reads like a finding and is not
+        # one. The counts are per kind, so say which kind ran over.
         if dropped > 0 do
-          IO.puts("  #{dropped} further dispute(s) NOT dumped (limit #{limit} per kind)")
+          kinds =
+            [
+              {length(dropped_disputes), "dispute"},
+              {length(dropped_splits), "split"},
+              {length(dropped_crashes), "crash"}
+            ]
+            |> Enum.reject(fn {k, _} -> k == 0 end)
+            |> Enum.map_join(", ", fn {k, name} -> "#{k} #{name}(s)" end)
+
+          IO.puts("  NOT dumped (cap #{limit} per kind): #{kinds}")
         end
     end
   end
