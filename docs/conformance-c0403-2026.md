@@ -2,7 +2,7 @@
 
 Article-by-article verification of this engine against the rules text
 (<https://handbook.fide.com/chapter/C0403202602>, approved by the FIDE
-Council 28/10/2025), checked 2026-08-17.
+Council 28/10/2025), checked 2026-08-17, and extended to Articles 3 and 4 on 2026-08-25.
 
 This exists because until that date the engine's rules had been derived from
 **bbpPairings' source code** and confirmed by **measurement** - 4.3 million
@@ -155,6 +155,34 @@ Note that colour never affects *who plays whom*: it is decided after the
 pairing, so a divergence here cannot produce a different set of boards,
 only a different side allocation on one of them. Every axis measured for
 this dispute reports 100.00% pairing agreement and zero illegal rounds.
+
+## Bracket construction and the candidate sequence (Articles 3 and 4)
+
+Checked against the article text 2026-08-25. Each row says what the article
+requires and where the engine satisfies it. Where it satisfies it by a
+different mechanism the row says so and points at the measured section that
+follows, rather than asserting equivalence.
+
+| article | rule | implementation | verdict |
+|---|---|---|---|
+| 3.1 | `M0` MDPs arriving, `MaxPairs` the most pairs the bracket can make, `M1` the MDPs actually paired | the bracket state carries all three; `MaxPairs` is the matcher's cardinality bound | exact |
+| 3.2 | S1 is the first `MaxPairs` residents by Article 1.2 (homogeneous), or the first pairable `M1` MDPs (heterogeneous); S2 is the remaining residents | subgroup split, sorting on `{-points, rank}` | exact |
+| 3.2 | MDPs beyond `M1` sit in a **Limbo** and are bound to double-float | `limbo` in the bracket state, excluded from this bracket's edges | exact |
+| 3.3 | The first candidate pairs S1[i] with S2[i] | asserted directly - `tiebreak_order_test.exs` checks the identity pairing sorts first | exact |
+| 3.4 | A candidate meeting C1-C5 and C6-C21 is "perfect" and is accepted immediately | the matcher's optimum over weights packing C1-C21 in priority order | equivalent, not identical - see below |
+| 3.5-3.7 | When no candidate is perfect, alter S1/Limbo/S2: transpose S2, then exchange between S1 and S2; heterogeneous brackets work the remainder first, then the MDP-Pairing, then the Limbo | the matcher searches every matching, so every candidate those alterations can reach is considered | equivalent, not identical - see below |
+| 3.8 | Choose the best candidate: better on [C5], then [C6]-[C21], then **generated earlier** | rung comparison, with `transposition_key/3` standing in for generation order | see "Known structural divergence" |
+| 4.1 | Tag players with consecutive BSNs in bracket order before any alteration | S1 and S2 are already in Article 1.2 order, so index and BSN rank rise together | exact |
+| 4.2 | Sort transpositions by the lexicographic value of their first `N1` BSNs | `transposition_key/3` **is** this ordering, not an approximation - argued and measured | exact - see below |
+| 4.3 | Sort exchanges by: fewest BSNs exchanged; smallest difference of the moved sums; largest differing BSN out of S1; smallest differing BSN into S1 | measured against `Ainalrami.Sequence` | see "Article 4.3, measured 2026-08-17" |
+| 4.4 | A set of pairable MDPs is valid if its Limbo complies with [C7]; valid sets sort by smallest differing BSN | heterogeneous handling | see "Heterogeneous brackets, added 2026-08-18" |
+| 4.5 | Each application picks the next element of the established order | not enumerated - the matcher does not step a sequence | by construction - see below |
+
+The honest summary: **every requirement about WHICH pairing is best is met
+exactly. The requirements about the ORDER candidates are generated in are met
+by an equivalence argument plus measurement, not by doing what the article
+literally describes.** That is the subject of the next section, and it is the
+one place in this document where the engine does not simply follow the text.
 
 ## Known structural divergence
 
