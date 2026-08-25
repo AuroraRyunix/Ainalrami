@@ -80,21 +80,42 @@ defmodule Ainalrami.ThreeWayComparisonTest do
   run, the 42% was diagnosed in one position instead of being reported as
   the references contradicting each other on half of all accelerated rounds.
 
-  ## A crashed reference is missing data, not a disagreement
+  ## A crashed reference is missing data, but only sometimes costly
 
   Gacrux reports failure INSIDE its output file with exit status 0, and
   `### Error 510` is its catch-all for "an exception escaped the checker".
-  `Ainalrami.Test.Gacrux` used to map that to "no legal pairing", which is
-  wrong, and this harness is where the wrongness showed: 203 of the 234
-  exhaustion splits the 2026-08-24 run dumped were 510 crashes rather than
-  Gacrux refusing a position - one single bug, `crosstabledutch.py:253`
-  `KeyError: 'n'`, in every one of the 60 sampled.
+  `Ainalrami.Test.Gacrux` used to map that to "no legal pairing". A
+  `{:crashed, _}` round is now its own kind: counted, reported, dumped, and
+  in no rate.
 
-  A `{:crashed, _}` round is now its own kind. It is counted, reported and
-  dumped, and it is excluded from every rate, because a reference that fell
-  over is evidence for neither side. The crash count is printed on its own
-  line whether or not it is zero, so a future run cannot quietly turn
-  crashes back into disagreements the way this one did.
+  What that change then revealed is worth stating carefully, because the
+  first reading of it was wrong. Re-running Gacrux on the 234 exhaustion
+  splits the 2026-08-24 run dumped found 203 crashes, and every one of the
+  60 sampled was `crosstabledutch.py:253 KeyError: 'n'` - which looked like
+  a single bug. It is not. Those 234 were dumped BECAUSE bbpPairings paired
+  the position, so that sample could only ever contain the crash that
+  happens on pairable positions. Measured without that filter, on 200
+  crashes from a 21,079-round run, there are three sites and they mean
+  opposite things:
+
+      196x  pairingdutch.py:314   RuntimeError: No active exception to reraise
+        2x  pairingdutch.py:465   KeyError: 'rem_hamilton'
+        2x  crosstabledutch.py:253  KeyError: 'n'
+
+  `pairingdutch.py:314` is `if len(edges) == 0: raise` - a bare `raise` with
+  no active exception, i.e. a placeholder where Gacrux means "this bracket
+  has no pairable edges". bbpPairings independently found NO legal pairing
+  on 196 of 196 of them. So that crash lands where the position really is
+  unpairable, the tournament ends on that round either way, and no
+  comparison was lost. `crosstabledutch.py:253` is the opposite: bbpPairings
+  paired 2 of 2, so a comparison that was available did not happen.
+
+  The report therefore splits crashes by whether bbpPairings had an answer,
+  and warns on the costly ones only. A single lumped percentage would have
+  read 1.1006% when the number that can actually move a rate was 0.02%.
+
+  Both numbers print whether or not they are zero, so a future run cannot
+  quietly turn crashes back into disagreements the way this one did.
 
   ## Cost
 
@@ -253,23 +274,23 @@ defmodule Ainalrami.ThreeWayComparisonTest do
           {{:no_valid_pairing, _}, {:no_valid_pairing, _}} ->
             {:halt, {acc, ps}}
 
-          # Gacrux fell over. That is not a refusal and not a disagreement -
-          # it is one missing answer - so the round is recorded as a crash,
-          # left out of every rate, and the TOURNAMENT CONTINUES on
-          # bbpPairings' pairing. Truncating here is what the old
-          # no-valid-pairing reading did, and it silently biased the corpus
-          # towards short tournaments: crashes need a last round, so every
-          # one of them cut a tournament off at exactly the point the
-          # topscorer rules start to matter.
+          # Gacrux fell over where bbpPairings had an answer. THIS is the
+          # crash that costs something: a comparison that could have been
+          # made was not, so the round is recorded, kept out of every rate,
+          # and the TOURNAMENT CONTINUES on bbpPairings' pairing. Truncating
+          # here is what the old no-valid-pairing reading did, and it
+          # silently biased the corpus towards short tournaments.
           {{:ok, bbp}, {:crashed, detail}} ->
-            row = Map.merge(base, %{kind: :reference_crash, who: :gacrux, detail: detail})
+            row = crash_row(base, detail, :comparison_lost)
             {:cont, {[row | acc], apply_round(ps, bbp, simulate_results(bbp))}}
 
-          # Nothing left to continue on, so this one does stop - but it is
-          # still a crash rather than a split, because Gacrux never answered.
-          {_, {:crashed, detail}} ->
-            row = Map.merge(base, %{kind: :reference_crash, who: :gacrux, detail: detail})
-            {:halt, {[row | acc], ps}}
+          # Gacrux fell over where bbpPairings also found no legal pairing.
+          # Still a crash - Gacrux did not conclude anything, it raised - but
+          # it cost NOTHING, because the tournament ends here either way.
+          # Measured, not assumed: of 200 dumped crashes, 198 were this and
+          # every one of them was a position bbpPairings refuses too.
+          {{:no_valid_pairing, _}, {:crashed, detail}} ->
+            {:halt, {[crash_row(base, detail, :none) | acc], ps}}
 
           {bbp_result, gac_result} ->
             row =
@@ -284,6 +305,10 @@ defmodule Ainalrami.ThreeWayComparisonTest do
       end)
 
     Enum.reverse(rows)
+  end
+
+  defp crash_row(base, detail, cost) do
+    Map.merge(base, %{kind: :reference_crash, who: :gacrux, detail: detail, cost: cost})
   end
 
   defp safely_pair(players, rounds, forbidden) do
@@ -351,6 +376,7 @@ three-way comparison over #{n} compared round(s):
     # count is nonzero is a line a reader never learns to look for.
     crashed = length(crashes)
     attempted = n + length(splits) + crashed
+    {costly, free} = Enum.split_with(crashes, &(&1.cost == :comparison_lost))
 
     IO.puts(
       "
@@ -359,22 +385,40 @@ three-way comparison over #{n} compared round(s):
         "excluded from every rate above, being neither a pairing nor a refusal"
     )
 
-    crashes
-    |> Enum.frequencies_by(& &1.detail)
-    |> Enum.sort_by(fn {_detail, k} -> -k end)
-    |> Enum.take(3)
-    |> Enum.each(fn {detail, k} ->
-      IO.puts("    #{k}x #{detail |> String.split(~r/\r?\n/) |> List.first()}")
-    end)
+    # The split that matters. A 510 where bbpPairings ALSO finds no legal
+    # pairing costs nothing: the tournament ends on that round either way,
+    # so no comparison was available to lose. A 510 where bbpPairings had an
+    # answer is missing data, and only that number can move a rate.
+    #
+    # Reporting one lumped percentage would be true and useless - the smoke
+    # run that produced this split read 1.1006% crashed, of which 99% cost
+    # nothing at all.
+    IO.puts(
+      "    #{length(free)} at positions bbpPairings also found unpairable " <>
+        "- the tournament ended there regardless, so no comparison was lost"
+    )
+
+    breakdown(free, "      ")
+
+    lost_pct = length(costly) * 100 / max(attempted, 1)
+
+    IO.puts(
+      "    #{length(costly)} where bbpPairings HAD an answer  " <>
+        "#{Float.round(lost_pct, 4)}% - these are the ones that cost a comparison"
+    )
+
+    breakdown(costly, "      ")
 
     # The same shape as the two-way harness' resource-starvation warning:
     # past a few percent the surviving rounds are a filtered sample, and a
-    # rate computed on them is not the rate that was asked for.
-    if crashed > 0 and crashed * 100 / max(attempted, 1) > 5.0 do
+    # rate computed on them is not the rate that was asked for. Thresholded
+    # on the costly crashes only, for the reason above.
+    if lost_pct > 1.0 do
       IO.puts(
-        "    WARNING: that is over 5% of attempted rounds. The rates above are " <>
-          "computed on the rounds Gacrux survived, which is not a random sample " <>
-          "of positions - treat them as untrustworthy until the crash is understood."
+        "    WARNING: over 1% of attempted rounds lost a comparison to a crash. " <>
+          "The rates above are computed on the rounds Gacrux survived, which is " <>
+          "then not a random sample of positions - treat them as untrustworthy " <>
+          "until the crash is understood."
       )
     end
 
@@ -407,6 +451,19 @@ three-way comparison over #{n} compared round(s):
     end
 
     IO.puts("")
+  end
+
+  # Crash sites, commonest first. `-v` makes Gacrux re-raise, so `detail` is
+  # a real file:line rather than its uninformative "Program error" page, and
+  # the sites turn out to mean different things - see the moduledoc.
+  defp breakdown(rows, indent) do
+    rows
+    |> Enum.frequencies_by(& &1.detail)
+    |> Enum.sort_by(fn {_detail, k} -> -k end)
+    |> Enum.take(5)
+    |> Enum.each(fn {detail, k} ->
+      IO.puts("#{indent}#{k}x #{detail |> String.split(~r/\r?\n/) |> List.first()}")
+    end)
   end
 
   # The rounds worth keeping are the ones where the REFERENCES differ from

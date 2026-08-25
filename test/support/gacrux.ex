@@ -132,31 +132,43 @@ defmodule Ainalrami.Test.Gacrux do
   # harness records every round where one reference refuses while the other
   # pairs, so a wrong reading would surface as a pile of exhaustion splits.
   #
-  # It did, and the assumption is now falsified. The 2026-08-24 validation
-  # run produced 234 such splits; re-running Gacrux by hand on every one of
-  # them found 203 were `### Error 510` and 31 were a genuinely empty
-  # pairing list. Under `-v` Gacrux re-raises instead of swallowing, and all
-  # 60 sampled 510s were the SAME exception:
+  # It did, and the assumption is now falsified - though not in the way it
+  # first appeared, and the difference matters. The 2026-08-24 run produced
+  # 234 such splits; re-running Gacrux on every one found 203 were
+  # `### Error 510` and 31 a genuinely empty pairing list. Under `-v` Gacrux
+  # re-raises instead of swallowing, and all 60 sampled 510s were the same
+  # exception, `crosstabledutch.py:253 KeyError: 'n'`, which read like a
+  # single bug. That sample was biased by construction: a split is only
+  # DUMPED when bbpPairings paired the position, so it can only ever contain
+  # the crash that fires on pairable positions. Sampled without that filter,
+  # 510 has at least three sites and they do not mean the same thing:
   #
-  #     crosstabledutch.py:253  KeyError: 'n'
+  #     pairingdutch.py:314    `if len(edges) == 0: raise` - a bare `raise`
+  #                            with no active exception, so it always throws
+  #                            RuntimeError. It is where Gacrux means "this
+  #                            bracket has no pairable edges", and
+  #                            bbpPairings independently found no legal
+  #                            pairing on 196 of 196 of them.
   #
-  #     opp = {"w": "bb", "b":"ww", " ":"nc"}[acop[0]]
+  #     crosstabledutch.py:253 `{"w": "bb", "b": "ww", " ": "nc"}[acop[0]]`,
+  #                            where `color_preference` (`crosstable.py:80`)
+  #                            returns the STRING `"nc"`, so `acop[0]` is
+  #                            `?n` and a dict whose only no-preference key
+  #                            is `" "` raises. Dead code - `opp` is
+  #                            recomputed two lines down inside the guard
+  #                            that needs it - in the topscorer branch, so
+  #                            it takes a last round plus a topscorer with
+  #                            no colour history. bbpPairings paired 2 of 2.
   #
-  # `color_preference` (`crosstable.py:80`) returns the STRING `"nc"` when a
-  # player has no colour preference, so `acop[0]` is `?n` and the lookup -
-  # whose only no-preference key is `" "`, written for the `"  "` default -
-  # raises. The line is dead code: `opp` is recomputed two lines later
-  # inside the guard that actually needs it. It fires only in the topscorer
-  # branch, so it takes a last round plus a topscorer with no colour
-  # history, which is why an unpaired player is usually nearby and why this
-  # looked like an exhaustion split for so long.
+  #     pairingdutch.py:465    KeyError `rem_hamilton`. Rare; both observed
+  #                            were positions bbpPairings also refuses.
   #
   # 510 is a CATCH-ALL - `do_command` turns any exception raised inside the
-  # checker into `error(510, "Program error")` - so it means "Gacrux fell
-  # over", full stop. A reference that fell over is MISSING DATA. It is not
-  # evidence that the position is unpairable and it is not evidence that the
-  # references disagree, so it gets its own outcome and every caller must
-  # decide what to do with it rather than silently folding it into a rate.
+  # checker into `error(510, "Program error")` - so at THIS layer it means
+  # "Gacrux fell over", full stop, and nothing more may be inferred here.
+  # Deciding which crashes cost something needs the other engine's answer,
+  # which this module does not have, so it reports the crash and the site
+  # and leaves the judgement to the caller that can make it.
   #
   # Every other code is a real failure - a bad command line, an unreadable
   # input, a method it does not implement - and stays an error, so a harness
