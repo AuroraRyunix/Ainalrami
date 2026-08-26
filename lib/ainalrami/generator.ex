@@ -90,18 +90,17 @@ defmodule Ainalrami.Generator do
     # field. Same philosophy as the `players - 1` cap above - stop the
     # tournament at the last round that actually completed rather than
     # letting one bad round crash the whole generation.
-    {final, played_rounds} =
-      Enum.reduce_while(1..rounds, {roster(players, accelerations), 0}, fn round_no,
-                                                                           {current, _last} ->
+    final =
+      Enum.reduce_while(1..rounds, roster(players, accelerations), fn _round_no, current ->
         try do
           next =
             current
             |> grant_requested_byes(bye_pct)
             |> play_one_round(rounds, forfeit_pct, forbidden, initial_colour)
 
-          {:cont, {next, round_no}}
+          {:cont, next}
         rescue
-          Pairing.NoValidPairingError -> {:halt, {current, round_no - 1}}
+          Pairing.NoValidPairingError -> {:halt, current}
         end
       end)
 
@@ -115,12 +114,28 @@ defmodule Ainalrami.Generator do
           # knew just `142` got no round count at all, which silently
           # changed the final-round pairing - see `Ainalrami.Trf`'s
           # `parse_xxr/2`.
-          number_of_rounds: played_rounds,
+          #
+          # `rounds`, the count every round was PAIRED under, not
+          # `played_rounds`, the count that actually completed. The two
+          # differ whenever the reduce above halts early on a deadlocked
+          # round, and this field means the tournament's intended length -
+          # `expected_rounds` - not its progress. Writing the truncated
+          # number handed a reader a file whose rounds were paired under
+          # one round count and which declares another. It feeds exactly
+          # one rule, `final_round_topscorers?/2`'s
+          # `played_rounds >= expected_rounds - 1` gate, which relaxes the
+          # colour constraints for the last two rounds: a nine-round
+          # generation that deadlocked at seven declared seven, so a reader
+          # re-pairing round 7 applied the final-round exception to a round
+          # this generator had paired as an ordinary one - and the
+          # disagreement looked like an engine defect rather than a
+          # mislabelled file.
+          number_of_rounds: rounds,
           initial_colour: initial_colour,
           forbidden_pairs: forbidden
         },
         players: final
-      }) <> "XXR #{played_rounds}\r\n"
+      }) <> "XXR #{rounds}\r\n"
 
     {text, seed}
   end

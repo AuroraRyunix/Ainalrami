@@ -467,6 +467,37 @@ defmodule Ainalrami.CLITest do
       end
     end
 
+    test "a tournament that deadlocks early still declares the count it was paired under" do
+      # `142`/`XXR` state the tournament's intended LENGTH, not its
+      # progress - `expected_rounds`, which is what every round here was
+      # actually paired with. A round can have no legal completion at all
+      # (a proven deadlock, not a search giving up), and the generator then
+      # stops at the last round that finished; it used to write THAT number
+      # into both fields, so the file's rounds were paired under one count
+      # and declared another.
+      #
+      # It feeds exactly one rule: `final_round_topscorers?/2`'s
+      # `played_rounds >= expected_rounds - 1` gate, which relaxes the
+      # colour constraints for the last two rounds. Under the truncated
+      # count a reader applies the final-round exception to a round this
+      # generator paired as an ordinary one, and the disagreement reads as
+      # an engine defect rather than as a mislabelled file.
+      #
+      # Six players, five rounds, 40% of them asking for a bye each round:
+      # a third of the seeds in this shape deadlock. Seed 2 stops after
+      # three.
+      {text, _seed} =
+        Ainalrami.Generator.generate(seed: 2, players: 6, rounds: 5, requested_bye_pct: 40)
+
+      parsed = Trf.parse(text)
+      played = parsed.players |> Enum.map(&length(&1.games)) |> Enum.max()
+
+      assert played < 5, "seed 2 is the deadlocking fixture"
+      assert parsed.tournament[:number_of_rounds] == 5
+      assert text =~ "XXR 5"
+      assert text =~ "142 5"
+    end
+
     test "rounds are capped so the field cannot run out of legal opponents" do
       {text, _seed} = Ainalrami.Generator.generate(seed: 9, players: 6, rounds: 40)
       parsed = Trf.parse(text)
