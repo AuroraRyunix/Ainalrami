@@ -406,11 +406,56 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
       :differs
   end
 
-  # How many rounds actually carry results. Taken over players rather than
-  # the header's own round count, which states the tournament's intended
-  # length, not its progress.
+  # How many rounds were actually PAIRED. Taken over players rather than the
+  # header's own round count, which states the tournament's intended length,
+  # not its progress.
+  #
+  # `length(&1.games)` is not that number. An arbiter's bye is recorded
+  # BEFORE its round is paired - that is how the engine knows to leave the
+  # player out - so a file waiting to have round N paired already carries a
+  # round-N `H` or `Z` for everyone who asked to sit it out, and
+  # `parse_games/1` sizes the list from the line. One such player made this
+  # count one high, and the checker then diffed a round the file had never
+  # paired: `recorded_pairs/2` discards every non-participating game, so
+  # `actual` was `[]`, while `state_before_round/3` reconstructs exactly the
+  # position that round is to be paired FROM and duly pairs it. Every file
+  # with a pre-recorded bye for its pending round reported a spurious
+  # mismatch on its last round and exited 1.
+  #
+  # A round counts as paired if ANY player took part in its pairing. Rounds
+  # before that are counted too even if nobody's entry participated, which
+  # is bbpPairings' rule as well: `trf.cpp:329-340` raises `playedRounds` to
+  # `matches.size()` for any non-empty entry and to `matches.size() + 1`
+  # only when `participatedInPairing`.
+  #
+  # bbpPairings on the same file reaches the same place by a different
+  # route. Its reader pads every short history out to the pending round
+  # with non-participating self-matches (`evenUpMatchHistories`), so its
+  # checker does visit round N - and then finds every player sitting it out,
+  # computes an empty matching, and prints nothing. Not checking the round
+  # at all says the same thing more plainly.
   defp completed_rounds(players) do
-    players |> Enum.map(&length(&1.games)) |> Enum.max(fn -> 0 end)
+    players |> Enum.map(&paired_through/1) |> Enum.max(fn -> 0 end)
+  end
+
+  defp paired_through(player) do
+    player.games
+    |> Enum.with_index(1)
+    |> Enum.reduce(0, fn {game, round}, paired ->
+      cond do
+        blank?(game) -> paired
+        Trf.participated_in_pairing?(game) -> round
+        true -> max(paired, round - 1)
+      end
+    end)
+  end
+
+  # An entry holding nothing at all - no opponent, no colour, no result.
+  # `parse_games/1` keeps these for interior rounds a late entrant missed,
+  # and they are evidence of nothing.
+  defp blank?(game) do
+    is_nil(game.opponent_rank) and is_nil(game.colour) and
+      (is_nil(game.result) or String.trim(game.result) == "")
   end
 
   # The tournament as it stood immediately before `round` was paired:

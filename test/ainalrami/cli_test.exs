@@ -532,27 +532,63 @@ defmodule Ainalrami.CLITest do
     test "a player holding an arbiter-assigned bye is left out of the replayed pairing" do
       # Five players, one of whom took a half-point bye in round 1: the
       # engine must pair the other four and not deal that player a game.
-      players = self_paired_tournament(1, 5)
+      # An arbiter's bye is recorded BEFORE its round is paired, which is
+      # exactly how the engine knows to leave that player out, so
+      # `state_before_round/3` has to carry it forward into the replay.
+      sitting = %{opponent_rank: nil, colour: nil, result: "H"}
 
-      [sitting | others] =
-        Enum.map(players, fn p -> %{p | games: [], points: 0.0} end)
+      roster =
+        for i <- 1..5 do
+          %{rank: i, name: "P#{i}", fide_rating: 2000 - i * 10, points: 0.0, games: []}
+        end
 
-      sitting = %{
-        sitting
-        | points: 0.5,
-          games: [%{opponent_rank: nil, colour: nil, result: "H"}]
-      }
+      roster = List.update_at(roster, 4, &%{&1 | points: 0.5, games: [sitting]})
+      pairs = Ainalrami.Pairing.pair_next_round(roster, expected_rounds: 9)
 
-      path = write_trf([sitting | others])
+      refute Enum.any?(pairs, fn {w, b} -> 5 in [w, b] end),
+             "rank 5 asked to sit out and must not be paired"
+
+      path = write_trf(record_round(roster, pairs))
       {out, code} = run_capturing(fn -> CLI.run([path, "-c"]) end)
 
-      # Round 1 as recorded has nobody paired at all, so it differs - what
-      # matters is that the engine never proposes a game for the player who
-      # sat out.
-      assert code == 1
-      refute out =~ "engine: []"
-      assert out =~ "engine:"
-      refute out =~ "{#{sitting.rank},"
+      assert code == 0
+      assert out =~ "1/1 round(s) match"
+      refute out =~ "DIFFERS"
+    end
+
+    test "a bye pre-recorded for the PENDING round is not a round to check" do
+      # The same mechanism one round later, and the bug it used to cause.
+      # `completed_rounds/1` counted the LENGTH of the longest game list, so
+      # one player holding a round-5 `H` for a round nobody had been paired
+      # in yet made it 5. The checker then diffed round 5:
+      # `recorded_pairs/2` discards every non-participating game, so the
+      # file's side was `[]`, while `state_before_round/3` reconstructs
+      # precisely the position round 5 is to be paired FROM and duly paired
+      # it. Every tournament with an advance bye standing for its next round
+      # failed its own check on that round and exited 1.
+      #
+      # bbpPairings prints a `Round #5` heading for this file and nothing
+      # under it - its reader pads the short histories out with
+      # non-participating self-matches, so every player is sitting round 5
+      # out and the matching comes back empty. Exit 0, no discrepancy.
+      players = self_paired_tournament(4)
+
+      pending =
+        List.update_at(players, 0, fn p ->
+          %{
+            p
+            | points: p.points + 0.5,
+              games: p.games ++ [%{opponent_rank: nil, colour: nil, result: "H"}]
+          }
+        end)
+
+      path = write_trf(pending)
+      {out, code} = run_capturing(fn -> CLI.run([path, "-c"]) end)
+
+      assert code == 0
+      assert out =~ "Checking 4 round(s)"
+      assert out =~ "4/4 round(s) match"
+      refute out =~ "round 5"
     end
   end
 
@@ -565,23 +601,29 @@ defmodule Ainalrami.CLITest do
       end
 
     Enum.reduce(1..rounds, roster, fn _round, players ->
-      pairs = Ainalrami.Pairing.pair_next_round(players, expected_rounds: rounds)
+      record_round(players, Ainalrami.Pairing.pair_next_round(players, expected_rounds: rounds))
+    end)
+  end
 
-      by_rank =
-        Enum.reduce(pairs, %{}, fn
-          {w, nil}, acc ->
-            Map.put(acc, w, {%{opponent_rank: nil, colour: nil, result: "U"}, 1.0})
+  # Writes one round of `pairs` onto `roster`, leaving anyone the pairing
+  # left out (an arbiter's bye already on their sheet) exactly as they were.
+  defp record_round(roster, pairs) do
+    by_rank =
+      Enum.reduce(pairs, %{}, fn
+        {w, nil}, acc ->
+          Map.put(acc, w, {%{opponent_rank: nil, colour: nil, result: "U"}, 1.0})
 
-          {w, b}, acc ->
-            acc
-            |> Map.put(w, {%{opponent_rank: b, colour: "w", result: "1"}, 1.0})
-            |> Map.put(b, {%{opponent_rank: w, colour: "b", result: "0"}, 0.0})
-        end)
-
-      Enum.map(players, fn p ->
-        {game, points} = Map.fetch!(by_rank, p.rank)
-        %{p | points: p.points + points, games: p.games ++ [game]}
+        {w, b}, acc ->
+          acc
+          |> Map.put(w, {%{opponent_rank: b, colour: "w", result: "1"}, 1.0})
+          |> Map.put(b, {%{opponent_rank: w, colour: "b", result: "0"}, 0.0})
       end)
+
+    Enum.map(roster, fn p ->
+      case Map.fetch(by_rank, p.rank) do
+        {:ok, {game, points}} -> %{p | points: p.points + points, games: p.games ++ [game]}
+        :error -> p
+      end
     end)
   end
 
