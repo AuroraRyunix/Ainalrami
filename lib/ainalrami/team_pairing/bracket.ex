@@ -125,7 +125,9 @@ defmodule Ainalrami.TeamPairing.Bracket do
     state = walk_top_sets(all_indices, half, [], 0, ctx, state)
 
     case state.best do
-      nil -> {:error, :no_legal_pairing}
+      nil ->
+        {:error, :no_legal_pairing}
+
       pairs ->
         {:ok,
          %{
@@ -230,7 +232,7 @@ defmodule Ainalrami.TeamPairing.Bracket do
             cond do
               j == i -> mask
               # Only top-bottom pairs exist in this sub-problem.
-              (i in tops) == (j in tops) -> mask
+              i in tops == j in tops -> mask
               Team.met?(team, elem(ctx.tpns, j)) -> mask
               true -> mask ||| 1 <<< Map.fetch!(position, j)
             end

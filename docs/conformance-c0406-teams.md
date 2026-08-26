@@ -214,6 +214,67 @@ The corpus still has a role, but a different one: fuzzing for crashes,
 [C1]/[C2] legality violations, and [C3] dead ends - properties that hold
 regardless of which candidate is chosen.
 
+## Reading decisions the implementation had to make
+
+Written while building `lib/ainalrami/team_pairing.ex`, so these are the
+places the text ran out rather than places nobody looked.
+
+### [C5]'s score profile, and the 3.5.4 example that contradicts it
+
+2.3.2 reads: "Minimise the score differences (taken in descending order) in
+the pairs involving upfloaters, i.e. maximise the scores (taken in ascending
+order) of the upfloaters." Taken at face value, a set of three upfloaters
+should take the three highest-scoring candidates available.
+
+The example under 3.5.4 says otherwise. It assumes 2, 6 and 8 have 3 points
+and 1, 3 and 5 have 2.5, states that three upfloaters are needed, and then
+says "[C5] determines that two upfloaters must have 3 points and the other
+2.5" - dropping one of the three available 3-pointers for a 2.5-pointer,
+which is a *larger* score difference. It asserts that step rather than
+deriving it, and no other article visible in the chapter forces it.
+
+**The implementation follows the article, not the example**: [C5] takes the
+highest-scoring candidates, so the same position produces {2,6,8}. The
+example's own ORDERING - `{2,6,1} < {2,6,3} < {2,6,5} < {2,8,1} < ...` - is
+unambiguous and is implemented and tested exactly as written; only the
+profile it starts from is in question.
+
+Both readings are pinned by tests in `team_pairing_test.exs` ("3.5.4 orders
+candidate sets lexicographically by TPN" and "[C5] takes every top-scoring
+candidate when it can"), so whichever way this is resolved, the test that
+fails names the decision.
+
+One possibility worth checking with the SPP: the example may be carrying an
+unstated [C6] constraint, since taking all three 3-pointers empties that
+scoregroup and [C6]'s "unless ... this scoregroup is now empty" clause turns
+off exactly when it does.
+
+### 3.6.4 names minimisation criteria as if they were predicates
+
+"Choose the first pairing that also complies with criteria [C1], [C8], [C9]
+and [C10]." [C1] is a predicate. The other three are minimisations, and no
+single pairing complies with a minimisation in isolation - it complies by
+achieving the minimum attainable over the bracket's legal pairings.
+
+So `Bracket.pair/2` minimises `{c8, c9, c10}` lexicographically and
+tie-breaks by identifier order. That is the same statement made computable:
+the first compliant pairing in identifier order IS the lex-smallest
+identifier among those achieving the minima. The practical consequence is
+that the walk cannot always stop at the first legal candidate - though it
+stops immediately on `{0,0,0}`, which cannot be beaten and which round one
+and most ordinary brackets hit on the first try.
+
+### [C7] is a minimisation applied to a choice between sets
+
+2.3.4 minimises upfloaters that were floaters in the previous round, and
+3.5.5 asks for "the first set that ... complies with [C6] and [C7]". The
+implementation takes 3.5.4's order and applies legality plus [C6] as a gate,
+which means [C7] currently acts as part of the ordering rather than as a
+separate ranking pass. A stricter reading would rank surviving sets by their
+[C7] count before applying 3.5.4's tie-break. Recorded rather than guessed;
+it changes behaviour only when a lexicographically earlier set carries more
+previous-round floaters than a later one.
+
 ## Open questions
 
 * **4.3.1 and the TPN-parity dispute.** Blocked on the SPP reply. Build

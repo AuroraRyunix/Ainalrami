@@ -59,10 +59,15 @@ defmodule Ainalrami.TeamPairing.Matching do
 
   def feasible?(mask, adj) do
     cond do
-      rem(popcount(mask), 2) == 1 -> false
-      greedy?(mask, adj) -> true
-      true -> {result, _memo} = search(mask, adj, %{})
-              result
+      rem(popcount(mask), 2) == 1 ->
+        false
+
+      greedy?(mask, adj) ->
+        true
+
+      true ->
+        {result, _memo} = search(mask, adj, %{})
+        result
     end
   end
 
@@ -80,7 +85,7 @@ defmodule Ainalrami.TeamPairing.Matching do
       false
     else
       u = lowest_bit(partners)
-      greedy?(mask &&& bnot((1 <<< v) ||| (1 <<< u)), adj)
+      greedy?(mask &&& bnot(1 <<< v ||| 1 <<< u), adj)
     end
   end
 
@@ -116,7 +121,7 @@ defmodule Ainalrami.TeamPairing.Matching do
 
   defp try_partners(partners, v, mask, adj, memo) do
     u = lowest_bit(partners)
-    rest = mask &&& bnot((1 <<< v) ||| (1 <<< u))
+    rest = mask &&& bnot(1 <<< v ||| 1 <<< u)
 
     case search(rest, adj, memo) do
       {true, memo} -> {true, memo}

@@ -80,7 +80,9 @@ defmodule Ainalrami.TeamPairingTest do
     test "never produces a mild preference - 1.7.1 has no such thing" do
       for colours <- [[], [:white], [:black], [:white, :black], [:black, :white, :black]] do
         pref = Team.preference(team(1, colours: colours), :a)
-        refute match?({_, :mild}, pref), "Type A produced a mild preference for #{inspect(colours)}"
+
+        refute match?({_, :mild}, pref),
+               "Type A produced a mild preference for #{inspect(colours)}"
       end
     end
   end
@@ -277,16 +279,11 @@ defmodule Ainalrami.TeamPairingTest do
       assert {:ok, []} = TeamPairing.select_upfloaters(residents, lower, :match_points)
     end
 
-    test "the regulation's own 3.5.4 example orders the sets correctly" do
-      # "Let's assume that 2,6,8 have 3 points, and 1,3,5 have 2.5 points.
-      #  [C4] determines that a set of three upfloaters is needed, and [C5]
-      #  determines that two upfloaters must have 3 points and the other 2.5.
-      #  The possible set of upfloaters are: {2,6,1} < {2,6,3} < {2,6,5} <
-      #  {2,8,1} < {2,8,3} < {2,8,5} < {6,8,1} < {6,8,3} < {6,8,5}"
-      #
-      # Three residents (odd) force three upfloaters here, and with no
-      # history every set is legal - so 3.5.5 takes the first, {2,6,1},
-      # which 3.5.3 orders within itself as 2,6 (3 points) then 1 (2.5).
+    test "[C4] takes ONE upfloater for an odd scoregroup, not more" do
+      # Minimise the number (2.3.1). Three residents need one upfloater to
+      # make four, and [C5] then maximises its score - so the 3.0 group wins
+      # over the 2.5 group, and 3.5.4's lexicographic order picks the
+      # smallest TPN within it.
       residents = [team(10, mp: 4.0), team(11, mp: 4.0), team(12, mp: 4.0)]
 
       lower = [
@@ -299,9 +296,72 @@ defmodule Ainalrami.TeamPairingTest do
       ]
 
       {:ok, set} = TeamPairing.select_upfloaters(residents, lower, :match_points)
+      assert Enum.map(set, & &1.tpn) == [2]
+    end
+
+    test "3.5.4 orders candidate sets lexicographically by TPN" do
+      # The regulation's example: "Let's assume that 2,6,8 have 3 points, and
+      # 1,3,5 have 2.5 points. [C4] determines that a set of three upfloaters
+      # is needed, and [C5] determines that two upfloaters must have 3 points
+      # and the other 2.5. The possible set of upfloaters are: {2,6,1} <
+      # {2,6,3} < {2,6,5} < {2,8,1} < ..."
+      #
+      # Its ORDERING is what this asserts, and the ordering is unambiguous.
+      # Its score profile is not: with 2, 6 and 8 all on 3 points, [C5] -
+      # "minimise the score differences ... i.e. maximise the scores of the
+      # upfloaters" - reads as taking all three 3-pointers, which would make
+      # the profile 3/3/3 rather than the 3/3/2.5 the example asserts. The
+      # example states that step rather than deriving it, so the text alone
+      # does not settle it (see docs/conformance-c0406-teams.md).
+      #
+      # So the position here has only 2 and 6 on 3 points, which forces the
+      # 3/3/2.5 profile the example describes and leaves exactly its first
+      # three sets: {2,6,1} < {2,6,3} < {2,6,5}. Three upfloaters are needed
+      # because the residents have all played each other, so each can only
+      # face an upfloater.
+      residents = [
+        team(10, mp: 4.0, opponents: [11, 12]),
+        team(11, mp: 4.0, opponents: [10, 12]),
+        team(12, mp: 4.0, opponents: [10, 11])
+      ]
+
+      lower = [
+        team(2, mp: 3.0),
+        team(6, mp: 3.0),
+        team(1, mp: 2.5),
+        team(3, mp: 2.5),
+        team(5, mp: 2.5)
+      ]
+
+      {:ok, set} = TeamPairing.select_upfloaters(residents, lower, :match_points)
 
       assert Enum.map(set, & &1.tpn) == [2, 6, 1],
              "3.5.4's first set is {2,6,1}, ordered within itself by 3.5.3"
+    end
+
+    test "[C5] takes every top-scoring candidate when it can - the reading the example leaves open" do
+      # Same shape, but with 8 on 3 points as well. This engine reads [C5] as
+      # maximising the upfloaters' scores, so it takes 2, 6 and 8 rather than
+      # dropping one for a 2.5-pointer. Asserted so the reading is pinned and
+      # visible: if the SPP or a later edition says otherwise, this test is
+      # the thing that fails and points at the decision.
+      residents = [
+        team(10, mp: 4.0, opponents: [11, 12]),
+        team(11, mp: 4.0, opponents: [10, 12]),
+        team(12, mp: 4.0, opponents: [10, 11])
+      ]
+
+      lower = [
+        team(2, mp: 3.0),
+        team(6, mp: 3.0),
+        team(8, mp: 3.0),
+        team(1, mp: 2.5),
+        team(3, mp: 2.5),
+        team(5, mp: 2.5)
+      ]
+
+      {:ok, set} = TeamPairing.select_upfloaters(residents, lower, :match_points)
+      assert Enum.map(set, & &1.tpn) == [2, 6, 8]
     end
 
     test "[C5] takes the highest available scores, not the lowest TPNs" do
@@ -526,6 +586,7 @@ defmodule Ainalrami.TeamPairingTest do
       # Greedy pairs 0-1 leaving {2,3} with no edge -> greedy fails.
       # The true answer: 0-3 and 1-2, so it IS feasible.
       adj2 = %{0 => 0b1010, 1 => 0b0101, 2 => 0b0010, 3 => 0b0001}
+
       assert Matching.feasible?(0b1111, adj2),
              "greedy picks 0-1 and strands 2 and 3; the exhaustive pass must find 0-3, 1-2"
     end
@@ -626,7 +687,7 @@ defmodule Ainalrami.TeamPairingTest do
   defp random_bracket(size) do
     for n <- 1..size do
       played = Enum.random(0..3)
-      colours = for _ <- 1..played, do: Enum.random([:white, :black])
+      colours = for _ <- 1..played//1, do: Enum.random([:white, :black])
 
       opponents =
         if size > 2 and Enum.random([true, false]) do
@@ -729,5 +790,4 @@ defmodule Ainalrami.TeamPairingTest do
       end
     end)
   end
-
 end
