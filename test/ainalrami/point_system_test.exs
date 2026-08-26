@@ -247,6 +247,127 @@ defmodule Ainalrami.PointSystemTest do
     end
   end
 
+  describe "the opponent, not only the code" do
+    # `getPoints` (tournament.h:310-322) is not a function of the result
+    # character. It reads `match.opponent == player.id` and
+    # `match.participatedInPairing` too, and `participatedInPairing` is
+    # built at trf.cpp:303 as `opponent != id || resultChar == 'U' ||
+    # resultChar == '+'`. Exactly two opponentless codes come out of that
+    # differently from the code alone, and `points_for/2` - a function of
+    # the code alone - could not express either.
+    @distinct %{
+      win: 7.0,
+      draw: 3.0,
+      loss: 2.0,
+      pairing_allocated_bye: 5.0,
+      forfeit_loss: 1.0,
+      zero_point_bye: 0.25
+    }
+
+    test "an opponentless forfeit WIN is the pairing's bye, not a win" do
+      # `+` is on the participatedInPairing list, so with nobody on the
+      # other side it satisfies `opponent == id && participatedInPairing`
+      # and takes the pairing-allocated-bye branch.
+      assert Trf.points_for_game(%{opponent_rank: nil, colour: nil, result: "+"}, @distinct) ==
+               5.0
+
+      # Against a real opponent the same code is an ordinary win, because
+      # `opponent == id` fails.
+      assert Trf.points_for_game(%{opponent_rank: 4, colour: "w", result: "+"}, @distinct) == 7.0
+    end
+
+    test "an opponentless forfeit LOSS is a zero-point bye, not a forfeit loss" do
+      # `-` is NOT on the participatedInPairing list. A LOSS that did not
+      # participate is a zero-point bye; the forfeit-loss field is only
+      # reached when there was an opponent to forfeit against.
+      assert Trf.points_for_game(%{opponent_rank: nil, colour: nil, result: "-"}, @distinct) ==
+               0.25
+
+      assert Trf.points_for_game(%{opponent_rank: 4, colour: "w", result: "-"}, @distinct) == 1.0
+    end
+
+    test "every other combination is the code alone" do
+      # Stated exhaustively so a future edit to `points_for_game/2` that
+      # widened its reach would fail here. The absent combinations are the
+      # ones bbpPairings rejects as invalid lines rather than scores:
+      # `0000 - 1`, `0000 - 0` and `Z` or a blank against an opponent.
+      for {result, opponentless, with_opponent} <- [
+            {"1", :invalid, 7.0},
+            {"W", :invalid, 7.0},
+            {"F", 7.0, :invalid},
+            {"U", 5.0, :invalid},
+            {"=", :invalid, 3.0},
+            {"D", :invalid, 3.0},
+            {"H", 3.0, :invalid},
+            {"0", :invalid, 2.0},
+            {"L", :invalid, 2.0},
+            {"Z", 0.25, :invalid},
+            {nil, 0.25, :invalid}
+          ] do
+        if opponentless != :invalid do
+          game = %{opponent_rank: nil, colour: nil, result: result}
+
+          assert Trf.points_for_game(game, @distinct) == opponentless,
+                 "0000 - #{result || "blank"}"
+
+          assert Trf.points_for_game(game, @distinct) == Trf.points_for(result, @distinct),
+                 "0000 - #{result || "blank"} should not be a special case"
+        end
+
+        if with_opponent != :invalid do
+          game = %{opponent_rank: 4, colour: "w", result: result}
+
+          assert Trf.points_for_game(game, @distinct) == with_opponent,
+                 "4 w #{result || "blank"}"
+        end
+      end
+    end
+
+    test "the standard system hides both, which is why the corpus never saw them" do
+      # A win and a pairing-allocated bye are both 1, a forfeit loss and a
+      # zero-point bye both 0. Nothing separates them until a file sets its
+      # own values - and the generator only ever writes `-` against a real
+      # opponent, so no `0000 - -` and no `0000 - +` has ever been fuzzed.
+      for result <- ["+", "-", "U", "F", "H", "Z"] do
+        game = %{opponent_rank: nil, colour: nil, result: result}
+        assert Trf.points_for_game(game) == Trf.points_for(result)
+      end
+    end
+
+    @forfeit_bye_fixture "test/fixtures/point_system/opponentless-forfeit-loss-bye.trf"
+
+    test "an opponentless forfeit loss no longer costs its holder the bye" do
+      # `eligibleForBye` (common.h:105-119) is
+      #
+      #     !gameWasPlayed
+      #       && (getPoints(...) >= pointsForWin
+      #             || (participatedInPairing && opponent == id))
+      #
+      # Both halves read the game, not the code. Under `BBF 1.0` the code
+      # alone says `-` is worth a win and disqualifies its holder; the
+      # reference says an opponentless `-` did not participate, is worth a
+      # ZERO-POINT BYE, and disqualifies nobody.
+      #
+      # Round 3 of five. Rank 4 already holds the pairing-allocated bye and
+      # is out of the running; rank 5, alone in the bottom bracket, is the
+      # only remaining candidate. bbpPairings 6.0.0 on this exact file
+      # gives `4 1 / 2 3 / 5 0`. Scoring the code alone struck rank 5 off,
+      # pushed the bye up to rank 2 and paired 5 against 3 instead - one
+      # wrong bye and one wrong board, from one character.
+      %{players: players, tournament: t} = Trf.parse(File.read!(@forfeit_bye_fixture))
+
+      assert t[:point_system].forfeit_loss == 1.0, "the fixture is the BBF 1.0 case"
+
+      pairs =
+        Pairing.pair_next_round(players,
+          expected_rounds: t[:rounds],
+          point_system: t[:point_system]
+        )
+
+      assert normalise(pairs) == [[1, 4], [2, 3], [5]]
+    end
+  end
+
   describe "what it changes in the pairing" do
     test "a bye worth half a point puts its holder in a different bracket" do
       # The configuration FIDE actually permits, and the reason this is

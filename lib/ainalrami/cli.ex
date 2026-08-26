@@ -434,7 +434,7 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
       %{
         player
         | games: games,
-          points: Enum.sum(Enum.map(games, &Trf.points_for(&1.result, points)))
+          points: Enum.sum(Enum.map(games, &Trf.points_for_game(&1, points)))
       }
     end)
   end

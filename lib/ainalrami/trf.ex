@@ -202,6 +202,46 @@ defmodule Ainalrami.Trf do
   def points_for(_result, points), do: points.zero_point_bye
 
   @doc """
+  What a single GAME is worth - the result code read together with whether
+  it had an opponent.
+
+  `points_for/2` maps the code alone, and for two opponentless codes that is
+  not enough. bbpPairings' `getPoints` (`tournament.h:310-322`) reads
+  `match.opponent == player.id` and `match.participatedInPairing` as well as
+  the score, and `participatedInPairing` is built at `trf.cpp:303` as
+  `opponent != id || resultChar == 'U' || resultChar == '+'`. Two
+  combinations come out differently:
+
+    * `0000 - +` - an arbiter's forfeit WIN with nobody on the other side.
+      It counts as having taken part in the pairing (`+` is on that list),
+      so it lands in the pairing-allocated-bye branch, not the ordinary
+      win one.
+    * `0000 - -` - a forfeit LOSS with nobody on the other side. `-` is
+      NOT on that list, so it did not take part, and a non-participating
+      loss is a zero-point bye rather than a forfeit loss.
+
+  Under the standard system both distinctions are invisible (a win and a
+  pairing-allocated bye are both 1, a forfeit loss and a zero-point bye
+  both 0), which is why 488M fuzzed pairings never saw them - the generator
+  only ever writes `-` against a real opponent. They separate the moment a
+  file sets its own values with `BBW`/`BBU`/`BBF`, and then they separate a
+  player's SCORE, which decides their bracket.
+
+  Every other combination agrees with `points_for/2`, and the ones that do
+  not appear here are the ones bbpPairings rejects outright: `0000 - 1`,
+  `0000 - 0` and a bare `Z` against an opponent are all invalid lines.
+  """
+  def points_for_game(game), do: points_for_game(game, default_point_system())
+
+  def points_for_game(game, points) do
+    case {Map.get(game, :opponent_rank), Map.get(game, :result)} do
+      {nil, result} when result in ~w(+ U) -> points.pairing_allocated_bye
+      {nil, "-"} -> points.zero_point_bye
+      {_opponent, result} -> points_for(result, points)
+    end
+  end
+
+  @doc """
   Whether a result code represents a game that was actually PLAYED.
 
   bbpPairings sets `gameWasPlayed = false` for exactly `+ - H F U Z` and a

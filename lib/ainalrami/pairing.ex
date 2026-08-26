@@ -270,7 +270,7 @@ defmodule Ainalrami.Pairing do
 
     # Stamped for the same reason `pair_next_round/2` stamps it, and missing
     # until 2026-08-26. Every score-dependent rule reads the point system
-    # through `result_points/1` and `point_system/0`, so without this they
+    # through `game_points/1` and `point_system/0`, so without this they
     # all fell back to 1/=/0 - while this function's whole job is to explain
     # what the PAIRING did. The CLI builds one keyword list and hands it to
     # both, so `openpair file.trf -x` on a file carrying `BB*` lines paired
@@ -1038,7 +1038,7 @@ defmodule Ainalrami.Pairing do
 
       cond do
         not played?(game) ->
-          if result_points(game.result) > point_system().loss, do: :down, else: :none
+          if game_points(game) > point_system().loss, do: :down, else: :none
 
         not is_map_key(by_rank, game.opponent_rank) ->
           :none
@@ -1091,7 +1091,7 @@ defmodule Ainalrami.Pairing do
     player.games
     |> Enum.slice(from, played - from)
     |> Enum.reduce(reconciled_points(player, played), fn game, score ->
-      score - result_points(game.result)
+      score - game_points(game)
     end)
     |> Kernel.+(acceleration_at(player, played - rounds_back))
   end
@@ -1117,12 +1117,12 @@ defmodule Ainalrami.Pairing do
     played_sum =
       player.games
       |> Enum.take(played)
-      |> Enum.reduce(0.0, fn game, sum -> sum + result_points(game.result) end)
+      |> Enum.reduce(0.0, fn game, sum -> sum + game_points(game) end)
 
     future_sum =
       player.games
       |> Enum.drop(played)
-      |> Enum.reduce(0.0, fn game, sum -> sum + result_points(game.result) end)
+      |> Enum.reduce(0.0, fn game, sum -> sum + game_points(game) end)
 
     acceleration = acceleration_at(player, played)
 
@@ -1150,10 +1150,19 @@ defmodule Ainalrami.Pairing do
   # to prevent. `Pairing` aliases nothing from `Trf` by design (the engine
   # runs on plain maps and does not require a parsed file), so this is the
   # one call rather than a module-wide alias.
-  defp result_points(result) do
+  # What a game is worth here, under whichever point system is in force.
+  #
+  # bbpPairings scores from `getPoints(player, match)` everywhere it scores
+  # at all, and that reads the OPPONENT as well as the result: `0000 - +`
+  # is a pairing-allocated bye rather than a win, and `0000 - -` is a
+  # zero-point bye rather than a forfeit loss (see
+  # `Trf.points_for_game/2`). This scored the code alone, which put those
+  # two players in the wrong bracket under any file setting its own point
+  # values. Every caller holds the whole game, so none of them needs to.
+  defp game_points(game) do
     case Process.get(@point_system_key) do
-      nil -> Ainalrami.Trf.points_for(result)
-      system -> Ainalrami.Trf.points_for(result, system)
+      nil -> Ainalrami.Trf.points_for_game(game)
+      system -> Ainalrami.Trf.points_for_game(game, system)
     end
   end
 
@@ -4172,14 +4181,23 @@ defmodule Ainalrami.Pairing do
   # being right the moment a file sets its own point values. With
   # `BBF 1.0`, a forfeit LOSS is worth a win and disqualifies its holder;
   # with `BBW 2.0`, a half-point bye still does not.
+  #
+  # The score test is only the reference's FIRST disjunct. The second -
+  # `participatedInPairing && opponent == id` - catches the opponentless
+  # `U` and `+` however little the file pays them, and was written here as
+  # a bare `result == "U"`. It coincided while `+` was scored as a win;
+  # once `+` is scored as the pairing-allocated bye it is, a file setting
+  # `BBU 0.0` would have handed a second bye to somebody who already had a
+  # forfeit win.
 
   defp eligible_for_bye?(player) do
     not Enum.any?(player.games, &bye_disqualifying?/1)
   end
 
-  defp bye_disqualifying?(%{result: result}) do
-    not Ainalrami.Trf.game_was_played?(result) and
-      (result == "U" or result_points(result) >= point_system().win)
+  defp bye_disqualifying?(game) do
+    not Ainalrami.Trf.game_was_played?(game.result) and
+      (game_points(game) >= point_system().win or
+         (is_nil(game.opponent_rank) and Ainalrami.Trf.participated_in_pairing?(game)))
   end
 
   defp assign_colour_with_history({a, b}) do
