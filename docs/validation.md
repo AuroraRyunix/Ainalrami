@@ -86,6 +86,31 @@ The 08-20 corpus is written up in full below. Per-axis detail for the four
 later runs is in [engineering-log.md](engineering-log.md), under their own
 dates.
 
+**A seventh, on 2026-08-26**, re-measuring after the sweep's thirteen
+fixes. Small next to the table above and deliberately so - its job is to
+show the fixes cost nothing, not to add coverage:
+
+| axis | rounds | individual pairings | refused | illegal | disagreements |
+|---|---|---|---|---|---|
+| everything on, 4-40, 6000x9 | 47,882 | 386,562 | 0 | 0 | 0 |
+| small fields 4-10, 40000x9 | 245,952 | 863,316 | 0 | 0 | 0 |
+| deep rounds 4-40, 2000x16 | 27,271 | 311,987 | 0 | 0 | 0 |
+| **total** | **321,105** | **1,561,865** | **0** | **0** | **0** |
+
+"Everything on" is every axis the harness has at once: mixed point
+systems, mixed acceleration, mixed initial colour, 12% arbiter byes, 10%
+forfeits, 8% withdrawals, 8% forbidden pairs and mixed rating shapes.
+
+Worth saying plainly what that does and does not prove. Two of the thirteen
+fixes are invisible to any corpus this generator can produce - the
+`0000 - +` / `0000 - -` scoring split (the generator only ever writes `-`
+against a real opponent) and the short serialized line (the corpus never
+serializes a round in progress). A third, the negative blossom duals, was
+happening 734 times per 800 nine-round tournaments while the engine agreed
+with bbpPairings on all 800. A clean corpus after a fix is evidence the fix
+broke nothing. It is not evidence the fix was unnecessary, and for these
+three it could never have been the thing that found them.
+
 **The limit of all of it.** Every one of those 2.5 billion pairings is
 measured against a SINGLE oracle, and agreement with one reference cannot
 detect a rule both engines read the same wrong way. The only instrument
