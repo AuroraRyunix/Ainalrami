@@ -47,6 +47,20 @@ defmodule Ainalrami.PairingLaterRoundTest do
              "a forbidden-pair map from the previous call leaked into this one: #{inspect(again)}"
     end
 
+    test "initial_colour is honoured, not inferred past" do
+      # The fourth option this entry point ignored. `pair_next_round/2` and
+      # `explain_round/3` both stamp it; this one did not, so a caller asking
+      # for Black on board one silently got White - `colour_of/2` reads the
+      # key with a default of "w".
+      players = [p(1, 0.0, []), p(2, 0.0, [])]
+
+      white_first = Pairing.pair_later_round(players, expected_rounds: 5, initial_colour: "w")
+      black_first = Pairing.pair_later_round(players, expected_rounds: 5, initial_colour: "b")
+
+      refute white_first == black_first,
+             "initial_colour: \"b\" produced the same seating as \"w\" - the option was dropped"
+    end
+
     test "expected_rounds from one call does not survive into the next" do
       players = [p(1, 0.0, []), p(2, 0.0, [])]
 

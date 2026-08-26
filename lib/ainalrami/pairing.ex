@@ -751,6 +751,17 @@ defmodule Ainalrami.Pairing do
 
     Process.put(@point_system_key, opts[:point_system] || Process.get(@point_system_key))
 
+    # The fourth option, and the last one this entry point was ignoring.
+    # `pair_next_round/2` and `explain_round/3` both stamp it; this did not,
+    # so a direct caller passing `initial_colour: "b"` had it silently
+    # dropped and board one came out the wrong way round - `colour_of/2`
+    # reads this key with a default of "w".
+    Process.put(
+      @initial_colour_key,
+      opts[:initial_colour] || Process.get(@initial_colour_key) ||
+        infer_initial_colour(players) || "w"
+    )
+
     # Cleaned up here, and until 2026-08-26 it was not cleaned up at all.
     # That mattered because of the `|| Process.get(...)` fallbacks above:
     # the leftovers were not merely inert, the NEXT direct call inherited
@@ -771,6 +782,7 @@ defmodule Ainalrami.Pairing do
       Process.delete(@expected_rounds_key)
       Process.delete(@forbidden_key)
       Process.delete(@point_system_key)
+      Process.delete(@initial_colour_key)
       Process.delete(@played_key)
     end
   end
