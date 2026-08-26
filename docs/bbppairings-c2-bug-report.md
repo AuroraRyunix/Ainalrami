@@ -237,6 +237,43 @@ minimised. It goes to TPN 6 regardless, because [C2] is absolute and has
 eliminated every other candidate - the criteria are lexicographic, and an
 absolute one is not tradeable against a lower-ranked preference.
 
+## A fourth case, and the first on a non-standard point system
+
+Found 2026-08-26 on a corpus axis that had never been run before: `mixed`
+point systems crossed with withdrawals. One disagreement in **476,150
+rounds**, which is the rate this defect shows up at once the obvious
+triggers are already covered.
+
+`test/fixtures/c2_seed8112174-r9-p18.trf` - 18 players, round 9, a
+football 3-1-0 system (`BBW 3.0`, `BBD 1.0`, `BBU 3.0`), seven players
+still active.
+
+Rank 6's round-3 entry is `0000 - U`: it has already had a
+pairing-allocated bye. bbpPairings' round-9 answer gives it another:
+
+```
+Ainalrami:    6-18   8-BYE   9-11   14-13
+bbpPairings:  6-BYE  9-8     11-18  14-13
+```
+
+That is [C2] again, in the same direction as the three cases above - the
+program that awards the second bye is bbpPairings, every time.
+
+**Worth stating precisely because the point system is unusual here**: `BBU`
+is 3.0, the same as `BBW`. A reader might wonder whether the U is being
+mistaken for a win, or whether the bye's VALUE is what confuses
+`eligibleForBye` - it tests "an unplayed game worth at least a win", and on
+this system a `U` is worth exactly a win. That makes this case slightly
+different in flavour from the three standard-scored ones, and it may be a
+second mechanism rather than the same one. It is filed here rather than
+separately because the observable defect - a second pairing-allocated bye -
+is identical.
+
+Verified not to be a regression in Ainalrami: the identical file, fed to
+the engine at the commit before that day's five fixes, produces the same
+pairing. The disagreement is pre-existing and was surfaced by a new axis,
+not caused by a change.
+
 ## Reproduction
 
 Save the file above with CRLF line endings and run the command in "Observed
