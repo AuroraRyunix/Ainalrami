@@ -267,11 +267,36 @@ defmodule Ainalrami.WeightedMatching do
   # twelve-vertex solve that stopped after one augmentation with ten
   # exposed vertices left.
   #
-  # The fix is theirs exactly: every exposed top-level blossom whose base
-  # dual is odd gets +1 on each of its vertices, and -2 on its own blossom
-  # dual if it is non-trivial, so every edge's dual sum is unchanged. On a
-  # fresh solve every dual is `max_w`, which is even, so this is a no-op
-  # there and `solve/2` is unaffected.
+  # The fix is theirs exactly: every exposed blossom whose base dual is odd
+  # gets +1 on each of its vertices, and -2 on its own blossom dual if it
+  # is non-trivial, so every edge's dual sum is unchanged. On a fresh solve
+  # every dual is `max_w`, which is even, so this is a no-op there and
+  # `solve/2` is unaffected.
+  #
+  # "Every exposed blossom" is not "every exposed TOP-LEVEL blossom", and
+  # the difference is the whole of `descend_to_adjustable/2`. The -2 has to
+  # come from a blossom that HAS 2 to give, and a top-level one need not:
+  # `form_blossom/3` creates a blossom at dual 0, and it only gains
+  # `2 * delta` while it is labelled `:outer`, so one formed around a tree
+  # root whose stage ends on an immediately-following delta-0 augmentation
+  # finishes the solve matched and still at 0. `set_weight/4` then prepares
+  # only its external partner, and `prepare_vertex/2` leaves that blossom
+  # non-trivial and EXPOSED with its dual untouched - so the next `solve/1`
+  # took 2 from a zero and left a NEGATIVE blossom dual behind, which is
+  # not a feasible dual solution and which every later delta computation
+  # then reads as though it were.
+  #
+  # The reference descends instead (`graph.cpp:805-843`): from the exposed
+  # root blossom, walk into the child holding the base while that child is
+  # itself a non-trivial blossom with dual 0, dissolving each zero-dual
+  # ancestor on the way down (`freeAncestorOfBase`), and take the -2 from
+  # the first blossom that has it - or from nothing at all, if the descent
+  # reaches a bare vertex. The +1 goes to the vertices of THAT blossom, not
+  # of the one we started from; the siblings dropped on the way down came
+  # out matched to each other, so their own parity is already right.
+  #
+  # Dissolving a zero-dual blossom is free: `dissolve_one/3` hands each
+  # vertex `z_B / 2`, which is 0.
   defp even_up_exposed_duals(state) do
     # Before the first stage the label map is empty and `top_blossoms/1`
     # would see nothing; on a fresh state every dual is `max_w`, even, so
@@ -283,12 +308,27 @@ defmodule Ainalrami.WeightedMatching do
 
     Enum.reduce(top, state, fn b, state ->
       if not matched?(state, b) and rem(dual_of(state, base_vertex(state, b)), 2) == 1 do
+        label_before = state.label
+        {state, b, dissolved} = descend_to_adjustable(state, b, [])
+
+        # `dissolve_one/3` is written for the BETWEEN-STAGES path and
+        # labels every child it frees `:free`. Here there is no tree yet:
+        # `solve/1` has just cleared the label map, and `carry_caches/2`
+        # reads an empty one as "rebuild from scratch". Leaving the labels
+        # behind made the first stage carry caches computed against the
+        # weights of the previous solve, and cost a bracket that had been
+        # right - seed 19 round 2 of the default bbpPairings corpus,
+        # 23 players, four boards different. Only the labels are undone;
+        # everything else `dissolve_one/3` writes is the structural edit
+        # this wants.
+        state = %{state | label: Map.drop(label_before, dissolved)}
+
         vs = blossom_vertices(state, b)
         dual = Enum.reduce(vs, state.dual, fn v, d -> Map.update!(d, v, &(&1 + 1)) end)
 
         dual =
           if Map.has_key?(state.children, b),
-            do: Map.update!(dual, b, &(&1 - 2)),
+            do: Map.update!(dual, b, &take_two(&1, b)),
             else: dual
 
         %{state | dual: dual}
@@ -296,6 +336,38 @@ defmodule Ainalrami.WeightedMatching do
         state
       end
     end)
+  end
+
+  # `graph.cpp:827-830` asserts this rather than checking it, and so does
+  # this - the descent above is what makes it true, and a blossom dual
+  # below zero is not a dual solution at all. Left as a raise because it is
+  # cheap, because the negative value is otherwise silent (every later
+  # delta computation simply reads it), and because it took a probe to see
+  # it at all: instrumented right here, the version without the descent
+  # produced 734 negative duals over 800 nine-round tournaments while
+  # agreeing with bbpPairings on every one of them.
+  defp take_two(z, _b) when z >= 2, do: z - 2
+
+  defp take_two(z, b) do
+    raise "WeightedMatching: blossom #{b} has dual #{z}, too little to even up its base"
+  end
+
+  # `graph.cpp:812-823`. Returns the blossom (or bare vertex) the -2 is to
+  # come from, with every zero-dual ancestor between it and `b` dissolved,
+  # and the ids of the ones dissolved on the way.
+  defp descend_to_adjustable(state, b, dissolved) do
+    cond do
+      not Map.has_key?(state.children, b) ->
+        {state, b, dissolved}
+
+      Map.fetch!(state.dual, b) != 0 ->
+        {state, b, dissolved}
+
+      true ->
+        base = base_vertex(state, b)
+        state = dissolve_one(state, b, base)
+        descend_to_adjustable(state, Map.fetch!(state.in_blossom, base), [b | dissolved])
+    end
   end
 
   @doc """

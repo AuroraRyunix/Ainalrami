@@ -103,6 +103,70 @@ defmodule Ainalrami.WeightedMatchingTest do
     end
   end
 
+  describe "the incremental path: new/3, set_weight/4, solve/1" do
+    # `solve/2` is the pure entry, and every test above uses it. `Pairing`
+    # does not: it builds one state with `new/3` and then edits weights
+    # with `set_weight/4`, re-solving between edits, so the search
+    # RESUMES from a previous optimum instead of starting fresh. That is
+    # the path `even_up_exposed_duals/1` and `prepare_vertex/2` exist for,
+    # and it had no direct coverage at all - it was reached only through
+    # whole pairings, where a wrong matching shows up as a different
+    # bracket rather than as a smaller total weight.
+    test "an edited state reaches the same optimum a fresh solve would" do
+      for seed <- 201..320 do
+        :rand.seed(:exsss, {seed, seed * 3, seed * 7})
+        n = Enum.random(4..10)
+
+        edges =
+          for a <- 0..(n - 1), b <- 0..(n - 1), a < b, :rand.uniform() < 0.45 do
+            {a, b, Enum.random(1..15)}
+          end
+
+        {state, _} =
+          n |> WeightedMatching.new(edges, max_weight: 16, gcd: 1) |> WeightedMatching.solve()
+
+        # A handful of edits, each followed by its own resume. The final
+        # weights are what the oracle is asked about.
+        {state, final} =
+          Enum.reduce(1..5, {state, edges}, fn _step, {state, current} ->
+            a = Enum.random(0..(n - 1))
+            b = Enum.random(0..(n - 1))
+
+            if a == b do
+              {state, current}
+            else
+              w = Enum.random(0..15)
+
+              {state, _} =
+                state |> WeightedMatching.set_weight(a, b, w) |> WeightedMatching.solve()
+
+              {lo, hi} = {min(a, b), max(a, b)}
+              current = Enum.reject(current, fn {x, y, _} -> {x, y} == {lo, hi} end)
+              {state, if(w > 0, do: [{lo, hi, w} | current], else: current)}
+            end
+          end)
+
+        result = matching_of(state, n)
+
+        assert valid_matching?(result, final),
+               "seed #{seed}: invalid matching #{inspect(result)} for edges #{inspect(final)}"
+
+        expected = oracle_max_weight(n, final)
+        got = total_weight(result, final)
+
+        assert got == expected,
+               "seed #{seed}: incremental got #{got}, oracle says #{expected}, " <>
+                 "edges: #{inspect(final)}, matching: #{inspect(result)}"
+      end
+    end
+  end
+
+  defp matching_of(state, n) do
+    for v <- 0..(n - 1), u = WeightedMatching.mate_of(state, v), u != nil, into: %{} do
+      {v, u}
+    end
+  end
+
   # `Ainalrami.Matching`'s bracket DP is a genuinely INDEPENDENT
   # implementation (different algorithm, memoized subset DP over ANY
   # subset rather than a primal-dual blossom search) already relied on
