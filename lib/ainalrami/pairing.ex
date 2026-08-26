@@ -268,6 +268,15 @@ defmodule Ainalrami.Pairing do
       opts[:initial_colour] || infer_initial_colour(players) || "w"
     )
 
+    # Stamped for the same reason `pair_next_round/2` stamps it, and missing
+    # until 2026-08-26. Every score-dependent rule reads the point system
+    # through `result_points/1` and `point_system/0`, so without this they
+    # all fell back to 1/=/0 - while this function's whole job is to explain
+    # what the PAIRING did. The CLI builds one keyword list and hands it to
+    # both, so `openpair file.trf -x` on a file carrying `BB*` lines paired
+    # under the file's system and explained under the default one.
+    Process.put(@point_system_key, opts[:point_system] || Ainalrami.Trf.default_point_system())
+
     try do
       played = rounds_played(players)
       Process.put(@played_key, played)
@@ -317,6 +326,7 @@ defmodule Ainalrami.Pairing do
     after
       Process.delete(@expected_rounds_key)
       Process.delete(@initial_colour_key)
+      Process.delete(@point_system_key)
       Process.delete(@played_key)
       Process.delete(@forbidden_key)
       Process.delete(@bye_score_key)
@@ -739,7 +749,30 @@ defmodule Ainalrami.Pairing do
         Process.get(@forbidden_key)
     )
 
-    do_pair_later_round(players)
+    Process.put(@point_system_key, opts[:point_system] || Process.get(@point_system_key))
+
+    # Cleaned up here, and until 2026-08-26 it was not cleaned up at all.
+    # That mattered because of the `|| Process.get(...)` fallbacks above:
+    # the leftovers were not merely inert, the NEXT direct call inherited
+    # them. A forbidden-pair map from tournament A silently forbade the same
+    # starting ranks in tournament B, and A's `expected_rounds` let the
+    # final-round colour exception fire in a mid-tournament round of B -
+    # both of which produce a pairing that looks entirely legal.
+    #
+    # Unconditional, including on the `pair_next_round/2` path that stamps
+    # these keys and delegates here. That is safe because the delegation is
+    # the last thing that function does before its own `after` deletes the
+    # same keys - so nothing reads them after this returns, and a double
+    # delete is a no-op. Anyone adding work after the delegation has to
+    # revisit this.
+    try do
+      do_pair_later_round(players)
+    after
+      Process.delete(@expected_rounds_key)
+      Process.delete(@forbidden_key)
+      Process.delete(@point_system_key)
+      Process.delete(@played_key)
+    end
   end
 
   defp do_pair_later_round(players) do

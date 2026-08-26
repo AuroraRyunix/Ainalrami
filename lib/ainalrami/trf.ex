@@ -369,7 +369,7 @@ defmodule Ainalrami.Trf do
 
     for {field, code} <- order,
         value = Map.get(system, field),
-        value != Map.fetch!(default, field) do
+        emit?(field, value, system, default) do
       # Fixed columns, not free-form. `readPoints` (trf.cpp:637-644) demands
       # a line of at least 8 characters and reads the value from column 5
       # onwards, so `BBW 2.0` - the obvious spelling, and 7 characters - is
@@ -378,6 +378,32 @@ defmodule Ainalrami.Trf do
       code <> " " <> String.pad_leading(:erlang.float_to_binary(value / 1, decimals: 1), 4)
     end
   end
+
+  # Whether a `BB*` line has to be written.
+  #
+  # "It differs from the default" is the obvious rule and it is wrong for
+  # exactly one field. Reading a `BBW` sets `pairing_allocated_bye` to the
+  # same value unless a `BBU` has already pinned it - that is this module's
+  # own `parse_bb_points/3` (`pab_pinned?`) and bbpPairings'
+  # `usePairingAllocatedByeScore` (`trf.cpp:1206-1213`). So whenever the win
+  # is non-default and the bye is at its default, the "differs" rule omitted
+  # `BBU` and the reader then made the bye worth the WIN.
+  #
+  # The emitter's own note about ordering shows the interaction was known -
+  # "BBU comes last on purpose, BBW drags the pairing-allocated bye with it
+  # unless the bye has already been pinned" - but it was applied to the order
+  # of the lines and not to the decision of whether to write one. The file
+  # was wrong, not just the round trip: a 3-1-0 event with an ordinary
+  # one-point bye stated a three-point bye.
+  #
+  # The rule is therefore what the READER will reconstruct, not what the
+  # default is: write `BBU` whenever a `BBW` is being written at all.
+  defp emit?(:pairing_allocated_bye, value, system, default) do
+    value != default.pairing_allocated_bye or
+      Map.get(system, :win) != default.win
+  end
+
+  defp emit?(field, value, _system, default), do: value != Map.fetch!(default, field)
 
   # `XXA`/`XXP` are JaVaFo's spellings and what the sibling project emits,
   # so they stay the default. `250`/`260` are bbpPairings' own fixed-column,
@@ -452,23 +478,36 @@ defmodule Ainalrami.Trf do
   defp numeric_forbidden_lines([], _rounds), do: []
 
   defp numeric_forbidden_lines(groups, rounds) do
-    last = max(rounds, 1)
-
     for group <- groups, ids = group_ids(group), length(ids) >= 2 do
-      ids
-      |> Enum.with_index()
-      |> Enum.reduce(
-        []
-        |> place({1, 3}, "260")
-        |> place({5, 7}, 1, align: :right)
-        |> place({9, 11}, last, align: :right),
-        fn {id, i}, acc ->
-          start = 13 + i * 5
-          place(acc, {start, start + 3}, id, align: :right)
-        end
-      )
-      |> render()
+      {first, last} = group_rounds(group, rounds)
+      forbidden_260_line(ids, first, last)
     end
+  end
+
+  # A group carries its own round range when it was parsed from a `260`.
+  # Writing every group as `1..rounds` discarded it, so a ban limited to
+  # rounds 2-6 came back out as a ban on the whole event - the parser read
+  # the range and the writer threw it away.
+  defp group_rounds({_ids, first, last}, _rounds)
+       when is_integer(first) and is_integer(last),
+       do: {first, last}
+
+  defp group_rounds(_group, rounds), do: {1, max(rounds, 1)}
+
+  defp forbidden_260_line(ids, first, last) do
+    ids
+    |> Enum.with_index()
+    |> Enum.reduce(
+      []
+      |> place({1, 3}, "260")
+      |> place({5, 7}, first, align: :right)
+      |> place({9, 11}, last, align: :right),
+      fn {id, i}, acc ->
+        start = 13 + i * 5
+        place(acc, {start, start + 3}, id, align: :right)
+      end
+    )
+    |> render()
   end
 
   # A group is either a bare list of ranks (`XXP`) or the round-limited
@@ -504,9 +543,25 @@ defmodule Ainalrami.Trf do
   defp forbidden_pair_lines(nil), do: []
 
   defp forbidden_pair_lines(groups) do
-    groups
-    |> Enum.reject(&(length(&1) < 2))
-    |> Enum.map(&("XXP " <> Enum.join(&1, " ")))
+    # `length/1` used to be called straight on the group, and a group parsed
+    # from a `260` is the tuple `{ids, first, last}` - `length/1` is a BIF
+    # that requires a list, so a parse-then-serialize round trip on any file
+    # containing a `260` raised ArgumentError. `group_ids/1` exists precisely
+    # to normalise the two shapes and the sibling writer already used it.
+    #
+    # A round-limited group is written back as `260` even on this default
+    # path, because `XXP` has no way to say "rounds 2 to 6" - emitting one
+    # would silently WIDEN the ban to the whole event, which is a worse
+    # answer than the crash it replaces.
+    {ranged, plain} =
+      groups
+      |> Enum.filter(&(length(group_ids(&1)) >= 2))
+      |> Enum.split_with(
+        &match?({_ids, first, last} when is_integer(first) and is_integer(last), &1)
+      )
+
+    Enum.map(plain, &("XXP " <> Enum.join(group_ids(&1), " "))) ++
+      Enum.map(ranged, fn {ids, first, last} -> forbidden_260_line(ids, first, last) end)
   end
 
   defp legend_lines(true, max_round) when max_round > 0 do

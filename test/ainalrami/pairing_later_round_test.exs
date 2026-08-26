@@ -17,6 +17,73 @@ defmodule Ainalrami.PairingLaterRoundTest do
     |> Enum.sort()
   end
 
+  describe "the public entry point does not leak state into the next call" do
+    # `pair_next_round/2` wraps everything in try/after and clears the
+    # process dictionary. `pair_later_round/2` is equally public, set three
+    # of the same keys, and cleared none of them - and because it falls back
+    # to `Process.get(...)` when an option is absent, the leftovers were not
+    # inert: the next direct call inherited them.
+    test "forbidden pairs from one call do not bind the next" do
+      a = [p(1, 0.0, []), p(2, 0.0, []), p(3, 0.0, []), p(4, 0.0, [])]
+
+      # 1-3 and 2-4 is the natural split of four equal players, so forbid
+      # exactly that - a leak is then visible as the engine avoiding a pair
+      # nobody asked it to avoid.
+      natural = Pairing.pair_later_round(a, expected_rounds: 5) |> as_pair_sets()
+      assert natural == [[1, 3], [2, 4]]
+
+      # Tournament A forbids 1-3.
+      restricted =
+        Pairing.pair_later_round(a, expected_rounds: 5, forbidden_pairs: [[1, 3]])
+        |> as_pair_sets()
+
+      refute [1, 3] in restricted, "the forbidden pair should not have been seated"
+
+      # Tournament B, same ranks, forbids nothing - so the natural pairing
+      # must come back.
+      again = Pairing.pair_later_round(a, expected_rounds: 5) |> as_pair_sets()
+
+      assert again == natural,
+             "a forbidden-pair map from the previous call leaked into this one: #{inspect(again)}"
+    end
+
+    test "expected_rounds from one call does not survive into the next" do
+      players = [p(1, 0.0, []), p(2, 0.0, [])]
+
+      _ = Pairing.pair_later_round(players, expected_rounds: 1)
+
+      refute Process.get(:ainalrami_expected_rounds),
+             "expected_rounds outlived the call that set it"
+    end
+
+    test "the process dictionary is clean afterwards" do
+      players = [p(1, 0.0, []), p(2, 0.0, []), p(3, 0.0, []), p(4, 0.0, [])]
+
+      _ =
+        Pairing.pair_later_round(players,
+          expected_rounds: 5,
+          forbidden_pairs: [[1, 2]],
+          point_system: %{
+            win: 3.0,
+            draw: 1.0,
+            loss: 0.0,
+            pairing_allocated_bye: 3.0,
+            forfeit_loss: 0.0,
+            zero_point_bye: 0.0
+          }
+        )
+
+      for key <- [
+            :ainalrami_expected_rounds,
+            :ainalrami_forbidden_pairs,
+            :ainalrami_point_system,
+            :ainalrami_played_rounds
+          ] do
+        refute Process.get(key), "#{key} was left behind"
+      end
+    end
+  end
+
   # Round 2 after round 1's standard 8-player split (1v5, 2v6, 3v7, 4v8) -
   # 1, 3, 6, 8 won (1.0 pts); 2, 4, 5, 7 lost (0.0 pts). Two even brackets,
   # neither hits a rematch, but the plain top-half-vs-bottom-half split

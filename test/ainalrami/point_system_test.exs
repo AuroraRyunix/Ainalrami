@@ -164,6 +164,33 @@ defmodule Ainalrami.PointSystemTest do
       refute trf =~ "BB"
     end
 
+    test "BBU is written whenever BBW is, because the reader would infer it" do
+      # The bug this exists for: "emit only what differs from the default"
+      # is the obvious rule and is wrong for exactly this field. Reading a
+      # BBW sets pairing_allocated_bye to the same value unless a BBU has
+      # already pinned it - `pab_pinned?` here, `usePairingAllocatedByeScore`
+      # in bbpPairings. So a 3-1-0 system with an ordinary one-point bye
+      # omitted BBU as "not different", and the reader then made the bye
+      # worth three.
+      #
+      # That is not a round-trip defect. The FILE stated a point system the
+      # caller never asked for, and anything reading it - including
+      # bbpPairings - was entitled to believe it.
+      system = %{Trf.default_point_system() | win: 3.0, draw: 1.0}
+
+      trf =
+        Trf.serialize(%{
+          tournament: %{name: "P", type: "swiss", point_system: system},
+          players: []
+        })
+
+      assert trf =~ "BBW"
+      assert trf =~ "BBU", "BBW without BBU makes the reader infer a 3-point bye"
+
+      assert Trf.parse(trf).tournament[:point_system].pairing_allocated_bye == 1.0,
+             "the bye must come back as the one the caller specified"
+    end
+
     test "only the values that differ are written" do
       trf =
         Trf.serialize(%{

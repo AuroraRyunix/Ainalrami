@@ -355,7 +355,7 @@ defmodule Ainalrami.Test.FuzzTournament do
     players =
       Enum.map(players, fn player ->
         if MapSet.member?(withdrawn, player.rank) do
-          %{player | games: player.games ++ [%{opponent_rank: nil, colour: nil, result: "Z"}]}
+          record_bye(player, "Z")
         else
           player
         end
@@ -366,18 +366,34 @@ defmodule Ainalrami.Test.FuzzTournament do
     else
       Enum.map(players, fn player ->
         if not MapSet.member?(withdrawn, player.rank) and :rand.uniform(100) <= pct do
-          result = Enum.random(~w(H Z))
-
-          %{
-            player
-            | points: player.points + result_points(result),
-              games: player.games ++ [%{opponent_rank: nil, colour: nil, result: result}]
-          }
+          record_bye(player, Enum.random(~w(H Z)))
         else
           player
         end
       end)
     end
+  end
+
+  # One helper for both branches, because they were the same rule written
+  # twice and one copy was missing the point-system term: the withdrawal
+  # branch appended the `Z` game and left `points` alone, while the
+  # requested-bye branch added `result_points(result)`.
+  #
+  # Harmless on every point system but one. `paid_forfeit` sets
+  # `zero_point_bye: 0.5`, and `PAIRING_FUZZ_POINT_SYSTEM=mixed` draws it one
+  # time in eight - so with withdrawals switched on, a player out for two or
+  # more rounds carried a points column short by 0.5 per round. bbpPairings
+  # recomputes the score from the results and rejects a file it cannot
+  # reconcile, which makes this an INSTRUMENT bug: the harness generates a
+  # file the reference refuses, and a refusal is not a disagreement about
+  # pairing. Three instrument bugs have been found in this harness before,
+  # all of the same kind - it measured something other than what it claimed.
+  defp record_bye(player, result) do
+    %{
+      player
+      | points: player.points + result_points(result),
+        games: player.games ++ [%{opponent_rank: nil, colour: nil, result: result}]
+    }
   end
 
   def simulate_results(pairs) do

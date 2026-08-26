@@ -255,6 +255,36 @@ defmodule Ainalrami.ExtensionLinesTest do
       assert parsed.tournament[:forbidden_pairs] == [{[1, 3], 2, 6}]
     end
 
+    test "a file with a 260 line can be written back out" do
+      # `forbidden_pair_lines/1` called `length/1` straight on the group, and
+      # a group parsed from a `260` is the tuple `{ids, first, last}`.
+      # `length/1` is a BIF that requires a list, so parse-then-serialize on
+      # any file containing a `260` raised ArgumentError - the parse side was
+      # tested (the test above asserts the tuple), and nothing ever wrote one
+      # back.
+      parsed = Trf.parse(four_player_roster() <> line_260("2", "6", "1", "3"))
+
+      text = Trf.serialize(parsed)
+      assert is_binary(text)
+
+      # And it comes back as a 260, not as an XXP - XXP cannot express a
+      # round range, so emitting one would silently widen the ban from
+      # "rounds 2 to 6" to the whole event.
+      assert text =~ ~r/^260/m
+      refute text =~ ~r/^XXP/m
+
+      assert Trf.parse(text).tournament[:forbidden_pairs] == [{[1, 3], 2, 6}],
+             "the round range must survive a round trip"
+    end
+
+    test "a plain XXP group still writes as XXP" do
+      parsed = Trf.parse(four_player_roster() <> "XXP 1 3
+")
+
+      text = Trf.serialize(parsed)
+      assert text =~ ~r/^XXP 1 3/m
+    end
+
     test "one 260 line names a GROUP, forbidding every pair within it" do
       # Like `XXP`, a `260` line is a list of ids and every pair among them
       # is forbidden - not just the first two.
