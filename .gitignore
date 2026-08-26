@@ -21,3 +21,11 @@ erl_crash.dump
 /overnight_run/forfeit*/
 /overnight_run/*.log
 /matching_baseline.bin
+
+# Scratch outputs of the one-off tools, committed by accident and removed
+# 2026-08-27. `forced_exchange.trf` is what `tools/forced_exchange.exs`
+# writes into the working directory; `solve_input.bin` (1.1 MB) was a
+# matcher input dumped during the delta-scan work and is referenced by
+# nothing.
+/forced_exchange.trf
+/solve_input.bin
