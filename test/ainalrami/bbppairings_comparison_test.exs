@@ -305,7 +305,7 @@ defmodule Ainalrami.BbppairingsComparisonTest do
   defp colour_mismatches({:raised, _}, _bbp, _active, _players, _where),
     do: %{colour_mismatches: 0, colour_disputed: 0}
 
-  defp colour_mismatches(ainalrami_pairs, bbp_pairs, active, players, {seed, round}) do
+  defp colour_mismatches(ainalrami_pairs, bbp_pairs, _active, players, {seed, round}) do
     theirs = MapSet.new(bbp_pairs)
 
     reversed =

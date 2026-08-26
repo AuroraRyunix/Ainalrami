@@ -93,7 +93,7 @@ defmodule Ainalrami.SequenceTest do
       s2 = [4, 5, 6]
 
       sizes =
-        for {from_s1, from_s2} <- raw_exchanges(s1, s2),
+        for {from_s1, _from_s2} <- raw_exchanges(s1, s2),
             do: length(from_s1)
 
       assert sizes == Enum.sort(sizes), "single-BSN exchanges must all precede pairs"

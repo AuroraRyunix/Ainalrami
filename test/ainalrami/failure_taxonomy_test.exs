@@ -346,6 +346,24 @@ defmodule Ainalrami.FailureTaxonomyTest do
      %{opponent_rank: white, colour: "b", result: "-", points: 0.0}}
   end
 
+  defp games_for(_white, nil, :bye),
+    do: {%{opponent_rank: nil, colour: nil, result: "U", points: 1.0}, nil}
+
+  defp games_for(white, black, :white_win) do
+    {%{opponent_rank: black, colour: "w", result: "1", points: 1.0},
+     %{opponent_rank: white, colour: "b", result: "0", points: 0.0}}
+  end
+
+  defp games_for(white, black, :black_win) do
+    {%{opponent_rank: black, colour: "w", result: "0", points: 0.0},
+     %{opponent_rank: white, colour: "b", result: "1", points: 1.0}}
+  end
+
+  defp games_for(white, black, :draw) do
+    {%{opponent_rank: black, colour: "w", result: "=", points: 0.5},
+     %{opponent_rank: white, colour: "b", result: "=", points: 0.5}}
+  end
+
   defp apply_round(players, pairs, results) do
     games_by_rank = games_by_rank(pairs, results)
 
@@ -366,24 +384,6 @@ defmodule Ainalrami.FailureTaxonomyTest do
       acc = Map.put(acc, white, white_game)
       if black, do: Map.put(acc, black, black_game), else: acc
     end)
-  end
-
-  defp games_for(_white, nil, :bye),
-    do: {%{opponent_rank: nil, colour: nil, result: "U", points: 1.0}, nil}
-
-  defp games_for(white, black, :white_win) do
-    {%{opponent_rank: black, colour: "w", result: "1", points: 1.0},
-     %{opponent_rank: white, colour: "b", result: "0", points: 0.0}}
-  end
-
-  defp games_for(white, black, :black_win) do
-    {%{opponent_rank: black, colour: "w", result: "0", points: 0.0},
-     %{opponent_rank: white, colour: "b", result: "1", points: 1.0}}
-  end
-
-  defp games_for(white, black, :draw) do
-    {%{opponent_rank: black, colour: "w", result: "=", points: 0.5},
-     %{opponent_rank: white, colour: "b", result: "=", points: 0.5}}
   end
 
   defp normalize(pairs) do

@@ -113,29 +113,6 @@ defmodule Ainalrami.MidRoundBracketTest do
   # ARE S1 (3.4).
   defp candidates(order, []), do: homogeneous(order)
 
-  # Every pairing Article 4 generates for a homogeneous bracket: the
-  # natural S1/S2 pairing, its transpositions (4.2), and then the same
-  # again after each exchange between S1 and S2 (4.3).
-  #
-  # The exchanges are not optional detail. Leaving them out was this
-  # file's SECOND wrong oracle: a remainder answer pairing two S2 members
-  # with each other is unreachable by transposition alone and perfectly
-  # reachable once an exchange has moved one of them into S1 - so the test
-  # "found" the engine off-sequence when it was the generator that could
-  # not express the move.
-  defp homogeneous(members) do
-    {s1, s2} = Enum.split(members, div(length(members), 2))
-
-    natural = for o <- Sequence.transpositions(s2, length(s1)), do: Enum.zip(s1, o)
-
-    exchanged =
-      for {new_s1, new_s2} <- Sequence.exchanges(s1, s2),
-          o <- Sequence.transpositions(new_s2, length(new_s1)),
-          do: Enum.zip(new_s1, o)
-
-    (natural ++ exchanged) |> Enum.map(&normalise/1) |> Enum.uniq()
-  end
-
   # A heterogeneous bracket pairs in TWO stages (3.4): the MDP-Pairing
   # seats the moved-down players against residents, and the residents left
   # over form a REMAINDER paired as a homogeneous bracket of its own. A
@@ -165,6 +142,29 @@ defmodule Ainalrami.MidRoundBracketTest do
   # The bracket a round actually decided something in: it inherited
   # moved-down players AND floats players onward. That is the shape this
   # file exists for, and it does not occur in every generated position.
+  # Every pairing Article 4 generates for a homogeneous bracket: the
+  # natural S1/S2 pairing, its transpositions (4.2), and then the same
+  # again after each exchange between S1 and S2 (4.3).
+  #
+  # The exchanges are not optional detail. Leaving them out was this
+  # file's SECOND wrong oracle: a remainder answer pairing two S2 members
+  # with each other is unreachable by transposition alone and perfectly
+  # reachable once an exchange has moved one of them into S1 - so the test
+  # "found" the engine off-sequence when it was the generator that could
+  # not express the move.
+  defp homogeneous(members) do
+    {s1, s2} = Enum.split(members, div(length(members), 2))
+
+    natural = for o <- Sequence.transpositions(s2, length(s1)), do: Enum.zip(s1, o)
+
+    exchanged =
+      for {new_s1, new_s2} <- Sequence.exchanges(s1, s2),
+          o <- Sequence.transpositions(new_s2, length(new_s1)),
+          do: Enum.zip(new_s1, o)
+
+    (natural ++ exchanged) |> Enum.map(&normalise/1) |> Enum.uniq()
+  end
+
   defp middle_bracket(report) do
     Enum.find(report, fn b ->
       b.mdps != [] and b.floats != [] and b.pairs != [] and length(b.order) >= 4
