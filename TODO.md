@@ -9,8 +9,10 @@ that looked obviously correct and measured *worse* - is in
 > repository. The engine core came back clean of confirmed logic bugs; what
 > did come back is `pair_later_round/2` leaking process-dictionary state
 > and honouring only half its options, `explain_round/3` dropping
-> `:point_system`, and two harness instruments that have drifted. None are
-> fixed.
+> `:point_system`, `Trf.serialize/2` raising on any tournament parsed from
+> a `260` line, and a drifted harness instrument. Six survived an
+> adversarial refutation pass; one was refuted and is kept in the document
+> with the reasoning. None are fixed.
 
 ## Conformance
 
