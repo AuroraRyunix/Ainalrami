@@ -123,6 +123,71 @@ defmodule Ainalrami.TrfTest do
     assert col(carlsen_replacement, 15, 47) |> String.trim() =~ ~r/^Ev  il 001 injected$/
   end
 
+  test "a blank result still occupies its column, so the round block is whole" do
+    # `render/1` trims trailing whitespace, which every other line here
+    # wants and a `001` line with games does not. A blank result column
+    # takes the separator at `base + 6` down with it and the line ends two
+    # columns short of the round block.
+    #
+    # bbpPairings refuses the whole FILE for it, not just the round.
+    # `trf.cpp:189-191` only enters a round block while
+    # `startIndex <= line.size() - 8`, so the short block is never read, and
+    # `trf.cpp:352-355` then finds the leftover non-space characters and
+    # throws `InvalidLineException`. Verified by direct invocation: the
+    # trimmed file exits 3 with `Invalid line`, the padded one exits 0 and
+    # pairs the round.
+    data = %{
+      tournament: %{name: "Blank", type: "swiss"},
+      players: [
+        %{
+          rank: 1,
+          name: "A",
+          points: 1.0,
+          games: [
+            %{opponent_rank: 2, colour: "w", result: "1"},
+            %{opponent_rank: nil, colour: nil, result: nil}
+          ]
+        },
+        %{
+          rank: 2,
+          name: "B",
+          points: 0.0,
+          games: [
+            %{opponent_rank: 1, colour: "b", result: "0"},
+            %{opponent_rank: nil, colour: nil, result: "H"}
+          ]
+        }
+      ]
+    }
+
+    [blank_line, filled_line] =
+      Trf.serialize(data)
+      |> String.split("
+")
+      |> Enum.filter(&String.starts_with?(&1, "001"))
+
+    # Round 2 is columns 102-109: id 102-105, colour 107, result 109.
+    assert String.length(blank_line) == 109
+    assert String.length(filled_line) == 109
+    assert col(blank_line, 102, 105) == "0000"
+    assert col(blank_line, 107, 107) == "-"
+    assert col(blank_line, 109, 109) == " "
+    assert col(filled_line, 109, 109) == "H"
+  end
+
+  test "a player with no games at all is not padded out to a round block" do
+    # The trim is right for every OTHER line, and for a `001` line that
+    # carries no games: a round-one roster ends at the rank column.
+    data = put_in(sample(), [:players, Access.at(0), :games], [])
+    data = put_in(data, [:players, Access.at(1), :games], [])
+
+    for line <- Trf.serialize(data) |> String.split("
+"),
+        String.starts_with?(line, "001") do
+      assert String.length(line) == 89
+    end
+  end
+
   test "082 (number of teams) is always emitted, even 0 for an individual tournament" do
     lines = sample() |> Trf.serialize() |> String.split("\r\n")
     assert Enum.any?(lines, &(&1 == "082 0"))

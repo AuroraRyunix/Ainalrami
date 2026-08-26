@@ -746,6 +746,28 @@ defmodule Ainalrami.Trf do
     |> place(@player_cols.rank, p[:rank], align: :right)
     |> place_games(games)
     |> render()
+    |> pad_to_last_round(games)
+  end
+
+  # `render/1` trims trailing whitespace, which every other line here wants
+  # and a `001` line with games does not. A round whose result column is
+  # blank - a round paired but not yet played, or one its holder sat out
+  # with nothing recorded - loses BOTH the separator at `base + 6` and the
+  # result at `base + 7`, and the line stops two columns short.
+  #
+  # bbpPairings then refuses the whole FILE, not just the round.
+  # `trf.cpp:189-191` only enters a round block while
+  # `startIndex <= line.size() - 8`, so the short block is never read; and
+  # `trf.cpp:352-355` then finds non-space characters left over past
+  # `startIndex` and throws `InvalidLineException`. Confirmed by direct
+  # invocation on a serialized two-round file: exit code 3, "Invalid line".
+  # Every TRF this engine wrote for a round in progress was unreadable by
+  # the reference implementation.
+  defp pad_to_last_round(line, []), do: line
+
+  defp pad_to_last_round(line, games) do
+    {result_col, _} = round_cols(length(games)).result
+    String.pad_trailing(line, result_col)
   end
 
   defp place_games(acc, games) do
