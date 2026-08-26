@@ -4,6 +4,14 @@ Open work only. The history - including everything closed, and the changes
 that looked obviously correct and measured *worse* - is in
 [docs/engineering-log.md](docs/engineering-log.md).
 
+> **A whole-codebase sweep ran on 2026-08-26**; its findings are in
+> [docs/sweep-2026-08-26.md](docs/sweep-2026-08-26.md) - 19 items for this
+> repository. The engine core came back clean of confirmed logic bugs; what
+> did come back is `pair_later_round/2` leaking process-dictionary state
+> and honouring only half its options, `explain_round/3` dropping
+> `:point_system`, and two harness instruments that have drifted. None are
+> fixed.
+
 ## Conformance
 
 Both of the gaps carried here are now closed - 4.3 against the article
@@ -198,7 +206,51 @@ million tournaments (see [docs/validation.md](docs/validation.md)).
 
       150 tournaments / 7,338 pairings at 100.00% since. `XXP`/`XXA`
       remain the default and the forms the sibling project emits.
-- [ ] **Team tournaments (C.04.6).** Spec read and written up in
+- [~] **Team tournaments (C.04.6).** **First cut built 2026-08-26** on
+      `feature/team-pairing`, in separate files that touch nothing in the
+      individual engine: `lib/ainalrami/team_pairing.ex` (the 3.3-3.5
+      procedure), `team_pairing/bracket.ex` (3.6), `team_pairing/team.ex`
+      (Articles 1.6/1.7), `team_pairing/colour.ex` (Article 4),
+      `team_pairing/matching.ex` (the [C3] oracle). 50 tests pass;
+      `docs/c0406-regulation-text.md` now holds the regulation verbatim so
+      article citations point at a stable local copy.
+
+      **The test is the definition, not a correlation.** 3.6 defines the
+      answer as the first element of an enumerable order, so for small
+      brackets the test generates every pairing, sorts by identifier,
+      filters by the criteria and asserts the engine returns the head. That
+      needs no reference implementation - which is the point, since none
+      exists.
+
+      Still open before this is usable:
+
+      * **[C5] vs the 3.5.4 example.** Article 2.3.2 says maximise the
+        upfloaters' scores; the example under 3.5.4 assumes 2/6/8 all hold
+        3 points and then takes only two of them plus a 2.5-pointer, a
+        LARGER score difference, without deriving why. The engine follows
+        the article. Both readings have a test. Worth asking the SPP
+        alongside the 5.2.5 question - see the "Reading decisions" section
+        of the conformance doc.
+      * **4.3.1 is the 5.2.5 TPN-parity rule again**, so it inherits that
+        dispute. `Colour.initial_colour_by_parity/2` is the one line that
+        changes.
+      * **[C7] as a ranking rather than a gate** - currently applied
+        through 3.5.4's order rather than as its own pass. Changes
+        behaviour only when an earlier set carries more previous-round
+        floaters than a later one.
+      * **Match-level forfeits.** [C2] names "won a match by forfeit",
+        which implies a match-level forfeit concept distinct from a
+        board-level one. Modelled as a flag; needs its own pass against
+        Article 1.
+      * **Fuzzing for legality** - the corpus role that survives having no
+        oracle: crashes, [C1]/[C2] violations, [C3] dead ends.
+      * **Host integration.** Board order is deliberately unspecified by
+        FIDE (Article 0) and so belongs to OpenPairings, not here.
+
+      Original notes, from reading the spec before any code existed
+      (2026-08-21):
+
+- [ ] **Team tournaments - the reading.** Written up in
       [docs/conformance-c0406-teams.md](docs/conformance-c0406-teams.md)
       before any code, 2026-08-21. Three findings that change the shape of
       the work:

@@ -476,16 +476,28 @@ Stated so the claim's boundary is explicit:
   disagrees with `XXR`. The harness generates none of these; see
   [TODO.md](../TODO.md). Late entrants are the one of the three that a
   normal club event actually produces.
-- **Non-default point configuration.** Every corpus scores a win at 1, a
-  draw at 0.5 and a pairing-allocated bye at 1. bbpPairings can be told
-  otherwise (`BBW`/`BBD`/`BBU`/`BBZ`/`BBF`), and FIDE permits an organiser
-  to value the bye at 0.5. Points decide the score groups, and score groups
-  are the foundation of every bracket in the system - so this is a
-  constant that reaches further into the algorithm than most of the ones
-  already varied.
+- ~~**Non-default point configuration**~~ - **covered, and it was worth
+  it.** `PAIRING_FUZZ_POINT_SYSTEM` now generates `BB*` lines across seven
+  named systems (half-point bye, doubled, football 3-1-0, paid loss, paid
+  forfeit, draw-heavy). It found two real engine bugs that every
+  standard-scored corpus was structurally incapable of seeing:
+
+  * a **half-point loss** scored 87.46% on its first run, because
+    `float_direction/4` treated "scored anything at all" as having
+    downfloated - correct only when a loss is worth zero;
+  * the final-round **topscorer threshold** read `pointsForWin` where
+    `dutch.cpp:55` reads `max(pointsForWin, pointsForDraw)`, which no axis
+    could see while every system had the win worth at least the draw.
+
+  The second was measured rather than argued: a `draw_heavy` axis run in
+  two arms over identical seeds gave **3,775,174 rounds at 100.00%** with
+  the fix and **8,181 wrong rounds** without it, with zero illegal rounds
+  either way. See "The same expression was wrong a second time" above.
 - **Fields above 500 players and round counts above 20.** Both are
   boundaries of the harness rather than of the engine, but nothing has
-  measured past them.
+  measured past them. This is now the most reachable gap on the list: the
+  matcher rebuild took 60-120 players from 0.36 to ~12 tournaments/s, so
+  the axis that was once unaffordable is affordable.
 - **Three-way agreement at scale.** 3,352 rounds, against 217 million
   two-way. This is the weakest number on the page and the one worth
   raising.
