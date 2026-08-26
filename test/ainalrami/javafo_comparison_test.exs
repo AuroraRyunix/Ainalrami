@@ -494,8 +494,9 @@ defmodule Ainalrami.JavafoComparisonTest do
   # harness was built to find (criteria that cannot bind until round 3+).
   defp report(comparisons, errors, exhausted, rounds) do
     IO.puts("\nJaVaFo comparison, #{rounds} round(s) per tournament:\n")
-    IO.puts("  round | exact rounds |    rate | individual pairs |    rate | illegal")
-    IO.puts("  ------+--------------+---------+------------------+---------+--------")
+    IO.puts("  round | exact rounds |    rate | individual pairs |    rate | refused | illegal")
+
+    IO.puts("  ------+--------------+---------+------------------+---------+---------+--------")
 
     comparisons
     |> Enum.group_by(& &1.round)
@@ -516,7 +517,10 @@ defmodule Ainalrami.JavafoComparisonTest do
 
       IO.puts(
         "\n  LEGALITY: #{length(illegal)}/#{length(comparisons)} Ainalrami rounds were not legal " <>
-          "pairings at all (#{Enum.join(by_kind, ", ")}) - independent of whether javafo agreed."
+          "pairings at all (#{Enum.join(by_kind, ", ")}) - independent of whether javafo agreed. " <>
+          "`raised` means Ainalrami REFUSED to pair the round, which is a different failure from " <>
+          "emitting a wrong one: check whether javafo paired it before assuming the round was " <>
+          "genuinely impossible."
       )
     end
 
@@ -570,7 +574,14 @@ defmodule Ainalrami.JavafoComparisonTest do
     pairs_matched = Enum.sum(Enum.map(measurements, & &1.pairs_matched))
     pairs_total = Enum.sum(Enum.map(measurements, & &1.pairs_total))
 
-    illegal = Enum.count(measurements, &(&1.illegal != nil))
+    # Refusing to pair and emitting a wrong pairing are different failures
+    # and want different responses, so they get their own columns.
+    # Counting them together is how 142 refusals once read as 142 illegal
+    # pairings - see `Ainalrami.DeepRoundsTest`. The split landed in the
+    # bbpPairings harness and not in this copy, which is the second
+    # instrument fix to have reached one of the two.
+    refused = Enum.count(measurements, &(&1.illegal == :raised))
+    illegal = Enum.count(measurements, &(&1.illegal not in [nil, :raised]))
 
     String.pad_leading("#{rounds_matched}/#{rounds_total}", 12) <>
       " | " <>
@@ -579,7 +590,8 @@ defmodule Ainalrami.JavafoComparisonTest do
       String.pad_leading("#{pairs_matched}/#{pairs_total}", 16) <>
       " | " <>
       String.pad_leading(percent(pairs_matched, pairs_total), 6) <>
-      "% | " <> String.pad_leading("#{illegal}", 7)
+      "% | " <>
+      String.pad_leading("#{refused}", 7) <> " | " <> String.pad_leading("#{illegal}", 7)
   end
 
   defp percent(_matched, 0), do: "n/a"

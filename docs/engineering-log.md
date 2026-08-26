@@ -37,6 +37,55 @@ failures rather than quietly dropped, so nobody re-derives them.
 
 ## Done
 
+### 2026-08-26 - the sweep's findings, fixed
+
+Thirteen bug-severity findings from `docs/sweep-2026-08-26.md`, plus two
+instrument fixes and the suite's last four compile warnings. That document
+carries the index and the three findings that turned out to be worse than
+written; the commits carry the reasoning. Three are worth repeating here
+because of what they say about where the remaining risk is:
+
+* **`points_for/2` was a function of the result character.** `getPoints`
+  (tournament.h:310-322) is not: it reads `match.opponent` and
+  `match.participatedInPairing` too. Exactly two opponentless codes come
+  out differently - `0000 - +` is the pairing's own bye rather than a win,
+  `0000 - -` is a zero-point bye rather than a forfeit loss. Both are
+  invisible under the standard system, and the generator only ever writes
+  `-` against a real opponent, so **488 million fuzzed pairings could not
+  reach either**. `parse/1` accepts both from a file. This is the shape to
+  keep looking for: not a rule implemented wrongly, but a rule the corpus
+  is structurally unable to produce.
+
+* **A blank result column cost the whole file, not the round.** `render/1`
+  trimmed two columns off the last round block, and bbpPairings answers
+  that with `InvalidLineException` and exit 3. Every TRF this engine wrote
+  for a round in progress was unreadable by the reference. Found by
+  reading, confirmed by invocation - no corpus would have caught it,
+  because the corpus never serializes a round in progress.
+
+* **`even_up_exposed_duals/1` was producing infeasible duals at scale.**
+  734 negative blossom duals over 800 nine-round tournaments, while
+  agreeing with bbpPairings on all 800. A latent invariant break that
+  costs nothing measurable is the hardest kind to find and the easiest
+  kind to dismiss; the fix ports the reference's descent and keeps its
+  assertion as a raise, so a regression fails the default suite.
+
+  The reference's remedy did NOT port cleanly. `dissolve_one/3` labels the
+  children it frees `:free`, which is right between stages and wrong here -
+  `solve/1` has just cleared the label map and `carry_caches/2` reads an
+  empty one as "rebuild from scratch". The first attempt cost a bracket
+  that had been right (seed 19 round 2 of the default corpus, four boards
+  different) and looked, for one run, like the fix being wrong rather than
+  incomplete.
+
+Also measured, and now in `validation.md`: the JaVaFo agreement rate is
+**not one number**. Round one is 100.00%, plain five-round play 98.82%,
+10% byes 91.22%, 10% forfeits 89.60%, both 83.68%. This page had carried a
+bare "96.26%" attached to no axis at all. Every one of those axes is
+100.00% against bbpPairings, which is the argument for the oracle choice
+stated as data rather than as a preference.
+
+
 - ~~Project scaffold~~ - mix.exs (escript config), `.formatter.exs`,
   `.gitignore`.
 - ~~TRF16/TRF06 file I/O~~ - `Ainalrami.Trf`, ported from OpenPairings'
@@ -2984,29 +3033,53 @@ conditions simultaneously appears on no single-parameter axis.
 | axis | rounds | individual pairings | agreement |
 |---|---|---|---|
 | `forfeit-r4` | 1,598,287 | 18,778,447 | 100.00% |
+
 | `forfeit-r9` | 1,978,408 | 25,718,415 | 100.00% |
+
 | `forfeit-r16` | 1,987,334 | 29,346,916 | 100.00% |
+
 | `forbidden-r4` | 1,595,378 | 18,766,085 | 100.00% |
+
 | `forbidden-r9` | 1,979,853 | 25,752,483 | 100.00% |
+
 | `forbidden-r16` | 1,996,740 | 29,419,953 | 100.00% |
+
 | `baku-r4` | 1,595,529 | 18,782,959 | 100.00% |
+
 | `baku-r9` | 1,979,993 | 25,733,829 | 100.00% |
+
 | `baku-r16` | 1,998,711 | 29,461,263 | 100.00% |
+
 | `randaccel-r4` | 1,596,489 | 18,787,951 | 100.00% |
+
 | `randaccel-r9` | 1,979,997 | 25,719,246 | 100.00% |
+
 | `randaccel-r16` | 1,998,594 | 29,489,842 | 100.00% |
+
 | `black-r4` | 1,595,475 | 18,770,241 | 100.00% |
+
 | `black-r9` | 1,979,997 | 25,758,882 | 100.00% |
+
 | `black-r16` | 1,998,690 | 29,457,792 | 100.00% |
+
 | `numeric-r4` | 1,196,407 | 14,084,109 | 100.00% |
+
 | `numeric-r9` | 1,529,850 | 19,868,382 | 100.00% |
+
 | `kitchensink-r4` | 1,198,893 | 12,037,418 | 100.00% |
+
 | `kitchensink-r9` | 1,529,208 | 16,969,773 | 100.00% |
+
 | `kitchensink-r16` | 1,599,611 | 20,134,813 | 100.00% |
+
 | `big60-r4` | 120,000 | 4,613,804 | 100.00% |
+
 | `big60-r9` | 180,000 | 6,914,780 | 100.00% |
+
 | `big60-r16` | 192,000 | 7,391,030 | 100.00% |
+
 | `big150-r9` | 27,000 | 2,312,182 | 100.00% |
+
 | `big300-r9` | 3,600 | 614,733 | 100.00% |
 
 The one worth naming: **`black-*`**. Article 5.2.5 is the only place this

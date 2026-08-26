@@ -32,10 +32,35 @@ and Gacrux both implement the 2026 edition. Over 3352 rounds those two
 agreed with each other on **every single one**, which bounds their mutual
 disagreement at ~0.09% and is what makes them usable as a ruler at all.
 
-Ainalrami measures **96.26%** against JaVaFo, and that is the expected
-result rather than a defect - it is the size of the rules change. An
-engine agreeing with all three simultaneously would prove the harness was
-measuring nothing.
+Ainalrami disagrees with JaVaFo, and that is the expected result rather
+than a defect - it is the size of the rules change. An engine agreeing
+with all three simultaneously would prove the harness was measuring
+nothing.
+
+**How much it disagrees depends entirely on the axis**, which one figure
+cannot say. This page carried a bare "96.26%" for a while, unattached to
+any axis; measured per axis on 2026-08-26, with the real jar and zero
+process errors:
+
+| axis | tournaments x rounds | exact rounds | individual pairs |
+|---|---|---|---|
+| round one only | 2000 x 1 | **100.00%** | 100.00% |
+| plain | 400 x 5 | **98.82%** | 99.62% |
+| 10% arbiter byes | 400 x 5 | **91.22%** | 97.68% |
+| 10% forfeits | 400 x 5 | **89.60%** | 97.38% |
+| both | 400 x 5 | **83.68%** | 95.19% |
+
+Round one is identical, which is what you would expect of a rules change
+that lives in the bracket cascade rather than the initial split. Every
+axis that puts an UNPLAYED game on a scorecard - a bye, a forfeit - is
+where the 2022 and 2026 texts part company, and it compounds with the
+round count. The same axes measure 100.00% against bbpPairings, which is
+the whole reason bbpPairings is the oracle here and JaVaFo is the control.
+
+Note also that this harness reads only seven of the sixteen
+`PAIRING_FUZZ_*` knobs (it predates `Ainalrami.Test.FuzzTournament` and
+has its own generator); since 2026-08-26 it REFUSES the other nine rather
+than reporting the default axis's rate under their name.
 
 ## The corpora
 
@@ -229,7 +254,7 @@ mix test --only bbppairings
 | tag | what it runs |
 |---|---|
 | `bbppairings` | the main fuzz harness against bbpPairings |
-| `javafo` | round-one composition against real JaVaFo |
+| `javafo` | composition against real JaVaFo, every round (seven axes only - see above) |
 | `three_way` | Ainalrami vs bbpPairings vs Gacrux on identical positions |
 | `taxonomy` | classify disagreements by first differing bracket |
 | `rule_delta` | pinned cases where the 2022 and 2026 rules differ |
