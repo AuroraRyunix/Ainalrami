@@ -6,13 +6,20 @@ that looked obviously correct and measured *worse* - is in
 
 > **A whole-codebase sweep ran on 2026-08-26**; its findings are in
 > [docs/sweep-2026-08-26.md](docs/sweep-2026-08-26.md) - 19 items for this
-> repository. The engine core came back clean of confirmed logic bugs; what
-> did come back is `pair_later_round/2` leaking process-dictionary state
-> and honouring only half its options, `explain_round/3` dropping
-> `:point_system`, `Trf.serialize/2` raising on any tournament parsed from
-> a `260` line, and a drifted harness instrument. Six survived an
-> adversarial refutation pass; one was refuted and is kept in the document
-> with the reasoning. None are fixed.
+> repository. The engine core came back clean of confirmed logic bugs.
+>
+> **All thirteen bug-severity findings are fixed** (that document indexes
+> them against their commits), along with two instrument fixes and the
+> suite's last four compile warnings. Three turned out worse than the sweep
+> had them: `points_for/2`'s two opponentless codes also decide C2 bye
+> eligibility; `render/1`'s short line makes bbpPairings refuse the whole
+> FILE, not the round; and `even_up_exposed_duals/1` was producing 734
+> infeasible blossom duals per 800 nine-round tournaments while agreeing
+> with the reference on all of them.
+>
+> Still open from the sweep's lower sections, and listed under Diagnostics
+> and Harness below: the CLI's silently-ignored options, the three-way
+> harness's missing colour instrument, and two optimizations.
 
 ## Conformance
 
@@ -208,6 +215,18 @@ million tournaments (see [docs/validation.md](docs/validation.md)).
 
       150 tournaments / 7,338 pairings at 100.00% since. `XXP`/`XXA`
       remain the default and the forms the sibling project emits.
+- [ ] **The three-way harness has full colour data and no colour
+      instrument.** `same?/2` compares through `normalize/1`, which sorts
+      each pair's ranks, so every number it has ever reported is
+      colour-blind. That is the exact gap that hid a missing Article 5.2.4
+      through 195 million pairings in the two-way harness, which answered
+      it with `colour_mismatches/5` and the 5.2.5 dispute split. Port it.
+      From the 2026-08-26 sweep.
+- [ ] **Two measured optimizations, neither urgent.** `legal_pair?/2`
+      rescans the whole game list (with a `String.trim` per game) on every
+      candidate edge, and wants a per-round MapSet; `score_before/3`
+      recomputes `reconciled_points/2` four times per player per round.
+      From the 2026-08-26 sweep.
 - [~] **Team tournaments (C.04.6).** **First cut built 2026-08-26** on
       `feature/team-pairing`, in separate files that touch nothing in the
       individual engine: `lib/ainalrami/team_pairing.ex` (the 3.3-3.5
@@ -303,6 +322,16 @@ million tournaments (see [docs/validation.md](docs/validation.md)).
       re-proposed.
 
 ## Diagnostics
+
+- [ ] **The CLI silently ignores a mistyped or space-separated option.**
+      `split_flags/1` takes a fixed list of bare flags plus anything
+      matching `--name=`, and validates no name. `--player=30` runs with a
+      random roster size, `--initial-colour=x` silently picks White, and
+      `ainalrami -g out.trf --seed 42` (a space instead of `=`) writes the
+      file and ignores the seed - so the run is unreproducible, which is
+      the RTG's whole argument for existing. Fix is small: a known-option
+      allowlist and `usage_error/1`, both of which already exist.
+      From the 2026-08-26 sweep.
 
 - [x] ~~**A CLI explain mode.**~~ **Done 2026-08-21.** `explain_round/3`
       had been library-only since the adjudicator needed it, so a host
