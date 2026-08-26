@@ -74,6 +74,15 @@ defmodule Ainalrami.JavafoComparisonTest do
     * `PAIRING_FUZZ_ROUNDS` - rounds per tournament (default 2)
     * `PAIRING_FUZZ_MIN_PLAYERS` / `PAIRING_FUZZ_MAX_PLAYERS` - roster size
       range (default 4..40)
+    * `PAIRING_FUZZ_BYE_PCT` / `PAIRING_FUZZ_FORFEIT_PCT` - result variety
+    * `PAIRING_FUZZ_DUMP=<dir>` - write each disagreement's TRF there
+
+  That is the WHOLE list. This harness predates
+  `Ainalrami.Test.FuzzTournament` and never adopted it - `initial_roster/1`
+  and `build_trf/2` are its own private generator - so the nine remaining
+  `PAIRING_FUZZ_*` knobs the bbpPairings harness reads take effect nowhere
+  here. `refuse_unsupported_axes!/0` raises rather than letting a run report
+  the default axis's rate under a requested axis's name.
 
   The historical round-1 measurement (20,000 rosters, 2..60 players,
   100%) is reproducible as
@@ -88,6 +97,8 @@ defmodule Ainalrami.JavafoComparisonTest do
   @moduletag timeout: :infinity
 
   test "Ainalrami and javafo.jar agree on who plays whom, in every round of a tournament" do
+    refuse_unsupported_axes!()
+
     count = env_int("PAIRING_FUZZ_COUNT", 20)
     rounds = env_int("PAIRING_FUZZ_ROUNDS", 2)
     players = env_int("PAIRING_FUZZ_MIN_PLAYERS", 4)..env_int("PAIRING_FUZZ_MAX_PLAYERS", 40)
@@ -582,6 +593,57 @@ defmodule Ainalrami.JavafoComparisonTest do
       Ainalrami: #{inspect(m.ainalrami)}
       javafo:   #{inspect(m.javafo)}
     """
+  end
+
+  # This harness predates `Ainalrami.Test.FuzzTournament` and never adopted
+  # it: `initial_roster/1` and `build_trf/2` below are its own private
+  # generator, and they read seven of the sixteen `PAIRING_FUZZ_*` knobs.
+  # The other nine take effect NOWHERE here, and setting one used to be
+  # indistinguishable from not setting it - the run completed, reported a
+  # rate, and the rate was for the DEFAULT axis under the requested axis's
+  # name. `PAIRING_FUZZ_POINT_SYSTEM=mixed ... --only javafo` banked as
+  # "the point system checks out against JaVaFo too" would have been a
+  # measurement of nothing.
+  #
+  # Modelled on `Ainalrami.ThreeWayComparisonTest`'s guard of the same name,
+  # and refusing for the same reason: not because the axis is unmeasurable,
+  # but because a silently ignored request produces a number that reads as
+  # evidence and is not. Wiring this harness onto `FuzzTournament` would
+  # retire the whole list; until then it says so out loud.
+  @unsupported_axes [
+    {"PAIRING_FUZZ_RATING_MODE", "initial_roster/1 draws Enum.random(1000..2800) - no ties, no unrated"},
+    {"PAIRING_FUZZ_ACCEL", "build_trf/2 emits no XXA line"},
+    {"PAIRING_FUZZ_FORBIDDEN_PCT", "build_trf/2 emits no XXP or 260 line, and safely_pair/2 passes no :forbidden_pairs"},
+    {"PAIRING_FUZZ_POINT_SYSTEM", "build_trf/2 emits no BB* or 162 line, and safely_pair/2 passes no :point_system"},
+    {"PAIRING_FUZZ_NUMERIC_EXT", "build_trf/2 emits neither spelling of the extension lines"},
+    {"PAIRING_FUZZ_WITHDRAW_PCT", "nothing withdraws anyone"},
+    {"PAIRING_FUZZ_INITIAL_COLOUR", "build_trf/2 emits no 152 line, and this harness is colour-blind by design"},
+    {"PAIRING_FUZZ_ROUNDS_MAX", "the round count is fixed at PAIRING_FUZZ_ROUNDS"},
+    {"PAIRING_FUZZ_SEED_FROM", "seeds always run 1..PAIRING_FUZZ_COUNT"}
+  ]
+
+  defp refuse_unsupported_axes! do
+    set =
+      Enum.filter(@unsupported_axes, fn {name, _why} ->
+        System.get_env(name) not in [nil, "", "0", "false"]
+      end)
+
+    if set != [] do
+      raise """
+      #{length(set)} axis/axes are set that this harness does not implement:
+
+      #{Enum.map_join(set, "
+", fn {name, why} -> "  #{name}=#{System.get_env(name)} - #{why}" end)}
+
+      This harness has its own private generator and never adopted
+      `Ainalrami.Test.FuzzTournament`, so these knobs take effect nowhere in
+      it. The run would complete and report a rate for the DEFAULT axis
+      under the requested axis's name.
+
+      Run these against bbpPairings (`--only bbppairings`), which does read
+      them, or wire this harness onto `FuzzTournament` first.
+      """
+    end
   end
 
   defp env_int(name, default) do
