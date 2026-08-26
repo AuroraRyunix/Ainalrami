@@ -403,6 +403,95 @@ defmodule Ainalrami.ExtensionLinesTest do
     end
   end
 
+  describe "XXC and 152 are the same field" do
+    # `152` is TRF16's initial piece colour - the one drawn by lot before
+    # round 1, which C.04.3 5.2.5 hands to the higher ranked player of a
+    # pair when neither holds a preference. `XXC white1` / `XXC black1` is
+    # JaVaFo's free-form spelling of it, and it was read by nothing: the
+    # code fell through `parse_header_line/3`'s `nil -> acc` clause, the
+    # same silent discard that used to swallow `XXP`.
+    #
+    # `white1` coincided with this engine's fallback and was harmless by
+    # accident. `black1` inverted every colour of the round, on any file
+    # with no colour history to infer the draw from - which is exactly the
+    # file that carries the line.
+    #
+    # Unlike `XXR`/`142`, two DISAGREEING spellings are not refused. The
+    # reference assigns as it reads (`trf.cpp:1143-1196`), so the later
+    # line wins, and reading the lines in file order is all it takes to
+    # agree with it.
+    test "either spelling alone sets the initial colour" do
+      assert Trf.parse(roster() <> "152 B
+").tournament[:initial_colour] == "b"
+      assert Trf.parse(roster() <> "XXC black1
+").tournament[:initial_colour] == "b"
+      assert Trf.parse(roster() <> "XXC white1
+").tournament[:initial_colour] == "w"
+    end
+
+    test "the last line to state it wins, in either spelling" do
+      assert Trf.parse(roster() <> "152 W
+XXC black1
+").tournament[:initial_colour] == "b"
+      assert Trf.parse(roster() <> "XXC black1
+152 W
+").tournament[:initial_colour] == "w"
+      assert Trf.parse(roster() <> "XXC white1 black1
+").tournament[:initial_colour] == "b"
+    end
+
+    test "tokens the reference skips are skipped here too" do
+      # `trf.cpp:1148-1166` walks the tokens and simply ignores anything it
+      # does not recognise, so a line carrying only noise leaves the field
+      # unset rather than raising.
+      assert Trf.parse(roster() <> "XXC
+").tournament[:initial_colour] == nil
+      assert Trf.parse(roster() <> "XXC nonsense
+").tournament[:initial_colour] == nil
+
+      assert Trf.parse(roster() <> "XXC nonsense	black1 more
+").tournament[:initial_colour] ==
+               "b"
+    end
+
+    test "XXC rank is refused rather than ignored" do
+      # The third setting on the line, and the one this engine cannot
+      # honour: it makes the RANK column (86-89) the effective pairing
+      # number for colour assignment and tie-breaking
+      # (`computePlayerIndexes`, trf.cpp:691-706), where
+      # `parse_player_line/1` reads the start number from columns 5-8
+      # unconditionally. Ignoring it pairs a different tournament than the
+      # file describes, so it gets `XXP`'s treatment, not `XXR`'s.
+      for text <- ["XXC rank
+", "XXC rank white1
+", "XXC white1 rank
+"] do
+        assert_raise Trf.ValidationError, ~r/rank column/, fn ->
+          Trf.parse(roster() <> text)
+        end
+      end
+    end
+
+    test "black1 mirrors the whole round" do
+      # bbpPairings 6.0.0 on these exact bytes: `XXC white1` gives 1 3 /
+      # 4 2, `XXC black1` gives 3 1 / 2 4. Four players with no history, so
+      # 5.2.5 decides every board and nothing else can.
+      assert pair_roster_with("XXC white1") == [{1, 3}, {4, 2}]
+      assert pair_roster_with("XXC black1") == [{3, 1}, {2, 4}]
+    end
+
+    defp pair_roster_with(extra) do
+      %{players: players, tournament: t} = Trf.parse(roster() <> "XXR 3
+" <> extra <> "
+")
+
+      Pairing.pair_next_round(players,
+        expected_rounds: t[:number_of_rounds],
+        initial_colour: t[:initial_colour]
+      )
+    end
+  end
+
   describe "XXP forbidden pairings" do
     @fixture "test/fixtures/forbidden_pairs/only-legal-pairing.trf"
 

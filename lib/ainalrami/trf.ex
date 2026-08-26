@@ -34,7 +34,9 @@ defmodule Ainalrami.Trf do
 
   ## The `XX*` extension lines
 
-  Three of JaVaFo's own `XX` extension codes are read; two of them are written:
+  Four of JaVaFo's own `XX` extension codes are read; two of them are
+  written. The two that are not - `XXR` and `XXC` - each have a TRF16
+  spelling that `serialize/1` emits in their place:
 
     * `XXR n` - the round count (see `parse_xxr/2`), which is the same field
       as TRF16's `142`. A file may carry both spellings, but they must
@@ -47,6 +49,11 @@ defmodule Ainalrami.Trf do
       (see `parse_xxp/2`), surfaced as `tournament[:forbidden_pairs]`.
     * `XXA` - per-player acceleration/virtual points, round by round
       (see `parse_xxa/2`), surfaced as each player's `:accelerations`.
+    * `XXC white1|black1` - the colour drawn by lot before round 1 (see
+      `parse_xxc/2`), the same field as TRF16's `152`. READ ONLY for the
+      same reason `XXR` is: the value round-trips, the spelling does not.
+      `XXC rank` is a third setting on the same line and RAISES, because
+      this engine cannot honour it.
 
   Anything else beginning `XX` still falls through `parse_header_line/3`'s
   `nil -> acc` clause and is ignored. That silent-discard behaviour is
@@ -954,6 +961,7 @@ defmodule Ainalrami.Trf do
           "XXR" -> parse_xxr(acc, line)
           "XXP" -> parse_xxp(acc, line)
           "XXA" -> parse_xxa(acc, line)
+          "XXC" -> parse_xxc(acc, line)
           "250" -> parse_250(acc, line)
           "260" -> parse_260(acc, line)
           "162" -> parse_point_system(acc, line)
@@ -1196,6 +1204,47 @@ defmodule Ainalrami.Trf do
     raise ValidationError,
           "the file gives two different round counts (#{existing} and #{rounds}); " <>
             "`142` and `XXR` are the same field and must agree"
+  end
+
+  # `XXC [rank] [white1|black1]` - JaVaFo's free-form spelling of the two
+  # settings TRF16 gives fixed columns to. A port of `trf.cpp:1143-1177`,
+  # which takes `line.substr(3)`, tokenizes on space/tab, and folds the
+  # tokens left to right; unknown tokens are skipped, and the LAST of
+  # `white1`/`black1` wins.
+  #
+  # `white1`/`black1` is the same field as `152` (C.04.3 5.1: the colour
+  # drawn by lot before round 1, which 5.2.5 hands to the higher ranked
+  # player of a pair when neither holds a preference). A file may carry
+  # either spelling; unlike `142`/`XXR` these are not checked against each
+  # other, because the reference does not check them either - it assigns as
+  # it reads, so the later line simply wins, and that is what reading the
+  # lines in file order does here. READ ONLY: `serialize/1` emits `152`, the
+  # TRF16 spelling, the same way an incoming `XXR` goes out as `142`.
+  #
+  # `rank` RAISES. It tells the reference to use the RANK column (86-89) as
+  # the effective pairing number for colour assignment and tie-breaking
+  # instead of the start number (`computePlayerIndexes`, `trf.cpp:691-706`),
+  # and this engine has no such notion - `parse_player_line/1` reads
+  # `rank:` from columns 5-8 unconditionally. Ignoring it would pair a
+  # DIFFERENT tournament from the one the file describes and report it with
+  # full confidence, which is exactly the failure `XXP` raises to avoid. A
+  # file carrying it is refused until the ordering is implemented.
+  defp parse_xxc(acc, line) do
+    line
+    |> String.slice(3..-1//1)
+    |> String.split([" ", "	"], trim: true)
+    |> Enum.reduce(acc, fn
+      "white1", acc -> put_in(acc.tournament[:initial_colour], "w")
+      "black1", acc -> put_in(acc.tournament[:initial_colour], "b")
+      "rank", _acc -> raise ValidationError, message: rank_ordering_message(line)
+      _other, acc -> acc
+    end)
+  end
+
+  defp rank_ordering_message(line) do
+    "`XXC rank` asks for the rank column (86-89) to be used as the pairing " <>
+      "number, which this engine does not implement - it would pair a " <>
+      "different tournament than the file describes: #{line}"
   end
 
   # `XXP a b [c ...]` - a mutually-forbidden GROUP of players, JaVaFo's own
