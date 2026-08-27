@@ -117,6 +117,38 @@ defmodule Ainalrami.ThreeWayComparisonTest do
   Both numbers print whether or not they are zero, so a future run cannot
   quietly turn crashes back into disagreements the way this one did.
 
+  ## Colour is a second instrument, and the reference pair is the point of it
+
+  The three rates above are colour-blind. `same?/2` sorts each pair's two
+  ranks before comparing, so every number this harness has ever produced
+  measures who plays whom and never who is White. That is not a small gap:
+  the identical blindness in the two-way harness let a missing Article
+  5.2.4 survive 195 million pairings, and it was found by building a
+  position by hand rather than by any corpus.
+
+  So colour is measured too, over the boards a pair of engines BOTH formed,
+  and there are three pairwise numbers rather than one. The one worth
+  running this for is **bbpPairings vs Gacrux**. Every colour figure in this
+  project is quoted against one reference or the other, so the distance
+  between the two references is the accuracy those figures actually carry -
+  and nothing had ever measured it. `docs/dispute-initial-colour.md`
+  already predicts it is not zero: bbpPairings renumbers TPNs around anyone
+  not paired in the current round, Gacrux only around players who have
+  never played, so a field where somebody who HAS played sits out can split
+  them. Predicting is not measuring.
+
+  Differences are split the way the two-way harness splits them - a board
+  Article 5.2.5 decides is the known dispute and is expected, anything else
+  is a finding - but the split is deliberately weaker for the reference
+  pair than for this engine. See `explained_by_article_5_2_5?/4` for why
+  making it stronger would file real dispute boards as findings.
+
+  None of this can fail a run. The assertions below are untouched and the
+  composition rates still measure exactly what they measured before: a
+  colour difference on an otherwise identical round is a different finding
+  from a different round, and folding the two together would lose both.
+  That is the choice the two-way harness made, for the same reason.
+
   ## Cost
 
   Gacrux is a Python script, ~750ms per round against bbpPairings' ~21ms,
@@ -253,7 +285,15 @@ defmodule Ainalrami.ThreeWayComparisonTest do
                 ours: ours,
                 bbp_gac: same?(bbp, gac),
                 ours_bbp: same?(ours, bbp),
-                ours_gac: same?(ours, gac)
+                ours_gac: same?(ours, gac),
+                # Counts, not boards. `ps` is the roster the round was
+                # paired FROM - before `apply_round/3` writes this round's
+                # results onto it - because Article 5.2 is decided by the
+                # colour history the engines were handed, not by the one
+                # they produce. Reducing to four integers here rather than
+                # keeping the boards is what lets a billion-pairing run
+                # hold its rows in memory at all.
+                colours: colour_agreement(ours, bbp, gac, ps, base)
               })
 
             {:cont, {[row | acc], apply_round(ps, bbp, simulate_results(bbp))}}
@@ -329,6 +369,252 @@ defmodule Ainalrami.ThreeWayComparisonTest do
   defp same?(_, :raised), do: false
   defp same?(a, b), do: normalize(a) == normalize(b)
 
+  @no_colours %{shared: 0, agreed: 0, disputed: 0, unexplained: 0}
+
+  # WHO IS WHITE, which `same?/2` and `normalize/1` deliberately throw away.
+  #
+  # Ported from `Ainalrami.BbppairingsComparisonTest.colour_mismatches/5`,
+  # and its reasoning is worth restating rather than referencing, because it
+  # is the whole argument for the function existing: sorting each pair's
+  # ranks before comparing means 4.3 million tournaments and 195 million
+  # pairings validated who plays whom and never once checked Article 5. A
+  # missing 5.2.4 survived all of it. The rates in this harness are built on
+  # the same `normalize/1` and carry the same blind spot.
+  #
+  # What this harness can ask that the two-way one cannot: it holds THREE
+  # answers to one position, so the reference pair can be asked the question
+  # too. bbpPairings-vs-Gacrux is the only colour rate in this project that
+  # is not measured against an assumption - it bounds the distance between
+  # the two rulers rather than the distance from this engine to one of them.
+  #
+  # Counted separately from composition and reported beside it, never folded
+  # in: the two fail for different reasons, and the existing pass/fail
+  # assertion stays exactly as colour-blind as it was so that this
+  # instrument cannot turn a green run red.
+  defp colour_agreement(ours, bbp, gac, players, where) do
+    # Built once and shared by all three comparisons. The two-way harness
+    # rebuilds this inside the predicate, once per board; here that would be
+    # three passes over the same roster for the same round.
+    by_rank = Map.new(players, &{&1.rank, &1})
+
+    %{
+      bbp_gac: colours_between({"bbpPairings", "Gacrux"}, bbp, gac, by_rank, :reach, where),
+      ours_bbp:
+        colours_between({"Ainalrami", "bbpPairings"}, ours, bbp, by_rank, :conformance, where),
+      ours_gac: colours_between({"Ainalrami", "Gacrux"}, ours, gac, by_rank, :conformance, where)
+    }
+  end
+
+  # An engine that gave no answer contributes NO boards rather than
+  # zero-agreement boards, which is the same distinction this file already
+  # draws twice over for Gacrux: an `### Error 510` is not a refusal, and a
+  # refusal is not a wrong pairing. A denominator that quietly absorbs a
+  # missing answer reports a confidence nobody measured.
+  #
+  # Only `:raised` needs handling here. A crashed or refused reference never
+  # reaches this function at all - those rounds become `:reference_crash`
+  # and `:exhaustion_split` rows, which are not `:compared` and so hold no
+  # `colours` key to be summed.
+  defp colours_between(_names, :raised, _right, _by_rank, _mode, _where), do: @no_colours
+
+  # Unreachable today: `ours` is always the LEFT argument above, precisely so
+  # that one clause covers it. It stays because the cost of being wrong
+  # about that later is silent - a rate that counts Ainalrami's refusal as a
+  # colour disagreement looks exactly like a colour regression.
+  defp colours_between(_names, _left, :raised, _by_rank, _mode, _where), do: @no_colours
+
+  defp colours_between(names, left, right, by_rank, mode, where) do
+    theirs = MapSet.new(right)
+
+    # Only a board both engines formed can disagree about COLOUR; a board
+    # only one of them formed is a composition difference and is already
+    # counted by `same?/2`. A pairing is a partition, so `theirs` can hold
+    # at most one orientation of a given board and these two membership
+    # tests can never both be true.
+    both_formed =
+      Enum.filter(left, fn
+        {_w, nil} -> false
+        {w, b} -> MapSet.member?(theirs, {w, b}) or MapSet.member?(theirs, {b, w})
+      end)
+
+    {reversed, agreed} =
+      Enum.split_with(both_formed, fn {w, b} -> MapSet.member?(theirs, {b, w}) end)
+
+    # Split the differences into the one there is a diagnosis for and
+    # everything else. Without it the known dispute's volume - the two-way
+    # harness measures nearly two thousand boards per six hundred bye-heavy
+    # tournaments - buries a genuine colour regression completely, which is
+    # why a bare count is a weak instrument.
+    {disputed, unexplained} =
+      Enum.split_with(reversed, &explained_by_article_5_2_5?(&1, by_rank, where.round, mode))
+
+    debug_unexplained(names, unexplained, by_rank, where)
+
+    %{
+      shared: length(both_formed),
+      agreed: length(agreed),
+      disputed: length(disputed),
+      unexplained: length(unexplained)
+    }
+  end
+
+  # Is this board one Article 5.2.5 decides - and, when one of the two
+  # engines is this one, did THIS ENGINE apply it?
+  #
+  # 5.2.5 is the last resort, reached only when neither player holds a
+  # colour preference at all, which per Article 1.7.4 means neither has ever
+  # played a game with a colour. It hands the initial colour to the higher
+  # ranked player on an odd TPN.
+  #
+  # C.04.2 Article 2 fixes a TPN for the tournament and provides nothing
+  # that renumbers it around players who are not paired in a round. Both
+  # references renumber anyway, so every board 5.2.5 decides on a field
+  # where somebody has sat out is expected to differ - see
+  # `docs/dispute-initial-colour.md`.
+  #
+  # Two modes, and the gap between them is the honest part of this port.
+  #
+  # `:conformance` is the two-way harness's rule unchanged: 5.2.5 decides
+  # the board AND this engine's answer is the article's. Phrased as "did
+  # this engine follow the article", never as "does the reference's answer
+  # match a model of its internals" - an earlier version of that harness did
+  # the latter and mis-filed a real case, because predicting a reference's
+  # numbering means implementing a rule this project does not believe in.
+  #
+  # `:reach` is all that survives when NEITHER side is this engine. On a
+  # bbpPairings-vs-Gacrux board there is no conformance to test without
+  # modelling both references' numbering - the banned thing, twice - so the
+  # test is only that 5.2.5 is what decides the board. That is a weaker
+  # claim and it is reported under a weaker word: those boards are "within
+  # 5.2.5's reach", not "the known dispute confirmed".
+  #
+  # Weaker on purpose, not by omission. The references do not renumber the
+  # same way as each other, so on one board the article, bbpPairings and
+  # Gacrux can name three different TPNs whose parities all differ, and
+  # every one of the three answers is the known dispute. Any stronger test -
+  # "at least one of them gave the article's answer", say - would file
+  # exactly those boards as unexplained findings, which is the failure mode
+  # `docs/dispute-initial-colour.md` records the two-way harness already
+  # having once.
+  defp explained_by_article_5_2_5?({white, black}, by_rank, round, mode) do
+    a = Map.get(by_rank, white)
+    b = Map.get(by_rank, black)
+
+    cond do
+      is_nil(a) or is_nil(b) -> false
+      not no_colour_preference?(a) -> false
+      not no_colour_preference?(b) -> false
+      mode == :reach -> true
+      true -> white == article_5_2_5_white(a, b, round)
+    end
+  end
+
+  # The colour Article 5.2.5 gives, read straight off the TPNs the file
+  # carries.
+  defp article_5_2_5_white(a, b, round) do
+    # Article 1.2's order: score first, then TPN ascending - over the score
+    # the engine actually pairs on, which INCLUDES virtual points.
+    #
+    # Using raw points here mis-filed a board on the two-way harness's
+    # accelerated axis: a player on 0.0 carrying 1.0 of acceleration ties
+    # with one on 1.0, so the tie falls to TPN and the lower number is the
+    # higher ranked player; judged on raw points the ordering inverts and
+    # with it the expected colour.
+    #
+    # `refuse_unsupported_axes!/0` refuses acceleration here, so `score_at/2`
+    # can only ever add 0.0 in this harness. It is carried anyway, character
+    # for character with the two-way copy, because a rule written twice that
+    # is only ALMOST the same is worse than a rule written twice.
+    {top, bottom} =
+      if {-score_at(a, round), a.rank} < {-score_at(b, round), b.rank},
+        do: {a, b},
+        else: {b, a}
+
+    initial_white? = String.downcase(initial_colour()) == "w"
+    top_takes_initial? = rem(top.rank, 2) == 1
+
+    if top_takes_initial? == initial_white?, do: top.rank, else: bottom.rank
+  end
+
+  # The score the round is paired on: recorded points plus whatever
+  # acceleration applies. `with_acceleration/2` indexes by the tournament's
+  # PLAYED-round count, 0-based, so the value governing round `n` sits at
+  # index `n - 1`. Reads through `Access` rather than a dotted field, since
+  # a roster generated without the axis carries no `:accelerations` key at
+  # all.
+  defp score_at(player, round) do
+    accel =
+      case player[:accelerations] do
+        nil -> 0.0
+        values -> Enum.at(values, round - 1) || 0.0
+      end
+
+    player.points + accel
+  end
+
+  # Article 1.7.4: a player with no games has no colour preference. "Games"
+  # means games actually PLAYED, which is narrower than games carrying a
+  # colour: a forfeit records a colour but was never played, so it feeds
+  # neither the colour difference nor a repeated-colour run.
+  #
+  # All three engines agree on that. This one gates on `result in ~w(1 = 0)`;
+  # bbpPairings sets `gameWasPlayed = false` for `+ - H F U Z` and blank
+  # (`trf.cpp:277-291`), which is the same set.
+  #
+  # Testing `colour != nil` instead - as the two-way harness did until
+  # 2026-08-17 - mis-filed every forfeited round as "has a preference", so
+  # seven boards decided by 5.2.5 were reported as unexplained Article 5
+  # disagreements. They were the known dispute all along, and only surfaced
+  # on an axis carrying forfeits AND byes together.
+  defp no_colour_preference?(player) do
+    Enum.all?(player.games, &(&1.result not in ~w(1 = 0)))
+  end
+
+  defp debug_unexplained(_names, [], _by_rank, _where), do: :ok
+
+  defp debug_unexplained({left_name, right_name}, boards, by_rank, where) do
+    if System.get_env("COLOUR_DEBUG") do
+      for {w, b} <- boards do
+        # Seed, round and player count together, because those three are
+        # exactly what reproduces a position on its own - the same triple
+        # `write_dispute/2` puts in a dump filename. Colour differences are
+        # not dumped, so this line is the only route back to the board.
+        IO.puts("
+seed #{where.seed} round #{where.round}, #{where.player_count} players: UNEXPLAINED
+  #{left_name} says #{w} is White, #{right_name} says #{b} is White")
+
+        # Deciding WHICH of Article 5.2's five steps applies needs both
+        # players' full colour history, unplayed rounds included: 5.2.3
+        # walks the two histories back in step, and a round nobody played is
+        # not a round where the colours agreed.
+        #
+        # No acceleration column, unlike the two-way harness's version of
+        # this line: `refuse_unsupported_axes!/0` refuses that axis here, so
+        # the field is always nil and a column that is always nil is one a
+        # reader learns to skip over.
+        Enum.each([w, b], &IO.puts(history_line(by_rank, &1)))
+      end
+    end
+
+    :ok
+  end
+
+  # Never raises on a rank it cannot find. This runs inside a `Task`, where
+  # an exception takes the whole run down rather than one round - the same
+  # reason `Ainalrami.Test.Gacrux`'s `parse_pair/1` returns `:error` instead
+  # of matching inline. A diagnostic that can kill the run it is diagnosing
+  # is worse than no diagnostic.
+  defp history_line(by_rank, rank) do
+    case Map.get(by_rank, rank) do
+      nil ->
+        "  ##{rank} is not in the roster - an engine named a rank the file does not carry"
+
+      player ->
+        history = Enum.map_join(player.games, " ", fn g -> "#{g.colour || "-"}#{g.result}" end)
+        "  ##{rank} pts=#{player.points} games=[#{history}]"
+    end
+  end
+
   defp report(compared, splits, crashes, errors) do
     n = length(compared)
     pct = fn k -> "#{Float.round(k * 100 / max(n, 1), 4)}%" end
@@ -355,6 +641,8 @@ three-way comparison over #{n} compared round(s):
   of the #{length(ours_differs)} round(s) where Ainalrami differs from either:")
     IO.puts("    references agree, so Ainalrami is the odd one out    #{outvoted}")
     IO.puts("    references disagree too, so there is no ground truth #{no_majority}")
+
+    report_colours(compared)
 
     # Counted apart from the rates: one engine refused the position entirely,
     # so there is no pairing to compare, but the two references have still
@@ -451,6 +739,130 @@ three-way comparison over #{n} compared round(s):
     end
 
     IO.puts("")
+  end
+
+  # Colour, reported ALONGSIDE the composition rates and never folded into
+  # them - see the moduledoc. The labels are character-for-character the
+  # ones the block above uses, so the two triples line up in a terminal and
+  # one can be read against the other without counting columns.
+  #
+  # Every line prints whether or not it is zero, for the reason the crash
+  # lines do: a line that appears only when something is wrong is a line
+  # nobody learns to look for, and the first thing a new instrument has to
+  # establish is that it ran at all.
+  defp report_colours(compared) do
+    bbp_gac = colour_totals(compared, :bbp_gac)
+    ours_bbp = colour_totals(compared, :ours_bbp)
+    ours_gac = colour_totals(compared, :ours_gac)
+
+    IO.puts("
+  colours - who is WHITE, over the boards each pair of engines BOTH formed:")
+
+    IO.puts(colour_line("bbpPairings vs Gacrux       ", bbp_gac, "within 5.2.5's reach"))
+    IO.puts(colour_line("Ainalrami   vs bbpPairings  ", ours_bbp, "by the 5.2.5 dispute"))
+    IO.puts(colour_line("Ainalrami   vs Gacrux       ", ours_gac, "by the 5.2.5 dispute"))
+
+    references_worst_warning(bbp_gac, [ours_bbp, ours_gac])
+    unexplained_warning(bbp_gac, ours_bbp, ours_gac)
+    reference_colour_bound(bbp_gac)
+  end
+
+  defp colour_line(label, totals, dispute_word) do
+    "  #{label}#{totals.agreed}/#{totals.shared}  #{colour_percent(totals)}  " <>
+      "#{totals.disputed} #{dispute_word}, #{totals.unexplained} unexplained"
+  end
+
+  # "n/a" rather than the 0.0% a `max(shared, 1)` denominator would print,
+  # following `percent/2` in the two-way harness. No shared boards is not a
+  # rate of zero, and it happens for reasons worth telling apart from a
+  # disagreement: a bye-only round, or an Ainalrami that refused every
+  # position it was handed.
+  defp colour_percent(%{shared: 0}), do: "n/a"
+
+  defp colour_percent(totals),
+    do: "#{Float.round(totals.agreed * 100 / totals.shared, 4)}%"
+
+  defp colour_totals(compared, key) do
+    Enum.reduce(compared, @no_colours, fn row, acc ->
+      counts = Map.fetch!(row.colours, key)
+
+      %{
+        shared: acc.shared + counts.shared,
+        agreed: acc.agreed + counts.agreed,
+        disputed: acc.disputed + counts.disputed,
+        unexplained: acc.unexplained + counts.unexplained
+      }
+    end)
+  end
+
+  # The line this harness was extended for. If the two REFERENCES agree with
+  # each other about colour LESS often than this engine agrees with either
+  # of them, then every colour figure this project has published - each one
+  # measured against one of those two - carries an error bar wider than the
+  # quantity it reports, and no two-way run can say which engine is wrong.
+  # Nobody has ever measured that number, so it is printed as a finding
+  # rather than quietly folded into a rate.
+  defp references_worst_warning(references, ours) do
+    if references_worst?(references, ours) do
+      IO.puts("
+    !! the two REFERENCES agree about colour LESS often than Ainalrami agrees
+       with either of them. Every colour number this project quotes is
+       measured against one of those two, so the pair of rulers disagrees
+       by more than the thing they are being used to measure - read this
+       line before reading any of the rest.")
+    end
+  end
+
+  # Guarded on every side having boards to compare. A pair with no shared
+  # boards has no rate at all, and "worse than nothing" is not a finding.
+  defp references_worst?(references, ours) do
+    rate = colour_rate(references)
+    rate != nil and Enum.all?(Enum.map(ours, &colour_rate/1), &(&1 != nil and rate < &1))
+  end
+
+  defp colour_rate(%{shared: 0}), do: nil
+  defp colour_rate(totals), do: totals.agreed / totals.shared
+
+  defp unexplained_warning(bbp_gac, ours_bbp, ours_gac) do
+    total = bbp_gac.unexplained + ours_bbp.unexplained + ours_gac.unexplained
+
+    if total > 0 do
+      IO.puts("
+    !! #{total} board(s) where two engines agreed on WHO plays whom and then
+       disagreed on who is WHITE, NOT explained by the known 5.2.5 dispute.
+       Article 5 is a real conformance surface and every rate above it is
+       blind to it. Re-run with COLOUR_DEBUG=1 to print each board and both
+       players' full colour histories.")
+    else
+      IO.puts("
+    no unexplained disagreement about who is White.")
+    end
+  end
+
+  # Rule of three again, on BOARDS rather than rounds. That denominator is
+  # several times the composition bound's, so a clean colour run bounds the
+  # references far more tightly than a clean composition run does - which is
+  # the point, since this is the bound every other colour figure in the
+  # project inherits.
+  #
+  # A board within 5.2.5's reach is still an observed difference between the
+  # two references, so it disqualifies the clean branch exactly as an
+  # exhaustion split disqualifies the composition one.
+  defp reference_colour_bound(%{shared: 0}), do: :ok
+
+  defp reference_colour_bound(totals) do
+    if totals.agreed == totals.shared do
+      bound = Float.round(300 / totals.shared, 5)
+
+      IO.puts("
+  the references never disagreed about colour on #{totals.shared} board(s); that
+  bounds their true colour-disagreement rate at about #{bound}% (95%), not at zero")
+    else
+      differing = totals.shared - totals.agreed
+
+      IO.puts("
+  the references differ about colour on #{differing} of #{totals.shared} board(s)")
+    end
   end
 
   # Crash sites, commonest first. `-v` makes Gacrux re-raise, so `detail` is

@@ -24,7 +24,7 @@ were compared term by term, not merely observed to agree.
 | 1.7.2 | Strong preference: CD = ±1 | `strong? = not absolute? and imbalance > 0` | exact |
 | 1.7.3 | Mild preference: CD = 0, alternate from the previous game | `preference` ladder falls through to `invert(last)` | exact |
 | 1.7.4 | A player with no games has no preference | `preference` is `nil` only for a never-played player | exact |
-| 1.8 | Topscorer: **over** 50% of the maximum possible score, final round only | `points > played_rounds * point_system().win / 2`, gated on `played_rounds >= expected_rounds - 1` | exact - see notes 1 and 6 |
+| 1.8 | Topscorer: **over** 50% of the maximum possible score, final round only | `points > played_rounds * max(point_system().win, point_system().draw) / 2`, gated on `played_rounds >= expected_rounds - 1` | exact - see notes 1 and 6 |
 
 ## Absolute criteria (2.1)
 
@@ -103,10 +103,21 @@ downfloat; reading it as one gave every player who had ever sat a round out
 a float history the reference does not have, and C14-C21 then priced their
 pairings wrongly. 100.00% after the fix, on the same corpus.
 
-One term is still narrower than the reference's: 1.8's threshold uses
-`point_system().win` where bbpPairings uses `max(pointsForWin,
-pointsForDraw)`. The two differ only in a system where a draw outscores a
-win, which no named system does and no sane file would.
+1.8's threshold reads `max(win, draw)`, as `dutch.cpp:55` does. It was
+written as `win` alone until 0.11.1, on the reasoning that the two differ
+only where a draw outscores a win and no sane file does that. A
+`draw_heavy` axis was added to find out, and the reasoning was wrong: two
+arms over identical seeds gave 3,775,174 rounds at 100.00% with the fix
+against 8,181 wrong rounds without it. See `docs/validation.md`.
+
+**This paragraph said the opposite for two days**, and the row above said
+`point_system().win` - the code was fixed in 0.11.1 and this record was
+not. That cost something concrete on 2026-08-27: the independent
+brute-force oracle in `tools/exhaustion_bruteforce.exs` was written from
+this table, inherited the stale term, and reported false verdicts against
+the engine until its own positive control caught it. A conformance record
+is read as the specification; when it lags the code it does not merely go
+quiet, it propagates.
 
 ## Colour allocation (Article 5)
 
