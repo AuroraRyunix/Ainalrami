@@ -3637,3 +3637,122 @@ tight. Anything that improves the tight-edge count has to do it WITHOUT
 inflating the dual objective, and this project has no candidate for that.
 
 Reverted. `matching_baseline.exs` is byte-identical again on all 460.
+
+## The odd-field bootstrap: 4.0 s of construction for a graph that was already known (2026-08-27)
+
+`tools/bootstrap_split.exs` had just established where the odd-field bye
+bootstrap's time goes at 1,001 players. Three halves, and only one of them
+is the algorithm:
+
+| | before | after |
+|---|---|---|
+| building the edge list | 2,407 ms | **638 ms** |
+| `WeightedMatching.new/3` | 1,409 ms | **224 ms** |
+| `WeightedMatching.solve/1` | 2,877 ms | 2,254 ms |
+| bootstrap total | 6,621 ms | **3,090 ms** |
+
+Medians of three on the 36-core box, same cached 1,001-player round-6 field
+for every run. End to end, best of three, cold process: the odd round goes
+14,291 ms -> **9,016 ms**, and the parity ratio against the same field one
+player smaller goes 2.04-2.32x -> 1.31-1.45x. The even field is the
+control and does not move (6,399 ms -> 6,477 ms, inside a 400 ms spread).
+
+`solve/1` was not touched and fell 22% anyway. Nothing about the search
+changed - the state it is handed is bit-identical, see below - so that is
+garbage: the old path put a 500,500-tuple list and a second 500,500-element
+list of discarded comprehension results on the process heap before the
+search started, and every collection during the search walked them.
+
+### Three constructions, none of which the answer depends on
+
+**The per-pair work was per-player.** The inner comprehension called
+`legal_pair?/2` and `colour_compatible?/2` per PAIR and read
+`Map.fetch!(places, _.points)` and `eligible_for_bye?/1` for each endpoint.
+Every one of those is a property of a POSITION in the sorted field:
+`eligible_for_bye?/1` alone walked a game list a million times to produce a
+thousand distinct answers. They are now tuples indexed by position, built
+once. `legal_pair?/2`'s `Enum.any?(p1.games, ...)` scan becomes a single
+`is_map_key/2` against a played-opponent set - the MapSet the note in that
+function had been asking for - with the arbiter's forbidden pairs folded
+into the same map, which is legitimate because `legal_pair?/2` asks both
+questions of the same player and bbpPairings answers both from one lookup
+anyway (`dutch.cpp:653-666` inserts the rematch straight into
+`forbiddenPairs`).
+
+**The weight did not need reassembling per pair.** A compatible edge is
+`tie_unit * (cardinality_unit + eligibility * eligibility_unit + score) +
+top_pair` where `eligibility` and `score` are both sums of per-endpoint
+terms - the very property the `duals` handed to `new/3` were already
+derived from. Doubled, that is `2 * half_const + vertex(lo) + vertex(hi) +
+2 * top(hi)`: two additions per edge instead of six multiplications and
+four hash lookups. No weight changes; the same integer arrives by a
+shorter route.
+
+**The edge list existed only to be taken apart again.** The graph is
+COMPLETE by construction (dutch.cpp:768-791 emits an edge even for
+`compatible/4`-failing pairs), so at n=1,001 the `[{i, j, w}]` list was
+500,500 tuples allocated and immediately consumed by `new/3`'s fold, which
+spent a million `Map.update/4`s scattering them into the nested
+`%{u => %{v => 2w}}` the solver actually reads. The bootstrap now emits
+that structure directly, a row at a time - one `:maps.from_list/1` per row
+- and `new/3` takes it as `:adjacency` and does no fold at all. The price
+is that each pair's weight is arrived at twice, once from each endpoint's
+row; with the per-player facts above that is two tuple reads and an
+addition, and it is still four times quicker.
+
+Two smaller things fell out of the same reading. `greedy_start/3`'s
+dual-feasibility assertion was a `for` comprehension whose result was
+discarded - 500,500 list cells built for nothing - and both of its O(E)
+scans read the dual map with `Map.fetch!/2` where the duals are keyed by
+exactly `0..n-1` and a flat tuple does. Two million hashes, on a graph
+whose vertices are already dense integers.
+
+### Proving it invisible
+
+The bar is that the matcher receives the same input, not that it returns
+the same answer - a maximum-weight matching need not be unique, so "same
+answer" would have been the weaker claim. Both trees were patched, on the
+box only, to print `:erlang.phash2` of `weights`, `max_w`, `dual` and the
+greedy `blossom_match` at the point `build_state/5` hands them over. All
+three whole-field solves in a 1,001-player round hash identically:
+
+    WMFP n=1001 weights=35949947 max_w=103196167 dual=68492382 bm=94596732
+    WMFP n=1001 weights=90091074 max_w=116873996 dual=32900900 bm=114629392
+    WMFP n=1001 weights=100857086 max_w=34984707 dual=43914350 bm=79643213
+
+`max_w` is in there deliberately: it is not decoration, `greedy_resume/1`
+tests `dual[v] == max_w` to decide which vertices are fresh, so an
+"obviously equivalent" ceiling would have been a behaviour change. It is
+tracked exactly while the rows are built rather than derived from a bound.
+
+On top of that, and recorded here because the 2026-08-26 sweep found the
+default fuzz axis exercises neither forbidden pairs nor byes:
+
+* `tools/bootstrap_identity.exs`, new, traces
+  `bye_assignee_score_from_field/2`'s return without exporting it -
+  `{0.0, false}` and a round hashing to 59399646 in both trees.
+* 296 tests, 0 failures.
+* `tools/matching_baseline.exs`: 460/460 byte-identical, recorded on the
+  old tree and verified on the new one.
+* bbpPairings, 3,000 tournaments x 9 rounds: 25,274/25,274 rounds,
+  299,281/299,281 pairs, 100.00%.
+* bbpPairings on an axis that actually runs this code, 1,500 tournaments
+  of exactly 41 players x 9 rounds with 20% forbidden pairs, 15% byes and
+  10% forfeits: 13,500/13,500 rounds, 238,687/238,687 pairs, 100.00%, and
+  the old tree returns the same figures down to the 11,009 Article 5.2.5
+  colour-dispute boards.
+
+### What is left
+
+Construction is 862 ms of a 3,090 ms bootstrap, and most of what remains
+is irreducible: a million bignum additions and a million map entries.
+`places` is a mixed-radix encoding, so a 1,001-player field's weights run
+to about a hundred digits, and `new/3` does not divide out the common
+factor when the caller supplies duals. Narrowing them is a weights
+question, and dead lever 2 above already says what happened last time.
+
+The bootstrap is now 28% of an odd round rather than 47%, and `solve/1` is
+73% of what is left of it. `bootstrap_split.exs`'s verdict line has
+changed accordingly: it now says THE SOLVE, which is the question it was
+written to hand over - whether C5's "minimise the score of the PAB
+assignee" needs a maximum-weight matching at all. That is still open.

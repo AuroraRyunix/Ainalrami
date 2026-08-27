@@ -3752,87 +3752,204 @@ defmodule Ainalrami.Pairing do
     top_score = elem(arr, 0).points
     tie_unit = div(n, 2) + 1
 
-    edges =
-      Enum.flat_map(0..(n - 2), fn i ->
-        a = elem(arr, i)
+    # --- per-PLAYER facts, hoisted out of the pair loop -----------------
+    #
+    # Everything from here to `incompatible` used to be recomputed per
+    # PAIR, 500,500 times at n=1,001, for a value that is a property of one
+    # POSITION. `eligible_for_bye?/1` walks a game list and was called
+    # twice per edge - a million walks for a thousand distinct answers.
+    # `Map.fetch!(places, _.points)` was two hash lookups per edge.
+    # `legal_pair?/2` was a linear scan of the first player's games plus a
+    # `Process.get/1`, and `colour_compatible?/2` two map fetches to read
+    # four fields. Not one weight changes; they are computed a thousand
+    # times instead of a million.
+    #
+    # `blocked` is the played-opponent set the note asked for, with the
+    # arbiter's forbidden pairs folded into the same map. `legal_pair?/2`
+    # asks both questions of the SAME player - its first argument, which
+    # the pair loop always gave the better-sorted endpoint - so one
+    # membership test answers both. That is how bbpPairings has it anyway:
+    # `dutch.cpp:653-666` inserts the rematch straight into
+    # `forbiddenPairs`, and `compatible` makes a single lookup.
+    forbidden = Process.get(@forbidden_key)
 
-        Enum.flat_map((i + 1)..(n - 1), fn j ->
-          b = elem(arr, j)
+    blocked =
+      field
+      |> Enum.map(fn p ->
+        played = for g <- p.games, played?(g), into: %{}, do: {g.opponent_rank, []}
 
-          if legal_pair?(a, b) and colour_compatible?(a, b) do
-            # NOT `bye_candidate?/2` (the eligible-AND-score<=threshold
-            # test): checked directly against dutch.cpp:766-786, the
-            # bootstrap matching that DETERMINES byeAssigneeScore for an odd
-            # field uses its own separate, simpler inline weight -
-            # `1u + !eligibleForBye(player) + !eligibleForBye(opponent)` -
-            # not the real per-bracket `computeEdgeWeight`/`isByeCandidate`
-            # test. That's not an oversight on the C++ side: `isByeCandidate`
-            # needs `byeAssigneeScore` as an input, which is exactly what
-            # this pass is computing, so testing candidates against it here
-            # would be circular. Confirmed by measurement too - swapping
-            # this to `bye_candidate?(_, nil)` (tried during the
-            # `tools/adjudicate.exs` investigation below) made ~80/2522
-            # rounds newly unpairable where bbpPairings still found a legal
-            # pairing, a large regression, not the intended fix.
-            eligibility = 1 + bit(not eligible_for_bye?(a)) + bit(not eligible_for_bye?(b))
-
-            # A deliberate NON-literal reading, argued rather than copied.
-            # bbpPairings sums the raw SHIFT amounts here -
-            # `scoreGroupShifts[a] + scoreGroupShifts[b]`, roughly linear
-            # in the score-group index - where everywhere else it uses
-            # them as shifts (`1u << scoreGroupShifts[...]`). `places` is
-            # the mixed-radix encoding used by the rest of this port, and
-            # it is geometric, so the two are different functions.
-            #
-            # They agree on everything this pass can observe. The field is
-            # odd, the graph is complete, so the matcher covers all but one
-            # player and this band's total is `constant - value(leftover)`
-            # under EITHER encoding. Both are strictly increasing in the
-            # score-group index, so both say the same thing: minimise the
-            # leftover's score. The same collapse applies to the
-            # eligibility band above (`(n-1)/2 + ineligible_total -
-            # [leftover ineligible]`), which is why neither band can see
-            # the matching's shape and the field below had to.
-            #
-            # The reduction needs every edge compatible. Where it isn't,
-            # more than one player goes uncovered and the two encodings
-            # could in principle part company - but that is the case where
-            # real bbpPairings throws `NoValidPairingException` instead,
-            # and the `[] -> {nil, false}` branch below already declines to
-            # constrain C5 there.
-            score = Map.fetch!(places, a.points) + Map.fetch!(places, b.points)
-
-            # `b` is the worse-sorted of the two, so testing it alone is
-            # the whole of the C++ condition - see `tie_unit` above.
-            top_pair = bit(b.points >= top_score)
-            weight = cardinality_unit + eligibility * eligibility_unit + score
-
-            [{i, j, tie_unit * weight + top_pair}]
-          else
-            # dutch.cpp:768-791: `compatible/4`-failing pairs still get a
-            # real edge here (`edgeWeight` starts at, and for these stays,
-            # exactly 0) - the bootstrap matching_computer is built as a
-            # COMPLETE graph, so an incompatible pair is only ever a worse
-            # choice than a compatible one, never an impossible one.
-            # `WeightedMatching.solve/2`'s `build_state/2` silently drops
-            # any edge with weight `0` (`if w > 0`), so a literal port of
-            # "weight 0" would vanish here exactly like the omitted-edge
-            # version this replaces - hence weight `1`, the smallest weight
-            # that still registers, still guaranteed below every compatible
-            # edge's `cardinality_unit`-or-higher floor. Previously this
-            # pair contributed NO edge at all, so a field whose only
-            # legal/colour-compatible pairs can't form a near-perfect
-            # matching (heavy forfeits/absolute-colour clashes) could leave
-            # MORE than one player unmatched here - a case real bbpPairings
-            # doesn't hit at this bootstrap step, since it always has a
-            # complete graph to fall back on.
-            #
-            # Scaled by `tie_unit` along with every compatible edge, so an
-            # incompatible pair stays exactly as far below them as before.
-            [{i, j, tie_unit}]
-          end
-        end)
+        case forbidden && Map.get(forbidden, p.rank) do
+          nil -> played
+          set -> Enum.reduce(set, played, &Map.put(&2, &1, []))
+        end
       end)
+      |> List.to_tuple()
+
+    ranks = field |> Enum.map(& &1.rank) |> List.to_tuple()
+
+    # `colour_compatible?/2`'s clash test in one value per player: the
+    # colour this player is ABSOLUTELY committed to, or nil. The clash it
+    # looks for is "both absolute, same non-nil preference", so nil stands
+    # for "not absolute" and "absolute with no preference" alike and two
+    # nils never clash.
+    prefs =
+      field
+      |> Enum.map(fn p ->
+        cs = p.colour_stats
+        if cs.absolute? and not is_nil(cs.preference), do: cs.preference, else: nil
+      end)
+      |> List.to_tuple()
+
+    # Every compatible weight is a SUM OF PER-VERTEX TERMS plus one bit -
+    # the same property the `duals` below are built on - so it does not
+    # have to be reassembled out of `eligibility`, `score` and `top_pair`
+    # once per pair. Split once, on the matcher's DOUBLED scale so the
+    # adjacency handed to `new/3` needs no second pass over it:
+    #
+    #     2 * (tie_unit * (cardinality_unit + eligibility * eligibility_unit
+    #                      + score) + top_pair)
+    #       = 2 * half_const + vertex(lo) + vertex(hi) + 2 * top(hi)
+    #
+    # since `eligibility` is `1 + ineligible(lo) + ineligible(hi)` and
+    # `score` is `place(lo) + place(hi)`. Identical integers, two additions
+    # instead of six multiplications and four map lookups.
+    half_const = tie_unit * (cardinality_unit + eligibility_unit)
+
+    # The `eligibility` half of `vertex`. NOT `bye_candidate?/2` (the
+    # eligible-AND-score<=threshold test): checked directly against
+    # dutch.cpp:766-786, the bootstrap matching that DETERMINES
+    # byeAssigneeScore for an odd field uses its own separate, simpler
+    # inline weight -
+    # `1u + !eligibleForBye(player) + !eligibleForBye(opponent)` -
+    # not the real per-bracket `computeEdgeWeight`/`isByeCandidate`
+    # test. That's not an oversight on the C++ side: `isByeCandidate`
+    # needs `byeAssigneeScore` as an input, which is exactly what
+    # this pass is computing, so testing candidates against it here
+    # would be circular. Confirmed by measurement too - swapping
+    # this to `bye_candidate?(_, nil)` (tried during the
+    # `tools/adjudicate.exs` investigation below) made ~80/2522
+    # rounds newly unpairable where bbpPairings still found a legal
+    # pairing, a large regression, not the intended fix.
+    #
+    # The `score` half is a deliberate NON-literal reading, argued rather
+    # than copied.
+    # bbpPairings sums the raw SHIFT amounts here -
+    # `scoreGroupShifts[a] + scoreGroupShifts[b]`, roughly linear
+    # in the score-group index - where everywhere else it uses
+    # them as shifts (`1u << scoreGroupShifts[...]`). `places` is
+    # the mixed-radix encoding used by the rest of this port, and
+    # it is geometric, so the two are different functions.
+    #
+    # They agree on everything this pass can observe. The field is
+    # odd, the graph is complete, so the matcher covers all but one
+    # player and this band's total is `constant - value(leftover)`
+    # under EITHER encoding. Both are strictly increasing in the
+    # score-group index, so both say the same thing: minimise the
+    # leftover's score. The same collapse applies to the
+    # eligibility band above (`(n-1)/2 + ineligible_total -
+    # [leftover ineligible]`), which is why neither band can see
+    # the matching's shape and the field below had to.
+    #
+    # The reduction needs every edge compatible. Where it isn't,
+    # more than one player goes uncovered and the two encodings
+    # could in principle part company - but that is the case where
+    # real bbpPairings throws `NoValidPairingException` instead,
+    # and the `[] -> {nil, false}` branch below already declines to
+    # constrain C5 there.
+    vertex =
+      field
+      |> Enum.map(fn p ->
+        2 * tie_unit *
+          (eligibility_unit * bit(not eligible_for_bye?(p)) + Map.fetch!(places, p.points))
+      end)
+      |> List.to_tuple()
+
+    # The worse-sorted of a pair is the one the C++ condition tests, so
+    # this bit is read off whichever endpoint sits LOWER in the sorted
+    # field - see `tie_unit` above.
+    top = field |> Enum.map(&bit(&1.points >= top_score)) |> List.to_tuple()
+
+    # dutch.cpp:768-791: `compatible/4`-failing pairs still get a
+    # real edge here (`edgeWeight` starts at, and for these stays,
+    # exactly 0) - the bootstrap matching_computer is built as a
+    # COMPLETE graph, so an incompatible pair is only ever a worse
+    # choice than a compatible one, never an impossible one.
+    # `WeightedMatching.solve/2`'s `build_state/2` silently drops
+    # any edge with weight `0` (`if w > 0`), so a literal port of
+    # "weight 0" would vanish here exactly like the omitted-edge
+    # version this replaces - hence weight `1`, the smallest weight
+    # that still registers, still guaranteed below every compatible
+    # edge's `cardinality_unit`-or-higher floor. Previously this
+    # pair contributed NO edge at all, so a field whose only
+    # legal/colour-compatible pairs can't form a near-perfect
+    # matching (heavy forfeits/absolute-colour clashes) could leave
+    # MORE than one player unmatched here - a case real bbpPairings
+    # doesn't hit at this bootstrap step, since it always has a
+    # complete graph to fall back on.
+    #
+    # Scaled by `tie_unit` along with every compatible edge, so an
+    # incompatible pair stays exactly as far below them as before.
+    incompatible = 2 * tie_unit
+
+    # The graph is COMPLETE, so the matcher's own `%{u => %{v => 2w}}` can
+    # be built a ROW at a time and the `[{i, j, w}]` list in between is
+    # pure overhead: 500,500 tuples at n=1,001, consed up by two nested
+    # `flat_map`s and then folded straight back apart by a million
+    # `Map.update/4`s inside `new/3`. `Map.new/1` over a finished row is
+    # one `:maps.from_list/1` instead, and `new/3` takes the structure as
+    # `:adjacency` and does no fold at all.
+    #
+    # The price is that each pair's weight is arrived at twice, once from
+    # each endpoint's row, where the triangular list arrived at it once.
+    # With the per-player facts above that is two tuple reads and one
+    # addition, and `tools/bootstrap_split.exs` at 1,001 players measures
+    # this half of the bootstrap at 638 ms against 2,407 ms even so
+    # (medians of three), with `new/3` on top going 1,409 ms -> 224 ms.
+    #
+    # Legality is NOT symmetric to compute, only to answer:
+    # `legal_pair?(p1, p2)` interrogates p1's game list and p1's forbidden
+    # set, and the pair loop always handed it the better-sorted player. So
+    # a row consults its OWN `blocked` above the diagonal and the other
+    # endpoint's below it, and the two halves are written out separately
+    # for that reason rather than for the hoisting.
+    {rows, max_weight2} =
+      Enum.map_reduce(0..(n - 1)//1, 0, fn i, mx ->
+        rank_i = elem(ranks, i)
+        pref_i = elem(prefs, i)
+        blocked_i = elem(blocked, i)
+        below = 2 * half_const + elem(vertex, i) + 2 * elem(top, i)
+        above = 2 * half_const + elem(vertex, i)
+
+        {pairs, mx} =
+          Enum.reduce(0..(i - 1)//1, {[], mx}, fn j, {acc, mx} ->
+            w =
+              if not is_map_key(elem(blocked, j), rank_i) and
+                   colours_pairable?(arr, elem(prefs, j), pref_i, j, i) do
+                below + elem(vertex, j)
+              else
+                incompatible
+              end
+
+            {[{j, w} | acc], max(mx, w)}
+          end)
+
+        {pairs, mx} =
+          Enum.reduce((i + 1)..(n - 1)//1, {pairs, mx}, fn j, {acc, mx} ->
+            w =
+              if not is_map_key(blocked_i, elem(ranks, j)) and
+                   colours_pairable?(arr, pref_i, elem(prefs, j), i, j) do
+                above + elem(vertex, j) + 2 * elem(top, j)
+              else
+                incompatible
+              end
+
+            {[{j, w} | acc], max(mx, w)}
+          end)
+
+        {{i, Map.new(pairs)}, mx}
+      end)
+
+    adjacency = Map.new(rows)
 
     # Every compatible edge's weight is a sum of per-vertex terms plus the
     # one-bit `top_pair`, so a dual of half the symmetric part per vertex
@@ -3843,18 +3960,20 @@ defmodule Ainalrami.Pairing do
     # along those edges and the search has one or two exposed vertices to
     # settle, instead of matching one heaviest edge per stage for a
     # hundred stages. Checked against the weights by `new/3`.
-    duals =
-      Map.new(0..(n - 1)//1, fn i ->
-        p = elem(arr, i)
-
-        {i,
-         tie_unit *
-           (cardinality_unit + eligibility_unit * (1 + 2 * bit(not eligible_for_bye?(p))) +
-              2 * Map.fetch!(places, p.points)) + bit(p.points >= top_score)}
-      end)
+    #
+    # Written out of the same decomposition as the weights above, and
+    # producing the same integers the per-vertex form did:
+    # `half_const + vertex(i) + top(i)`.
+    duals = Map.new(0..(n - 1)//1, fn i -> {i, half_const + elem(vertex, i) + elem(top, i)} end)
 
     {_state, matching} =
-      n |> WeightedMatching.new(edges, duals: duals) |> WeightedMatching.solve()
+      n
+      |> WeightedMatching.new([],
+        adjacency: adjacency,
+        duals: duals,
+        max_weight: div(max_weight2, 2)
+      )
+      |> WeightedMatching.solve()
 
     case Enum.reject(0..(n - 1), &is_map_key(matching, &1)) do
       # No legal complete round exists; leave C5 unconstrained and let the
@@ -4177,6 +4296,23 @@ defmodule Ainalrami.Pairing do
     else
       true
     end
+  end
+
+  # `colour_compatible?/2` for a caller that has already reduced each
+  # player to the colour they are ABSOLUTELY committed to, or nil - see
+  # `prefs` in `bye_assignee_score_from_field/2`. Same three outcomes: no
+  # commitment on the better-sorted side, or two different commitments,
+  # pairs; the same commitment twice falls through to the same final-round
+  # exception, which is the only branch that needs the player maps and is
+  # rare enough to pay for `elem/2` when it fires.
+  #
+  # `i` is the better-sorted endpoint and `j` the worse, matching the order
+  # `colour_compatible?/2` itself passes on - `final_round_topscorers?/2`
+  # reads its FIRST argument's game count as the played-round fallback.
+  defp colours_pairable?(_arr, nil, _pref_j, _i, _j), do: true
+
+  defp colours_pairable?(arr, pref_i, pref_j, i, j) do
+    pref_i != pref_j or final_round_topscorers?(elem(arr, i), elem(arr, j))
   end
 
   defp final_round_topscorers?(a, b) do

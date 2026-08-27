@@ -137,6 +137,16 @@ defmodule Ainalrami.WeightedMatching do
   greedy start may match. A caller whose weights are a sum of per-vertex
   terms can make every edge tight this way and hand the search an almost
   complete matching; see `greedy_start/3`.
+
+  `:adjacency` hands over the nested `%{u => %{v => 2w}}` map that
+  `build_state/5` would otherwise fold out of `edges`, ALREADY DOUBLED, and
+  `edges` is then ignored. It exists for a caller that knows its whole graph
+  up front and can emit that structure directly: `Ainalrami.Pairing`'s
+  odd-field bye bootstrap builds a COMPLETE graph, so the `[{i, j, w}]` list
+  in between was 500,500 tuples at n=1,001 allocated only to be consumed
+  here, and the fold on top of them was a million `Map.update/4`s. Pass
+  `:max_weight` with it - the ceiling is otherwise derived from `edges`,
+  which such a caller does not supply.
   """
   def new(n, edges, opts \\ []) do
     # `:gcd` overrides the reduction. A persistent caller whose LATER
@@ -166,7 +176,9 @@ defmodule Ainalrami.WeightedMatching do
         w -> 2 * div(w, gcd)
       end
 
-    state = build_state(n, edges, ceiling, Keyword.get(opts, :duals))
+    state =
+      build_state(n, edges, ceiling, Keyword.get(opts, :duals), Keyword.get(opts, :adjacency))
+
     Map.put(state, :gcd, gcd)
   end
 
@@ -787,29 +799,45 @@ defmodule Ainalrami.WeightedMatching do
     end
   end
 
-  defp build_state(n, edges, ceiling, duals) do
+  defp build_state(n, edges, ceiling, duals, adjacency) do
     # Adjacency, not a flat `{u, v} => w` map. `resistance/3` is the
     # innermost operation in the whole algorithm -- the delta scans call it
     # once per vertex pair, every step -- and a tuple key means allocating
     # and hashing a two-tuple on each of those. Nesting lets the scans
     # fetch one vertex's row once and then do plain single-key lookups
     # against it.
+    #
+    # A caller that hands the finished structure over as `:adjacency` skips
+    # this fold; see `new/3` for who does and why.
     weights =
-      Enum.reduce(edges, %{}, fn {i, j, w}, acc ->
-        if w > 0 do
-          acc
-          |> Map.update(i, %{j => 2 * w}, &Map.put(&1, j, 2 * w))
-          |> Map.update(j, %{i => 2 * w}, &Map.put(&1, i, 2 * w))
-        else
-          acc
-        end
-      end)
+      adjacency ||
+        Enum.reduce(edges, %{}, fn {i, j, w}, acc ->
+          if w > 0 do
+            acc
+            |> Map.update(i, %{j => 2 * w}, &Map.put(&1, j, 2 * w))
+            |> Map.update(j, %{i => 2 * w}, &Map.put(&1, i, 2 * w))
+          else
+            acc
+          end
+        end)
 
+    # `:adjacency` without `:max_weight` still has to get the ceiling from
+    # somewhere, and the only place left is the map itself -- a full O(E)
+    # walk, which is exactly what such a caller is trying to avoid, so it
+    # should pass the ceiling. Kept as a fallback rather than a raise
+    # because the value is derivable and a wrong one is not caught until
+    # `greedy_resume/1` misreads a dual.
     max_w =
       ceiling ||
-        Enum.reduce(edges, 0, fn {_i, _j, w}, acc ->
-          if w > 0, do: max(acc, 2 * w), else: acc
-        end)
+        if adjacency do
+          Enum.reduce(adjacency, 0, fn {_u, row}, acc ->
+            Enum.reduce(row, acc, fn {_v, w2}, best -> max(best, w2) end)
+          end)
+        else
+          Enum.reduce(edges, 0, fn {_i, _j, w}, acc ->
+            if w > 0, do: max(acc, 2 * w), else: acc
+          end)
+        end
 
     {dual, blossom_match} = greedy_start(n, weights, duals)
 
@@ -919,22 +947,22 @@ defmodule Ainalrami.WeightedMatching do
           end)
 
         given ->
-          dual = Map.new(0..(n - 1)//1, fn v -> {v, Map.get(given, v, 0)} end)
-
-          for {u, row} <- weights, {v, w2} <- row, u < v do
-            if Map.fetch!(dual, u) + Map.fetch!(dual, v) < w2 do
-              raise ArgumentError,
-                    "new/3: the given duals are infeasible on edge {#{u}, #{v}}: " <>
-                      "#{Map.fetch!(dual, u)} + #{Map.fetch!(dual, v)} < #{w2}"
-            end
-          end
-
-          dual
+          Map.new(0..(n - 1)//1, fn v -> {v, Map.get(given, v, 0)} end)
       end
+
+    # `dual` is final from here, and keyed by exactly `0..n-1`, so the two
+    # O(E) scans below read it out of a flat tuple instead of hashing the
+    # map on every edge endpoint. On `Ainalrami.Pairing`'s odd-field bye
+    # bootstrap those two scans are two million lookups between them, and
+    # `elem/2` is a pointer offset where `Map.fetch!/2` is a hash and a
+    # probe.
+    dual_t = 0..(n - 1)//1 |> Enum.map(&Map.fetch!(dual, &1)) |> List.to_tuple()
+
+    if given != nil, do: check_duals!(weights, dual_t)
 
     blossom_match =
       Enum.reduce(0..(n - 1)//1, %{}, fn v, bm ->
-        yv = Map.fetch!(dual, v)
+        yv = elem(dual_t, v)
 
         if Map.has_key?(bm, v) do
           bm
@@ -943,7 +971,7 @@ defmodule Ainalrami.WeightedMatching do
             weights
             |> Map.get(v, %{})
             |> Enum.reduce(nil, fn {u, w2}, best ->
-              if yv + Map.fetch!(dual, u) == w2 and not Map.has_key?(bm, u) and
+              if yv + elem(dual_t, u) == w2 and not Map.has_key?(bm, u) and
                    (best == nil or u < best),
                  do: u,
                  else: best
@@ -957,6 +985,28 @@ defmodule Ainalrami.WeightedMatching do
       end)
 
     {dual, blossom_match}
+  end
+
+  # `duals[u] + duals[v] >= 2 * w(u, v)` on every edge -- the precondition
+  # `new/3` documents, checked rather than trusted because a caller that
+  # gets it wrong gets a silently suboptimal matching, not a crash.
+  #
+  # Written as a `for` comprehension, which built and then discarded a list
+  # one element per EDGE: 500,500 of them on the bye bootstrap, allocated
+  # for nothing. `Enum.each` keeps every assertion, in the same order, and
+  # allocates none of it.
+  defp check_duals!(weights, dual_t) do
+    Enum.each(weights, fn {u, row} ->
+      yu = elem(dual_t, u)
+
+      Enum.each(row, fn {v, w2} ->
+        if u < v and yu + elem(dual_t, v) < w2 do
+          raise ArgumentError,
+                "new/3: the given duals are infeasible on edge {#{u}, #{v}}: " <>
+                  "#{yu} + #{elem(dual_t, v)} < #{w2}"
+        end
+      end)
+    end)
   end
 
   # A stage bound of `2n` is generous - the reference algorithm needs at

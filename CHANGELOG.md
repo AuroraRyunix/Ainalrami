@@ -54,6 +54,46 @@ invisible to any corpus this generator can produce and a third had been
 breaking a matcher invariant 734 times per 800 tournaments while agreeing
 with the reference on every one of them.
 
+## [Unreleased]
+
+### Changed
+
+- [Change] **A 1,001-player odd round is 37% quicker, and no pairing
+  changes.** `tools/parity_bench.exs` had shown that one extra player cost
+  up to 2.3x the whole round, because an odd field runs a whole-field
+  bootstrap matching an even field skips entirely. `tools/bootstrap_split.exs`
+  then showed that 56% of that pass was not the matching at all - it was
+  building the graph: 2,407 ms to produce a 500,500-edge list and another
+  1,409 ms for `WeightedMatching.new/3` to fold that list into the nested
+  map the solver reads.
+
+  Both halves are construction, so both could go without touching a rule.
+  Per-pair work that was really per-player (`eligible_for_bye?/1`, the
+  score-group lookup, the played-opponent scan) is now computed once per
+  position; the edge weight is assembled from per-vertex terms it was
+  always a sum of; and the bootstrap emits the solver's nested map
+  directly, as `new/3`'s new `:adjacency` option, instead of building a
+  list for `new/3` to take apart again. Construction goes 3,743 ms ->
+  862 ms, the bootstrap 6,621 ms -> 3,090 ms, and the round
+  14,291 ms -> 9,016 ms. The parity ratio against the same field one
+  player smaller goes 2.04-2.32x -> 1.31-1.45x; the even field, which
+  never ran this code, does not move.
+
+  Not one weight changes, and that is checked rather than argued: the
+  matcher state `build_state/5` hands to the search - the weight map, the
+  ceiling, the duals and the greedy matching - hashes identically before
+  and after on all three whole-field solves of a 1,001-player round. On
+  top of that, 460/460 byte-identical matchings on
+  `tools/matching_baseline.exs`, and 100.00% against bbpPairings on both
+  3,000 tournaments x 9 rounds (25,274 rounds) and a deliberately
+  odd-heavy 1,500 x 9 rounds of exactly 41 players with forbidden pairs,
+  byes and forfeits (13,500 rounds), where the pre-change tree returns the
+  same figures down to the colour-dispute board count. See
+  [the engineering log](docs/engineering-log.md#the-odd-field-bootstrap-40-s-of-construction-for-a-graph-that-was-already-known-2026-08-27).
+
+  `solve/1` was not touched. It got 22% quicker anyway, which is the
+  garbage the discarded intermediate lists used to leave on the heap.
+
 ## [0.12.0] - 2026-08-27
 
 Thirteen bug-severity findings from a deliberate whole-codebase sweep, plus

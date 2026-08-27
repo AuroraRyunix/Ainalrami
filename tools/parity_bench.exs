@@ -13,13 +13,19 @@
 # and its first clause is `bye_assignee_score(_brackets, 0), do: {nil, false}`.
 # On an EVEN field it returns immediately. On an odd one it runs
 # `bye_assignee_score_from_field/2`, which builds a COMPLETE graph over the
-# whole active field - `Enum.flat_map(0..(n - 2), ...)` over
-# `(i + 1)..(n - 1)`, with a `legal_pair?/2` and a `colour_compatible?/2` call
-# per pair and an edge emitted on BOTH branches of the `if` (the else branch
-# returns `[{i, j, tie_unit}]`, deliberately, so the graph stays complete the
-# way dutch.cpp:768-791 has it) - and hands it to `WeightedMatching.new/3`,
-# which builds an n-by-n nested weight map on top. At 1,001 players that is
+# whole active field - every pair carries an edge, including the pairs that
+# fail `legal_pair?/2` or `colour_compatible?/2`, deliberately, so the graph
+# stays complete the way dutch.cpp:768-791 has it. At 1,001 players that is
 # 500,500 edges. At 1,000 it is zero.
+#
+# It used to build them as a `[{i, j, w}]` list out of two nested
+# `flat_map`s, calling `legal_pair?/2` and `colour_compatible?/2` per PAIR,
+# and hand that to `WeightedMatching.new/3` to fold into an n-by-n nested
+# weight map. `tools/bootstrap_split.exs` costed the two halves at 2,407 ms
+# and 1,409 ms of a 1,001-player round; the per-pair work is now per-PLAYER
+# and the nested map is emitted directly as `new/3`'s `:adjacency`, for
+# 638 ms and 224 ms. The pass itself is unchanged - same edges, same
+# weights, same matching.
 #
 # The engineering log's recorded sizes are 209 (odd), 400 (even) and 1,000
 # (even). So this pass has been measured at 209 and nowhere else, and the
