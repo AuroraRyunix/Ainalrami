@@ -141,6 +141,14 @@ one, 604 ms for the BEAM), the pairing work is:
 | 400 | 2,088 ms | **963 ms** | 1,094 ms |
 | 1,000 | 43,754 ms | **7,695 ms** | 7,669 ms |
 
+**Those sizes are 209, 400 and 1,000 - one odd and two even, and the
+parity matters.** An odd field runs a whole-field bootstrap matching that
+an even one skips entirely, and on 2026-08-27 it was measured at **46.2% of
+a 1,001-player round**: 1,000 players takes 6.0 s and 1,001 takes 13.3 s.
+So the two large numbers above are the cheap half of the picture, and half
+of any real tournament is an odd field. See
+[docs/engineering-log.md](docs/engineering-log.md) under 2026-08-27.
+
 So **1.15x to 5.7x quicker than the C++ reference**, and **level with the
 Python one** - quicker at 400, within 0.3% at 1,000. At 209 players 63% of
 the BEAM's wall clock is VM start-up, which is why it trails end-to-end

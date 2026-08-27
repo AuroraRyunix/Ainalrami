@@ -37,6 +37,88 @@ failures rather than quietly dropped, so nobody re-derives them.
 
 ## Done
 
+### 2026-08-27 - every large benchmark was taken at the wrong parity
+
+`bye_assignee_score/2`'s first clause is `bye_assignee_score(_brackets, 0),
+do: {nil, false}`, and it is called with `rem(length(field), 2)`. On an
+EVEN field it returns immediately. On an odd one it runs
+`bye_assignee_score_from_field/2`, which builds a COMPLETE graph over the
+whole active field - every pair, a `legal_pair?/2` and a
+`colour_compatible?/2` per pair, an edge emitted on both branches so the
+graph stays complete - and hands it to `WeightedMatching.new/3`, which
+builds an n-by-n nested weight map on top. At 1,001 players that is 500,500
+edges. At 1,000 it is zero.
+
+The recorded sizes are 209 (odd), 400 (even) and 1,000 (even). So the pass
+was measured at 209 and nowhere else, and the bracket table already said so
+without anyone reading it: the bootstrap row is marked "n/a (even field)"
+for 400. The entry that removed the idle first bracket said the quiet part
+outright - "That gate opens with `ctx.odd_field?`, and 400 is even, so the
+answer was unobservable."
+
+`tools/parity_bench.exs`, best of three, cold process, pairing round 6 of a
+nine-round event:
+
+| players | parity | best of 3 | ratio |
+|---|---|---|---|
+| 208 | even | 527.9 ms | |
+| 209 | odd | 716.5 ms | 1.36x |
+| 400 | even | 915.9 ms | |
+| 401 | odd | 1,490.3 ms | 1.63x |
+| 1,000 | even | 6,045.8 ms | |
+| 1,001 | odd | **13,335.5 ms** | **2.21x** |
+
+**One extra player costs 2.2x the whole round at 1,000, and the ratio grows
+with n** - 1.36, 1.63, 2.21 - which is the signature of a quadratic pass
+that only one parity pays.
+
+Parity changes four things, not one, which is why an even-field profile is
+misleading rather than merely incomplete. The bootstrap is the expensive
+one, but `bye_candidate?/2` also switches clause, and that feeds
+`completion_rung/4`, the TOP rung of the ladder - so the edge weights
+themselves differ between the two parities. `c9_rank/3` becomes live, and
+`ctx.odd_field?` gates the `idle_bracket?/4` skip that bought 0.39 -> 0.23
+at 209.
+
+**Half of a real tournament is an odd field.** The published speed table is
+the good half.
+
+**Attributed.** `PARITY_BENCH_TRACE=1` at 1,001 players:
+
+    1000 (even): not called - allowed_byes = 0, whole pass skipped
+    1001 (odd):  1 call, n=1001, 500,500 edges, 6,529.6 ms (46.2% of the round)
+
+One call. Half the round. The arithmetic closes: 6,474 ms even plus
+6,530 ms of bootstrap is the 13,335 ms measured odd, within the noise of a
+traced run.
+
+So the answer to "is there a time win left" is yes, and it is the largest
+one on the board - larger than the transposition fast path's estimated
+ceiling, and on a pass nobody had looked at because it is invisible at even
+sizes. Nothing is fixed here; this entry is the measurement and the
+correction to the record.
+
+**What to try next, in order.** The bootstrap answers one question - C5's
+"minimise the score of the PAB assignee" - and it answers it by building
+the complete field graph and solving a maximum-weight matching on it. Three
+things worth measuring before touching the algorithm:
+
+1. **Is the graph the cost, or the solve?** The trace times the whole call.
+   Split it: graph construction (500,500 `legal_pair?` plus
+   `colour_compatible?` calls and an n-by-n nested map) against
+   `WeightedMatching.new/3` plus the solve. If it is construction, the
+   answer is a representation change and not an algorithmic one.
+2. **Does the answer need a matching at all?** C5 asks for the minimum
+   achievable bye score, not for the matching that achieves it. A feasibility
+   test per candidate score - "can the field be completely paired with this
+   player byed" - answered over the score groups in descending order, may
+   settle it without ever solving the whole field. That is a bound, not a
+   matching, and bounds are cheap.
+3. **Is it reusable across rounds?** The field changes by one round of
+   results between calls. Whether any of the graph survives that has never
+   been asked.
+
+
 ### 2026-08-27 - the corpus's one blind spot, measured
 
 The two-way corpus halts a tournament the moment bbpPairings answers "no
