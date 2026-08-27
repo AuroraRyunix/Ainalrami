@@ -187,6 +187,64 @@ declines, these axes could not show it.
 
 **That gap is now measured. See below.**
 
+### The three-way run (2026-08-27)
+
+The weakest number on this page was three-way agreement: 3,352 rounds
+against 217 million two-way. Everything else rests on bbpPairings being
+right, and this was the only instrument that could catch a rule both
+engines read the same way wrong.
+
+Eight axes, 649,207 rounds compared by all three engines - **194 times the
+previous coverage**. A ninth axis was void: it was run alongside another
+job on the same box and failed on reference processes not launching, which
+is the resource-starvation failure this harness's own moduledoc warns
+about. It is being re-run alone rather than quoted.
+
+**Composition. Ainalrami agreed with bbpPairings on 649,207 of 649,207
+rounds - 100.00% on every axis.** The two disagree nowhere.
+
+The three engines are not unanimous, and the pattern is the point:
+
+| axis | bbpPairings vs Gacrux | Ainalrami vs bbpPairings |
+|---|---|---|
+| 12% byes | 83,981/83,988 | 83,988/83,988 |
+| 10% forfeits | 83,886/83,898 | 83,898/83,898 |
+| everything Gacrux allows | 80,561/80,679 | 80,679/80,679 |
+| the other five axes | 100% | 100% |
+
+137 rounds where the references disagree with each other, and in every one
+of them Ainalrami is on bbpPairings' side. There is no round in 649,207
+where Ainalrami is the odd one out.
+
+### Colour, measured three ways for the first time
+
+`same?/2` compares through `normalize/1`, which sorts each pair's ranks, so
+every number this harness had ever reported was colour-blind - the same gap
+that hid a missing Article 5.2.4 through 195 million pairings in the
+two-way harness. It now carries three pairwise colour rates over the boards
+each PAIR of engines both formed.
+
+**6,242,974 boards.** Ainalrami against bbpPairings: 6,178,843 agreed,
+64,131 differing and **every one of them explained by the known Article
+5.2.5 dispute. Zero unexplained.** That is the strongest statement this
+project has about Article 5: on six million boards, this engine's only
+colour differences from the reference are the one divergence it documents,
+argues for, and has raised with the SPP.
+
+**And the two references contradict each other.** On the forfeit axis and
+on the combined axis, one board each where bbpPairings and Gacrux disagree
+about who is White, outside 5.2.5's reach - so on Articles 5.2.1 to 5.2.4,
+which nobody disputes. In both, Ainalrami agrees with bbpPairings and
+Gacrux is alone.
+
+Two boards in 6.2 million is a rate of 3.2e-5%, and it is not zero. Nobody
+had measured it before, because measuring it needs an instrument that
+compares two references to each other rather than both to the engine under
+test. Both positions are worth reading; see the note in TODO.md.
+
+The rule-of-three bound on the references' true colour-disagreement rate is
+now about **3e-4%** per axis, computed over boards rather than rounds.
+
 ### The exhaustion probe (2026-08-27)
 
 The corpus halts a tournament the moment bbpPairings answers "no legal
@@ -654,9 +712,9 @@ Stated so the claim's boundary is explicit:
   measured past them. This is now the most reachable gap on the list: the
   matcher rebuild took 60-120 players from 0.36 to ~12 tournaments/s, so
   the axis that was once unaffordable is affordable.
-- **Three-way agreement at scale.** 3,352 rounds, against 217 million
-  two-way. This is the weakest number on the page and the one worth
-  raising.
+- ~~**Three-way agreement at scale**~~ - **raised 2026-08-27, from 3,352
+  rounds to 649,207**, and given a colour instrument it never had. See
+  "The three-way run" below. It is no longer the weakest number here.
 
 ## Performance
 

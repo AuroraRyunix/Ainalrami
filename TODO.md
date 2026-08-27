@@ -186,6 +186,18 @@ What is left is one limit of method rather than a known divergence.
 
 ## Harness
 
+- [ ] **Read the two boards where the two REFERENCES disagree about
+      colour.** The three-way run of 2026-08-27 measured reference-against-
+      reference colour agreement for the first time: 6,242,974 boards, and
+      two on which bbpPairings and Gacrux contradict each other OUTSIDE
+      Article 5.2.5's reach - i.e. on 5.2.1 to 5.2.4, which nobody
+      disputes. One on the 10%-forfeit axis, one on the combined axis.
+      Ainalrami agrees with bbpPairings in both, so this is not a finding
+      against this engine; it is a finding about the ruler. Reproduce with
+      `COLOUR_DEBUG=1` on those axes and seeds, decide which reference is
+      right, and file it upstream if it is Gacrux. See
+      [docs/validation.md](docs/validation.md#colour-measured-three-ways-for-the-first-time).
+
 - [ ] **Brute-force the exhaustion refusals on the 4-6 player axis.** The
       2026-08-27 probe established that this engine refuses every position
       bbpPairings refuses - 815,479 of them - but two engines agreeing that

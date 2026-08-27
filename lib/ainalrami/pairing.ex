@@ -105,6 +105,35 @@ defmodule Ainalrami.Pairing do
   # tournament and reports it confidently.
   @point_system_key :ainalrami_point_system
 
+  # The three diagnostic environment flags the hot path used to read
+  # per-edge, stamped once per round instead. `System.get_env/1` is not a
+  # constant fold: it builds a charlist for the name, goes through the
+  # emulator's environment table under a global lock, and allocates a
+  # binary for the answer.
+  #
+  # `completion_rung/3` is the first rung `edge_rungs/6` returns, and
+  # `bracket_edge_weight/8` calls that for EVERY legal, colour-compatible
+  # candidate pair - order 70,000 reads in a 1,000-player round. The fuzz
+  # harnesses run 36 workers in ONE VM, so that is 36 workers queueing on
+  # one lock, per edge, for a value that cannot change while the VM is up.
+  # `AINALRAMI_TRACE` (roughly 10 reads per bracket) and `AINALRAMI_NOFAST`
+  # are stamped with it because the three share one lifetime and splitting
+  # them would be three chances to forget one.
+  #
+  # `:unset` rather than nil is the sentinel for "the variable is not set",
+  # because nil is also what `Process.get/1` answers for a key that was
+  # never stamped, and those two cases must NOT collapse: an unstamped key
+  # has to fall back to a real `System.get_env/1`, so a caller reaching
+  # these functions without going through an entry point still sees the
+  # truth rather than a silent "unset". `System.get_env/1` returns nil only
+  # when the variable is absent - a variable set to nothing comes back as
+  # `""`, which is truthy here - so the sentinel is unambiguous and
+  # `env_flag/2` reproduces `System.get_env/1` exactly, including for a
+  # caller comparing the result against a string.
+  @env_completion_key :ainalrami_env_completion
+  @env_trace_key :ainalrami_env_trace
+  @env_nofast_key :ainalrami_env_nofast
+
   @doc """
   Pairs the next round, dispatching to `pair_round_one/1` when no game
   history exists yet, or the bracket cascade below otherwise.
@@ -129,6 +158,7 @@ defmodule Ainalrami.Pairing do
     )
 
     Process.put(@point_system_key, opts[:point_system] || Ainalrami.Trf.default_point_system())
+    stamp_env_flags()
 
     try do
       played = rounds_played(players)
@@ -163,6 +193,7 @@ defmodule Ainalrami.Pairing do
       Process.delete(@point_system_key)
       Process.delete(@played_key)
       Process.delete(@forbidden_key)
+      clear_env_flags()
     end
   end
 
@@ -276,6 +307,7 @@ defmodule Ainalrami.Pairing do
     # both, so `openpair file.trf -x` on a file carrying `BB*` lines paired
     # under the file's system and explained under the default one.
     Process.put(@point_system_key, opts[:point_system] || Ainalrami.Trf.default_point_system())
+    stamp_env_flags()
 
     try do
       played = rounds_played(players)
@@ -334,6 +366,7 @@ defmodule Ainalrami.Pairing do
       Process.delete(@oracle_key)
       Process.delete(@dirty_key)
       Process.delete(@first_single_bye_key)
+      clear_env_flags()
     end
   end
 
@@ -762,6 +795,15 @@ defmodule Ainalrami.Pairing do
         infer_initial_colour(players) || "w"
     )
 
+    # No `|| Process.get(...)` on this one, unlike the four above: those
+    # fall back because a direct caller has to be able to inherit the outer
+    # caller's OPTIONS, and the environment is not an option. Re-reading it
+    # here on the `pair_next_round/2` path costs three env lookups per
+    # round against the ~70,000 per-edge ones this removes, and buys the
+    # guarantee that a stale flag cannot be inherited even if some future
+    # path ever did leak one.
+    stamp_env_flags()
+
     # Cleaned up here, and until 2026-08-26 it was not cleaned up at all.
     # That mattered because of the `|| Process.get(...)` fallbacks above:
     # the leftovers were not merely inert, the NEXT direct call inherited
@@ -784,6 +826,7 @@ defmodule Ainalrami.Pairing do
       Process.delete(@point_system_key)
       Process.delete(@initial_colour_key)
       Process.delete(@played_key)
+      clear_env_flags()
     end
   end
 
@@ -1168,6 +1211,40 @@ defmodule Ainalrami.Pairing do
 
   defp point_system do
     Process.get(@point_system_key) || Ainalrami.Trf.default_point_system()
+  end
+
+  # Stamped by every entry point that stamps `@point_system_key`, and
+  # cleared by the same `after` blocks - see those keys' own comment for
+  # why anything less leaks state from one tournament into the next one
+  # paired in the same process.
+  #
+  # An unconditional read rather than `Process.get(key) || ...`: the other
+  # round-scoped keys carry that fallback because a direct call to
+  # `pair_later_round/2` has to be able to inherit an outer caller's
+  # options, and there are no options to inherit here. Re-reading costs
+  # three env lookups on the `pair_next_round/2` -> `pair_later_round/2`
+  # path, against the ~70,000 it removes, and in exchange a stale value can
+  # never be inherited at all.
+  defp stamp_env_flags do
+    Process.put(@env_completion_key, read_env_flag("AINALRAMI_COMPLETION"))
+    Process.put(@env_trace_key, read_env_flag("AINALRAMI_TRACE"))
+    Process.put(@env_nofast_key, read_env_flag("AINALRAMI_NOFAST"))
+  end
+
+  defp clear_env_flags do
+    Process.delete(@env_completion_key)
+    Process.delete(@env_trace_key)
+    Process.delete(@env_nofast_key)
+  end
+
+  defp read_env_flag(name), do: System.get_env(name) || :unset
+
+  defp env_flag(key, name) do
+    case Process.get(key) do
+      nil -> System.get_env(name)
+      :unset -> nil
+      value -> value
+    end
   end
 
   defp float_of(player, rounds_back) do
@@ -1937,7 +2014,7 @@ defmodule Ainalrami.Pairing do
   defp local_eligible?(combined, nsgb, wsgb, ctx) do
     window = Enum.take(combined, min(wsgb, length(combined)))
 
-    System.get_env("AINALRAMI_NOFAST") == nil and nsgb >= 2 and
+    env_flag(@env_nofast_key, "AINALRAMI_NOFAST") == nil and nsgb >= 2 and
       Enum.all?(window, fn p ->
         if ctx.odd_field?,
           do: not is_nil(ctx.bye_score) and p.points > ctx.bye_score,
@@ -2140,7 +2217,7 @@ defmodule Ainalrami.Pairing do
   # never fall, and a stage where it does is dropping a pair the criteria
   # say it should have kept.
   defp trace_stage(st, label) do
-    if System.get_env("AINALRAMI_TRACE") do
+    if env_flag(@env_trace_key, "AINALRAMI_TRACE") do
       kept =
         Enum.count(0..(st.m - 1)//1, fn i ->
           p = partner(st, i)
@@ -2665,7 +2742,23 @@ defmodule Ainalrami.Pairing do
   # transposition procedure, and they are right. Kept, off the critical
   # path, because a correct key would be worth having if anyone works out
   # what the post-exchange split actually is.
+  #
+  # "Off the critical path" is what the flag check being FIRST buys. It
+  # used to be last, so a switched-off tie-break still paid for itself in
+  # full on every bracket and then threw the answer away: on the
+  # 205-player bracket that is 104 `Integer.pow` calls topping out near
+  # 690 bits, and 10,506 `terms` entries, each one a ~690-bit bignum
+  # multiply plus an `Enum.min_max` allocation. The flag-off branch
+  # returns the same `%{terms: %{}, scale: 1}` the tail used to.
   defp transposition_terms(_m, sgb, nsgb) do
+    if System.get_env("AINALRAMI_TRANS") do
+      transposition_terms_on(sgb, nsgb)
+    else
+      %{terms: %{}, scale: 1}
+    end
+  end
+
+  defp transposition_terms_on(sgb, nsgb) do
     {s1, s2} =
       cond do
         # A heterogeneous bracket pairs its moved-down players against the
@@ -2682,18 +2775,26 @@ defmodule Ainalrami.Pairing do
     base = n2 + 2
     pow = for e <- 0..(k + 1), into: %{}, do: {e, Integer.pow(base, e)}
 
+    # Hoisted: a comprehension re-evaluates its INNER generator once per
+    # outer element, so leaving this inline rebuilt the same 103-element
+    # indexed list 102 times on that bracket.
+    #
+    # This only bites under `AINALRAMI_TRANS=1`. The guard above means the
+    # whole function is skipped in the default configuration, so the hoist
+    # saves nothing there - it is fixed because the flag exists to be used,
+    # not because it is on a hot path today.
+    s2_indexed = Enum.with_index(s2)
+
     terms =
       for {p, pi} <- Enum.with_index(s1),
-          {q, qi} <- Enum.with_index(s2),
+          {q, qi} <- s2_indexed,
           into: %{} do
         {Enum.min_max([p, q]), Map.fetch!(pow, k - pi) * (n2 - qi)}
       end
 
     # One unit above anything the terms can reach, so the whole tie-break
     # sits under the criteria rather than beside them.
-    if System.get_env("AINALRAMI_TRANS"),
-      do: %{terms: terms, scale: Map.fetch!(pow, k + 1)},
-      else: %{terms: %{}, scale: 1}
+    %{terms: terms, scale: Map.fetch!(pow, k + 1)}
   end
 
   # bbpPairings reads an unmatched vertex as matched to ITSELF, and three
@@ -2975,7 +3076,7 @@ defmodule Ainalrami.Pairing do
     eligibility =
       bit(not bye_candidate?(a, ctx.bye_score)) + bit(not bye_candidate?(b, ctx.bye_score))
 
-    case System.get_env("AINALRAMI_COMPLETION") do
+    case env_flag(@env_completion_key, "AINALRAMI_COMPLETION") do
       "eligibility" -> {"C2/C5 bye-eligibility", eligibility, 3 * s}
       _ -> {"C2/C4/C5 bye-eligibility", 1 + eligibility, 3 * s}
     end
