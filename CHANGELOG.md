@@ -34,11 +34,19 @@ tournaments (45.5%) ended early because the reference ran out of legal
 pairings, almost entirely in the 4-10 player axes - 88.2% of the `4-10,
 15% byes` axis and 78.2% of the plain one. Those tournaments are excluded
 from the rates, so agreement is measured up to exhaustion and not about
-it: an engine willing to pair a round bbpPairings declines is the one
-behaviour these axes are structurally blind to. Whether the four later
+it: an engine willing to pair a round bbpPairings declines was the one
+behaviour these axes were structurally blind to. Whether the four later
 corpora exhaust at the same rate has not been measured. The full
 statement is
 [what the corpus could not see](docs/validation.md#what-the-corpus-could-not-see).
+
+That blind spot was measured on 2026-08-27 and came back clean:
+`tools/exhaustion_probe.exs` put 815,479 positions bbpPairings had refused
+to this engine, across six axes and 930,000 tournaments, and it refused
+every one. What that does NOT establish is that a legal pairing genuinely
+does not exist in those positions - two engines can be wrong together, and
+the brute-force check that would settle it has not been run. See
+[the exhaustion probe](docs/validation.md#the-exhaustion-probe-2026-08-27).
 
 And a clean corpus is evidence a change broke nothing, not evidence the
 change was unnecessary. Of the thirteen bugs closed on 2026-08-26, two are

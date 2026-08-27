@@ -183,8 +183,55 @@ is arithmetically impossible without repeats (88.2% of `4-10, 15% byes`
 and 78.2% of `4-10, plain` terminated early). Those tournaments are
 excluded from the rates, so agreement is measured up to exhaustion and
 not about it: if this engine were willing to pair a round bbpPairings
-declines, these axes could not show it. That is the one behaviour the
-corpus is structurally blind to.
+declines, these axes could not show it.
+
+**That gap is now measured. See below.**
+
+### The exhaustion probe (2026-08-27)
+
+The corpus halts a tournament the moment bbpPairings answers "no legal
+pairing left", records it as exhausted, and never asks this engine. So the
+one behaviour it was structurally blind to was this engine being MORE
+permissive than the reference - willing to pair a round the reference
+refuses.
+
+`tools/exhaustion_probe.exs` asks. Same generator, same axes, same TRF; on
+`{:no_valid_pairing, _}` it puts the identical position to
+`Pairing.pair_next_round/2` and classifies what comes back.
+
+| axis | tournaments | reached exhaustion | both refused | disagreements |
+|---|---|---|---|---|
+| 4-10, plain, 9 rounds | 200,000 | 156,290 (78.1%) | 156,290 | 0 |
+| 4-10, 15% byes, 9 rounds | 200,000 | 177,608 (88.8%) | 177,608 | 0 |
+| 4-10, 12% forfeits, 9 rounds | 150,000 | 136,408 (90.9%) | 136,408 | 0 |
+| 4-6, 20 rounds | 150,000 | 150,000 (100%) | 150,000 | 0 |
+| 4-10, every axis on, 9 rounds | 150,000 | 149,121 (99.4%) | 149,121 | 0 |
+| 11-20, 16 rounds | 80,000 | 46,052 (57.6%) | 46,052 | 0 |
+| **total** | **930,000** | **815,479** | **815,479** | **0** |
+
+**815,479 positions where bbpPairings said no legal pairing exists, and
+this engine said the same thing every time.** Three bbpPairings process
+errors (0.0003%) are excluded.
+
+The exhaustion rates reproduce the corpus's own: 78.1% against the recorded
+78.2% for `4-10, plain`, 88.8% against 88.2% for `4-10, 15% byes`. That is
+the probe confirming it recreated the same conditions, not a second
+measurement of the same thing.
+
+Had the engine returned a pairing, the probe checks it for a rematch, a
+second pairing-allocated bye, a forbidden pair, and a correct partition of
+the active field. The first three are checked against the recorded game
+history alone and share nothing with the engine's own reasoning; the
+partition and bye-count checks have to derive the active set from the game
+lists, which IS circular, and are reported under their own names for that
+reason. None of them fired, so the distinction did not end up mattering.
+
+**What this still does not prove.** That both engines refuse is not proof
+that a legal pairing does not exist - it is the same single-oracle limit as
+everywhere else on this page, applied to the refusal rather than to the
+pairing. Two engines can be wrong together. The check that would settle it
+is a brute-force search over all complete pairings of the active field,
+which is affordable on the 4-6 player axis and has not been run.
 
 ### What this run added over its predecessors
 

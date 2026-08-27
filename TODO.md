@@ -186,6 +186,15 @@ What is left is one limit of method rather than a known divergence.
 
 ## Harness
 
+- [ ] **Brute-force the exhaustion refusals on the 4-6 player axis.** The
+      2026-08-27 probe established that this engine refuses every position
+      bbpPairings refuses - 815,479 of them - but two engines agreeing that
+      no legal pairing exists is not proof that none does. On a field of 4
+      to 6 the complete-pairing space is small enough to enumerate
+      exhaustively against C1/C2 and the absolute colour constraints, which
+      would turn the agreement into a proof. See
+      [docs/validation.md](docs/validation.md#the-exhaustion-probe-2026-08-27).
+
 The corpus is large but not wide. Each of these is a dimension it holds
 constant - which is the failure mode that let a real bug survive 2.5
 million tournaments (see [docs/validation.md](docs/validation.md)).

@@ -37,6 +37,42 @@ failures rather than quietly dropped, so nobody re-derives them.
 
 ## Done
 
+### 2026-08-27 - the corpus's one blind spot, measured
+
+The two-way corpus halts a tournament the moment bbpPairings answers "no
+legal pairing left" and never asks this engine. 45.5% of the ~6M
+tournaments in the two 488M-pairing runs ended that way, so the corpus
+could not see this engine being MORE permissive than the reference. That
+was written up as a known limit and left there.
+
+`tools/exhaustion_probe.exs` asks. On `{:no_valid_pairing, _}` it hands the
+identical position to `pair_next_round/2` and classifies the answer:
+both refuse, or a pairing which is then checked for a rematch, a second
+pairing-allocated bye, a forbidden pair and a correct partition.
+
+**815,479 refused positions across 930,000 tournaments and six axes. The
+engine refused every one.** Zero disagreements, including on a 4-6 player
+20-round axis built so that every single tournament exhausts, and on an
+axis with every knob the harness has switched on at once.
+
+Two things worth keeping from how it went:
+
+* **The probe reproduced the corpus's own exhaustion rates before it
+  reported anything** - 78.1% against the recorded 78.2% for
+  `4-10, plain`, 88.8% against 88.2% for `4-10, 15% byes`. That is the
+  cheapest possible check that a new instrument recreated the conditions it
+  claims to be measuring, and it should be the first thing any future probe
+  here does. Three instrument bugs have been found in this project before;
+  none of them would have survived this check.
+
+* **The result is bounded, and the bound is the interesting part.** Both
+  engines refusing is not proof that no legal pairing exists - it is the
+  single-oracle limit again, moved from the pairing to the refusal. For the
+  4-6 player axis a brute-force search over all complete pairings is
+  affordable and would settle it outright. Not run; recorded as the next
+  step rather than glossed.
+
+
 ### 2026-08-26 - the sweep's findings, fixed
 
 Thirteen bug-severity findings from `docs/sweep-2026-08-26.md`, plus two
