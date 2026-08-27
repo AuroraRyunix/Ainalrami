@@ -98,22 +98,48 @@ ceiling, and on a pass nobody had looked at because it is invisible at even
 sizes. Nothing is fixed here; this entry is the measurement and the
 correction to the record.
 
+**Split, same day.** `tools/bootstrap_split.exs` traces
+`WeightedMatching.new/3` and `solve/1` inside the bootstrap call, so the
+7.2 s divides:
+
+| | | |
+|---|---|---|
+| building the edge list | 2,413.6 ms | 33.7% |
+| `WeightedMatching.new/3` | 1,608.9 ms | 22.4% |
+| `WeightedMatching.solve/1` | 3,148.0 ms | 43.9% |
+
+The solve is the largest single line, but it is not the majority: **edge
+list plus graph construction is 4,022 ms against the solve's 3,148 ms.**
+56% of the bootstrap is getting the problem into the matcher, not solving
+it - and that half needs no algorithmic argument and carries no conformance
+risk, only a representation.
+
+One number puts the whole pass in proportion. The same round performs
+**533 bracket solves totalling 5,954.8 ms.** The bootstrap alone is
+7,170.5 ms. *One whole-field matching costs more than every bracket
+matching of the actual pairing combined.*
+
 **What to try next, in order.** The bootstrap answers one question - C5's
 "minimise the score of the PAB assignee" - and it answers it by building
-the complete field graph and solving a maximum-weight matching on it. Three
-things worth measuring before touching the algorithm:
+the complete field graph and solving a maximum-weight matching on it. In
+priority order now that the split is known:
 
-1. **Is the graph the cost, or the solve?** The trace times the whole call.
-   Split it: graph construction (500,500 `legal_pair?` plus
-   `colour_compatible?` calls and an n-by-n nested map) against
-   `WeightedMatching.new/3` plus the solve. If it is construction, the
-   answer is a representation change and not an algorithmic one.
+1. **The 4.0 s of construction, which is pure representation.** The graph
+   is complete by design - `dutch.cpp:768-791` emits an edge for
+   incompatible pairs too - so 500,500 edges are not negotiable, but the
+   list-of-tuples into nested-map path is. `new/3` spends 1.6 s turning a
+   list it was just handed into a map; a builder that takes the complete
+   graph directly, or an adjacency representation that skips the
+   intermediate list, changes no pairing decision at all. Cheapest work
+   here with the least to argue about.
 2. **Does the answer need a matching at all?** C5 asks for the minimum
-   achievable bye score, not for the matching that achieves it. A feasibility
-   test per candidate score - "can the field be completely paired with this
-   player byed" - answered over the score groups in descending order, may
-   settle it without ever solving the whole field. That is a bound, not a
-   matching, and bounds are cheap.
+   achievable bye score, not for the matching that achieves it. A
+   feasibility test per candidate score - "can the field be completely
+   paired with this player byed" - walked down the score groups, may settle
+   it without ever solving the whole field. That is a bound, not a
+   matching. It is the bigger prize and the bigger argument: getting it
+   wrong gives a legal-looking wrong pairing, so it would need the
+   bracket-level oracle treatment.
 3. **Is it reusable across rounds?** The field changes by one round of
    results between calls. Whether any of the graph survives that has never
    been asked.
