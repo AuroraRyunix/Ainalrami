@@ -87,7 +87,7 @@ defmodule Ainalrami.BbppairingsComparisonTest do
   """
 
   use ExUnit.Case
-  alias Ainalrami.{Pairing, Test.Bbppairings}
+  alias Ainalrami.{Pairing, Test.Bbppairings, Test.ColourArticle}
 
   # Generation moved to `Ainalrami.Test.FuzzTournament` so the three-way
   # harness could stop generating a weaker corpus than this one. Imported
@@ -325,7 +325,7 @@ defmodule Ainalrami.BbppairingsComparisonTest do
     # genuine colour regression completely, which is the whole reason a
     # count on its own is a weak instrument.
     {disputed, unexplained} =
-      Enum.split_with(reversed, &decided_by_article_5_2_5?(&1, players, round))
+      Enum.split_with(reversed, &ColourArticle.decided_by_5_2_5?(&1, players, round))
 
     if System.get_env("COLOUR_DEBUG") do
       for {w, b} <- unexplained do
@@ -353,87 +353,6 @@ seed #{seed} round #{round}: UNEXPLAINED - we say #{w} White, bbpPairings says #
     end
 
     %{colour_mismatches: length(unexplained), colour_disputed: length(disputed)}
-  end
-
-  # Is this board one that Article 5.2.5 decides, and did we apply it?
-  #
-  # 5.2.5 is the last resort, reached only when neither player holds a
-  # colour preference at all - which per Article 1.7.4 means neither has
-  # ever played a game with a colour. It hands the initial colour to the
-  # higher ranked player on an odd TPN.
-  #
-  # C.04.2 Article 2 fixes a TPN for the tournament and provides nothing
-  # that renumbers it around players who are not paired in a round. Both
-  # reference implementations renumber anyway, so every board 5.2.5 decides
-  # on a field where somebody has sat out is expected to differ - see
-  # `docs/dispute-initial-colour.md`.
-  #
-  # Deliberately phrased as "did WE follow the article", not "does their
-  # answer match a model of their internals". An earlier version did the
-  # latter and mis-filed a real case, because guessing at bbpPairings'
-  # numbering is a second implementation of a rule this project does not
-  # believe in. What matters is that our own answer is the article's; if it
-  # is, the difference is the known dispute whatever they did.
-  # The score the round is paired on: recorded points plus whatever
-  # acceleration applies. `with_acceleration/2` indexes by the tournament's
-  # PLAYED-round count, 0-based, so the value governing round `n` sits at
-  # index `n - 1`.
-  defp score_at(player, round) do
-    accel =
-      case player[:accelerations] do
-        nil -> 0.0
-        values -> Enum.at(values, round - 1) || 0.0
-      end
-
-    player.points + accel
-  end
-
-  defp decided_by_article_5_2_5?({white, black}, players, round) do
-    by_rank = Map.new(players, &{&1.rank, &1})
-    a = Map.get(by_rank, white)
-    b = Map.get(by_rank, black)
-
-    if a && b && no_colour_preference?(a) && no_colour_preference?(b) do
-      # Article 1.2's order: score first, then TPN ascending - over the
-      # score the engine actually pairs on, which INCLUDES virtual points.
-      #
-      # Using raw points here mis-filed a board on the accelerated axis:
-      # a player on 0.0 carrying 1.0 of acceleration ties with one on 1.0,
-      # so the tie falls to TPN and the lower number is the higher ranked
-      # player. Judged on raw points the ordering inverts, and with it the
-      # expected colour.
-      {top, bottom} =
-        if {-score_at(a, round), a.rank} < {-score_at(b, round), b.rank},
-          do: {a, b},
-          else: {b, a}
-
-      initial_white? = String.downcase(initial_colour()) == "w"
-      top_takes_initial? = rem(top.rank, 2) == 1
-
-      expected_white = if top_takes_initial? == initial_white?, do: top.rank, else: bottom.rank
-
-      white == expected_white
-    else
-      false
-    end
-  end
-
-  # Article 1.7.4: a player with no games has no colour preference. "Games"
-  # means games actually PLAYED, which is narrower than games carrying a
-  # colour: a forfeit records a colour but was never played, so it feeds
-  # neither the colour difference nor a repeated-colour run.
-  #
-  # Both engines agree on that. This engine gates on `result in ~w(1 = 0)`;
-  # bbpPairings sets `gameWasPlayed = false` for `+ - H F U Z` and blank
-  # (`trf.cpp:277-291`), which is the same set.
-  #
-  # Testing `colour != nil` instead - as this did until 2026-08-17 -
-  # mis-filed every forfeited round as "has a preference", so seven boards
-  # decided by 5.2.5 were reported as unexplained Article 5 disagreements.
-  # They were the known dispute all along, and only surfaced on an axis
-  # carrying forfeits AND byes together.
-  defp no_colour_preference?(player) do
-    Enum.all?(player.games, &(&1.result not in ~w(1 = 0)))
   end
 
   defp summarise({:raised, _} = raised), do: raised

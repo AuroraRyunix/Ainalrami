@@ -162,7 +162,7 @@ defmodule Ainalrami.ThreeWayComparisonTest do
   """
 
   use ExUnit.Case
-  alias Ainalrami.{Pairing, Test.Bbppairings, Test.Gacrux}
+  alias Ainalrami.{Pairing, Test.Bbppairings, Test.ColourArticle, Test.Gacrux}
 
   import Ainalrami.Test.FuzzTournament
 
@@ -502,72 +502,11 @@ defmodule Ainalrami.ThreeWayComparisonTest do
 
     cond do
       is_nil(a) or is_nil(b) -> false
-      not no_colour_preference?(a) -> false
-      not no_colour_preference?(b) -> false
+      not ColourArticle.no_colour_preference?(a) -> false
+      not ColourArticle.no_colour_preference?(b) -> false
       mode == :reach -> true
-      true -> white == article_5_2_5_white(a, b, round)
+      true -> white == ColourArticle.white_by_5_2_5(a, b, round)
     end
-  end
-
-  # The colour Article 5.2.5 gives, read straight off the TPNs the file
-  # carries.
-  defp article_5_2_5_white(a, b, round) do
-    # Article 1.2's order: score first, then TPN ascending - over the score
-    # the engine actually pairs on, which INCLUDES virtual points.
-    #
-    # Using raw points here mis-filed a board on the two-way harness's
-    # accelerated axis: a player on 0.0 carrying 1.0 of acceleration ties
-    # with one on 1.0, so the tie falls to TPN and the lower number is the
-    # higher ranked player; judged on raw points the ordering inverts and
-    # with it the expected colour.
-    #
-    # `refuse_unsupported_axes!/0` refuses acceleration here, so `score_at/2`
-    # can only ever add 0.0 in this harness. It is carried anyway, character
-    # for character with the two-way copy, because a rule written twice that
-    # is only ALMOST the same is worse than a rule written twice.
-    {top, bottom} =
-      if {-score_at(a, round), a.rank} < {-score_at(b, round), b.rank},
-        do: {a, b},
-        else: {b, a}
-
-    initial_white? = String.downcase(initial_colour()) == "w"
-    top_takes_initial? = rem(top.rank, 2) == 1
-
-    if top_takes_initial? == initial_white?, do: top.rank, else: bottom.rank
-  end
-
-  # The score the round is paired on: recorded points plus whatever
-  # acceleration applies. `with_acceleration/2` indexes by the tournament's
-  # PLAYED-round count, 0-based, so the value governing round `n` sits at
-  # index `n - 1`. Reads through `Access` rather than a dotted field, since
-  # a roster generated without the axis carries no `:accelerations` key at
-  # all.
-  defp score_at(player, round) do
-    accel =
-      case player[:accelerations] do
-        nil -> 0.0
-        values -> Enum.at(values, round - 1) || 0.0
-      end
-
-    player.points + accel
-  end
-
-  # Article 1.7.4: a player with no games has no colour preference. "Games"
-  # means games actually PLAYED, which is narrower than games carrying a
-  # colour: a forfeit records a colour but was never played, so it feeds
-  # neither the colour difference nor a repeated-colour run.
-  #
-  # All three engines agree on that. This one gates on `result in ~w(1 = 0)`;
-  # bbpPairings sets `gameWasPlayed = false` for `+ - H F U Z` and blank
-  # (`trf.cpp:277-291`), which is the same set.
-  #
-  # Testing `colour != nil` instead - as the two-way harness did until
-  # 2026-08-17 - mis-filed every forfeited round as "has a preference", so
-  # seven boards decided by 5.2.5 were reported as unexplained Article 5
-  # disagreements. They were the known dispute all along, and only surfaced
-  # on an axis carrying forfeits AND byes together.
-  defp no_colour_preference?(player) do
-    Enum.all?(player.games, &(&1.result not in ~w(1 = 0)))
   end
 
   defp debug_unexplained(_names, [], _by_rank, _where), do: :ok

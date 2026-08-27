@@ -226,12 +226,71 @@ partition and bye-count checks have to derive the active set from the game
 lists, which IS circular, and are reported under their own names for that
 reason. None of them fired, so the distinction did not end up mattering.
 
-**What this still does not prove.** That both engines refuse is not proof
-that a legal pairing does not exist - it is the same single-oracle limit as
-everywhere else on this page, applied to the refusal rather than to the
-pairing. Two engines can be wrong together. The check that would settle it
-is a brute-force search over all complete pairings of the active field,
-which is affordable on the 4-6 player axis and has not been run.
+### The refusals are proved, not corroborated (2026-08-27)
+
+Both engines refusing was not proof that a legal pairing does not exist -
+it was the single-oracle limit again, moved from the pairing to the
+refusal, and two engines can be wrong together.
+
+`tools/exhaustion_bruteforce.exs` settles it by enumeration. On every
+refusal it walks all `(n-1)!!` complete pairings of the active field, times
+`n` for the bye on an odd field, and tests each against C1, C2, C3 and the
+arbiter's own exclusions - written from the article text, sharing no code
+with `Ainalrami.Pairing` and structurally its opposite.
+
+| axis | tournaments | refusals | proved impossible | legal pairing found |
+|---|---|---|---|---|
+| 4-6, 20 rounds | 200,000 | 200,000 | 200,000 | 0 |
+| 4-10, 9 rounds | 200,000 | 156,163 | 156,163 | 0 |
+| 4-10, 15% byes | 150,000 | 133,337 | 133,337 | 0 |
+| 4-10, 12% forfeits | 150,000 | 136,307 | 136,307 | 0 |
+| 4-12, 14 rounds, every axis on | 100,000 | 100,000 | 100,000 | 0 |
+| 7-12, 16 rounds | 80,000 | 80,000 | 80,000 | 0 |
+| **total** | **880,000** | **805,807** | **805,807** | **0** |
+
+**Every one of the 805,807 refusals is proved.** Not "the two engines
+agree" - no complete pairing of that field satisfies the absolute criteria,
+established by exhaustion.
+
+**4,876,836 positive controls passed.** On every round bbpPairings DID
+pair, the same oracle was asked whether a legal pairing exists and had to
+answer yes. An oracle too strict would fail there and then "prove" every
+refusal impossible for the same wrong reason, so without this the negative
+result would be worth nothing. It also checked the ACTIVE SET against the
+reference's own pairing, which names exactly who was in the round: zero
+mismatches over all 4.8 million.
+
+**The control earned its place immediately.** The first run of this tool
+reported 11,013 false verdicts against the engine, and four separate
+defects in the tool caused them - not one in the engine:
+
+* The active set came from the loop counter. When the whole field holds a
+  pre-recorded bye the round is entirely byes and the reference advances to
+  pair the next one, so the counter and the reference disagreed about which
+  round was being paired. Now derived from the data.
+* An empty active field made `perfect_matching?([])` vacuously true, which
+  reported an empty field as a legal pairing against the reference.
+* C2 valued a half-point bye at `win / 2`, which is only right while a draw
+  is worth half a win. `BBD 2.0` makes it worth MORE than a win, which
+  disqualifies its holder from the bye - the tool said the opposite. This
+  is the same defect, in the same shape, as the one fixed in the engine
+  itself the previous day: a result scored from its code without the system
+  that says what the code is worth.
+* C3's topscorer exemption was written as AND where the article, and three
+  independent implementations, have OR. Every one of those 11,013 landed in
+  the final round, which is the only round where topscorer status exists -
+  that signature is what identified it.
+
+The `max(win, draw)` term in 1.8's threshold was wrong here because
+`docs/conformance-c0403-2026.md` still documented the `win`-only form that
+0.11.1 had already fixed. A conformance record is read as the
+specification; when it lags the code it does not go quiet, it propagates.
+
+**What is still not proved.** The enumeration is capped at 14 active
+players, so it says nothing about refusals on larger fields - though those
+are rarer, since a bigger field has more ways to be pairable. And it tests
+the three ABSOLUTE criteria; a refusal driven by something else would not
+be caught. Nothing in the corpus suggests one exists.
 
 ### What this run added over its predecessors
 
