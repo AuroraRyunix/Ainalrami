@@ -198,7 +198,11 @@ What is left is one limit of method rather than a known divergence.
       right, and file it upstream if it is Gacrux. See
       [docs/validation.md](docs/validation.md#colour-measured-three-ways-for-the-first-time).
 
-- [ ] **Brute-force the exhaustion refusals on the 4-6 player axis.** The
+- [x] ~~**Brute-force the exhaustion refusals on the 4-6 player axis.**~~
+      **Done 2026-08-27** (`20c4cb4`). 880,000 tournaments, 805,807 refusals,
+      every one PROVED impossible by enumeration against C1/C2/C3, with
+      4,876,836 positive controls passing. The oracle found four bugs in
+      itself before it found none in the engine. The original note said: The
       2026-08-27 probe established that this engine refuses every position
       bbpPairings refuses - 815,479 of them - but two engines agreeing that
       no legal pairing exists is not proof that none does. On a field of 4
@@ -236,18 +240,24 @@ million tournaments (see [docs/validation.md](docs/validation.md)).
 
       150 tournaments / 7,338 pairings at 100.00% since. `XXP`/`XXA`
       remain the default and the forms the sibling project emits.
-- [ ] **The three-way harness has full colour data and no colour
-      instrument.** `same?/2` compares through `normalize/1`, which sorts
+- [x] ~~**The three-way harness has full colour data and no colour
+      instrument.**~~ **Done 2026-08-27** (`969ba20`). Three pairwise colour
+      rates now, including bbpPairings against Gacrux, which nobody had ever
+      measured. 750,449 rounds and 7,392,594 boards: Ainalrami's only colour
+      differences from either reference are the known 5.2.5 dispute, zero
+      unexplained. The original note said: `same?/2` compares through `normalize/1`, which sorts
       each pair's ranks, so every number it has ever reported is
       colour-blind. That is the exact gap that hid a missing Article 5.2.4
       through 195 million pairings in the two-way harness, which answered
       it with `colour_mismatches/5` and the 5.2.5 dispute split. Port it.
       From the 2026-08-26 sweep.
-- [ ] **Two measured optimizations, neither urgent.** `legal_pair?/2`
-      rescans the whole game list (with a `String.trim` per game) on every
-      candidate edge, and wants a per-round MapSet; `score_before/3`
-      recomputes `reconciled_points/2` four times per player per round.
-      From the 2026-08-26 sweep.
+- [~] **Two measured optimizations.** `legal_pair?/2`'s per-round MapSet
+      LANDED on 2026-08-27 (`716b7cb`), inside the odd-field bootstrap where
+      it was worth 4x on the edge-list build - but only there; the bracket
+      cascade still rescans. `score_before/3` recomputing
+      `reconciled_points/2` four times per player per round is untouched and
+      was measured at ~0.1% of a large round, so it is a tidy-up rather than
+      an optimisation. From the 2026-08-26 sweep.
 - [~] **Team tournaments (C.04.6).** **First cut built 2026-08-26** on
       `feature/team-pairing`, in separate files that touch nothing in the
       individual engine: `lib/ainalrami/team_pairing.ex` (the 3.3-3.5
