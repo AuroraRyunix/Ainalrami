@@ -162,8 +162,7 @@ defmodule Ainalrami.TrfTest do
 
     [blank_line, filled_line] =
       Trf.serialize(data)
-      |> String.split("
-")
+      |> String.split("\r\n")
       |> Enum.filter(&String.starts_with?(&1, "001"))
 
     # Round 2 is columns 102-109: id 102-105, colour 107, result 109.
@@ -181,8 +180,7 @@ defmodule Ainalrami.TrfTest do
     data = put_in(sample(), [:players, Access.at(0), :games], [])
     data = put_in(data, [:players, Access.at(1), :games], [])
 
-    for line <- Trf.serialize(data) |> String.split("
-"),
+    for line <- Trf.serialize(data) |> String.split("\r\n"),
         String.starts_with?(line, "001") do
       assert String.length(line) == 89
     end
@@ -815,8 +813,10 @@ defmodule Ainalrami.TrfTest do
     # rejects the line. Same shape as the XXA column bug.
     test "a 250 line puts each field in bbpPairings' columns, not one wider" do
       line =
-        sample_data() |> numeric() |> String.split("
-") |> Enum.find(&String.starts_with?(&1, "250"))
+        sample_data()
+        |> numeric()
+        |> String.split("\r\n")
+        |> Enum.find(&String.starts_with?(&1, "250"))
 
       assert String.slice(line, 4, 4) == "    ", "cols 5-8 are MATCH points and must be blank"
       assert String.slice(line, 9, 4) == " 1.0", "cols 10-13 are game points"
@@ -832,8 +832,10 @@ defmodule Ainalrami.TrfTest do
     # the two spellings pair differently.
     test "a 260 line outlives the declared round count" do
       line =
-        sample_data() |> numeric() |> String.split("
-") |> Enum.find(&String.starts_with?(&1, "260"))
+        sample_data()
+        |> numeric()
+        |> String.split("\r\n")
+        |> Enum.find(&String.starts_with?(&1, "260"))
 
       assert String.slice(line, 4, 3) == "  1"
       last = line |> String.slice(8, 3) |> String.trim() |> String.to_integer()
