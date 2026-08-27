@@ -54,9 +54,78 @@ invisible to any corpus this generator can produce and a third had been
 breaking a matcher invariant 734 times per 800 tournaments while agreeing
 with the reference on every one of them.
 
-## [Unreleased]
+## [0.13.0] - 2026-08-27
+
+### Added
+
+- [Feature] **`serialize/2` can write the round count as `XXR`.** TRF16's
+  `142` and JaVaFo's `XXR n` are the same field, and this module only ever
+  wrote `142` - which JaVaFo does not read. A file written here for JaVaFo
+  therefore carried no round count that reader could see, and JaVaFo pairs
+  the final round differently without one. `opts[:xxr]` writes
+  `tournament[:number_of_rounds]` under JaVaFo's spelling instead;
+  bbpPairings reads either prefix into the same `expectedRounds`
+  (`trf.cpp:1117-1124`) and does not care.
+
+  One or the other, never both. Two spellings of one field in a file only
+  one reader will open is a second thing to keep in step for nobody's
+  benefit, and `parse/1` refuses a file whose two spellings disagree - a
+  refusal the writer should not be able to provoke.
+
+  Found while retiring the sibling app's own TRF16 implementation onto this
+  one: it had been concatenating the `XXR` line onto this module's output
+  by hand, because there was no way to ask for it.
+
+### Fixed
+
+- [Fix] **`serialize/1` writes `W`, `D` and `L` instead of refusing them.**
+  The three letter spellings of an ordinary win, draw and loss are scored
+  by `points_for/2`, called played by `game_was_played?/1` and published in
+  `result_codes/0` - but `@playing_codes` left them out, so the writer
+  raised `ValidationError` ("unrecognized TRF result code") on codes this
+  module documents. The reading direction only looked safe because the
+  parser folded the letters into symbols before validation ran; that fold
+  is gone now too, and both directions are measured against the one list.
+
+  Not hypothetical. The sibling app's pairing path emits these codes for
+  SWAR's `1-0U`, `0-1U` and `1/2-1/2U` result strings and hands the text
+  to this module, so every unrated game in an export hit the raise.
+  `tools/trf_differential.exs` counted it at 39 serialize cases and at 13
+  of 83 round-trip cases this module could not write at all; both are zero
+  now, with no new divergence group in their place.
+
+  `W`/`L` and `D`/`D` are the only legal pairings of the letters. Whether
+  a game reaches the rating report is a property of the game, not of a
+  seat in it, so it cannot be rated for White and unrated for Black:
+  `W` against `0` is still refused, as is any letter code with no opponent
+  (that is a bye wearing the wrong code, and the four bye codes exist for
+  it).
 
 ### Changed
+
+- [Change] **`parse/1` returns the result code the file actually wrote,
+  `W`, `D` and `L` included.** The reader rewrote those three into `1`, `=`
+  and `0` on the way in, on the reasoning that one code should mean one
+  thing everywhere downstream. For a pairing engine that costs nothing -
+  the letters are the same played, scored result - but it is the one
+  rewrite a READER of this format must not do: rated-versus-not is the only
+  thing the letters carry over the symbols, TRF16 spells them for exactly
+  that, and once folded there is nothing left to recover it from.
+
+  Measured rather than assumed. `tools/trf_differential.exs` in the sibling
+  app runs both TRF implementations over one corpus and groups divergences
+  by cause; this was the largest group in the run at 108 cases, and it is
+  now zero with no new group in its place. The consequence lands there: the
+  app's importer maps a mutual pair of codes to a stored result, and its
+  `W` -> `1-0U`, `L`/`W` -> `0-1U` and `D`/`D` -> `1/2-1/2U` clauses are
+  reachable only while the letter survives the parse. Folded, they were
+  dead code and every imported unrated game was filed as a rated one,
+  silently.
+
+  Nothing downstream needed the fold: `points_for/2`, `game_was_played?/1`
+  and `@playing_codes`/`@legal_result_pairs` all read the letters directly,
+  and read them that way because bbpPairings does (`trf.cpp:252-270`,
+  `278-286`). A blank column still comes back as `nil`.
 
 - [Change] **A 1,001-player odd round is 37% quicker, and no pairing
   changes.** `tools/parity_bench.exs` had shown that one extra player cost

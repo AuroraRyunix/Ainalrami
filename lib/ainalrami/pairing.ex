@@ -4098,13 +4098,14 @@ defmodule Ainalrami.Pairing do
   # wrong until the harness started generating forfeits.
   #
   # Defined by the same table as `Trf.game_was_played?/1` rather than by a
-  # private list of its own. The list said `1 = 0`, which is right for
-  # anything that came through `Trf.parse/1` - that normalises the letter
-  # spellings `W`, `D` and `L` on the way in - and wrong for a caller who
-  # builds player maps directly, which the engine's public API invites.
-  # Such a caller's played, unrated game would have been read as unplayed:
-  # no colour, no float. Two definitions of "played" that disagreed on the
-  # same input is the bug, and one of them is the reference's.
+  # private list of its own. The list said `1 = 0`, which was right only
+  # while `Trf.parse/1` folded the letter spellings `W`, `D` and `L` into
+  # the symbols on the way in, and wrong for a caller who builds player maps
+  # directly, which the engine's public API invites. Such a caller's played,
+  # unrated game would have been read as unplayed: no colour, no float. Two
+  # definitions of "played" that disagreed on the same input is the bug, and
+  # one of them is the reference's. The fold is gone now, so the letters
+  # reach here from a parsed file as well.
   defp played?(game), do: Ainalrami.Trf.game_was_played?(game.result)
 
   # A player's full colour state, ported from bbpPairings'
@@ -4402,11 +4403,12 @@ defmodule Ainalrami.Pairing do
   # letter spellings of an ordinary result, and an ordinary win has never
   # disqualified anybody from a bye.
   #
-  # Unreachable through this repo's own parser either way, since `Trf.parse/1`
-  # normalises `W` to `1` before the engine sees it - but reachable from a
-  # caller that hands in player maps directly, which is exactly how the
-  # sibling Phoenix app uses this engine. There it would have barred a player
-  # from a bye for the crime of having won a game.
+  # It was unreachable through this repo's own parser while that folded `W`
+  # into `1` before the engine saw it, and reachable from a caller that hands
+  # in player maps directly, which is exactly how the sibling Phoenix app
+  # uses this engine. There it would have barred a player from a bye for the
+  # crime of having won a game. The fold is gone, so a parsed file reaches
+  # this rule with its letters intact too, and it has to be right for both.
   #
   # Enforced as a hard requirement on the cascade's final state rather
   # than scored, so the search has to find a legal bye assignee or report

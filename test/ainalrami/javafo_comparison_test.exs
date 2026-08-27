@@ -623,13 +623,17 @@ defmodule Ainalrami.JavafoComparisonTest do
   # evidence and is not. Wiring this harness onto `FuzzTournament` would
   # retire the whole list; until then it says so out loud.
   @unsupported_axes [
-    {"PAIRING_FUZZ_RATING_MODE", "initial_roster/1 draws Enum.random(1000..2800) - no ties, no unrated"},
+    {"PAIRING_FUZZ_RATING_MODE",
+     "initial_roster/1 draws Enum.random(1000..2800) - no ties, no unrated"},
     {"PAIRING_FUZZ_ACCEL", "build_trf/2 emits no XXA line"},
-    {"PAIRING_FUZZ_FORBIDDEN_PCT", "build_trf/2 emits no XXP or 260 line, and safely_pair/2 passes no :forbidden_pairs"},
-    {"PAIRING_FUZZ_POINT_SYSTEM", "build_trf/2 emits no BB* or 162 line, and safely_pair/2 passes no :point_system"},
+    {"PAIRING_FUZZ_FORBIDDEN_PCT",
+     "build_trf/2 emits no XXP or 260 line, and safely_pair/2 passes no :forbidden_pairs"},
+    {"PAIRING_FUZZ_POINT_SYSTEM",
+     "build_trf/2 emits no BB* or 162 line, and safely_pair/2 passes no :point_system"},
     {"PAIRING_FUZZ_NUMERIC_EXT", "build_trf/2 emits neither spelling of the extension lines"},
     {"PAIRING_FUZZ_WITHDRAW_PCT", "nothing withdraws anyone"},
-    {"PAIRING_FUZZ_INITIAL_COLOUR", "build_trf/2 emits no 152 line, and this harness is colour-blind by design"},
+    {"PAIRING_FUZZ_INITIAL_COLOUR",
+     "build_trf/2 emits no 152 line, and this harness is colour-blind by design"},
     {"PAIRING_FUZZ_ROUNDS_MAX", "the round count is fixed at PAIRING_FUZZ_ROUNDS"},
     {"PAIRING_FUZZ_SEED_FROM", "seeds always run 1..PAIRING_FUZZ_COUNT"}
   ]

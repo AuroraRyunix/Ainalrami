@@ -41,10 +41,12 @@ defmodule Ainalrami.Trf do
     * `XXR n` - the round count (see `parse_xxr/2`), which is the same field
       as TRF16's `142`. A file may carry both spellings, but they must
       AGREE: two different counts are refused rather than silently resolved,
-      since every implementation resolves them differently. READ ONLY:
-      `serialize/1` emits the count as the standard `142` header, so a file
-      that came in with `XXR` goes out with `142`. The value round-trips;
-      the spelling does not.
+      since every implementation resolves them differently. `serialize/2`
+      emits `142` by default, so a file that came in with `XXR` goes out
+      with `142` unless the caller asks for `xxr: true` - the value always
+      round-trips, the spelling only when asked for. It has to be askable:
+      JaVaFo reads `XXR` and not `142`, so a file written for JaVaFo with
+      the default spelling carries no round count that reader can see.
     * `XXP a b [c ...]` - a mutually-forbidden GROUP of players
       (see `parse_xxp/2`), surfaced as `tournament[:forbidden_pairs]`.
     * `XXA` - per-player acceleration/virtual points, round by round
@@ -140,7 +142,23 @@ defmodule Ainalrami.Trf do
     half_point_bye: "H",
     full_point_bye: "F",
     pairing_allocated_bye: "U",
-    zero_point_bye: "Z"
+    zero_point_bye: "Z",
+    # A game that WAS contested but does not reach the rating report -
+    # typically one that ended before the minimum number of moves
+    # (VCL4THP Q185). Scored and paired exactly like "1"/"="/"0", which is
+    # bbpPairings' reading too: W/D/L are absent from its
+    # `gameWasPlayed = false` list (`trf.cpp:278-286`) and are scored
+    # through the same WIN/DRAW/LOSS branch as the symbols
+    # (`trf.cpp:252-270`).
+    #
+    # They are published because both directions carry them: a caller
+    # building a file has no other way to say "played, not rated", and
+    # `parse/1` hands the letter back untouched rather than folding it into
+    # its symbol - see `parse_game_at_round/2` for why a reader that folds
+    # is a reader that loses the only thing they encode.
+    unrated_win: "W",
+    unrated_draw: "D",
+    unrated_loss: "L"
   }
 
   def result_codes, do: @result_codes
@@ -281,8 +299,50 @@ defmodule Ainalrami.Trf do
   # vs. an unpaired round (byes of every kind). A forfeit is legally
   # "unplayed" per FIDE Art. 16, but it still occupies a pairing slot (an
   # opponent), unlike a bye - so the two groups get different validation.
-  @playing_codes ~w(1 = 0 + -)
+  #
+  # `W`/`D`/`L` are on the playing list because they are ordinary played
+  # results spelled with letters (see `@result_codes`), and this list was
+  # the one place in the file that said otherwise: `points_for/2` above
+  # scores them as win/draw/loss and `game_was_played?/1` calls them played,
+  # while `validate_game!/5` refused them as unrecognized. The contradiction
+  # stayed hidden on the READING side only while the parser rewrote the
+  # letters into symbols before validation ever ran; `serialize/1` had no
+  # such rewrite, so the writer rejected exactly the input its own scorer
+  # accepts, and a caller handing in a played-but-unrated game got a
+  # `ValidationError` naming a code this module documents. The rewrite is
+  # gone too (`parse_game_at_round/2`), so this list is now what both
+  # directions are measured against.
+  @playing_codes ~w(1 = 0 + - W D L)
   @bye_codes ~w(H F U Z)
+
+  @doc """
+  The TRF16 result codes for a round the player was PAIRED in: a played game
+  (`1` `=` `0`, and the unrated letter spellings `W` `D` `L` of the same
+  three) or a forfeit (`+` `-`), which FIDE Art. 16 calls unplayed but which
+  still occupies an opponent's slot.
+
+  Published because this list is the one thing a caller must agree with this
+  module about, and every private copy of it so far has drifted. The sibling
+  app (`AuroraRyunix/openpairings`) grew two - a standings presence rule and
+  a compile-time `@playing_codes` in its TRF importer - both spelled
+  `~w(1 = 0 + -)` back when that was the whole list, and both then quietly
+  stopped treating an unrated game as a game: the importer left those rounds
+  unpaired, and standings counted them as absences. Neither copy was wrong
+  on the day it was written, which is exactly the failure mode - a private
+  list cannot be corrected by fixing the canonical one.
+  """
+  def playing_codes, do: @playing_codes
+
+  @doc """
+  The TRF16 codes for a round the player was NOT paired in: the half-point,
+  full-point, pairing-allocated and zero-point byes.
+
+  The complement of `playing_codes/0` over everything `serialize/1` accepts,
+  and exported alongside it because deciding what a round MEANS needs both
+  halves - `playing_codes/0` on its own cannot tell a bye from a code this
+  module would refuse.
+  """
+  def bye_codes, do: @bye_codes
 
   # Legal opponent-result for each of this player's playing codes. A win
   # ("1") only pairs with a loss ("0"); a played "0-0" (both players lose,
@@ -295,12 +355,22 @@ defmodule Ainalrami.Trf do
   # player, only no longer required to mirror). Anything else (both win,
   # both forfeit-win, a win against a draw, etc.) is impossible and
   # rejected.
+  #
+  # The unrated letters mirror the symbols they spell and pair only with
+  # each other. Whether a game reaches the rating report is a property of
+  # the GAME, not of a seat in it, so it cannot be rated for White and
+  # unrated for Black: `W`/`0` and `D`/`=` are not legal halves of one
+  # result, and a file carrying them has two players disagreeing about what
+  # happened rather than one unusual game.
   @legal_result_pairs %{
     "1" => ["0"],
     "0" => ["1", "0", "="],
     "=" => ["=", "0"],
     "+" => ["-"],
-    "-" => ["+", "-"]
+    "-" => ["+", "-"],
+    "W" => ["L"],
+    "L" => ["W"],
+    "D" => ["D"]
   }
 
   # Round blocks repeat every 10 columns starting at column 92 (round 1):
@@ -368,27 +438,62 @@ defmodule Ainalrami.Trf do
   safely ignored by any TRF16 reader (including `parse/1`, since these
   lines don't start with a recognized 3-digit code). Off by default.
 
+  `opts[:ascii]`: when true, folds every string in `data` to ASCII
+  (é -> e, ß -> ss) before any of it is placed in a column, so that one
+  character is one byte again and no accent can shift the fields to its
+  right - see `maybe_fold_ascii/2` for the damage that does and for why
+  this is off by default. Set it for a file that leaves the building (a
+  FIDE submission, an arbiter's printout); leave it off for a file an
+  engine reads back.
+
   A player carrying `:accelerations` (a list of virtual-point values, one
   per round from round 1) gets an `XXA` line, and
   `tournament[:forbidden_pairs]` (a list of mutually-forbidden starting-rank
   GROUPS) becomes one `XXP` line per group. Both are emitted after the
   player/team rows, and both round-trip through `parse/1`.
+
+  `opts[:xxr]`: write `tournament[:number_of_rounds]` as JaVaFo's `XXR n`
+  extension line INSTEAD of TRF16's `142 n` header. Off by default, and it
+  is the caller's knowledge of its reader that decides: the two are the
+  same field (see the moduledoc), but only one of them reaches JaVaFo.
+  `142` is a Swiss-Manager convention this module emits because it is the
+  TRF16-shaped spelling; JaVaFo does not read it, and a file that gives
+  JaVaFo no round count at all is paired without the final-round colour
+  exception. bbpPairings reads both prefixes into the same
+  `expectedRounds` (`trf.cpp:1117-1124`), so it does not care which.
+
+  Only one is written, never both. Two spellings of one field in a file
+  that only one reader will ever open is a second thing to keep in step for
+  no reader's benefit, and `parse/1` already refuses a file whose two
+  spellings disagree - a refusal a writer should not be able to provoke.
   """
   def serialize(data, opts \\ [])
 
-  def serialize(%{tournament: t, players: players} = data, opts) do
+  def serialize(%{tournament: _, players: _} = given, opts) do
+    %{tournament: t, players: players} = data = maybe_fold_ascii(given, opts[:ascii])
+
     validate_games!(players)
     teams = Map.get(data, :teams, [])
     max_round = Enum.reduce(players, 0, &max(&2, length(&1[:games] || [])))
 
-    header_lines(t, players, teams)
+    header_lines(t, players, teams, opts[:xxr])
     |> Kernel.++(point_system_lines(t[:point_system]))
     |> Kernel.++(legend_lines(opts[:column_legend], max_round))
     |> Kernel.++(Enum.map(players, &player_line/1))
     |> Kernel.++(Enum.map(teams, &team_line/1))
+    |> Kernel.++(xxr_line(t[:number_of_rounds], opts[:xxr]))
     |> Kernel.++(extension_lines(t, players, max_round, opts[:numeric_extensions]))
     |> Enum.map_join("", &(&1 <> "\r\n"))
   end
+
+  # Emitted after the player rows rather than up with the headers, next to
+  # the `XXA`/`XXP` lines it keeps company with in every file JaVaFo is
+  # actually handed. Position carries no meaning to any reader here -
+  # `parse/1` folds lines in file order and both references scan the whole
+  # file - so this is only about where a human looking at the file expects
+  # the extension block to be.
+  defp xxr_line(rounds, true) when not is_nil(rounds), do: ["XXR #{rounds}"]
+  defp xxr_line(_rounds, _xxr), do: []
 
   # Written as `BB*` rather than as a `162` line: the `BB` directives are one
   # value per line, so a file carrying them says exactly which settings were
@@ -668,7 +773,7 @@ defmodule Ainalrami.Trf do
     1..width |> Enum.map_join("", &Integer.to_string(rem(&1, 10)))
   end
 
-  defp header_lines(t, players, teams) do
+  defp header_lines(t, players, teams, xxr?) do
     [
       header(:name, t[:name]),
       header(:city, t[:city]),
@@ -685,7 +790,7 @@ defmodule Ainalrami.Trf do
     |> Kernel.++(Enum.map(t[:deputy_arbiters] || [], &header(:deputy_arbiter, &1)))
     |> Kernel.++([
       header(:time_control, t[:time_control]),
-      header(:number_of_rounds, t[:number_of_rounds]),
+      round_count_header(t[:number_of_rounds], xxr?),
       initial_colour_line(t[:initial_colour]),
       round_dates_line(t[:round_dates]),
       header(:generator, t[:generator])
@@ -707,6 +812,11 @@ defmodule Ainalrami.Trf do
   defp initial_colour_line(nil), do: nil
   defp initial_colour_line(colour) when colour in ["w", "W"], do: "152 W"
   defp initial_colour_line(colour) when colour in ["b", "B"], do: "152 B"
+
+  # The round count goes out under one spelling or the other, never both -
+  # see `serialize/2`'s `opts[:xxr]`.
+  defp round_count_header(_rounds, true), do: nil
+  defp round_count_header(rounds, _xxr), do: header(:number_of_rounds, rounds)
 
   defp header(_field, value) when value in [nil, ""], do: nil
   defp header(field, value), do: String.trim_trailing("#{@header_codes[field]} #{value}")
@@ -816,6 +926,86 @@ defmodule Ainalrami.Trf do
   # split or shift the fixed-width row - control characters are flattened
   # to spaces before the value is placed.
   defp strip_controls(text), do: String.replace(text, ~r/[\x00-\x1F\x7F]/, " ")
+
+  # The other way a field can shift the row. `strip_controls/1` above stops a
+  # name from splitting the line; this stops one from lengthening it. TRF16
+  # addresses its fields by COLUMN, and the readers of a submitted file
+  # (FIDE's rating server, SWAR, Swiss-Manager) count one column as one
+  # byte, while `place/4` and `render/1` count graphemes. The two agree only
+  # for ASCII: "Hendricks, Björn" is 16 graphemes but 17 bytes, so a
+  # byte-counting reader sees every field after the name one column early -
+  # FIDE id 1001 read as 100, rating 2400 as 240, the whole round history
+  # blank. One accented letter in one name is enough.
+  #
+  # Folding to ASCII (é -> e), which is what FIDE itself stores names as,
+  # makes graphemes and bytes the same thing again. Applied to the whole
+  # `data` map up front rather than inside `place/4`, because the shift is
+  # not a property of the name field: the `012`/`022`/`102` headers, the
+  # `013` team names and anything else free-text carry it too, and folding
+  # once means no future placed field can be forgotten.
+  #
+  # OFF by default, and that default is the load-bearing half. The pairing
+  # path writes a TRF that only an engine reads back, and bbpPairings and
+  # JaVaFo both decode UTF-8 correctly - their pairings are byte-identical
+  # with and without accents, and those exact bytes are what the
+  # differential corpus validated this engine against. Folding there would
+  # change the input the agreement was measured on to fix a problem it does
+  # not have. Only a caller writing a file for FIDE or for a human asks.
+  defp maybe_fold_ascii(data, true), do: deep_ascii(data)
+  defp maybe_fold_ascii(data, _), do: data
+
+  # Structs are left alone: a %Date{} or %Decimal{} is a value with its own
+  # printing rules, not free text to be rewritten a character at a time.
+  defp deep_ascii(%_{} = struct), do: struct
+  defp deep_ascii(map) when is_map(map), do: Map.new(map, fn {k, v} -> {k, deep_ascii(v)} end)
+  defp deep_ascii(list) when is_list(list), do: Enum.map(list, &deep_ascii/1)
+  defp deep_ascii(text) when is_binary(text), do: ascii_fold(text)
+  defp deep_ascii(other), do: other
+
+  # Letters with no canonical decomposition, so NFD alone would leave them
+  # non-ASCII. "ß" -> "ss" and "æ" -> "ae" LENGTHEN the string, which can
+  # push a long name past its 33-column field - correct, and handled by the
+  # same truncation in `place/4` that any over-long name already gets.
+  @ascii_fallbacks %{
+    "ß" => "ss",
+    "æ" => "ae",
+    "Æ" => "AE",
+    "œ" => "oe",
+    "Œ" => "OE",
+    "ø" => "o",
+    "Ø" => "O",
+    "đ" => "d",
+    "Đ" => "D",
+    "ð" => "d",
+    "Ð" => "D",
+    "þ" => "th",
+    "Þ" => "TH",
+    "ł" => "l",
+    "Ł" => "L",
+    "ı" => "i",
+    "İ" => "I",
+    "ħ" => "h",
+    "Ħ" => "H",
+    "ŋ" => "n",
+    "Ŋ" => "N",
+    "ŧ" => "t",
+    "Ŧ" => "T",
+    "ĸ" => "k"
+  }
+
+  # Anything still non-ASCII after decomposition is a non-Latin script
+  # (Cyrillic, Greek, CJK) with no one-to-one Latin form. It becomes "?"
+  # rather than being dropped: a visibly wrong name is something an arbiter
+  # can spot and fix before submitting, a silently shortened one is not -
+  # and dropping it would put the column count back where the fold was
+  # meant to fix it.
+  defp ascii_fold(text) do
+    @ascii_fallbacks
+    |> Enum.reduce(text, fn {from, to}, acc -> String.replace(acc, from, to) end)
+    |> :unicode.characters_to_nfd_binary()
+    |> String.replace(~r/[\x{0300}-\x{036F}]/u, "")
+    |> String.replace(~r/[^\x00-\x7F]/u, "?")
+  end
 
   defp render(placements) do
     placements
@@ -1589,6 +1779,32 @@ defmodule Ainalrami.Trf do
     Enum.map(1..round_count//1, &parse_game_at_round(line, &1))
   end
 
+  # The result column comes back exactly as the file spells it, letters
+  # included. This used to rewrite `W`, `D` and `L` into `1`, `=` and `0` on
+  # the way in, which is the one thing a reader of this format must not do:
+  # the letters ARE the symbols, played and scored identically, differing
+  # only in that the game does not reach the rating report (typically one
+  # that ended before the minimum number of moves). That single bit is what
+  # TRF16 spells them for, and rewriting them threw it away with nothing
+  # left to recover it from.
+  #
+  # Nothing downstream needed the rewrite. Every point where this repo
+  # consumes a result already reads the letters, and reads them because
+  # bbpPairings does: `points_for/2` scores them through `~w(1 + F W)` /
+  # `~w(= H D)` / `~w(0 L)` (`trf.cpp:252-270`), `game_was_played?/1` calls
+  # them played (`trf.cpp:278-286`), and `@playing_codes` /
+  # `@legal_result_pairs` validate them. The rewrite outlived all three.
+  #
+  # For the sibling app it was not cosmetic. `PairingsEngine.TrfImport`
+  # turns a mutual pair of codes into a stored result, and its `W` ->
+  # `1-0U`, `L`/`W` -> `0-1U` and `D`/`D` -> `1/2-1/2U` clauses can only be
+  # reached while the letter survives the parse. Under the rewrite they were
+  # dead code and every imported unrated game was stored as a rated one -
+  # the same drift that module's own `@playing_codes` copy had already
+  # suffered once, and the reason `Trf.playing_codes/0` is public there.
+  #
+  # A blank column still becomes `nil`. "No result recorded yet" is a
+  # different question from which result, and every caller asks it that way.
   defp parse_game_at_round(line, round) do
     cols = round_cols(round)
     id_raw = read(line, cols.id)
@@ -1598,31 +1814,9 @@ defmodule Ainalrami.Trf do
     %{
       opponent_rank: if(id_raw in ["", "0000"], do: nil, else: parse_int(id_raw)),
       colour: if(colour in ["", "-"], do: nil, else: colour),
-      result: normalize_result(result)
+      result: if(result == "", do: nil, else: result)
     }
   end
-
-  # "W", "D" and "L" are TRF16's letter spellings of "1", "=" and "0", and are
-  # normalised to those on the way in, so one code means one thing everywhere
-  # downstream: the validation tables above, `points_for/1`, the engine's own
-  # `result_points/1`, and every criterion that reads a result.
-  #
-  # They are NOT "unplayed" results, which is what this file assumed by
-  # omitting them. Checked against bbpPairings' own reader rather than
-  # inferred: it sets `gameWasPlayed = false` for exactly "+", "-", "H", "F",
-  # "U", "Z" and space (`trf.cpp:278-286`) - W/D/L are absent, so they are
-  # played games against a real opponent - and it scores them through the
-  # same WIN/DRAW/LOSS branch as "1"/"="/"0" (`trf.cpp:252-270`). Omitting
-  # them meant `parse/1` raised `ValidationError` on a legal TRF16 file.
-  #
-  # A blank result column is also legal and means a loss, but this parser
-  # already maps a blank to `nil` above; that is a separate question from a
-  # code it fails to recognise, and is left alone deliberately.
-  defp normalize_result("W"), do: "1"
-  defp normalize_result("D"), do: "="
-  defp normalize_result("L"), do: "0"
-  defp normalize_result(""), do: nil
-  defp normalize_result(result), do: result
 
   defp parse_team_line(line, slot \\ 1, ranks \\ []) do
     cols = team_player_cols(slot)

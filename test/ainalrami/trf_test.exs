@@ -348,7 +348,7 @@ defmodule Ainalrami.TrfTest do
     assert trf =~ "001"
   end
 
-  test "serialize/1 accepts the asymmetric result ('=' vs '0', an arbiter's disciplinary point adjustment)" do
+  test "serialize/1 accepts the VCL.13 asymmetric result ('=' vs '0', an arbiter's disciplinary point adjustment)" do
     trf = two_player_round("=", "0") |> Trf.serialize()
     assert trf =~ "001"
 
@@ -449,7 +449,8 @@ defmodule Ainalrami.TrfTest do
   # TRF06 (FIDE's Annexure-B, 2006) - column-identical to TRF16, but
   # predates the F/H/U/Z bye codes: a bye is a dangling playing code
   # against opponent 0000, and a "not paired" round is left fully blank
-  # rather than carrying any code at all.
+  # rather than carrying any code at all (VCL.11 recommends, not requires,
+  # supporting this older version).
   # ---------------------------------------------------------------------
 
   # Places `text` at 1-indexed `col` in `line`, padding with spaces as
@@ -505,8 +506,10 @@ defmodule Ainalrami.TrfTest do
 
   test "parse/1 doesn't stop at a genuinely blank round when real rounds follow (a late entrant's TRF06-style gap)" do
     # Round 1 is entirely blank ("not paired", TRF06's own convention for a
-    # late entrant) - round 2 is a real game. A naive implementation that
-    # stops parsing at the first blank round would silently drop round 2.
+    # late entrant) - round 2 is a real game. Not a hypothetical: the
+    # sibling project's parser, which this one was taken from, stopped at
+    # the first blank round and silently dropped round 2, and this is the
+    # test that found it.
     line =
       ""
       |> place_col(1, "001")
@@ -860,6 +863,293 @@ defmodule Ainalrami.TrfTest do
       assert text =~ "XXA"
       refute text =~ ~r/^250/m
       refute text =~ ~r/^260/m
+    end
+  end
+
+  describe "ascii: true keeps the byte columns where the spec puts them" do
+    # Deliberately NOT `col/3` above: that one slices graphemes, which is the
+    # very assumption under test. A submitted TRF is read by byte.
+    defp byte_col(line, start, stop), do: :binary.part(line, start - 1, stop - start + 1)
+
+    defp first_player_line(trf) do
+      trf |> String.split("\r\n") |> Enum.find(&String.starts_with?(&1, "001"))
+    end
+
+    defp byte_roster(name) do
+      %{
+        tournament: %{name: "Byte Test", type: "swiss"},
+        players: [
+          %{
+            rank: 1,
+            name: name,
+            sex: "m",
+            title: "",
+            fide_rating: 2400,
+            federation: "BEL",
+            fide_number: 1001,
+            birth_date: "1985-01-01",
+            points: 1.0,
+            games: [%{opponent_rank: 2, colour: "w", result: "1"}]
+          },
+          %{
+            rank: 2,
+            name: "Bravo, Bob",
+            sex: "m",
+            title: "",
+            fide_rating: 2300,
+            federation: "BEL",
+            fide_number: 1002,
+            birth_date: "1986-01-01",
+            points: 0.0,
+            games: [%{opponent_rank: 1, colour: "b", result: "0"}]
+          }
+        ]
+      }
+    end
+
+    test "an accented name occupies the same byte columns as a plain one" do
+      plain = "Hendricks, Bjorn" |> byte_roster() |> Trf.serialize(ascii: true)
+      accented = "Hendricks, Björn" |> byte_roster() |> Trf.serialize(ascii: true)
+
+      assert first_player_line(accented) == first_player_line(plain)
+
+      # Spelled out, so a future reader sees which fields were at stake: the
+      # FIDE id is the one that turns into a different player.
+      line = first_player_line(accented)
+      assert byte_col(line, 49, 52) == "2400"
+      assert byte_col(line, 58, 68) == "       1001"
+      assert byte_col(line, 81, 84) == " 1.0"
+      assert byte_col(line, 92, 95) == "   2"
+      assert byte_col(line, 97, 97) == "w"
+      assert byte_col(line, 99, 99) == "1"
+    end
+
+    test "without the option that same row shifts every field after the name" do
+      line = "Hendricks, Björn" |> byte_roster() |> Trf.serialize() |> first_player_line()
+
+      # One byte longer than it has characters - the whole cause.
+      assert byte_size(line) == String.length(line) + 1
+
+      # Rating 2400 reads as 240, FIDE id 1001 as 100, and the round history
+      # goes blank. Asserted rather than merely refuted, so the damage is on
+      # the record if anyone ever makes this the default: the pairing path
+      # wants exactly these bytes, and every engine that reads them decodes
+      # UTF-8 properly.
+      assert byte_col(line, 49, 52) == " 240"
+      assert byte_col(line, 58, 68) == "        100"
+      assert byte_col(line, 92, 95) == "    "
+      assert byte_col(line, 99, 99) == " "
+    end
+
+    test "folds the letters NFD alone cannot decompose" do
+      line =
+        "Weiß, Jörg-Ømer" |> byte_roster() |> Trf.serialize(ascii: true) |> first_player_line()
+
+      assert line |> byte_col(15, 47) |> String.trim() == "Weiss, Jorg-Omer"
+    end
+
+    test "a non-Latin script becomes ? rather than silently shrinking the row" do
+      line =
+        "Карпов, Анатолий" |> byte_roster() |> Trf.serialize(ascii: true) |> first_player_line()
+
+      assert byte_col(line, 15, 47) == String.pad_trailing("??????, ????????", 33)
+      assert byte_col(line, 49, 52) == "2400"
+    end
+
+    test "no byte of a folded file is above 0x7F - headers and extensions included" do
+      data =
+        "Hendricks, Björn"
+        |> byte_roster()
+        |> put_in([:tournament], %{
+          name: "Åre Öppna",
+          city: "Liège",
+          type: "swiss",
+          chief_arbiter: "Nguyễn, Hoàng"
+        })
+
+      trf = Trf.serialize(data, ascii: true)
+
+      refute trf =~ ~r/[^\x00-\x7F]/u
+      assert trf =~ "012 Are Oppna"
+      assert trf =~ "022 Liege"
+      # "ễ" is e plus two combining marks, so NFD reaches it and no "?" is
+      # needed - the fallback table is only for the letters that decompose
+      # to nothing.
+      assert trf =~ "102 Nguyen, Hoang"
+    end
+  end
+
+  describe "column_legend: true" do
+    # The legend was written for the sibling app's arbiter-facing export and
+    # had no test in THIS repo at all: the only thing pinning ~50 lines of
+    # `legend_line/1`, `legend_games/2` and `ruler_line/2` was one
+    # `String.starts_with?(&1, "DDD SSSS sTTT")` over in
+    # `openpairings/test/pairings_engine/trf_export_test.exs`. That
+    # assertion cannot see the thing the legend exists to be: a ruler is
+    # only useful if it lines up, and a legend whose `RRRR` sits one column
+    # left of the rating field is worse than no legend, because it is the
+    # thing a human checks a suspect file against.
+    #
+    # So these assert the alignment, not the text.
+    defp legend_roster do
+      %{
+        tournament: %{name: "Legend", type: "swiss"},
+        players: [
+          %{
+            rank: 1,
+            name: "Alpha, Ann",
+            sex: "w",
+            title: "IM",
+            fide_rating: 2400,
+            federation: "BEL",
+            fide_number: 1001,
+            birth_date: "1985-01-01",
+            points: 1.0,
+            games: [
+              %{opponent_rank: 2, colour: "w", result: "1"},
+              %{opponent_rank: nil, colour: nil, result: "U"}
+            ]
+          },
+          %{
+            rank: 2,
+            name: "Bravo, Bob",
+            sex: "m",
+            title: "",
+            fide_rating: 2300,
+            federation: "BEL",
+            fide_number: 1002,
+            birth_date: "1986-01-01",
+            points: 0.0,
+            games: [
+              %{opponent_rank: 1, colour: "b", result: "0"},
+              %{opponent_rank: nil, colour: nil, result: "H"}
+            ]
+          }
+        ]
+      }
+    end
+
+    defp legend_lines_of(data) do
+      lines = data |> Trf.serialize(column_legend: true) |> String.split("\r\n")
+      legend = Enum.find(lines, &String.starts_with?(&1, "DDD"))
+      i = Enum.find_index(lines, &(&1 == legend))
+
+      # Blank separator, tens ruler, units ruler, legend - in that order,
+      # immediately before the first player row.
+      %{
+        blank: Enum.at(lines, i - 3),
+        tens: Enum.at(lines, i - 2),
+        units: Enum.at(lines, i - 1),
+        legend: legend,
+        first_player: Enum.at(lines, i + 1)
+      }
+    end
+
+    test "every field code sits in the columns the player row uses" do
+      %{legend: legend} = legend_lines_of(legend_roster())
+
+      # 1-indexed inclusive, straight from the FIDE spec - the same numbers
+      # `player line matches the exact FIDE TRF16 column positions` above
+      # asserts against the real row.
+      assert col(legend, 1, 3) == "DDD"
+      assert col(legend, 5, 8) == "SSSS"
+      assert col(legend, 10, 10) == "s"
+      assert col(legend, 11, 13) == "TTT"
+      assert col(legend, 15, 47) == String.duplicate("N", 33)
+      assert col(legend, 49, 52) == "RRRR"
+      assert col(legend, 54, 56) == "FFF"
+      assert col(legend, 58, 68) == String.duplicate("I", 11)
+      assert col(legend, 70, 79) == "BBBB/BB/BB"
+      assert col(legend, 81, 84) == "PPPP"
+      assert col(legend, 86, 89) == "RRRR"
+
+      # Every gap the spec leaves between two fields is blank in the legend
+      # too, so a marker that grew a column would show up here rather than
+      # merging into its neighbour.
+      for gap <- [4, 9, 14, 48, 53, 57, 69, 80, 85] do
+        assert col(legend, gap, gap) == " ",
+               "column #{gap} separates two fields and must be blank"
+      end
+    end
+
+    test "the round blocks are marked with the round's own last digit" do
+      %{legend: legend} = legend_lines_of(legend_roster())
+
+      # Round 1 at 92-99, round 2 at 102-109 - the same 10-column cadence
+      # the player row uses, and the digit says WHICH round, which is the
+      # only way to count along a 20-round line without a finger.
+      assert col(legend, 92, 95) == "1111"
+      assert col(legend, 97, 97) == "1"
+      assert col(legend, 99, 99) == "1"
+      assert col(legend, 102, 105) == "2222"
+      assert col(legend, 107, 107) == "2"
+      assert col(legend, 109, 109) == "2"
+    end
+
+    test "the legend is exactly as wide as the player rows it describes" do
+      %{legend: legend, tens: tens, units: units, first_player: player} =
+        legend_lines_of(legend_roster())
+
+      assert String.length(legend) == String.length(player)
+      assert String.length(units) == String.length(legend)
+      assert String.length(tens) == String.length(legend)
+    end
+
+    test "the two rulers count the columns they sit above" do
+      %{blank: blank, tens: tens, units: units} = legend_lines_of(legend_roster())
+
+      assert blank == ""
+
+      # The units ruler repeats 1234567890, so the character at column N is
+      # N's own last digit - the property that makes it a ruler rather than
+      # decoration.
+      for n <- [1, 9, 10, 47, 92, 109] do
+        assert col(units, n, n) == n |> rem(10) |> Integer.to_string()
+      end
+
+      # The tens ruler labels each decade, right-aligned so the label ENDS
+      # on the column it names: "1" at column 10, "10" across 99-100.
+      assert col(tens, 10, 10) == "1"
+      assert col(tens, 20, 20) == "2"
+      assert col(tens, 99, 100) == "10"
+      assert col(tens, 1, 9) == String.duplicate(" ", 9)
+    end
+
+    test "a reader still sees the same tournament through it" do
+      # The whole safety argument for emitting these lines at all: they
+      # carry no 3-digit code, so `parse_header_line/3`'s `nil -> acc`
+      # clause drops them, and the blank one is rejected before that. If
+      # that ever stopped being true the legend would corrupt every file it
+      # was meant to make readable.
+      data = legend_roster()
+
+      assert Trf.parse(Trf.serialize(data, column_legend: true)) ==
+               Trf.parse(Trf.serialize(data))
+    end
+
+    test "off by default" do
+      text = Trf.serialize(legend_roster())
+
+      refute text =~ "DDD SSSS"
+      refute text =~ ~r/^1234567890/m
+    end
+
+    test "a roster with no rounds yet gets no legend" do
+      # `legend_lines/2` is guarded `when max_round > 0`. A ruler over a row
+      # that stops at the rank column would be pointing at nothing, and the
+      # blank line it leads with is the part a stricter reader could trip
+      # on - so the option produces no lines at all rather than three.
+      text =
+        Trf.serialize(
+          %{
+            tournament: %{name: "L", type: "swiss"},
+            players: [%{rank: 1, name: "Alpha, Ann", points: 0.0, games: []}]
+          },
+          column_legend: true
+        )
+
+      refute text =~ "DDD"
+      refute text =~ ~r/^1234567890/m
     end
   end
 end

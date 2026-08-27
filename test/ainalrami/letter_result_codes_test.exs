@@ -34,7 +34,7 @@ defmodule Ainalrami.LetterResultCodesTest do
   end
 
   describe "Trf.parse/1" do
-    test "accepts a file whose results are spelled with letters, and normalises them" do
+    test "accepts a file whose results are spelled with letters, and keeps them" do
       # Two players, one round, "W" against "L" - the letter form of 1 v 0.
       # The old parser raised on this outright.
       trf = """
@@ -49,11 +49,101 @@ defmodule Ainalrami.LetterResultCodesTest do
 
       assert [%{games: [alpha]}, %{games: [beta]}] = players
 
-      # Normalised on the way in, so nothing downstream has to know about the
-      # letter forms at all.
-      assert alpha.result == "1"
-      assert beta.result == "0"
+      # The file's own code, not the symbol it spells. The parser used to
+      # rewrite these to "1" and "0", which reads harmlessly here and is
+      # destructive one caller out: the rated/unrated distinction is the only
+      # thing W/L carry over 1/0, and once folded there is nothing left to
+      # recover it from. The sibling app's importer decides whether a game
+      # reaches the rating report from exactly this character.
+      assert alpha.result == "W"
+      assert beta.result == "L"
+
+      # Unfolded, but not unclassified: the engine reads the letters through
+      # the same tables as the symbols, so keeping them costs no meaning.
+      assert Trf.points_for(alpha.result) == 1.0
+      assert Trf.game_was_played?(alpha.result)
     end
+
+    test "a letter result survives a write and a read back" do
+      # The round trip is the property that matters for consolidation - the
+      # writer and the reader in this module have to agree on what a code
+      # means, and a fold in either direction breaks that silently rather
+      # than loudly.
+      players = [
+        player(1, 0.5, [%{result: "D", colour: "w", opponent_rank: 2}]),
+        player(2, 0.5, [%{result: "D", colour: "b", opponent_rank: 1}])
+      ]
+
+      %{players: [%{games: [one]}, %{games: [two]}]} =
+        %{tournament: %{name: "Unrated draw", type: "swiss"}, players: players}
+        |> Trf.serialize()
+        |> Trf.parse()
+
+      assert one.result == "D"
+      assert two.result == "D"
+    end
+  end
+
+  describe "Trf.serialize/1" do
+    test "writes the letter codes instead of refusing them" do
+      # `serialize/1` raised `ValidationError` on three codes this module
+      # publishes in `result_codes/0` and scores in `points_for/1`, because
+      # `@playing_codes` left them out. The letters go into the file exactly
+      # as the caller spelled them: folding them to `1`/`=`/`0` on the way
+      # out would throw away the one bit they carry, that the game does not
+      # reach the rating report.
+      #
+      # Not hypothetical: the sibling app emits them for SWAR's "1-0U" /
+      # "1/2-1/2U" / "0-1U" result strings, and hands the text to THIS
+      # module, so every unrated game in an export hit the raise.
+      win_loss =
+        serialize_results([
+          player(1, 1.0, [%{result: "W", colour: "w", opponent_rank: 2}]),
+          player(2, 0.0, [%{result: "L", colour: "b", opponent_rank: 1}])
+        ])
+
+      assert win_loss == ["W", "L"]
+
+      draw =
+        serialize_results([
+          player(1, 0.5, [%{result: "D", colour: "w", opponent_rank: 2}]),
+          player(2, 0.5, [%{result: "D", colour: "b", opponent_rank: 1}])
+        ])
+
+      assert draw == ["D", "D"]
+    end
+
+    test "a letter code and the symbol it spells are still not a legal pair" do
+      # Rated-ness belongs to the game, not to a seat in it, so "W" against
+      # "0" is two players disagreeing rather than one unusual game. Pinned
+      # so that accepting the letters does not quietly become accepting any
+      # combination of them.
+      assert_raise Trf.ValidationError, ~r/illegal result combination/, fn ->
+        serialize_results([
+          player(1, 1.0, [%{result: "W", colour: "w", opponent_rank: 2}]),
+          player(2, 0.0, [%{result: "0", colour: "b", opponent_rank: 1}])
+        ])
+      end
+    end
+
+    test "a letter code still needs an opponent" do
+      # W/D/L join the PLAYING codes, which is what makes this raise: a
+      # played game with nobody on the other side is a bye wearing the wrong
+      # code, and the four bye codes exist for that.
+      assert_raise Trf.ValidationError, ~r/opponent 0000/, fn ->
+        serialize_results([player(1, 1.0, [%{result: "W", colour: nil, opponent_rank: nil}])])
+      end
+    end
+  end
+
+  # The round-1 result column, per player line, read where TRF16 puts it
+  # (column 99: the round block starts at 92, the result sits at +7).
+  defp serialize_results(players) do
+    %{tournament: %{name: "Unrated", type: "swiss"}, players: players}
+    |> Trf.serialize()
+    |> String.split("\r\n")
+    |> Enum.filter(&String.starts_with?(&1, "001"))
+    |> Enum.map(&String.at(&1, 98))
   end
 
   describe "bye eligibility" do
@@ -123,7 +213,10 @@ defmodule Ainalrami.LetterResultCodesTest do
                half_point_bye: "H",
                full_point_bye: "F",
                pairing_allocated_bye: "U",
-               zero_point_bye: "Z"
+               zero_point_bye: "Z",
+               unrated_win: "W",
+               unrated_draw: "D",
+               unrated_loss: "L"
              }
 
       # Every published code must be one `points_for/1` actually scores, and
