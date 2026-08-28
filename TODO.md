@@ -251,8 +251,31 @@ changed to match both references. What is left is one limit of method.
       Do it alongside the corpus re-run, where the change can be measured
       rather than asserted.
 
-- [ ] **Read the boards where the two REFERENCES disagree about colour -
-      there are more than two, and seven of them are now adjudicable.**
+- [x] ~~**Read the boards where the two REFERENCES disagree about colour.**~~
+      **Adjudicated 2026-08-28** - see
+      [docs/finding-gacrux-5-2-4.md](docs/finding-gacrux-5-2-4.md), ready to
+      file upstream.
+
+      The paired corpus run found exactly **two** such boards in 7,392,594,
+      one on the forfeit axis and one on the combined axis, and re-running
+      those two axes with `COLOUR_DEBUG=1` printed both. They have the same
+      structure and one substitution explains both: **Gacrux reads Article
+      5.2.4's "higher ranked player" as TPN order, where Article 1.2 defines
+      it as score first, then TPN.** On a board where 5.2.4 decides and the
+      two players are on different scores, that hands the preference to the
+      wrong one.
+
+      Forfeits appear in both because they are what creates the tie: 5.2.4 is
+      only reachable when nothing earlier can separate the players, and an
+      unplayed round removes a round from both colour histories at once.
+
+      This engine had the same defect and fixed it - same article, same wrong
+      reading. That is why the diagnosis took minutes.
+
+      Still to do: send it. It is inference from behaviour rather than a
+      reading of their source, and the report says so.
+
+- [ ] **Superseded note - the earlier count of 16 was a different corpus.**
 
       **Updated 2026-08-28 from `spp5225`**, a 1,065,373-round independent
       run on the post-ruling engine (seeds 32.0M-32.6M, seven axes,
