@@ -61,6 +61,34 @@ invisible to any corpus this generator can produce and a third had been
 breaking a matcher invariant 734 times per 800 tournaments while agreeing
 with the reference on every one of them.
 
+## [Unreleased]
+
+### Fixed
+
+- [Fix] **A corpus axis could report a clean colour result over zero
+  boards.** `PAIRING_FUZZ_INITIAL_COLOUR=b` - lowercase, which nothing
+  documented as different from `B` - was written into the TRF verbatim as
+  `152 b`. Every reference rejects that, so every comparison failed, and the
+  axis printed *"colours: no unexplained disagreement about who is White"*
+  over nothing at all. A vacuous pass that reads exactly like a clean result.
+
+  Found on 2026-08-28 when a 300,000-tournament axis of the 5.2.5
+  re-measurement finished in 91 seconds. The only signal was a process-error
+  counter, and it blamed resource starvation - which was wrong, and which
+  sent the reader looking at the box rather than at the parameter.
+
+  Two changes, because the value and the report failed separately:
+
+  - The knob is normalised and validated. `w`/`b`/`mixed` in any case now
+    work; anything unrecognised raises with a message naming the legal
+    values. The harness already refused `PAIRING_FUZZ_ACCEL` outright for a
+    related reason, so this is the established treatment.
+  - **The colour line carries its denominator.** It now reads "no
+    disagreement about who is White, over 3,257 board(s) formed by both
+    engines", and says so loudly when that number is zero. A count without a
+    denominator cannot distinguish "nothing disagreed" from "nothing was
+    compared", and the whole value of a colour rate is in that distinction.
+
 ## [0.14.0] - 2026-08-28
 
 The FIDE Systems of Pairings and Programs Commission answered this project's

@@ -499,14 +499,40 @@ defmodule Ainalrami.Test.FuzzTournament do
   # to the environment so a run that sets nothing behaves exactly as before.
   def initial_colour, do: Process.get(:fuzz_initial_colour) || env_initial_colour()
 
-  defp env_initial_colour, do: System.get_env("PAIRING_FUZZ_INITIAL_COLOUR", "W")
+  # Validated rather than passed through, because passing through fails
+  # SILENTLY and in the worst possible way. `PAIRING_FUZZ_INITIAL_COLOUR=b`
+  # - lowercase, which nothing documents as different - was written into the
+  # TRF verbatim as `152 b`, bbpPairings rejected every file, and the axis
+  # reported "colours: no unexplained disagreement about who is White" over
+  # ZERO compared boards. A vacuous pass that reads exactly like a clean
+  # result. Found on 2026-08-28 when a 300,000-tournament axis of the 5.2.5
+  # re-measurement finished in 91 seconds; only the process-error counter
+  # gave it away, and that counter blamed resource starvation.
+  #
+  # The harness already refuses `PAIRING_FUZZ_ACCEL` outright for a related
+  # reason. Same treatment: an unrecognised value is a typo, and a typo in a
+  # corpus knob must stop the run rather than quietly empty it.
+  defp env_initial_colour do
+    raw = System.get_env("PAIRING_FUZZ_INITIAL_COLOUR", "W")
 
-  # "mixed" draws per tournament. Anything else is used as-is, so W/B still
-  # pin a whole run the way they always did.
+    case String.upcase(raw) do
+      c when c in ["W", "B", "MIXED"] ->
+        c
+
+      _ ->
+        raise ArgumentError,
+              "PAIRING_FUZZ_INITIAL_COLOUR=#{inspect(raw)} is not recognised. " <>
+                "Use W, B or mixed (case-insensitive). An unrecognised value used to be " <>
+                "written into the TRF verbatim, which every reference rejects, and the " <>
+                "axis then reported a clean colour result over zero boards."
+    end
+  end
+
+  # "mixed" draws per tournament. W/B pin a whole run the way they always did.
   defp resolve_initial_colour do
-    case String.downcase(env_initial_colour()) do
-      "mixed" -> Enum.random(["W", "B"])
-      _ -> env_initial_colour()
+    case env_initial_colour() do
+      "MIXED" -> Enum.random(["W", "B"])
+      c -> c
     end
   end
 

@@ -514,7 +514,7 @@ defmodule Ainalrami.BbppairingsComparisonTest do
   # labelled "expected" that nothing may legitimately land in is a place for
   # a real regression to hide.
   defp colour_mismatches({:raised, _}, _bbp, _active, _players, _where),
-    do: %{colour_mismatches: 0}
+    do: %{colour_mismatches: 0, colour_shared: 0}
 
   defp colour_mismatches(ainalrami_pairs, bbp_pairs, _active, players, {seed, round}) do
     theirs = MapSet.new(bbp_pairs)
@@ -555,7 +555,16 @@ seed #{seed} round #{round}: UNEXPLAINED - we say #{w} White, bbpPairings says #
       end
     end
 
-    %{colour_mismatches: length(reversed)}
+    # The denominator travels with the count. A colour report needs to say
+    # what it compared: "no disagreement" over zero boards is not a result,
+    # and printing it as one is how an empty axis passes for a clean one.
+    shared =
+      Enum.count(ainalrami_pairs, fn
+        {_w, nil} -> false
+        {w, b} = pair -> MapSet.member?(theirs, pair) or MapSet.member?(theirs, {b, w})
+      end)
+
+    %{colour_mismatches: length(reversed), colour_shared: shared}
   end
 
   defp summarise({:raised, _} = raised), do: raised
@@ -634,6 +643,7 @@ seed #{seed} round #{round}: UNEXPLAINED - we say #{w} White, bbpPairings says #
 
   defp report(comparisons, errors, exhausted, rounds) do
     colour_bad = comparisons |> Enum.map(&Map.get(&1, :colour_mismatches, 0)) |> Enum.sum()
+    colour_shared = comparisons |> Enum.map(&Map.get(&1, :colour_shared, 0)) |> Enum.sum()
 
     if colour_bad > 0 do
       IO.puts(
@@ -653,8 +663,16 @@ seed #{seed} round #{round}: UNEXPLAINED - we say #{w} White, bbpPairings says #
      COLOUR_DEBUG=1 to print each unexplained board."
       )
     else
-      IO.puts("
-  colours: no unexplained disagreement about who is White.")
+      if colour_shared == 0 do
+        IO.puts("
+  !! colours: NOTHING WAS COMPARED - 0 board(s) were formed by both engines,
+     so the absence of a disagreement here means nothing at all. Check the
+     process-error count below and the axis parameters.")
+      else
+        IO.puts("
+  colours: no disagreement about who is White, over #{colour_shared} board(s)
+  formed by both engines.")
+      end
     end
 
     IO.puts("\nbbpPairings comparison, #{rounds} round(s) per tournament:\n")
