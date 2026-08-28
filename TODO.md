@@ -237,6 +237,39 @@ changed to match both references. What is left is one limit of method.
       Do it alongside the corpus re-run, where the change can be measured
       rather than asserted.
 
+- [ ] **Read the boards where the two REFERENCES disagree about colour -
+      there are more than two, and seven of them are now adjudicable.**
+
+      **Updated 2026-08-28 from `spp5225`**, a 1,065,373-round independent
+      run on the post-ruling engine (seeds 32.0M-32.6M, seven axes,
+      11,164,952 colour boards). It found **16** boards where bbpPairings
+      and Gacrux contradict each other - 13 on the combined axis, 3 on
+      forfeits, zero on the other five. Ainalrami agrees with bbpPairings on
+      every one, so **Gacrux is alone in all 16**.
+
+      Of those, **7 are boards where Article 5.2.5 itself decided** (the
+      harness's `within 5.2.5's reach` label). That number was uninteresting
+      while the article's answer was disputed - `:reach` was as much as the
+      harness could honestly say. It is not uninteresting now: the SPP has
+      fixed what the answer IS, and bbpPairings and this engine both
+      implement it, so a board where 5.2.5 decides and Gacrux differs from
+      both is **Gacrux failing the ruling**, not an open question. Those
+      seven are a filable upstream report.
+
+      The other 9 are outside 5.2.5 entirely - on 5.2.1 to 5.2.4, which
+      nobody disputes - and are the same phenomenon as the two found before.
+
+      Note these are DIFFERENT SEEDS from the original two-board finding
+      below (32M here, 95M there), so 16-versus-2 is not a like-for-like
+      increase; it is a second, larger sample of the same phenomenon. The
+      paired re-run on the original seeds is what compares directly.
+
+      Reproduce with `COLOUR_DEBUG=1` on the combined and forfeit axes,
+      decide which reference is right on each, and file the seven against
+      Gacrux.
+
+      The original note, still accurate for its own corpus:
+
 - [ ] **Read the two boards where the two REFERENCES disagree about
       colour.** The three-way run of 2026-08-27 measured reference-against-
       reference colour agreement for the first time: 6,242,974 boards, and
