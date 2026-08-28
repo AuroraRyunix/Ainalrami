@@ -95,6 +95,24 @@ defmodule Ainalrami.Pairing do
   # unconditionally until the TRF's `152` field was read at all.
   @initial_colour_key :ainalrami_initial_colour
 
+  # The round's ARRIVAL NUMBERING - `%{starting_rank => number}` - which is
+  # the number Article 5.2.5's parity is taken on. See
+  # `arrival_numbers/2`. Stamped once per round by `do_pair_later_round/1`
+  # and read by `assign_colour_with_history/1`, which sees only the two
+  # players of a board and so cannot build it.
+  #
+  # Round one does NOT use this key: `pair_round_one/1` builds the numbering
+  # from its own sorted field and passes it down as an argument, because it
+  # is public and is called directly, with nothing stamped, by tests and by
+  # the javafo harness.
+  #
+  # Same lifecycle as `@initial_colour_key`, and cleaned up in the same
+  # `after` blocks. The 2026-08-26 comment in `pair_later_round/2` is the
+  # standing warning about what a leaked round-scoped key costs: a stale
+  # numbering from tournament A silently renumbers tournament B, and the
+  # result is a pairing that looks entirely legal.
+  @parity_number_key :ainalrami_parity_numbers
+
   # What a result is WORTH. Stashed for the same reason as the others: it is
   # read deep in the historic-score reconstruction, which the bracket cascade
   # reaches from several directions.
@@ -190,6 +208,7 @@ defmodule Ainalrami.Pairing do
     after
       Process.delete(@expected_rounds_key)
       Process.delete(@initial_colour_key)
+      Process.delete(@parity_number_key)
       Process.delete(@point_system_key)
       Process.delete(@played_key)
       Process.delete(@forbidden_key)
@@ -314,6 +333,15 @@ defmodule Ainalrami.Pairing do
       Process.put(@played_key, played)
       Process.put(@forbidden_key, forbidden_map(opts[:forbidden_pairs], played + 1))
 
+      # Not read on this path today - `explain_bracket/7` grades a pairing
+      # it was handed and never reaches `assign_colour_with_history/1`, so
+      # nothing here asks for a number. Stamped anyway, for the reason the
+      # point-system stamp above was added on 2026-08-26 after being missing:
+      # an entry point that sets only SOME of the state the rules read is a
+      # trap for whoever next makes one of those rules reachable from here,
+      # and this one would surface as a `Map.fetch!` on an empty map.
+      Process.put(@parity_number_key, arrival_numbers(players, played + 1))
+
       field =
         players
         # Same two stamps, in the same order and over the same whole roster,
@@ -358,6 +386,7 @@ defmodule Ainalrami.Pairing do
     after
       Process.delete(@expected_rounds_key)
       Process.delete(@initial_colour_key)
+      Process.delete(@parity_number_key)
       Process.delete(@point_system_key)
       Process.delete(@played_key)
       Process.delete(@forbidden_key)
@@ -612,8 +641,19 @@ defmodule Ainalrami.Pairing do
   Confirmed against real `javafo.jar` output for 7/8/9/10/11/12/13-player
   fields, not assumed from the spec text alone.
 
-  Colours (Article 5.1/5.2.5): FIDE leaves the very first colour to a
-  literal "drawing of lots" - there is no deterministic rule to replicate.
+  Colours (Article 5.1/5.2.5): 5.2.5 hands the higher ranked player of each
+  pair the initial colour when their number is odd and the opposite when it
+  is even. That number is NOT the TPN: per the SPP's 2026-08-27 ruling on
+  C.04.2 Article 2.4, players who have not yet arrived are not numbered at
+  all, so it is the player's position among the arrivals. See
+  `arrival_numbers/2`. In round one the distinction is invisible - the whole
+  field is being paired, so every player has arrived and the position is the
+  rank - but it is computed rather than assumed here so the two code paths
+  state the same rule.
+
+  Article 5.1's *draw* is a different matter, and FIDE leaves the very first
+  colour to a literal "drawing of lots" - there is no deterministic rule to
+  replicate.
   This picks a fixed, documented convention rather than JaVaFo's own
   choice, which is empirically NOT a function of the roster/round-count
   alone: pairing the identical 8-player roster and round count under two
@@ -627,6 +667,27 @@ defmodule Ainalrami.Pairing do
   def pair_round_one(players) do
     sorted = Enum.sort_by(players, & &1.rank)
 
+    # 5.2.5's number, built locally rather than read from
+    # `@parity_number_key`. This function is PUBLIC and is called directly -
+    # by `pairing_test.exs` and by the javafo harness - with none of the
+    # round-scoped process state stamped, so a key would be nil on exactly
+    # those paths and the parity would silently fall back to the overturned
+    # reading.
+    #
+    # Building it here is not an approximation. This branch is only taken
+    # when nobody in the tournament has ever been paired: `pair_next_round/2`
+    # requires every active player to have `games == []`, and `rounds_played/1`
+    # is 0 only when no player anywhere holds a `participated_in_pairing?`
+    # game. So "has arrived" is exactly "is in `sorted`", and the number is
+    # the 1-based index in rank order.
+    #
+    # Numbered over `sorted`, not over `field`: the odd-field bye player is
+    # removed from `field` below but is being PAIRED and must be counted.
+    # They are last in rank order, so today the two coincide - numbering
+    # over `sorted` is the version that stays right if the bye selection
+    # ever changes.
+    numbers = sorted |> Enum.with_index(1) |> Map.new(fn {p, n} -> {p.rank, n} end)
+
     {bye, field} =
       if rem(length(sorted), 2) == 1 do
         {List.last(sorted), List.delete_at(sorted, -1)}
@@ -638,7 +699,11 @@ defmodule Ainalrami.Pairing do
     {s1, s2} = Enum.split(field, half)
 
     pairs =
-      s1 |> Enum.zip(s2) |> Enum.map(fn {top, bottom} -> assign_colour_round_one(top, bottom) end)
+      s1
+      |> Enum.zip(s2)
+      |> Enum.map(fn {top, bottom} ->
+        assign_colour_round_one(top, bottom, Map.fetch!(numbers, top.rank))
+      end)
 
     if bye, do: pairs ++ [{bye.rank, nil}], else: pairs
   end
@@ -654,13 +719,110 @@ defmodule Ainalrami.Pairing do
   # exactly this: the assumption only breaks when the players who would have
   # revealed the draw sat round one out.
   #
-  # This is 5.2.5 run backwards, and it uses 5.2.5's own number - the
-  # player's TPN - rather than their position among whoever happened to
-  # play. A player with an odd TPN held the initial colour, so their colour
-  # IS the draw; an even TPN held its opposite, so invert. Applying it to a
-  # renumbered position instead would make the inference disagree with the
-  # allocation it is inverting, on exactly the fields where somebody sat a
-  # round out.
+  # THE RULE: take the LOWEST-RANKED player who holds a colour in the first
+  # round that records any, and read the parity of THEIR number. Odd means
+  # they held the initial colour, so their colour IS the draw; even means
+  # they held its opposite, so invert.
+  #
+  # The number is the arrival number, not the TPN. Since the SPP's
+  # 2026-08-27 ruling (see `arrival_numbers/2`) 5.2.5's parity is taken on
+  # the player's position among those who had ARRIVED, and reading the raw
+  # TPN here would disagree with the allocation on exactly the fields where
+  # somebody sat a round out. See RAW-TPN SPLITS below for the measurement.
+  #
+  # The numbering has to be the one in force in the round the observed
+  # colour was RECORDED in, not the one for the round about to be paired:
+  # `first_coloured` is an index into `p.games`, so that round is
+  # `first_coloured + 1`, and `arrival_numbers_at/2` builds the numbering as
+  # of it. Using the current round's numbering would be a different rule
+  # whenever anybody arrived in between.
+  #
+  # ## This is NOT an exact inverse of the allocation, deliberately
+  #
+  # `assign_colour_round_one/3` takes the parity of the TOP of the board -
+  # "higher ranked" is Article 1.2, SCORE first and TPN only to break the
+  # tie, via `order_by_placement/2`. This reads the parity off whichever
+  # player happens to hold a colour, without asking whether they were the
+  # top or the bottom.
+  #
+  # The two coincide only when the first coloured round is round ONE: every
+  # player is then on zero, so "higher ranked" collapses to the lower TPN,
+  # and the lowest-ranked player holding a colour anywhere in the field is
+  # necessarily a top. Let round one record nothing but H/F/Z byes and
+  # forfeits and the first coloured round is round TWO or later, where the
+  # scores already differ - a downfloat can seat a low-TPN low-score player
+  # as the BOTTOM, and the two readings then answer opposite.
+  #
+  # An exact inverse was written on 2026-08-28 and REVERTED the same day,
+  # because bbpPairings v6.0.0 does not do it either and this file's job is
+  # to reproduce the reference, not to out-reason it.
+  #
+  # The instrument is `tools/inference_numbering_probe.exs`. It serialises
+  # the identical roster three times - no `152`, `152 W`, `152 B` - and
+  # hands all three to the real binary. The two stated runs are the
+  # alternatives; whichever one the silent run reproduces IS bbpPairings'
+  # deduction, read off bbpPairings' own output with this engine nowhere in
+  # the loop. It re-derives both candidate readings itself rather than
+  # calling in here, and `INP_SELFTEST=1` swaps them before the classifier
+  # to prove the losing column is a live tally and not a dead arm.
+  #
+  # Run 2026-08-28: 200 tournaments, 7 rounds, seeds 1-200, round one all
+  # byes so the first coloured round is round two. Four quantities, kept
+  # separate because they have separate denominators:
+  #
+  #   * READABLE POSITIONS, 189, from 142 distinct tournaments - positions
+  #     where the two stated runs differed and the silent one matched
+  #     exactly one. bbpPairings was read as deducing White on 87 of them
+  #     and Black on 102, so it is deducing rather than defaulting.
+  #   * SPLIT POSITIONS, 38 of those 189, from 26 tournaments - where this
+  #     reading and the exact inverse predict OPPOSITE draws. bbpPairings
+  #     followed the coloured player's own number 38 times and the
+  #     top-of-board number 0. Under `INP_SELFTEST=1` the same run reports
+  #     0 and 38.
+  #   * RAW-TPN SPLITS, 52 of those 189 - where this reading and the
+  #     overturned raw-TPN reading predict opposite draws. bbpPairings
+  #     followed the arrival numbering 52 times and the raw TPN 0, so the
+  #     arrival numbering is genuinely exercised and the flat result above
+  #     is not a corpus that never reached the rule.
+  #   * Over all 189 readable positions this reading predicted
+  #     bbpPairings' deduction 189 times and missed 0.
+  #
+  # These replace an earlier set - 17/17/0, "27 times in 106", and an "81
+  # positions in 600 fields" that also appeared as a conformance total. No
+  # script in the tree produced any of them, and they are not preserved.
+  # The CONCLUSION they were offered for is the one measured above and it
+  # holds; the numbers themselves were unreproducible and are gone.
+  #
+  # bbpPairings is therefore asymmetric with ITSELF here, which is worth
+  # stating plainly: on those same fields its ALLOCATION does hand the
+  # initial colour to the higher-SCORED player (checked forwards, with
+  # `152` present, and we match it board for board). So a file bbpPairings
+  # paired with `152` present does not round-trip through bbpPairings' own
+  # deduction with `152` stripped. We copy the asymmetry.
+  #
+  # No article decides this. 5.1 leaves the initial colour to a drawing of
+  # lots and `152` is the record of it; where the record is missing C.04.3
+  # says nothing whatsoever, so the reference's behaviour is the only rule
+  # there is. Preferring our own derivation to the measured reference on a
+  # point the text does not cover is precisely the mistake the SPP caught
+  # this engine making one article up.
+  #
+  # Pinned in `test/ainalrami/bbppairings_comparison_test.exs`, which
+  # re-runs the three-way file comparison above on two hand-built fields
+  # rather than asserting our own answer back to us. The probe is the same
+  # comparison at corpus scale; the tests are the two positions that must
+  # not silently start passing for the wrong reason.
+  #
+  # CONFORMANCE is a fourth quantity and deliberately not folded into the
+  # three above: the same probe run also compared this engine's whole
+  # pairing - colours included - against bbpPairings' silent run on all 189
+  # readable positions, and got 189 identical, 0 differing, 0 raised. That
+  # one has this engine in the loop and answers a different question.
+  #
+  # A player with no number at that round is skipped rather than guessed
+  # at. It cannot happen for a player who HOLDS a colour there - a colour
+  # means an opponent, which is an arrival - but the map is the authority
+  # and `Enum.find_value/2` simply moves to the next player.
   #
   # Returns nil when the file records no colours at all - before round one
   # there is genuinely nothing to infer from, which real bbpPairings treats
@@ -677,10 +839,12 @@ defmodule Ainalrami.Pairing do
       |> Enum.min(fn -> nil end)
 
     if first_coloured do
+      numbers = arrival_numbers_at(ranked, first_coloured + 1)
+
       Enum.find_value(ranked, fn p ->
-        case Enum.at(p.games, first_coloured) do
-          %{colour: c} when c in ["w", "b"] ->
-            if rem(p.rank, 2) == 1, do: c, else: invert(c)
+        case {Enum.at(p.games, first_coloured), Map.get(numbers, p.rank)} do
+          {%{colour: c}, number} when c in ["w", "b"] and is_integer(number) ->
+            if rem(number, 2) == 1, do: c, else: invert(c)
 
           _ ->
             nil
@@ -691,12 +855,21 @@ defmodule Ainalrami.Pairing do
 
   # `top` is always the better-ranked (lower rank number) of the pair, since
   # both halves are traversed in ascending rank order before zipping.
-  defp assign_colour_round_one(top, bottom) do
-    # 5.2.5: `top` holds the initial colour on an odd TPN and the opposite on
-    # an even one. The initial colour comes from the file's `152` field, or
-    # is reconstructed by `infer_initial_colour/1` when the file is silent.
+  #
+  # `top_number` is 5.2.5's number for `top` - its position among the
+  # players who have arrived, NOT its TPN. See `arrival_numbers/2` for the
+  # ruling that separated the two. It is passed in rather than computed
+  # because the numbering is a property of the ROUND: computing it here
+  # would rebuild it once per board, which is the exact class of regression
+  # `score_before/3` and `legal_pair?/2` have already cost this file once
+  # each.
+  defp assign_colour_round_one(top, bottom, top_number) do
+    # 5.2.5: `top` holds the initial colour on an odd number and the
+    # opposite on an even one. The initial colour comes from the file's
+    # `152` field, or is reconstructed by `infer_initial_colour/1` when the
+    # file is silent.
     initial_white? = Process.get(@initial_colour_key, "w") == "w"
-    top_takes_initial? = rem(top.rank, 2) == 1
+    top_takes_initial? = rem(top_number, 2) == 1
 
     if top_takes_initial? == initial_white? do
       {top.rank, bottom.rank}
@@ -825,6 +998,7 @@ defmodule Ainalrami.Pairing do
       Process.delete(@forbidden_key)
       Process.delete(@point_system_key)
       Process.delete(@initial_colour_key)
+      Process.delete(@parity_number_key)
       Process.delete(@played_key)
       clear_env_flags()
     end
@@ -833,6 +1007,13 @@ defmodule Ainalrami.Pairing do
   defp do_pair_later_round(players) do
     played = rounds_played(players)
     Process.put(@played_key, played)
+
+    # 5.2.5's numbering, built ONCE for the round from the FULL roster -
+    # not from `active` below. Both halves of the arrival test need it: a
+    # player who played round 1 and sits round 2 out has arrived but is not
+    # active, and a player who has never been paired but is in this round's
+    # pool has arrived and is.
+    Process.put(@parity_number_key, arrival_numbers(players, played + 1))
 
     field =
       players
@@ -983,6 +1164,118 @@ defmodule Ainalrami.Pairing do
   # five and gave the odd one out the pairing-allocated bye, while this
   # engine paired player 6 with player 4.
   defp active_this_round?(player, rounds_played), do: length(player.games) <= rounds_played
+
+  # ---------------------------------------------------------------------
+  # Article 5.2.5's number - the ARRIVAL NUMBERING
+  # ---------------------------------------------------------------------
+  #
+  # 5.2.5 says "if the higher ranked player has an odd TPN, give them the
+  # initial-colour; otherwise, give them the opposite colour." Which number
+  # that is was disputed: the TPN as C.04.2 Article 2 fixes it for the whole
+  # tournament, or a numbering that skips players who have not been paired.
+  # This engine implemented the first reading; both bbpPairings and Gacrux
+  # implement the second.
+  #
+  # The FIDE Systems of Pairings and Programs Commission answered the
+  # question on 2026-08-27, and answered it against this engine. Its
+  # reasoning is C.04.2 Article 2.4, quoted in full:
+  #
+  #   "A Late Entry is a participant who is only taken into account for the
+  #    pairing of rounds after the first. If admitted to the tournament,
+  #    LATE ENTRIES receive no points for unplayed rounds [...] and ARE
+  #    GIVEN AN APPROPRIATE TPN AND PAIRED ONLY WHEN THEY ACTUALLY ARRIVE."
+  #
+  # The SPP reads that as withholding the number until the arrival. This
+  # engine had read the identical sentence the other way round - that the
+  # number exists from the start and only the PAIRING waits. Both sides
+  # argued from the same clause; we read it backwards. The SPP is the
+  # authority on C.04.3, so this is settled and not open for
+  # re-litigation.
+  #
+  # So the number is NOT the TPN, and is deliberately not called one
+  # anywhere below. It is a position among the players who have arrived, it
+  # is recomputed for every round, and a late entrant's arrival shifts the
+  # number of everyone ranked below them.
+  #
+  # WHAT "ARRIVED" MEANS was then pinned empirically against bbpPairings
+  # v6.0.0, over twenty hand-built positions. Two records of that, and both
+  # are in the repository: `Ainalrami.InitialColourTest`'s "which round-one
+  # entries are an ARRIVAL" block is the table rebuilt as assertions and is
+  # what runs in CI, and `tools/tpn_membership_probe*.exs` are the four
+  # probes that produced it, kept so the table can be re-measured against
+  # the binary rather than re-asserted from itself. An earlier version of
+  # this comment said the probes were scratch and unversioned; they were
+  # committed instead.
+  # Every position is explained by a predicate this repo already had:
+  # `Ainalrami.Trf.participated_in_pairing?/1`, itself a port of
+  # bbpPairings' `opponent != id || resultChar == 'U' || resultChar == '+'`
+  # (`fileformats/trf.cpp:303`). The two counter-intuitive splits the probes
+  # found are exactly what that one line predicts, which is why the
+  # empirical rule is believed to BE the reference's rule rather than an
+  # artifact of the positions:
+  #
+  #   * `F` (full-point bye) is EXCLUDED though it scores 1.0 exactly like
+  #     the `U` bye that is INCLUDED - so the score is not the
+  #     discriminator, the result code is.
+  #   * `-` is the only code whose membership turns on the OPPONENT field:
+  #     `2 w -` (a forfeit loss against a real opponent) counts, the
+  #     opponentless `0000 - -` does not.
+  #
+  # Per prior-round entry, then: any played game counts (`1` `=` `0` and
+  # the letter spellings `W` `D` `L`), `+` counts with or without an
+  # opponent, `-` counts only WITH one, and `U` counts. `H`, `F`, `Z`,
+  # opponentless `-` and a blank round do not.
+  defp arrival_numbers(players, round) do
+    number_arrivals(players, &arrived_for?(&1, round))
+  end
+
+  # A player is numbered for round `round` if EITHER holds:
+  #
+  #   (a) they are in this round's pairing POOL - decided before the pairing
+  #       runs, so a player who enters the pool and ends up with the
+  #       pairing-allocated bye instead of an opponent still counts; or
+  #   (b) in some round strictly before this one they had a real opponent
+  #       recorded, or a `U`/`+`.
+  #
+  # `Enum.take(games, round - 1)` rather than the whole list is the honest
+  # statement of "before now". No constructible position distinguishes the
+  # two - a participating entry AT this round would itself raise
+  # `rounds_played/1` and move the round under computation - so this is a
+  # statement of intent rather than a measured difference.
+  defp arrived_for?(player, round) do
+    active_this_round?(player, round - 1) or
+      player.games |> Enum.take(round - 1) |> Enum.any?(&participated_in_pairing?/1)
+  end
+
+  # The numbering as it stood in a round the file has ALREADY recorded,
+  # which is what `infer_initial_colour/1` needs and is not the same
+  # question as the one above.
+  #
+  # Clause (a) there - "is in the pool" - is only decidable for the round
+  # being computed; a historic round's pool is not recoverable from the
+  # file. It does not have to be: every player who entered a round's pool
+  # left it either with an opponent or with the pairing-allocated `U`, and
+  # both satisfy `participated_in_pairing?/1`. So for a past round, "was in
+  # the pool at or before it" collapses to "participated in the pairing of
+  # some round up to and including it".
+  defp arrival_numbers_at(players, round) do
+    number_arrivals(players, fn p ->
+      p.games |> Enum.take(round) |> Enum.any?(&participated_in_pairing?/1)
+    end)
+  end
+
+  # Walk in ascending starting rank and hand out consecutive integers to
+  # exactly the arrivals. A player who has not arrived receives no number at
+  # all - they are absent from the map, not numbered late - so a caller that
+  # reaches for a missing key is asking about a player 5.2.5 cannot be
+  # deciding a board for, and should fail rather than fall back to the rank.
+  defp number_arrivals(players, arrived?) do
+    players
+    |> Enum.sort_by(& &1.rank)
+    |> Enum.filter(arrived?)
+    |> Enum.with_index(1)
+    |> Map.new(fn {player, number} -> {player.rank, number} end)
+  end
 
   # Fold each player's acceleration for the round about to be paired INTO
   # their `:points`, so every score read below this line is the accelerated
@@ -4449,18 +4742,34 @@ defmodule Ainalrami.Pairing do
 
       nil ->
         # Neither player has a colour preference, so 5.2.1-5.2.4 cannot apply
-        # and 5.2.5 decides on the higher ranked player's TPN parity.
+        # and 5.2.5 decides on the higher ranked player's parity.
         #
-        # "Higher ranked" is Article 1.2 -- SCORE first, then TPN ascending.
-        # This compared TPN alone, the same defect 5.2.4 carried one article
-        # up: any pair straddling a score group got the parity rule applied to
-        # the wrong player. Reachable wherever a player has no PLAYED games at
-        # all, which arbiter byes produce routinely -- and which is exactly
-        # where the residual colour disagreements clustered.
+        # The parity is taken on the ARRIVAL NUMBER, not the TPN - see
+        # `arrival_numbers/2` for the SPP ruling that separated them. Read
+        # from `@parity_number_key`, which `do_pair_later_round/1` stamps
+        # once for the whole round; this function sees only the two players
+        # of one board and could not build it.
+        #
+        # "Higher ranked" is Article 1.2 -- SCORE first, then TPN ascending --
+        # and is a SEPARATE question from which number the parity is then
+        # taken on. The ruling moved the second, not the first, so
+        # `order_by_placement/2` is untouched. This once compared TPN alone,
+        # the same defect 5.2.4 carried one article up: any pair straddling a
+        # score group got the parity rule applied to the wrong player.
+        # Reachable wherever a player has no PLAYED games at all, which
+        # arbiter byes produce routinely -- and which is exactly where the
+        # residual colour disagreements clustered.
         {top, bottom} = order_by_placement(a, b)
-        assign_colour_round_one(top, bottom)
+
+        # `fetch!`, not a `rank` fallback: `top` is being paired this round,
+        # so it is in this round's pool and therefore always numbered. A
+        # silent fallback here would restore the overturned reading on
+        # whatever path forgot to stamp the key.
+        assign_colour_round_one(top, bottom, Map.fetch!(parity_numbers(), top.rank))
     end
   end
+
+  defp parity_numbers, do: Process.get(@parity_number_key) || %{}
 
   # The colour `player` gets against `opponent` - a port of bbpPairings'
   # `choosePlayerNeutralColor` (`swisssystems/common.cpp`), which is

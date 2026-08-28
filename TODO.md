@@ -23,9 +23,9 @@ that looked obviously correct and measured *worse* - is in
 
 ## Conformance
 
-Both of the gaps carried here are now closed - 4.3 against the article
-itself, 5.2.5 against the handbook and AGAINST both reference engines.
-What is left is one limit of method rather than a known divergence.
+4.3 is closed against the article itself. 5.2.5 was closed the wrong way:
+the SPP ruled against this engine on 2026-08-27 and the engine has been
+changed to match both references. What is left is one limit of method.
 
 - [x] ~~**Article 4.3, including the heterogeneous case.**~~ **Closed
       2026-08-17/18** by `exchange_order_test.exs`, which walks Article 4's
@@ -59,16 +59,39 @@ What is left is one limit of method rather than a known divergence.
       whole area keeps producing.
 
 - [x] ~~**Article 5.2.5 - which number the parity applies to.**~~
-      **Settled 2026-08-17, in this engine's favour, from the handbook.**
-      C.04.2 Article 2 fixes a TPN for the tournament; nothing renumbers
-      it around players sitting a round out. Both references renumber
-      anyway -- around players who have never participated, measured both
-      ways with `tools/rip_probe.exs`, and they agree with each other.
+      **Done 2026-08-27: settled AGAINST this engine by the FIDE SPP, and
+      the engine changed.** The parity is taken on a numbering that skips
+      players who have never been paired - what bbpPairings and Gacrux
+      have always done. Ainalrami took it on the raw TPN, and was wrong.
 
-      Now a filed dispute rather than an open question:
-      [docs/dispute-initial-colour.md](docs/dispute-initial-colour.md).
-      Gacrux did not break the tie - it renumbers too. What broke it was
-      reading C.04.2, which nobody had done.
+      The crux is that both sides argued from the same sentence,
+      C.04.2:2.4: a late entry is *"given an appropriate TPN and paired
+      only when they actually arrive."* This engine read that as "the TPN
+      exists before the arrival; it is the PAIRING that waits." The SPP
+      reads the identical clause as "players who have yet to arrive don't
+      have a TPN." We read it the wrong way round.
+
+      The 2026-08-17 note below is preserved because it explains why the
+      engine behaved this way for months, and why the question was worth
+      asking. Its conclusion is superseded.
+
+      > **Settled 2026-08-17, in this engine's favour, from the handbook.**
+      > C.04.2 Article 2 fixes a TPN for the tournament; nothing renumbers
+      > it around players sitting a round out. Both references renumber
+      > anyway -- around players who have never participated, measured both
+      > ways with `tools/rip_probe.exs`, and they agree with each other.
+      >
+      > Now a filed dispute rather than an open question:
+      > [docs/dispute-initial-colour.md](docs/dispute-initial-colour.md).
+      > Gacrux did not break the tie - it renumbers too. What broke it was
+      > reading C.04.2, which nobody had done.
+
+      The last sentence is the bitter one: C.04.2 *was* read, and read
+      backwards. 2.4 is the clause both sides quoted.
+
+      The corpus has NOT been re-run on the corrected engine. Every
+      quoted 5.2.5 divergence count in this repo is expected to collapse
+      to zero and none of it is measured yet.
 
 ## Performance
 
@@ -186,6 +209,34 @@ What is left is one limit of method rather than a known divergence.
 
 ## Harness
 
+- [ ] **Strengthen the three-way harness's `:reach` classifier, and re-read
+      whatever it filed.** On a bbpPairings-vs-Gacrux board neither side is
+      this engine, so `explained_by_article_5_2_5?/4` drops to `:reach` -
+      "5.2.5 decided this board" rather than any conformance claim. That was
+      the honest ceiling while the article's answer was disputed: computing
+      it meant modelling a reference's internals, which this project refuses.
+
+      **The SPP ruling removes the ceiling.** The article's answer is now
+      fixed, and all three engines implement it, so computing it is applying
+      a rule rather than predicting an internal. `:reach` can become a real
+      conformance test OF THE REFERENCES against each other.
+
+      That matters more than a tidier label. This is the only instrument
+      that has ever caught bbpPairings and Gacrux contradicting each other,
+      and it found two such boards. It ran weakened for its whole life, so
+      **boards previously filed as "within 5.2.5's reach" may include real
+      reference disagreements nobody looked at** - the weaker word made them
+      unremarkable. Re-read them.
+
+      The weakening also had a false justification, which is its own lesson:
+      the comment cited "the references renumber differently from each
+      other", a claim `tools/rip_probe.exs` had already refuted in this
+      repo. A hypothesis stated as a finding propagated from a document into
+      an instrument and degraded it. Corrected 2026-08-28.
+
+      Do it alongside the corpus re-run, where the change can be measured
+      rather than asserted.
+
 - [ ] **Read the two boards where the two REFERENCES disagree about
       colour.** The three-way run of 2026-08-27 measured reference-against-
       reference colour agreement for the first time: 6,242,974 boards, and
@@ -245,7 +296,11 @@ million tournaments (see [docs/validation.md](docs/validation.md)).
       rates now, including bbpPairings against Gacrux, which nobody had ever
       measured. 750,449 rounds and 7,392,594 boards: Ainalrami's only colour
       differences from either reference are the known 5.2.5 dispute, zero
-      unexplained. The original note said: `same?/2` compares through `normalize/1`, which sorts
+      unexplained. **Re-read after 2026-08-27:** those "known dispute"
+      boards are now known DEFECTS - the SPP ruled against this engine and
+      the engine changed. The counts stand as measurements of the old
+      engine; they have not been re-run, and are expected, not known, to
+      go to zero. The original note said: `same?/2` compares through `normalize/1`, which sorts
       each pair's ranks, so every number it has ever reported is
       colour-blind. That is the exact gap that hid a missing Article 5.2.4
       through 195 million pairings in the two-way harness, which answered
@@ -280,12 +335,19 @@ million tournaments (see [docs/validation.md](docs/validation.md)).
         upfloaters' scores; the example under 3.5.4 assumes 2/6/8 all hold
         3 points and then takes only two of them plus a 2.5-pointer, a
         LARGER score difference, without deriving why. The engine follows
-        the article. Both readings have a test. Worth asking the SPP
-        alongside the 5.2.5 question - see the "Reading decisions" section
-        of the conformance doc.
-      * **4.3.1 is the 5.2.5 TPN-parity rule again**, so it inherits that
-        dispute. `Colour.initial_colour_by_parity/2` is the one line that
-        changes.
+        the article. Both readings have a test. Worth asking the SPP -
+        the 5.2.5 question was, and came back answered on 2026-08-27, so
+        the channel works. See the "Reading decisions" section of the
+        conformance doc.
+      * **4.3.1 is the 5.2.5 TPN-parity rule again**, so it inherits the
+        SPP's 2026-08-27 ruling rather than an open dispute.
+        `Colour.initial_colour_by_parity/2` is the line that changed - and
+        the "one line" estimate was wrong: `allocate/3` needed a
+        `:parity_numbers` option and `decide/5` became `decide/6`. Still
+        open on the team side: what "has never been paired" means for a
+        TEAM. The individual ruling does not settle it, `%Team{}` carries
+        no per-round history, and C.04.6 has no clause of its own
+        answering to C.04.2:2.4.
       * **[C7] as a ranking rather than a gate** - currently applied
         through 3.5.4's order rather than as its own pass. Changes
         behaviour only when an earlier set carries more previous-round
@@ -326,9 +388,12 @@ million tournaments (see [docs/validation.md](docs/validation.md)).
       individual system, where exhaustive verification is impossible in
       principle.
 
-      Article 4.3.1 is the SAME TPN-parity rule as the individual 5.2.5,
-      which is currently an open question to the SPP. Team colour
-      allocation should wait for that reply or it gets built twice.
+      Article 4.3.1 is the SAME TPN-parity rule as the individual 5.2.5.
+      That was an open question to the SPP when this was written; the
+      answer arrived 2026-08-27 and went against this engine, so team
+      colour allocation is no longer blocked. It takes the parity on the
+      numbering that skips teams never paired, and the individual side's
+      fix has been carried across.
 - [x] ~~Late entrants~~ **not a distinct axis either** (2026-08-17). A
       blank early round is indistinguishable from a zero-point bye
       everywhere the engine looks - same points, same
@@ -342,6 +407,13 @@ million tournaments (see [docs/validation.md](docs/validation.md)).
       provisional until the participant list closes, so a real late entry
       can renumber the field. This engine takes TPNs as given and never
       assigns them, so that belongs to the caller.
+
+      **Amended 2026-08-27.** Only half of that survives. The SPP ruled on
+      **2.4**, not 2.5, and under its reading the engine can no longer
+      take the file's numbering as given for 5.2.5: it must itself work
+      out which players hold a TPN - which have arrived, or are being
+      paired now - and take the parity on that. Assigning TPNs still
+      belongs to the caller; deciding who has one does not.
 - [x] ~~Files where `142` disagrees with `XXR`~~ **done 2026-08-17.** They
       are the same field; disagreement is now refused rather than silently
       resolved, because every implementation resolved it differently and
@@ -405,31 +477,61 @@ million tournaments (see [docs/validation.md](docs/validation.md)).
       disagreement in a multi-million-tournament corpus is the same rule
       in the same direction is itself evidence: one defect, narrow
       trigger, not scattered edge cases.
-- [x] ~~**Decide what to do with the 5.2.5 dispute.**~~ **Raised with the
-      SPP, 2026-08-21**, awaiting a reply.
+- [x] ~~**Decide what to do with the 5.2.5 dispute.**~~ **Done 2026-08-27:
+      the SPP answered, and it answered against us.** The parity is taken
+      on a numbering that skips players who have never been paired, not on
+      the TPN as C.04.2 Article 2 defines it. Both reference
+      implementations were right; Ainalrami was wrong, and has changed.
 
-      The question changed shape first, and for the better. C.04.3 was
-      rewritten on 1 February 2026: the old Article E.5 tested the parity
-      of a "pairing number", which A.2 defined as the initial ranking "and
-      subsequent modifications", while the new 5.2.5 tests a TPN and
-      Article 1.1 delegates that wholly to C.04.2 Article 2 - which allows
-      exactly two modifications and distinguishes nowhere between a player
-      who has played and one who has not.
+      The SPP's reasoning, quoted: *"Because of C.04.2:2.4 which states
+      'A Late Entry is a participant who is only taken into account for
+      the pairing of rounds after the first. If admitted to the
+      tournament, late entries receive no points for unplayed rounds ...
+      and are given an appropriate TPN and paired only when they actually
+      arrive.' ... players who have yet to arrive don't have a TPN."*
 
-      And JaVaFo, which PREDATES the rewrite, renumbers exactly as
-      bbpPairings and Gacrux do. So this is not two implementations
-      independently misreading a 2026 sentence; it is pre-2026 behaviour
-      carried forward into engines claiming the 2026 rules, which inverts
-      the strongest argument against this engine's reading. Three
-      implementations agreeing was evidence; shared lineage is not.
+      That is the same sentence this engine's case was built on. Our
+      reading was "the TPN exists before the arrival; it is the PAIRING
+      that waits." The SPP reads it as "no TPN until arrival." One clause,
+      two readings, and we took the wrong one. That is the single most
+      useful thing to carry out of this episode.
 
-      Letter in [docs/spp-question-initial-colour.md](docs/spp-question-initial-colour.md).
+      What follows is the position as it stood when the letter went out.
+      It is kept because it is why the question was asked; its conclusion
+      is superseded, and the shared-lineage argument in particular is
+      falsified - the three implementations agreed because they were
+      right, not because they inherited each other.
 
-      [docs/dispute-initial-colour.md](docs/dispute-initial-colour.md) is
-      written. It is the stronger of the two cases - it rests on a
-      definition quoted verbatim from C.04.2 rather than on an argument
-      about one position - and it affects two reference implementations at
-      once, which is worth weighing before raising it.
+      > The question changed shape first, and for the better. C.04.3 was
+      > rewritten on 1 February 2026: the old Article E.5 tested the parity
+      > of a "pairing number", which A.2 defined as the initial ranking "and
+      > subsequent modifications", while the new 5.2.5 tests a TPN and
+      > Article 1.1 delegates that wholly to C.04.2 Article 2 - which allows
+      > exactly two modifications and distinguishes nowhere between a player
+      > who has played and one who has not.
+      >
+      > And JaVaFo, which PREDATES the rewrite, renumbers exactly as
+      > bbpPairings and Gacrux do. So this is not two implementations
+      > independently misreading a 2026 sentence; it is pre-2026 behaviour
+      > carried forward into engines claiming the 2026 rules, which inverts
+      > the strongest argument against this engine's reading. Three
+      > implementations agreeing was evidence; shared lineage is not.
+      >
+      > [docs/dispute-initial-colour.md](docs/dispute-initial-colour.md) is
+      > written. It is the stronger of the two cases - it rests on a
+      > definition quoted verbatim from C.04.2 rather than on an argument
+      > about one position - and it affects two reference implementations at
+      > once, which is worth weighing before raising it.
+
+      The C.04.3 rewrite argument never reached the answer: the SPP
+      decided on C.04.2:2.4, which sits outside the rewrite entirely.
+      "The stronger of the two cases" also inverts - `seed735265` still
+      stands, with Gacrux backing us board for board, while this one
+      falls.
+
+      Letter as sent: [docs/spp-question-initial-colour.md](docs/spp-question-initial-colour.md).
+      The dispute write-up, now a record of a closed question:
+      [docs/dispute-initial-colour.md](docs/dispute-initial-colour.md).
 
 ## Deferred, deliberately
 

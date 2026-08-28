@@ -8,12 +8,16 @@
 #   5.2.2 grant the stronger; if both absolute, the wider colour difference
 #   5.2.3 alternate to the most recent round where one had White, other Black
 #   5.2.4 grant the higher ranked player's preference
-#   5.2.5 higher ranked player: odd TPN gets the initial colour, else opposite
+#   5.2.5 higher ranked player: odd number gets the initial colour, else opposite
+#         (the ARRIVAL number, not the TPN - SPP ruling of 2026-08-27; see
+#          docs/dispute-initial-colour.md)
 
 args = System.argv()
 count = args |> Enum.at(0, "40") |> String.to_integer()
 rounds = args |> Enum.at(1, "8") |> String.to_integer()
-exe = System.get_env("BBPPAIRINGS_EXE", "../openpairings/priv/bbppairings/bbpPairings-windows.exe")
+
+exe =
+  System.get_env("BBPPAIRINGS_EXE", "../openpairings/priv/bbppairings/bbpPairings-windows.exe")
 
 defmodule Probe do
   def colours(p), do: p.games |> Enum.filter(&(&1.result in ~w(1 = 0))) |> Enum.map(& &1.colour)
@@ -29,13 +33,26 @@ defmodule Probe do
     last2 = c |> Enum.reverse() |> Enum.take(2)
 
     cond do
-      c == [] -> {nil, "none (never played)"}
-      diff > 1 -> {"b", "ABSOLUTE (CD #{diff})"}
-      diff < -1 -> {"w", "ABSOLUTE (CD #{diff})"}
-      match?([x, x] when is_binary(x), last2) -> {invert(hd(last2)), "ABSOLUTE (same colour twice)"}
-      diff == 1 -> {"b", "strong (CD +1)"}
-      diff == -1 -> {"w", "strong (CD -1)"}
-      true -> {invert(hd(last2)), "mild (CD 0)"}
+      c == [] ->
+        {nil, "none (never played)"}
+
+      diff > 1 ->
+        {"b", "ABSOLUTE (CD #{diff})"}
+
+      diff < -1 ->
+        {"w", "ABSOLUTE (CD #{diff})"}
+
+      match?([x, x] when is_binary(x), last2) ->
+        {invert(hd(last2)), "ABSOLUTE (same colour twice)"}
+
+      diff == 1 ->
+        {"b", "strong (CD +1)"}
+
+      diff == -1 ->
+        {"w", "strong (CD -1)"}
+
+      true ->
+        {invert(hd(last2)), "mild (CD 0)"}
     end
   end
 

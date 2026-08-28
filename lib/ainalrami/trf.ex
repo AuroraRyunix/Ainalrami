@@ -115,8 +115,10 @@ defmodule Ainalrami.Trf do
     round_dates: "132",
     # TRF-2026's initial-piece-colour field: the colour drawn by lot before
     # round 1 (C.04.3 5.1), which 5.2.5 hands to the higher ranked player of
-    # a pair when neither holds a preference. Parsed as `"w"`/`"b"` into
-    # `tournament[:initial_colour]`.
+    # a pair when neither holds a preference - and hands them on the parity
+    # of their ARRIVAL NUMBER, not of their TPN, per the SPP's 2026-08-27
+    # ruling (see `Ainalrami.Pairing`'s `arrival_numbers/2`). Parsed as
+    # `"w"`/`"b"` into `tournament[:initial_colour]`.
     #
     # It was not read at all until 2026-08-17: the engine assumed White
     # unconditionally, so a file specifying Black was paired with every
@@ -1426,7 +1428,8 @@ defmodule Ainalrami.Trf do
   #
   # `white1`/`black1` is the same field as `152` (C.04.3 5.1: the colour
   # drawn by lot before round 1, which 5.2.5 hands to the higher ranked
-  # player of a pair when neither holds a preference). A file may carry
+  # player of a pair when neither holds a preference, on the parity of that
+  # player's arrival number rather than of their TPN). A file may carry
   # either spelling; unlike `142`/`XXR` these are not checked against each
   # other, because the reference does not check them either - it assigns as
   # it reads, so the later line simply wins, and that is what reading the

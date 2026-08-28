@@ -404,16 +404,111 @@ defmodule Ainalrami.TeamPairingTest do
     end
   end
 
+  # 4.3.1 is the team system's twin of the individual system's 5.2.5, and
+  # the FIDE Systems of Pairings and Programs Commission ruled on 2026-08-27
+  # that the parity is taken on a participant's position among those who
+  # have ARRIVED, not on the TPN Article 1.1 fixes. See
+  # `Ainalrami.TeamPairing.Colour`'s moduledoc and
+  # `Ainalrami.Pairing.arrival_numbers/2`.
+  #
+  # `Colour.allocate/3` given no `:parity_numbers` numbers the teams it was
+  # handed, which for a bare two-team call means 1 and 2. It deliberately
+  # does NOT fall back to the raw TPN - that is the overturned reading, and
+  # a fallback to it would be silent.
   describe "colour allocation (4.3)" do
-    test "4.3.1 - odd TPN takes the initial colour in round one" do
+    test "4.3.1 - arrival number 1 is odd and takes the initial colour" do
       {white, black} = Colour.allocate(team(1, mp: 1.0), team(4, mp: 0.0), initial_colour: :white)
       assert {white.tpn, black.tpn} == {1, 4}
     end
 
-    test "4.3.1 - even TPN takes the opposite" do
-      # First-team is 2 (higher score) and its TPN is even.
-      {white, black} = Colour.allocate(team(2, mp: 1.0), team(3, mp: 0.0), initial_colour: :white)
-      assert {white.tpn, black.tpn} == {3, 2}
+    test "4.3.1 - an even arrival number takes the opposite" do
+      # Four teams on the roster; the pair under test is 3 v 5, and the
+      # numbering over the roster is 1->1, 3->2, 5->3, 7->4.
+      #
+      # Every team on the roster is numbered, including TPN 1, which is not
+      # in the pair under test and has no match history at all (`team/2`
+      # sets `:match_points` but leaves `:colours` empty, so
+      # `Team.matches_played/1` is 0 for it). That is not an oversight: the
+      # team numbering filters on ROSTER MEMBERSHIP alone, where the
+      # individual numbering filters on having ever been paired. For a team
+      # that is present, membership is the same answer - the two only part
+      # company for a team that is ABSENT, which the moduledoc of
+      # `Ainalrami.TeamPairing.Colour` records as a defect and the test two
+      # below pins.
+      #
+      # First-team is 3 (higher score), whose arrival number is 2 - even -
+      # so it takes the opposite of the initial colour. Under the overturned
+      # reading TPN 3 is odd and would have taken White, so this board is
+      # the one the ruling moved.
+      teams = [team(1, mp: 1.0), team(3, mp: 1.0), team(5, mp: 0.0), team(7, mp: 0.0)]
+      numbers = Colour.parity_numbers(teams)
+
+      {white, black} =
+        Colour.allocate(team(3, mp: 1.0), team(5, mp: 0.0),
+          initial_colour: :white,
+          parity_numbers: numbers
+        )
+
+      assert {white.tpn, black.tpn} == {5, 3}
+    end
+
+    test "4.3.1 - a team that is not on the roster is not numbered, and shifts everyone below" do
+      # The same pair, 3 v 5, with TPN 1 absent from the roster entirely -
+      # a team that has NEVER arrived. The numbering becomes 3->1, 5->2,
+      # 7->3, so first-team 3 is now odd and the board flips.
+      #
+      # This is the whole content of the ruling for the team system: which
+      # teams are numbered depends on who is present, and everyone below a
+      # missing team moves. For the never-arrived team it is also the right
+      # answer; the test below is the same code path giving the wrong one.
+      teams = [team(3, mp: 1.0), team(5, mp: 0.0), team(7, mp: 0.0)]
+
+      {white, black} =
+        Colour.allocate(team(3, mp: 1.0), team(5, mp: 0.0),
+          initial_colour: :white,
+          parity_numbers: Colour.parity_numbers(teams)
+        )
+
+      assert {white.tpn, black.tpn} == {3, 5}
+    end
+
+    test "4.3.1 - KNOWN DEFECT: an arrived-then-absent team gives its number back" do
+      # Pins the divergence from the individual rule that
+      # `Ainalrami.TeamPairing.Colour`'s moduledoc records. This asserts
+      # what the engine DOES, not what C.04.6 should say; when
+      # `pair_round/2` grows a way to name an absent team, this is the test
+      # that fails and names the decision.
+      #
+      # TPN 1 arrived in round 1 and took the pairing-allocated bye, so it
+      # has `had_pab?` set and `Team.matches_played/1` of 0 - arrived, with
+      # nothing in `:colours` to prove it. It is absent this round, which a
+      # host can only express by leaving it out of the list handed to the
+      # pairer.
+      absent = team(1, pab: true)
+      present = [team(3, mp: 1.0), team(5, mp: 0.0), team(7, mp: 0.0)]
+
+      # What the individual rule would give: an arrived player stays
+      # numbered while absent (`Pairing.arrived_for?/2`'s second clause), so
+      # first-team 3 would be number 2 - even - and would take Black.
+      assert Colour.parity_numbers([absent | present])[3] == 2
+
+      # What this engine gives: TPN 1 is not in the list, so 3 is number 1 -
+      # odd - and takes White. Indistinguishable from the never-arrived case
+      # above, because the only difference between them is a struct the
+      # pairer was never handed.
+      assert Colour.parity_numbers(present)[3] == 1
+
+      {white, black} =
+        Colour.allocate(team(3, mp: 1.0), team(5, mp: 0.0),
+          initial_colour: :white,
+          parity_numbers: Colour.parity_numbers(present)
+        )
+
+      assert {white.tpn, black.tpn} == {3, 5}
+    end
+
+    test "parity_numbers/1 walks ascending TPN and numbers from one" do
+      assert Colour.parity_numbers([team(7), team(2), team(5)]) == %{2 => 1, 5 => 2, 7 => 3}
     end
 
     test "4.3.1 respects a Black initial colour" do

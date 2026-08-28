@@ -13,12 +13,26 @@ defmodule Ainalrami.MidRoundBracketTest do
   regulations define no ordering over those (see
   `docs/conformance-c0403-2026.md`).
 
-  So a middle bracket has been verified only through the corpus. That was
-  always the weakest link in the conformance story, and the 5.2.5 finding
-  sharpened why: **agreement with a reference is only as good as the
-  reference**, and bbpPairings demonstrably carries pre-2026 behaviour on
-  at least one article. "We match bbpPairings" is not the same claim as
-  "we follow the regulation".
+  So a middle bracket has been verified only through the corpus, and that
+  is the weakest link in the conformance story: **agreement with a
+  reference is only as good as the reference**. "We match bbpPairings" and
+  "we follow the regulation" are different claims, and no corpus, at any
+  size, can establish the second one.
+
+  That general point used to be argued here from a specific example -
+  Article 5.2.5, on the reading that bbpPairings carried pre-2026 behaviour
+  there. **The example is withdrawn.** The FIDE Systems of Pairings and
+  Programs Commission ruled on 2026-08-27 that 5.2.5's parity is taken on a
+  numbering that skips players who have never been paired, which is what
+  bbpPairings and Gacrux already did and what this engine had wrong. The
+  three engines did not agree out of shared lineage; they agreed because
+  they were right and we were not. No article is known to be stale in
+  bbpPairings.
+
+  The reason for the caution is unchanged, and the ruling sharpens it in
+  the other direction: a *disagreement* with a reference is no more
+  self-certifying than an agreement with one. Both send you to the article
+  text, which is what the two checks below do instead.
 
   ## What this file can and cannot check
 

@@ -123,12 +123,12 @@ quiet, it propagates.
 
 | article | rule | implementation | verdict |
 |---|---|---|---|
-| 5.1 | The initial colour is decided by lot, then alternates down the initial ranking | TRF header `152`, read by `Ainalrami.Trf`; `assign_colour_round_one/2` alternates on parity of rank | exact |
+| 5.1 | The initial colour is decided by lot, then alternates down the initial ranking | TRF header `152`, read by `Ainalrami.Trf`; `assign_colour_round_one/3` alternates on the parity of the number note 5 describes | exact |
 | 5.2.1 | Grant both preferences where they differ | first clause of the `preference` ladder | exact |
 | 5.2.2 | Grant the stronger preference; if both absolute, the wider colour difference | `absolute?`/`strong?` comparison | exact |
 | 5.2.3 | Alternate to the most recent round in which one had White and the other Black | walks both colour histories back in step | exact |
 | 5.2.4 | Grant the higher-ranked player's preference | ranked per Article 1.2: `{-points, rank}` | exact - see note 4 |
-| 5.2.5 | Otherwise: the higher-ranked player takes the initial colour if their TPN is odd, the opposite if even | `assign_colour_round_one/2` on `rem(top.rank, 2)` against the `152` header | exact - see note 5 |
+| 5.2.5 | Otherwise: the higher-ranked player takes the initial colour if their number is odd, the opposite if even - and per the SPP the number is a numbering of the players who have arrived, not the TPN | `assign_colour_round_one/3` on `rem(top_number, 2)`, `top_number` from `arrival_numbers/2`, against the `152` header | exact since 2026-08-27 - was a divergence before it, see note 5 |
 
 **4 - 5.2.4 ranks by Article 1.2, not by starting rank.** "Higher ranked"
 throughout C.04.3 means the 1.2 order - score first, then TPN ascending -
@@ -136,36 +136,105 @@ not the initial seeding. The comparison is on the tuple `{-points, rank}`
 so a higher score outranks a lower TPN, which is the article's order and
 not the file's.
 
-**5 - 5.2.5's parity is taken on the TPN, and the TPN is fixed.** The
-article defers the term to C.04.2 Article 2, which assigns a TPN from the
-initial ranking and moves it for exactly two reasons: a correction to the
-ranking data (barred after round four) and the closing of the participant
-list after late entries. Nothing renumbers TPNs around players who are not
-paired in a given round.
+**5 - 5.2.5's parity is NOT taken on the TPN. This engine had it wrong
+until 2026-08-27.** The question was put to the FIDE Systems of Pairings
+and Programs Commission, and it answered against this engine:
 
-Both reference implementations renumber anyway, and - measured both ways
-round with `tools/rip_probe.exs` - they draw the same line: they skip
-players who have **never participated**, and not players who have played
-and are merely absent this round. On a complete field all three engines
-agree, because the two numberings coincide; they diverge once somebody has
-been registered without ever being paired.
+> Because of C.04.2:2.4 which states "A Late Entry is a participant who is
+> only taken into account for the pairing of rounds after the first. If
+> admitted to the tournament, LATE ENTRIES receive no points for unplayed
+> rounds … and ARE GIVEN AN APPROPRIATE TPN AND PAIRED ONLY WHEN THEY
+> ACTUALLY ARRIVE." … players who have yet to arrive don't have a TPN.
 
-This engine follows the article, and **that is deliberate and is not going
-to be changed to match**. Gacrux does not break the tie here, as it does
-in `dispute-seed735265.md`: it renumbers with bbpPairings.
+So the parity is taken on a numbering that runs over the players who have
+arrived and skips those who never have. That is what the code does now:
+`arrival_numbers/2` in `lib/ainalrami/pairing.ex` walks the field in
+ascending starting rank and hands out consecutive integers to exactly the
+arrivals, and `assign_colour_round_one/3` takes the parity of that number.
+A player who has not arrived receives no number at all - they are absent
+from the map, not numbered late, which is the SPP's construction rather
+than a renumbering of anybody's TPN.
 
-The references' reading is not unreasonable - 2.5 makes TPNs provisional
-until the participant list closes, and a player who never turned up is
-arguably not on it. What decides it the other way is 2.4: a late entry is
-*"given an appropriate TPN and paired only when they actually arrive"*, so
-the TPN exists before the arrival and it is the pairing that waits. The
-full argument, the handbook text and the measured scale are in
-[dispute-initial-colour.md](dispute-initial-colour.md).
+**What "arrived" means, exactly, because the record is read as the
+specification.** For round R a player is numbered if either they are in
+round R's pairing pool - so someone who enters the pool and leaves it with
+the pairing-allocated bye rather than an opponent still counts - or some
+game of theirs before round R participated in a pairing, meaning it
+records a real opponent, or a `U`, or a `+`. The discriminator is the
+RESULT CODE and not the score, and the pair that shows it is `U` against
+`F`: both are worth a full point and only `U` counts, because only `U` is
+a bye the pairing allocated. `H`, `Z`, `F`, a `-` with no opponent, and a
+blank round do not count; a `-` WITH an opponent does, because the pairing
+seated that board.
+
+**The crux is that both sides argued from the same sentence.** C.04.2:2.4
+is the clause this record used to cite for the opposite conclusion: a late
+entry is *"given an appropriate TPN and paired only when they actually
+arrive"*, from which this project read "the TPN exists before the arrival;
+it is the pairing that waits". The SPP reads the identical clause as "no
+TPN until arrival". We read it the wrong way round. That is worth more to
+a future reader than the outcome is: the sentence is genuinely ambiguous
+on its face, and the authority that owns it has now disambiguated it.
+
+The superseded argument, in full, so nobody re-derives it: C.04.3 defers
+the term to C.04.2 Article 2, which assigns a TPN from the initial ranking
+and moves it for exactly two reasons - a correction to the ranking data
+(barred after round four) and the closing of the participant list after
+late entries - and nothing there renumbers a TPN around a player who is
+not paired in a given round. The premise the ruling denies is the
+unstated one: that every registered player holds a TPN in the first
+place. Marked superseded, kept in place.
+
+**What this note got right, and what it is worth keeping for.** Both
+reference implementations draw the *same* line, and - measured both ways
+round with `tools/rip_probe.exs` - they skip players who have **never
+participated**, and not players who have played and are merely absent this
+round. That statement was correct when it was written and is correct now;
+it is the specification the fix was built to. Gacrux does not break the
+tie here, as it does in `dispute-seed735265.md`: it renumbers with
+bbpPairings, and the SPP has since said both were right to.
+
+**The second retraction, and it is the worse of the two.**
+`docs/dispute-initial-colour.md` claimed the two references renumber
+differently from EACH OTHER - bbpPairings around anyone absent this round,
+Gacrux only around players who have never played - and concluded that "so
+agreeing with the references is not even a well-defined target". The claim
+was false when it was written. It was the pre-probe hypothesis
+`tools/rip_probe.exs` was built to test, stated as a finding without being
+measured; the probe refuted it in that same document's own evidence
+section, and the paragraph above this one has said the opposite since the
+day it was added. Re-confirmed 2026-08-27 against the local binary. It was
+load-bearing in three places - the decision not to fix, the README's
+summary of the dispute, and a deliberately weakened classifier in the
+three-way harness. It is dead twice over: refuted by measurement at the
+time it was made, and moot since the ruling, because matching the
+references exactly is now the requirement.
+
+The two retractions are different in kind and both are worth carrying.
+The first is a rule this project read backwards from a genuinely ambiguous
+sentence. The second is a statement this project never measured, published
+as a finding, and then kept after its own evidence refuted it.
+
+On a complete field all three engines always agreed, because the two
+numberings coincide; they diverged once somebody had been registered
+without ever being paired. After the fix they should not diverge at all.
+**Should**, not do: the fix is verified at small scale - 60 bye-heavy
+tournaments, 27 colour disagreements against bbpPairings under the old
+reading and 0 under the new - but the corpus has not been re-run, so the
+six-million-board figures quoted in `docs/validation.md` still count these
+boards as a dispute. They are defects, and the re-measurement is pending.
 
 Note that colour never affects *who plays whom*: it is decided after the
 pairing, so a divergence here cannot produce a different set of boards,
-only a different side allocation on one of them. Every axis measured for
-this dispute reports 100.00% pairing agreement and zero illegal rounds.
+only a different side allocation on one of them. That bounds the damage of
+this defect: every axis measured while it was live still reports 100.00%
+pairing agreement and zero illegal rounds.
+
+The full history, the handbook text and the measured scale are in
+[dispute-initial-colour.md](dispute-initial-colour.md) - kept as a
+superseded record, not a live dispute. Its conclusion is the one the SPP
+overturned, and its "not a well-defined target" claim is the one refuted
+above.
 
 ## Bracket construction and the candidate sequence (Articles 3 and 4)
 

@@ -114,7 +114,7 @@ three it could never have been the thing that found them.
 **The limit of all of it.** Every one of those 2.5 billion pairings is
 measured against a SINGLE oracle, and agreement with one reference cannot
 detect a rule both engines read the same wrong way. The only instrument
-that can is the three-way harness, and it has run over 3,352 rounds - see
+that can is the three-way harness, and it has run 649,207 rounds - see
 [The references](#the-references) for what that does and does not bound.
 
 ## The corpus
@@ -225,11 +225,45 @@ two-way harness. It now carries three pairwise colour rates over the boards
 each PAIR of engines both formed.
 
 **6,242,974 boards.** Ainalrami against bbpPairings: 6,178,843 agreed,
-64,131 differing and **every one of them explained by the known Article
-5.2.5 dispute. Zero unexplained.** That is the strongest statement this
-project has about Article 5: on six million boards, this engine's only
-colour differences from the reference are the one divergence it documents,
-argues for, and has raised with the SPP.
+64,131 differing, every one of them falling under what was then the open
+Article 5.2.5 dispute.
+
+#### Those figures describe behaviour that has been removed
+
+**They are the last actual measurement, and they are superseded.** On
+2026-08-27 the FIDE Systems of Pairings and Programmes Commission answered
+the question this project had put to it, and answered it against this
+engine: Article 5.2.5's parity is taken on a numbering that skips players
+who have never been paired, not on the TPN as C.04.2 Article 2 defines it.
+Both references were right. Ainalrami was wrong.
+
+The crux is that both sides argued from the same sentence. C.04.2:2.4 says
+a late entry is *"given an appropriate TPN and paired only when they
+actually arrive."* This project read that as: the TPN exists before the
+arrival, and it is the PAIRING that waits. The SPP reads the identical
+clause as: players who have yet to arrive don't have a TPN. We read it the
+wrong way round. The reasoning is kept in full in
+[dispute-initial-colour.md](dispute-initial-colour.md), marked as
+superseded rather than deleted, because it is why the engine behaved this
+way for months.
+
+So the 64,131 are not 64,131 documented divergences. They are 64,131 boards
+on which this engine was wrong. The claim that used to stand here - that
+this was the strongest statement the project had about Article 5 - is
+withdrawn outright.
+
+#### The re-measurement is PENDING, and no zero has been observed
+
+The engine now numbers the way the references do. The corpus has **not**
+been re-run. The expectation is that the same 6,242,974 boards come back
+6,242,974 agreed and zero differing, since the one documented cause of the
+64,131 has been removed - but that is an EXPECTATION, not a measurement,
+and this project has been burned by carried-forward numbers before. No zero
+appears on this page until one has been observed.
+
+Until the re-run, the honest statement of this engine's colour agreement
+with bbpPairings at scale is: **unmeasured on the current engine.** The
+figure that stands is the superseded one above.
 
 **And the two references contradict each other.** On the forfeit axis and
 on the combined axis, one board each where bbpPairings and Gacrux disagree
@@ -237,13 +271,20 @@ about who is White, outside 5.2.5's reach - so on Articles 5.2.1 to 5.2.4,
 which nobody disputes. In both, Ainalrami agrees with bbpPairings and
 Gacrux is alone.
 
+**The ruling does not touch those two boards and does not resolve them.**
+They fall outside 5.2.5 by construction, which is why they were reported
+separately in the first place; they are still open, still unadjudicated,
+and the re-run above will not close them.
+
 Two boards in 6.2 million is a rate of 3.2e-5%, and it is not zero. Nobody
 had measured it before, because measuring it needs an instrument that
 compares two references to each other rather than both to the engine under
 test. Both positions are worth reading; see the note in TODO.md.
 
 The rule-of-three bound on the references' true colour-disagreement rate is
-now about **3e-4%** per axis, computed over boards rather than rounds.
+now about **3e-4%** per axis, computed over boards rather than rounds. That
+bound is also unaffected by the ruling: it is measured between the two
+references, and neither of them changed.
 
 ### The exhaustion probe (2026-08-27)
 
@@ -363,8 +404,13 @@ axes stopped being unaffordable.
   600 tournaments in the previous corpus - the dimension that was
   thinnest is now among the thickest, which matters because the local
   graph only engages on brackets big enough to qualify.
-- **A Black-drawn-first axis**, exercising the 5.2.5 reading this engine
-  settles against both references.
+- **A Black-drawn-first axis**, exercising the half of Article 5.2.5 that
+  hands out the *opposite* colour. (This bullet used to say the axis
+  exercised "the 5.2.5 reading this engine settles against both
+  references". There is no such reading: the SPP ruled on 2026-08-27 that
+  the references were right. The axis is worth exactly as much as it always
+  was - it is about which colour the draw hands out, not about which number
+  the parity is taken on - but the justification was wrong.)
 
 ### The two disagreements
 
@@ -388,6 +434,14 @@ position in `test/fixtures/fe1_disputes/README.md`, and pinned by
 **11,000 tournaments / 69,038 rounds / 680,022 individual pairings, at
 100.00% with zero illegal rounds, zero refusals and zero unexplained
 colour differences.**
+
+**Read "zero unexplained" with the 2026-08-27 ruling in mind.** That figure
+was computed with a colour split that filed every Article 5.2.5 board under
+a known dispute and counted only the remainder. The SPP has since ruled
+that dispute against this engine, so boards the split absorbed as
+*explained* are now known to have been defects. The pairing figure -
+100.00%, zero illegal, zero refusals - is untouched; colour on this axis is
+pending re-measurement like every other colour figure on this page.
 
 | axis | rounds | individual pairs |
 |---|---|---|
@@ -608,31 +662,93 @@ were found *by* fixing the instrument rather than by the instrument:
   measured until `colour_mismatches/5` was added - 4.3 million tournaments
   and 195 million pairings had validated who plays whom and never once
   checked Article 5. Turning it on immediately found a missing 5.2.4 and
-  then the 5.2.5 dispute below.
+  then the 5.2.5 divergence below - which was argued as a dispute for ten
+  days and then ruled a defect in this engine.
 
-### Colour is measured separately, and split by cause
+### Colour is measured separately, and is no longer split by cause
 
 Colour differences are counted apart from pairing differences, because
 they fail for different reasons: a colour difference on an otherwise
-identical round is not the same finding as a different round.
+identical round is not the same finding as a different round. That part
+stands.
 
-They are then split again, into the known
-[Article 5.2.5 dispute](dispute-initial-colour.md) and **unexplained**.
-Without that split the dispute's volume - hundreds of boards per few
-hundred bye-heavy tournaments - would bury a real colour regression
-completely.
+**What has been removed is the second split**, wherever one of the two
+answers being compared is this engine's. In the two-way harness
+`colour_mismatches/5` no longer returns a `colour_disputed` count and
+`report/4` no longer prints one; comparison against bbpPairings is flat
+equality, and a board where this engine names a different White is a
+mismatch, counted as one, with no bucket to fall into. In the three-way
+harness the `:conformance` classification is gone from both comparisons
+that have this engine on one side, so their report line reads
+`expected (none are)` - the count is structurally zero rather than
+observed to be zero.
 
-A board is filed under the dispute when 5.2.5 is what decides it (neither
-player holds any colour preference) **and this engine's answer is the one
-the article gives**. That deliberately tests our own conformance rather
-than matching a model of bbpPairings' internals: an earlier version did
-the latter and mis-filed a genuine case, because predicting the
-references' numbering means implementing a rule this project rejects -
-twice, and in a test.
+**Why the split existed.** Until 2026-08-27 this engine took Article
+5.2.5's parity on the TPN and both references took it on a numbering that
+skips players who have never been paired, so every board 5.2.5 decided on
+a field where somebody had sat out differed by construction - hundreds of
+boards per few hundred bye-heavy tournaments, 64,131 across the six-million
+run. That volume would have buried a real colour regression completely, so
+boards were sorted into the known
+[Article 5.2.5 divergence](dispute-initial-colour.md) and **unexplained**,
+and only the second number was watched.
 
-The axes without byes are the control that makes the rest meaningful:
-plain, forfeit, `XXP` and Baku runs report **zero** colour differences,
-so this is not a general disagreement about Article 5.
+The predicate did the sorting by asking whether 5.2.5 was what decided the
+board (neither player holds a colour preference) **and this engine's answer
+was the one the article gives**. That was deliberately a conformance test
+rather than a model of bbpPairings' internals - an earlier version did the
+latter and mis-filed a genuine case.
+
+**Why it no longer does.** The SPP ruled the numbering question against
+this engine, the allocation now uses the references' numbering, and the
+predicate inverts with it: "the answer the article gives" is now the
+references' answer, so the old test would file correct boards as divergent
+and incorrect ones as unexplained. Worse, once we implement the same rule the
+bucket degenerates into "a board where we differ from the reference is
+explained by our differing from the reference" - a tautology that would
+swallow real regressions. A bucket labelled *expected* that nothing may
+legitimately land in is a hiding place, so it is deleted rather than
+zeroed.
+
+**What survives, and only where neither side is this engine.** The
+three-way harness still classifies one of its three comparisons -
+bbpPairings against Gacrux - under a mode named `:reach`, and the claim it
+makes is deliberately the weaker half of the old one. `:conformance` asked
+whether 5.2.5 decided the board **and** this engine's answer was the
+article's. `:reach` asks only the first: that neither player held a colour
+preference, so 5.2.5 is what the board turned on. No conformance claim is
+available on a board this engine formed neither answer to, and the report
+prints the weaker word for it - those boards are "within 5.2.5's reach",
+not a confirmed anything. That is the only surviving classification of a
+colour difference anywhere in the harnesses.
+
+**`:reach` was kept for the wrong reason for ten days, and that is worth
+recording.** The justification in the harness used to be that the two
+references renumber differently from each other, so a field where somebody
+who HAS played sits out could still split them - which would have made
+`:reach` a real distinction. That claim was false when it was written. It
+came from `docs/dispute-initial-colour.md`, where it was the pre-probe
+hypothesis stated as a finding, and `tools/rip_probe.exs` refuted it in
+that same document's own evidence section: when the absent player has
+already played, all three engines answer alike and nobody renumbers.
+Re-confirmed 2026-08-27 against the local binary. `:reach` survives on the
+correct and much smaller ground above - that a reference-against-reference
+board admits no claim about this engine's conformance - and not on a
+difference between the references that does not exist.
+
+**What that costs and what it buys.** It costs the historical figures on
+this page their meaning: any "zero unexplained" computed with the bucket in
+place excluded boards now known to be defects, and is annotated as such
+wherever it appears above. It buys a colour number with nothing subtracted
+from it. That number has not been measured yet - see "The re-measurement is
+PENDING" above.
+
+The axes without byes were the control that made the rest meaningful:
+plain, forfeit, `XXP` and Baku runs report **zero** colour differences, so
+the divergence was never a general disagreement about Article 5. That
+measurement holds, and the control's job is over: if the fix is right, the
+bye-heavy axes join the control at zero and it stops separating anything.
+Whether they do is exactly what the pending re-run answers.
 
 The adjudication tables in [engineering-log.md](engineering-log.md) were
 produced with the blank float history and have **not** been re-run. They
@@ -689,7 +805,14 @@ Stated so the claim's boundary is explicit:
 - **Team tournaments and late entrants**, and files where `rounds_count`
   disagrees with `XXR`. The harness generates none of these; see
   [TODO.md](../TODO.md). Late entrants are the one of the three that a
-  normal club event actually produces.
+  normal club event actually produces - and since 2026-08-27 they are a
+  priority rather than a footnote, because the late entrant is exactly the
+  construct the SPP's ruling turns on. C.04.2:2.4 is a rule *about* late
+  entries, the numbering it settles only moves when somebody is registered
+  and not yet paired, and no corpus on this page has ever generated one.
+  The engine's new numbering is pinned by unit tests and by a small
+  bye-heavy probe against the real binary; it is not pinned by any axis
+  that produces the construct the rule is written for.
 - ~~**Non-default point configuration**~~ - **covered, and it was worth
   it.** `PAIRING_FUZZ_POINT_SYSTEM` now generates `BB*` lines across seven
   named systems (half-point bye, doubled, football 3-1-0, paid loss, paid

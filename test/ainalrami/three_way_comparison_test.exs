@@ -131,17 +131,25 @@ defmodule Ainalrami.ThreeWayComparisonTest do
   running this for is **bbpPairings vs Gacrux**. Every colour figure in this
   project is quoted against one reference or the other, so the distance
   between the two references is the accuracy those figures actually carry -
-  and nothing had ever measured it. `docs/dispute-initial-colour.md`
-  already predicts it is not zero: bbpPairings renumbers TPNs around anyone
-  not paired in the current round, Gacrux only around players who have
-  never played, so a field where somebody who HAS played sits out can split
-  them. Predicting is not measuring.
+  and nothing had ever measured it.
 
-  Differences are split the way the two-way harness splits them - a board
-  Article 5.2.5 decides is the known dispute and is expected, anything else
-  is a finding - but the split is deliberately weaker for the reference
-  pair than for this engine. See `explained_by_article_5_2_5?/4` for why
-  making it stronger would file real dispute boards as findings.
+  An earlier version of this moduledoc predicted it was not zero, on the
+  grounds that the two references renumber differently from each other -
+  bbpPairings around anyone absent this round, Gacrux only around players
+  who have never played. That claim was false when it was written.
+  `tools/rip_probe.exs` had already refuted it: when the absent player has
+  played, all three engines answer alike. See the note above
+  `explained_by_article_5_2_5?/4`, and `docs/dispute-initial-colour.md`,
+  which records the retraction. The reason to run this comparison is simply
+  that nobody had ever measured the two references against each other, not
+  that a split was predicted.
+
+  Differences against THIS ENGINE are no longer split at all: the SPP ruled
+  on 2026-08-27 that 5.2.5's parity is taken on the arrival numbering rather
+  than on the fixed TPN, this engine now does that, and so a colour
+  difference against either reference has nothing left to be except a
+  finding. The `bbpPairings vs Gacrux` row keeps its weaker split, because
+  what it measures is not settled. See `explained_by_article_5_2_5?/4`.
 
   None of this can fail a run. The assertions below are untouched and the
   composition rates still measure exactly what they measured before: a
@@ -399,9 +407,8 @@ defmodule Ainalrami.ThreeWayComparisonTest do
 
     %{
       bbp_gac: colours_between({"bbpPairings", "Gacrux"}, bbp, gac, by_rank, :reach, where),
-      ours_bbp:
-        colours_between({"Ainalrami", "bbpPairings"}, ours, bbp, by_rank, :conformance, where),
-      ours_gac: colours_between({"Ainalrami", "Gacrux"}, ours, gac, by_rank, :conformance, where)
+      ours_bbp: colours_between({"Ainalrami", "bbpPairings"}, ours, bbp, by_rank, :none, where),
+      ours_gac: colours_between({"Ainalrami", "Gacrux"}, ours, gac, by_rank, :none, where)
     }
   end
 
@@ -441,10 +448,12 @@ defmodule Ainalrami.ThreeWayComparisonTest do
       Enum.split_with(both_formed, fn {w, b} -> MapSet.member?(theirs, {b, w}) end)
 
     # Split the differences into the one there is a diagnosis for and
-    # everything else. Without it the known dispute's volume - the two-way
-    # harness measures nearly two thousand boards per six hundred bye-heavy
-    # tournaments - buries a genuine colour regression completely, which is
-    # why a bare count is a weak instrument.
+    # everything else. The two-way harness used to need this badly: the
+    # 5.2.5 dispute put nearly two thousand boards per six hundred bye-heavy
+    # tournaments into the "differs" column, which buried any genuine colour
+    # regression. That bucket is gone since the SPP ruling, so what is left
+    # here is the reference-against-reference case, where the split still
+    # separates "5.2.5 decided this board" from a finding needing a look.
     {disputed, unexplained} =
       Enum.split_with(reversed, &explained_by_article_5_2_5?(&1, by_rank, where.round, mode))
 
@@ -458,54 +467,66 @@ defmodule Ainalrami.ThreeWayComparisonTest do
     }
   end
 
-  # Is this board one Article 5.2.5 decides - and, when one of the two
-  # engines is this one, did THIS ENGINE apply it?
+  # Is this board one there is an expected explanation for?
   #
   # 5.2.5 is the last resort, reached only when neither player holds a
   # colour preference at all, which per Article 1.7.4 means neither has ever
-  # played a game with a colour. It hands the initial colour to the higher
-  # ranked player on an odd TPN.
-  #
-  # C.04.2 Article 2 fixes a TPN for the tournament and provides nothing
-  # that renumbers it around players who are not paired in a round. Both
-  # references renumber anyway, so every board 5.2.5 decides on a field
-  # where somebody has sat out is expected to differ - see
-  # `docs/dispute-initial-colour.md`.
+  # played a game with a colour.
   #
   # Two modes, and the gap between them is the honest part of this port.
   #
-  # `:conformance` is the two-way harness's rule unchanged: 5.2.5 decides
-  # the board AND this engine's answer is the article's. Phrased as "did
-  # this engine follow the article", never as "does the reference's answer
-  # match a model of its internals" - an earlier version of that harness did
-  # the latter and mis-filed a real case, because predicting a reference's
-  # numbering means implementing a rule this project does not believe in.
+  # `:none` is used wherever ONE SIDE IS THIS ENGINE, and it explains
+  # nothing. Until 2026-08-28 those two comparisons ran a `:conformance`
+  # mode: 5.2.5 decides the board AND this engine's answer is the article's,
+  # where "the article" meant a model of this engine's reading of it - the
+  # parity of the fixed TPN. The SPP settled that reading against us on
+  # 2026-08-27 and this engine now takes the parity of the arrival numbering,
+  # which is what both references do, so `:conformance` would have become
+  # flat equality: a board where we differ from a reference would be
+  # "explained" by our differing from it. That is not an explanation, it is
+  # a tautology that swallows regressions, so the bucket is gone rather than
+  # left to report zero.
   #
   # `:reach` is all that survives when NEITHER side is this engine. On a
-  # bbpPairings-vs-Gacrux board there is no conformance to test without
-  # modelling both references' numbering - the banned thing, twice - so the
-  # test is only that 5.2.5 is what decides the board. That is a weaker
-  # claim and it is reported under a weaker word: those boards are "within
-  # 5.2.5's reach", not "the known dispute confirmed".
+  # bbpPairings-vs-Gacrux board there is no claim to make about THIS
+  # engine's conformance - it formed neither answer - so the test is only
+  # that 5.2.5 is what decides the board. That is a weaker claim and it is
+  # reported under a weaker word: those boards are "within 5.2.5's reach",
+  # not a confirmed anything.
   #
-  # Weaker on purpose, not by omission. The references do not renumber the
-  # same way as each other, so on one board the article, bbpPairings and
-  # Gacrux can name three different TPNs whose parities all differ, and
-  # every one of the three answers is the known dispute. Any stronger test -
-  # "at least one of them gave the article's answer", say - would file
-  # exactly those boards as unexplained findings, which is the failure mode
-  # `docs/dispute-initial-colour.md` records the two-way harness already
-  # having once.
-  defp explained_by_article_5_2_5?({white, black}, by_rank, round, mode) do
+  # An earlier version of this comment justified `:reach` differently, by
+  # claiming the two references renumber differently FROM EACH OTHER -
+  # bbpPairings around anyone absent this round, Gacrux only around players
+  # who have never played - so that a field where somebody who HAS played
+  # sits out could still split them. That claim was false when it was
+  # written. It was the hypothesis `tools/rip_probe.exs` was built to test,
+  # and the probe refuted it: when the absent player has already played,
+  # all three engines answer alike and nobody renumbers. Re-confirmed
+  # 2026-08-27 against the local bbpPairings binary. It survived in prose
+  # anyway, in `docs/dispute-initial-colour.md` and from there into this
+  # harness, where it justified keeping a weaker instrument.
+  #
+  # So `:reach` is not kept because the references might still split. It is
+  # kept because a weaker word is the honest one for a board this engine did
+  # not form.
+  #
+  # It can now be STRENGTHENED, and should be. The ruling fixed what the
+  # article's answer is, and computing it is no longer "modelling a
+  # reference's internals" - it is applying the rule all three engines now
+  # implement, this one included. That turns these boards back into a real
+  # conformance test OF THE REFERENCES, which is the only instrument that
+  # has ever caught them contradicting each other. Left for the corpus
+  # re-run, where it can be measured rather than asserted. See TODO.md.
+  defp explained_by_article_5_2_5?({white, black}, by_rank, _round, mode) do
     a = Map.get(by_rank, white)
     b = Map.get(by_rank, black)
 
     cond do
+      mode != :reach -> false
       is_nil(a) or is_nil(b) -> false
       not ColourArticle.no_colour_preference?(a) -> false
       not ColourArticle.no_colour_preference?(b) -> false
-      mode == :reach -> true
-      true -> white == ColourArticle.white_by_5_2_5(a, b, round)
+      true -> true
     end
   end
 
@@ -698,8 +719,8 @@ three-way comparison over #{n} compared round(s):
   colours - who is WHITE, over the boards each pair of engines BOTH formed:")
 
     IO.puts(colour_line("bbpPairings vs Gacrux       ", bbp_gac, "within 5.2.5's reach"))
-    IO.puts(colour_line("Ainalrami   vs bbpPairings  ", ours_bbp, "by the 5.2.5 dispute"))
-    IO.puts(colour_line("Ainalrami   vs Gacrux       ", ours_gac, "by the 5.2.5 dispute"))
+    IO.puts(colour_line("Ainalrami   vs bbpPairings  ", ours_bbp, "expected (none are)"))
+    IO.puts(colour_line("Ainalrami   vs Gacrux       ", ours_gac, "expected (none are)"))
 
     references_worst_warning(bbp_gac, [ours_bbp, ours_gac])
     unexplained_warning(bbp_gac, ours_bbp, ours_gac)
@@ -768,7 +789,7 @@ three-way comparison over #{n} compared round(s):
     if total > 0 do
       IO.puts("
     !! #{total} board(s) where two engines agreed on WHO plays whom and then
-       disagreed on who is WHITE, NOT explained by the known 5.2.5 dispute.
+       disagreed on who is WHITE.
        Article 5 is a real conformance surface and every rate above it is
        blind to it. Re-run with COLOUR_DEBUG=1 to print each board and both
        players' full colour histories.")

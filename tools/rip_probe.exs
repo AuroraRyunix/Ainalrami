@@ -1,11 +1,23 @@
 # Does Gacrux renumber around a player who has ALREADY PLAYED but is
 # sitting this round out?
 #
-# Its condition is `rfp or rip` - ready for pairing now, OR paired at some
-# point before - which reads as "renumber only around players who have
-# never participated at all". bbpPairings has no such clause and skips
-# anyone not valid for the current round. If that reading is right the two
-# references part company here, and Gacrux sides with this engine.
+# ANSWERED, BY THIS SCRIPT: no - and neither does bbpPairings. Both skip
+# only players who have NEVER participated. Re-confirmed 2026-08-27 against
+# the local bbpPairings binary, and endorsed by the SPP on the same day.
+#
+# This header is kept because the hypothesis it records did real damage.
+# The original read: Gacrux's condition is `rfp or rip` - ready for pairing
+# now, OR paired at some point before - while "bbpPairings has no such
+# clause and skips anyone not valid for the current round. If that reading
+# is right the two references part company here, and Gacrux sides with this
+# engine."
+#
+# That was a hypothesis. This probe refuted it on first run - board [2,7]
+# answers 7 from every engine, the unrenumbered answer - and the refutation
+# was never propagated. The hypothesis went on being quoted as a finding in
+# `docs/dispute-initial-colour.md`, in this repo's README, and in the
+# three-way harness, where it justified weakening a classifier. Stating a
+# hypothesis in the same prose register as a result is how that happens.
 #
 # Round one cannot show it: nobody has played yet, so `rip` is zero for
 # everyone and the two conditions coincide. This position is round two.

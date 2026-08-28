@@ -32,6 +32,22 @@ defmodule Ainalrami.BbppairingsComparisonTest do
   one, if either, matches the current Handbook text", the same standard
   `Ainalrami.JavafoComparisonTest` already uses.
 
+  ## A coverage gap in the corpus, found by review rather than by a failure
+
+  `safely_pair/3` passes `initial_colour:` on **every** comparison, and
+  `Ainalrami.Test.FuzzTournament` writes the matching `152` line into the
+  TRF handed to bbpPairings. So `opts[:initial_colour]` short-circuits
+  `pair_next_round/2`'s `||` on every round of every axis, and
+  `Pairing.infer_initial_colour/1` is never reached by the corpus at all.
+  Whatever this harness's headline rate is, it is a rate for the initial
+  colour's ALLOCATION, never for its inference.
+
+  The inference has unit coverage only - `Ainalrami.InitialColourTest`,
+  which runs with no binary present - plus the two `describe "the initial
+  colour inferred from a file with no 152"` tests below, which are its only
+  contact with a reference implementation and deliberately omit `152`. Any
+  new axis added here inherits the gap unless it stops stating the draw.
+
   ## Running it
 
       PAIRING_FUZZ_COUNT=500 PAIRING_FUZZ_ROUNDS=9 mix test --only bbppairings
@@ -87,7 +103,7 @@ defmodule Ainalrami.BbppairingsComparisonTest do
   """
 
   use ExUnit.Case
-  alias Ainalrami.{Pairing, Test.Bbppairings, Test.ColourArticle}
+  alias Ainalrami.{Pairing, Test.Bbppairings}
 
   # Generation moved to `Ainalrami.Test.FuzzTournament` so the three-way
   # harness could stop generating a weaker corpus than this one. Imported
@@ -130,6 +146,191 @@ defmodule Ainalrami.BbppairingsComparisonTest do
            "clustered should collide far more than spread: #{length(Enum.uniq(clustered))} vs #{length(Enum.uniq(spread))} distinct"
 
     assert length(Enum.uniq(spread)) > 30, "spread should stay near-distinct"
+  end
+
+  # ------------------------------------------------------------------
+  # The inference, which the corpus below CANNOT reach
+  # ------------------------------------------------------------------
+  #
+  # `safely_pair/3` passes `initial_colour:` on every single comparison, and
+  # `FuzzTournament` writes the matching `152` line into the TRF, so
+  # `opts[:initial_colour]` short-circuits `pair_next_round/2`'s `||` and
+  # `Pairing.infer_initial_colour/1` IS NEVER ENTERED. Not rarely - never,
+  # on every axis this harness has ever run. Every rate it has ever reported
+  # measures the round's ALLOCATION and the numbering the allocation uses;
+  # it says nothing whatever about the inference, and the size of the
+  # numbers invites the opposite reading.
+  #
+  # That includes the two small runs taken on 2026-08-27 to check the SPP
+  # ruling. Those are TWO SEPARATE runs on different configurations, and
+  # merging them into one figure manufactures a before/after that neither of
+  # them is:
+  #
+  #   * 60 tournaments, 5 rounds, 50% byes, 6-16 players: 27 colour
+  #     disagreements against bbpPairings with the overturned numbering
+  #     deliberately reinstated, and 0 with the fix in. The "before" was
+  #     sabotaged on purpose - a zero on its own is unfalsifiable, because
+  #     the same corpus at a 15% bye rate reports zero under both readings.
+  #   * 60 tournaments, 5 rounds, 40% byes, 25% forfeits: 0 colour
+  #     disagreements, 1096/1096 pairs, 299/299 rounds. A different
+  #     configuration, with no sabotaged before-column at all.
+  #
+  # Neither of them is the corpus, and the corpus has NOT been re-run since
+  # the fix - so there is no post-fix large-scale figure to quote here yet.
+  # docs/conformance-c0403-2026.md and docs/dispute-initial-colour.md carry
+  # both rows and mark the re-measurement pending.
+  #
+  # These two tests are the inference's only contact with the real binary.
+  # They deliberately use no `152` at all.
+  describe "the initial colour inferred from a file with no 152" do
+    test "matches bbpPairings on a field whose first coloured round is round two" do
+      # Round one records nothing but arbiter byes, so it carries no colour
+      # and the inference has to read ROUND TWO - where the scores already
+      # differ, and a downfloat can seat a low-TPN low-score player as the
+      # BOTTOM of their board.
+      for draw <- ["w", "b"] do
+        field = second_round_colours_only(["H", "H", "F", "Z"], 4, draw)
+
+        {:ok, silent} = Bbppairings.pair(trf(field, nil))
+        ours = Pairing.pair_next_round(field, expected_rounds: 9)
+
+        assert Enum.sort(ours) == Enum.sort(silent),
+               "draw #{draw}: bbpPairings deduced one initial colour from this file and we " <>
+                 "deduced another\n  ours: #{inspect(Enum.sort(ours))}\n  bbp:  #{inspect(Enum.sort(silent))}"
+      end
+    end
+
+    test "reproduces bbpPairings' asymmetry: its own deduction disagrees with its own 152" do
+      # The finding this pins. `assign_colour_round_one/3` takes the parity
+      # of the TOP of the board - Article 1.2, score first - while
+      # `infer_initial_colour/1` takes it off whichever player holds a
+      # colour, top or bottom. That is not an exact inverse, and on this
+      # field the two readings answer opposite.
+      #
+      # It is not corrected, because bbpPairings does not correct it either:
+      # handed a file IT produced under `152 B`, with the `152` stripped, it
+      # deduces White and pairs the later boards accordingly. Ainalrami
+      # copies the asymmetry rather than out-reasoning the reference on a
+      # point no article covers - 5.1 leaves the initial colour to a drawing
+      # of lots, and C.04.3 says nothing at all about recovering a lost one.
+      #
+      # A future bbpPairings that fixed its deduction would fail HERE, on a
+      # named expectation, rather than as noise in the corpus.
+      field = second_round_colours_only(["H", "H", "F", "Z"], 4, "b")
+
+      {:ok, silent} = Bbppairings.pair(trf(field, nil))
+      {:ok, stated_white} = Bbppairings.pair(trf(field, "w"))
+      {:ok, stated_black} = Bbppairings.pair(trf(field, "b"))
+
+      refute Enum.sort(stated_white) == Enum.sort(stated_black),
+             "the position must be informative: the two draws have to pair differently"
+
+      assert Enum.sort(silent) == Enum.sort(stated_white),
+             "bbpPairings deduces White from a file it paired under 152 B"
+
+      refute Enum.sort(silent) == Enum.sort(stated_black),
+             "which is to say its deduction does NOT recover the draw it actually used"
+
+      # And we land on the same side of that asymmetry.
+      assert Enum.sort(Pairing.pair_next_round(field, expected_rounds: 9)) == Enum.sort(silent)
+
+      # The forward direction is NOT asymmetric, and both engines agree on
+      # it - so the divergence is in the deduction alone, not in 5.2.5.
+      core = round_one_byes(["H", "H", "F", "Z"])
+      {:ok, bbp_round_two} = Bbppairings.pair(trf(core, "b"))
+
+      assert Pairing.pair_next_round(core, expected_rounds: 9, initial_colour: "b") ==
+               bbp_round_two,
+             "with the draw stated, 5.2.5 hands the initial colour to the higher-SCORED " <>
+               "player and both engines do it identically"
+    end
+  end
+
+  # Ranks 1..n, each holding one arbiter bye in round one and nothing else.
+  defp round_one_byes(codes) do
+    for {code, rank} <- Enum.with_index(codes, 1) do
+      bye = %{opponent_rank: nil, colour: nil, result: code}
+      %{blank_player(rank) | points: bye_points(code), games: [bye]}
+    end
+  end
+
+  # `round_one_byes/1` played forward one round on bbpPairings' OWN answer,
+  # plus `spectators` players who have never been paired at all - so a board
+  # of never-paired players survives into round three and 5.2.5 decides it.
+  #
+  # Built on the reference's round two rather than ours: the file then
+  # provably is one bbpPairings would have written, which is what makes its
+  # own deduction from it a fair reading.
+  defp second_round_colours_only(codes, spectators, draw) do
+    n = length(codes)
+    core = round_one_byes(codes)
+    {:ok, round_two} = Bbppairings.pair(trf(core, draw))
+
+    played =
+      for {code, rank} <- Enum.with_index(codes, 1) do
+        seat =
+          Enum.find_value(round_two, fn
+            {^rank, black} when black != nil -> {black, "w"}
+            {white, ^rank} when white != nil -> {white, "b"}
+            _ -> nil
+          end)
+
+        bye = %{opponent_rank: nil, colour: nil, result: code}
+
+        case seat do
+          nil ->
+            %{blank_player(rank) | points: bye_points(code), games: [bye, bye_of("Z")]}
+
+          {opponent, colour} ->
+            %{
+              blank_player(rank)
+              | points: bye_points(code) + 0.5,
+                games: [bye, %{opponent_rank: opponent, colour: colour, result: "="}]
+            }
+        end
+      end
+
+    watching =
+      for rank <- (n + 1)..(n + spectators) do
+        %{blank_player(rank) | points: 0.0, games: [bye_of("Z"), bye_of("Z")]}
+      end
+
+    played ++ watching
+  end
+
+  defp bye_of(code), do: %{opponent_rank: nil, colour: nil, result: code}
+
+  defp bye_points("H"), do: 0.5
+  defp bye_points("F"), do: 1.0
+  defp bye_points("Z"), do: 0.0
+
+  defp blank_player(rank) do
+    %{
+      rank: rank,
+      name: "P#{rank}",
+      sex: "",
+      title: "",
+      federation: "",
+      fide_rating: 2400 - rank * 7,
+      fide_number: nil,
+      birth_date: "",
+      points: 0.0,
+      games: []
+    }
+  end
+
+  # `initial` of `nil` omits the `152` line entirely, which is the whole
+  # point of these two tests.
+  defp trf(players, initial) do
+    Ainalrami.Trf.serialize(%{
+      tournament: %{
+        name: "inference",
+        type: "swiss",
+        number_of_rounds: 9,
+        initial_colour: initial
+      },
+      players: players
+    })
   end
 
   test "Ainalrami and bbpPairings.exe agree on who plays whom, in every round of a tournament" do
@@ -302,8 +503,18 @@ defmodule Ainalrami.BbppairingsComparisonTest do
   # position by hand. Counted separately from pairing agreement, because the
   # two fail for different reasons and a colour difference on an otherwise
   # identical round is not the same finding as a different round.
+  #
+  # Until 2026-08-28 this split its findings in two: a board Article 5.2.5
+  # decided was filed as "the known dispute" and expected, anything else as
+  # a finding. The dispute is over - the SPP ruled on 2026-08-27 that
+  # 5.2.5's parity is taken on the arrival numbering, which is what
+  # bbpPairings does and what this engine now does too - so there is nothing
+  # left for a colour difference against bbpPairings to be EXCEPT a finding.
+  # The split is gone rather than left to report zero, because a bucket
+  # labelled "expected" that nothing may legitimately land in is a place for
+  # a real regression to hide.
   defp colour_mismatches({:raised, _}, _bbp, _active, _players, _where),
-    do: %{colour_mismatches: 0, colour_disputed: 0}
+    do: %{colour_mismatches: 0}
 
   defp colour_mismatches(ainalrami_pairs, bbp_pairs, _active, players, {seed, round}) do
     theirs = MapSet.new(bbp_pairs)
@@ -319,16 +530,8 @@ defmodule Ainalrami.BbppairingsComparisonTest do
           MapSet.member?(theirs, {b, w}) and not MapSet.member?(theirs, pair)
       end)
 
-    # Split the disagreements into the one we have a diagnosis for and
-    # everything else. Without this the known dispute's volume - nearly two
-    # thousand boards per six hundred bye-heavy tournaments - would bury a
-    # genuine colour regression completely, which is the whole reason a
-    # count on its own is a weak instrument.
-    {disputed, unexplained} =
-      Enum.split_with(reversed, &ColourArticle.decided_by_5_2_5?(&1, players, round))
-
     if System.get_env("COLOUR_DEBUG") do
-      for {w, b} <- unexplained do
+      for {w, b} <- reversed do
         IO.puts("
 seed #{seed} round #{round}: UNEXPLAINED - we say #{w} White, bbpPairings says #{b} White")
 
@@ -352,7 +555,7 @@ seed #{seed} round #{round}: UNEXPLAINED - we say #{w} White, bbpPairings says #
       end
     end
 
-    %{colour_mismatches: length(unexplained), colour_disputed: length(disputed)}
+    %{colour_mismatches: length(reversed)}
   end
 
   defp summarise({:raised, _} = raised), do: raised
@@ -431,21 +634,17 @@ seed #{seed} round #{round}: UNEXPLAINED - we say #{w} White, bbpPairings says #
 
   defp report(comparisons, errors, exhausted, rounds) do
     colour_bad = comparisons |> Enum.map(&Map.get(&1, :colour_mismatches, 0)) |> Enum.sum()
-    colour_disputed = comparisons |> Enum.map(&Map.get(&1, :colour_disputed, 0)) |> Enum.sum()
-
-    if colour_disputed > 0 do
-      IO.puts("
-  colours: #{colour_disputed} board(s) differ by the Article 5.2.5 dispute
-     (TPN parity vs. position among the players being paired -- expected,
-     see docs/dispute-initial-colour.md; this engine follows C.04.2 Art. 2).")
-    end
 
     if colour_bad > 0 do
       IO.puts(
         "
-  !! #{colour_bad} pair(s) agreed on WHO plays whom but disagreed on who is WHITE," <>
+  !! #{colour_bad} pair(s) agreed on WHO plays whom but disagreed on who is WHITE." <>
           "
-     and are NOT explained by the known 5.2.5 dispute. Article 5 is a real" <>
+     Since the SPP's 2026-08-27 ruling there is no expected colour" <>
+          "
+     difference against bbpPairings left, so every one of these is a" <>
+          "
+     finding. Article 5 is a real" <>
           "
      conformance surface and this harness was blind to it until 2026-08-17 --" <>
           "

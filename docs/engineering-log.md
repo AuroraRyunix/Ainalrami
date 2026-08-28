@@ -32,10 +32,87 @@ failures rather than quietly dropped, so nobody re-derives them.
 > `deviation`, `spread`, and the `AINALRAMI_GLOBAL` environment variable.
 > `@peek_budget` is `:unbounded`, not 8.
 >
+> **Superseded rule, not just superseded identifiers:** every entry below
+> that takes Article 5.2.5's parity on the fixed TPN describes behaviour
+> this engine no longer has. The FIDE Systems of Pairings and Programs
+> Commission ruled on 2026-08-27 that the numbering SKIPS players who have
+> never been paired, which is what bbpPairings and Gacrux always did. The
+> entries are corrected in place where they assert otherwise; the ruling
+> and both retractions are the 2026-08-27 entry at the top of "Done" and
+> [`dispute-initial-colour.md`](dispute-initial-colour.md).
+>
 > `docs/fide-criteria.md` is the maintained rules-to-code map. This file is
 > the argument for how the code got there.
 
 ## Done
+
+### 2026-08-27 - Article 5.2.5 went the other way, and one of our arguments was already false
+
+The FIDE Systems of Pairings and Programs Commission answered the question
+this project put to it in
+[`spp-question-initial-colour.md`](spp-question-initial-colour.md): the
+parity Article 5.2.5 takes is taken on a numbering that **skips players who
+have never been paired**, not on the fixed TPN. bbpPairings and Gacrux were
+right. This engine was wrong, and had been since colours were implemented.
+
+**Both sides argued from the same sentence.** The SPP decided it on
+C.04.2:2.4 - late entries "are given an appropriate TPN and paired only
+when they actually arrive" - and so did this project, on 2026-08-17, in the
+commit that closed the question the first time (`04df149`, "Settle Article
+5.2.5 from the handbook"). We read the clause as granting the number at
+registration and making only the PAIRING wait; the SPP reads both halves as
+waiting. The grammar carries both. The SPP is the body that says which one
+the regulation means, so this is settled and is not open for
+re-litigation. It is not a case of nobody having read the handbook, which
+is the version of this story that would have been easier to tell.
+
+**What the engine does now.** `Ainalrami.Pairing.arrival_numbers/2` hands
+out 1, 2, 3, ... by ascending starting rank over exactly the players who
+have arrived, and a player who has not arrived gets no number at all rather
+than a late one. "Arrived" for round R is: in R's pairing pool, or
+participating in some game before R, where participation is
+`Ainalrami.Trf.participated_in_pairing?/1` - this repo's existing port of
+bbpPairings' `opponent != id || resultChar == 'U' || resultChar == '+'`
+(`fileformats/trf.cpp:303`). Two consequences that no score-based reading
+would produce, and which are the reason the empirical rule is believed to
+BE the reference's rule rather than a fit to the probe positions:
+
+* `U` (pairing-allocated bye) counts and `F` (full-point bye) does not,
+  though both score 1.0. The discriminator is the result CODE.
+* `-` counts only WITH an opponent: `2 w -` counts, `0000 - -` does not.
+
+**The second retraction, which is the worse one.**
+`docs/dispute-initial-colour.md` carried, as one of the two named reasons
+for not fixing this, the claim that the references "do not agree with each
+other either" - bbpPairings renumbering around anyone unpaired this round,
+Gacrux only around players who had never played - and concluded that
+"agreeing with the references is not even a well-defined target". That was
+**false when it was written**. It was the pre-probe hypothesis written up
+as a finding, and `tools/rip_probe.exs` had already refuted it in the same
+document's own evidence section, forty lines above: where the absent player
+has already played, this engine, bbpPairings and Gacrux all answer 7 and
+nobody renumbers. Re-confirmed 2026-08-27 against the local Windows
+binary. The false claim was load-bearing in three places - the decision not
+to fix, the README, and a harness classifier it weakened - and it survived
+because a hypothesis and the measurement that killed it were written into
+one file at different times and never reconciled. Nothing flagged it.
+
+**What this does to the numbers in this file.** The agreement percentages
+recorded below are COMPOSITION figures - which players were paired with
+which - and those are untouched: the dispute only ever moved which side of
+a board a player sat on. Colour differences were counted separately, and
+from 2026-08-17 (`04df149`) the comparison harnesses filed every board that
+Article 5.2.5 decided under "the known dispute" rather than under
+"unexplained", on the strength of the reading that has now been overturned.
+Every board so filed was a board this engine got wrong. The only place this
+file writes that count down is the odd-field bootstrap entry's 11,009
+Article 5.2.5 boards on a single 1,500-tournament bye-and-forfeit axis; the
+corpus runs never recorded theirs.
+
+**Pending, and not to be quoted before it exists:** the corpus has NOT been
+re-run on the corrected engine. There is no post-fix agreement figure of
+any kind - colour or composition - and any number in this file that touches
+5.2.5 is a measurement of the superseded behaviour until there is.
 
 ### 2026-08-27 - every large benchmark was taken at the wrong parity
 
@@ -3230,6 +3307,14 @@ The one worth naming: **`black-*`**. Article 5.2.5 is the only place this
 engine parts from JaVaFo, it turns on the initial colour, and every corpus
 before this had drawn White. Three axes of it, 4/9/16 rounds, clean.
 
+**Corrected 2026-08-27.** It no longer parts from anything: the SPP ruled
+that 5.2.5's parity is taken on a numbering that skips players who have
+never been paired, and the engine now does that (see the 2026-08-27 entry
+at the top of this file). The axis itself is untouched and was always worth
+running - it is about which colour the draw hands out, not about which
+number the parity is taken on - but the reason given here for naming it was
+the reading that lost.
+
 ### Cumulative
 
 With the round sweep and the 2026-08-20 run, the engine now stands at
@@ -3353,6 +3438,13 @@ Also new: a Black-drawn-first axis (300,000 tournaments), exercising the
 5.2.5 reading this engine settles against both references; 13-round
 tournaments, the deepest yet, where the pairing graph is most exhausted;
 and random acceleration alongside Baku.
+
+**Corrected 2026-08-27.** There is no such reading to exercise. The SPP
+ruled that the references were right and this engine was wrong about which
+number 5.2.5's parity is taken on; the twin of this sentence in
+`validation.md` was corrected at the same time. What the axis actually
+exercises is which colour the drawing of lots hands out, which is
+worth the same as it ever was; the justification written here was not.
 
 `@local_min_next_group` -- the one condition on the local path that was
 not certified term by term, that an odd bracket's float choice does not
@@ -3741,6 +3833,14 @@ default fuzz axis exercises neither forbidden pairs nor byes:
   10% forfeits: 13,500/13,500 rounds, 238,687/238,687 pairs, 100.00%, and
   the old tree returns the same figures down to the 11,009 Article 5.2.5
   colour-dispute boards.
+
+**Corrected 2026-08-27.** The identity claim stands - it was a comparison
+of two Ainalrami trees against each other, and the refactor did not touch
+colours. What the 11,009 are does not: the harness filed them as the known
+Article 5.2.5 dispute, and the SPP has since ruled that reading wrong, so
+they are 11,009 boards on which the old engine gave the wrong player White.
+It is the only count of them this file records. Both figures were taken
+before the fix and neither has been re-measured on the corrected engine.
 
 ### What is left
 

@@ -185,8 +185,10 @@ defmodule Ainalrami.CLITest do
     # other Black. C.04.3 5.2.4 decides - "grant the colour preference of the
     # higher ranked player" - so A(1) gets Black.
     #
-    # `choose_colour/2` skipped 5.2.4 and fell through to 5.2.5's odd-TPN
-    # rule, which handed A the initial colour instead. Confirmed against
+    # `choose_colour/2` skipped 5.2.4 and fell through to 5.2.5's odd-number
+    # rule (parity of the arrival number since the SPP ruling of 2026-08-27,
+    # of the raw TPN when this was written), which handed A the initial
+    # colour instead. Confirmed against
     # bbpPairings on this exact position: it answers `2 1`.
     assert out =~ "2\r\n2 1\r\n3 4\r\n"
   end

@@ -14,6 +14,12 @@ Each entry is tagged so a version can be skimmed:
 | [Security] | a vulnerability closed, or judged not to apply |
 | [Verified] | checked against a reference, no code change |
 
+Entries are a dated record of what was believed and measured at the time.
+Where a later version overturned an earlier entry's conclusion, the earlier
+entry is marked in place rather than rewritten or deleted - the reasoning
+is why the code was that way, and losing it invites the same ground being
+re-derived. Look for **SUPERSEDED** markers.
+
 ## What the agreement figures mean
 
 Most entries below carry a rate against bbpPairings 6.0.0, and the rates
@@ -24,9 +30,10 @@ right.
 Almost every one of the 2.5 billion cross-checked pairings on record here
 was measured against a **single oracle**, and agreement with one reference
 cannot detect a rule both engines read the same way wrong. The only
-instrument that can is the three-way harness, which stands at 3,352 rounds
-and bounds the two references' mutual disagreement at about 0.09% - that
-is the real precision of the ruler everything else is measured with.
+instrument that can is the three-way harness, which stands at 649,207
+rounds - that is the real precision of the ruler everything else is
+measured with. See `docs/validation.md` for the current bound; it is much
+tighter than the 0.09% the 3,352-round run supported.
 
 The headline tournament counts also read as more coverage than they are.
 In each of the two ~488M-pairing runs alike, 2,724,198 of 5,993,000
@@ -53,6 +60,119 @@ change was unnecessary. Of the thirteen bugs closed on 2026-08-26, two are
 invisible to any corpus this generator can produce and a third had been
 breaking a matcher invariant 734 times per 800 tournaments while agreeing
 with the reference on every one of them.
+
+## [0.14.0] - 2026-08-28
+
+The FIDE Systems of Pairings and Programs Commission answered this project's
+question about Article 5.2.5, and answered it against this engine. Both
+reference implementations were right. This version conforms.
+
+### Changed
+
+- [Change] **5.2.5's parity is taken on an arrival numbering, not on the
+  fixed TPN.** For the round being paired, players are numbered 1, 2, 3 ...
+  by ascending starting rank over exactly those who are in this round's
+  pairing pool OR who participated in some earlier round. A player who has
+  never been paired receives no number at all. Article 5.2.5's parity is
+  then taken on that number.
+
+  This changes which player is allocated White on any board where 5.2.5
+  decides and somebody has been registered without ever being paired. It
+  does NOT change who plays whom - colour allocation runs after the pairing
+  is decided.
+
+  The question, sent to the SPP on 2026-08-21, was whether the parity is
+  taken on the TPN as C.04.2 Article 2 defines it, or on a numbering that
+  skips never-paired players. The answer:
+
+  > The correct behaviour is (b). Why? Because of C.04.2:2.4 ... LATE
+  > ENTRIES ... ARE GIVEN AN APPROPRIATE TPN AND PAIRED ONLY WHEN THEY
+  > ACTUALLY ARRIVE. ... players who have yet to arrive don't have a TPN.
+
+  Both sides argued from that same sentence. This engine's case was "the TPN
+  exists before the arrival; it is the pairing that waits." The SPP reads the
+  identical clause as "no TPN until arrival." The reading was backwards, and
+  every other conclusion followed from it. See
+  `docs/dispute-initial-colour.md`.
+
+- [Change] **The membership test is the result code, not the score.** Which
+  prior-round entries count as having participated was not stated by the
+  ruling and was pinned empirically against bbpPairings rather than guessed.
+  A played game counts, including the unrated `W`/`D`/`L` codes. `U` (the
+  pairing-allocated bye) counts; `F` (an arbiter's full-point bye) does not,
+  though both score 1.0. `+` counts with or without an opponent, while `-`
+  counts only WITH one - `2 w -` participates, `0000 - -` does not. `H`, `Z`
+  and a blank round do not. Probes in `tools/tpn_membership_probe*.exs`.
+
+- [Change] **C.04.6 Article 4.3.1 follows, being the same rule.** The team
+  system's colour allocation takes the same numbering. This document had
+  said team colour should not be finalised until the answer arrived; it was
+  not, and 4.3.1 was rewritten here rather than built once.
+
+### Removed
+
+- [Removed] **The harness's colour dispute bucket.** Both comparison
+  harnesses split colour differences into "explained by the known 5.2.5
+  dispute" and "unexplained", because the dispute's volume would otherwise
+  bury a genuine regression. With the engine conforming, that split would
+  have become a tautology - a board where this engine differs from a
+  reference would be "explained" by its differing from the reference - so
+  the bucket is gone rather than left reporting zero. Colour comparison
+  against a reference is now flat equality.
+
+  The three-way harness keeps a weaker `:reach` classification for
+  bbpPairings-against-Gacrux boards, where neither side is this engine. It
+  can now be strengthened; see TODO.md.
+
+### Fixed
+
+- [Fix] **A claim this project published was false when it was written.**
+  `docs/dispute-initial-colour.md` gave two reasons for not complying. The
+  second was that the references renumber differently from each other -
+  "bbpPairings around anyone not paired this round, Gacrux only around
+  players who have never played" - so that agreeing with them was not even a
+  well-defined target.
+
+  They do not differ. `tools/rip_probe.exs` was built to test exactly that
+  hypothesis and refuted it on its first run: where the absent player has
+  already played, all three engines answer alike. The refutation was printed
+  in the same document's own evidence section and never propagated to the
+  paragraph that used it. Re-confirmed against the local bbpPairings binary
+  on 2026-08-27.
+
+  It had spread to four places by then - the decision not to fix, the
+  README, this changelog, and the three-way harness, where it justified
+  weakening a classifier that is the only instrument ever to catch the two
+  references contradicting each other. A hypothesis written in the same
+  prose register as a result is indistinguishable from one later.
+
+- [Fix] **A measurement with no instrument, found while fixing the above.**
+  The reversion of an "exact inverse" fix to `infer_initial_colour/1` was
+  justified by figures - 17 of 17, 0 of 17, "27 times in 106", "81 positions
+  in 600 fields" - that no script in the tree produced. The conclusion was
+  right and now has an instrument: `tools/inference_numbering_probe.exs`
+  measures it entirely inside bbpPairings, with this engine deciding
+  nothing. Of 189 readable positions from 200 tournaments, 38 split the two
+  readings and bbpPairings followed the coloured player's own arrival number
+  on 38 of 38, the exact inverse on 0. The old figures are not preserved.
+
+### Verified
+
+- [Verified] **The inference and the allocation use different numberings on
+  purpose, because bbpPairings does.** `assign_colour_round_one/3` takes
+  parity on the top of the board; `infer_initial_colour/1` takes it on the
+  coloured player's own number. That is not an inverse, and making it one -
+  which produces a perfect round trip - disagrees with bbpPairings on every
+  position where the two readings split. bbpPairings is asymmetric with
+  itself here, and the asymmetry is copied deliberately: Article 5.1 leaves
+  the initial colour to a drawing of lots and C.04.3 says nothing about
+  recovering a lost one, so the reference is the only rule there is.
+
+- [Verified] **Not yet re-measured at corpus scale.** The last corpus run
+  recorded 64,131 colour differences against bbpPairings out of 6,242,974
+  boards, every one attributed to this dispute. Those figures describe the
+  superseded behaviour. They are expected to collapse to zero, and that is
+  an expectation, not a measurement, until the corpus is re-run.
 
 ## [0.13.0] - 2026-08-27
 
@@ -930,6 +1050,13 @@ reference's own second-bye defect.
   argument against this engine's reading: three implementations agreeing
   was evidence against it, but shared lineage is not.
 
+  > **SUPERSEDED in 0.14.0.** The SPP ruled on 2026-08-27 that the
+  > references were right and this engine was not. The shared-lineage move
+  > above is exactly the error: three implementations agreed because they
+  > were correct, and this entry explained the agreement away rather than
+  > weighing it. The byte-identical JaVaFo output is still a real
+  > measurement; only the inference drawn from it fails.
+
 - [Verified] **The gap to bbpPairings was measured rather than guessed, and
   then closed.** Same tournament, same round, same machine, on a file the
   reference's own generator produced so neither side is favoured: 56x
@@ -1311,6 +1438,15 @@ program and started being read against the regulations themselves.
   this a diagnosis rather than a story. The mismatch count is deliberately
   not a target: closing it toward bbpPairings would trade a conformant
   implementation for an agreeing one.
+
+  > **SUPERSEDED in 0.14.0**, twice over. The SPP ruled on 2026-08-27 that
+  > the arrival numbering is correct, so closing the count toward the
+  > references bought conformance rather than trading it away. And the
+  > sentence "bbpPairings by position among those being paired this round,
+  > Gacrux by position among those paired now or previously" was false when
+  > written: `tools/rip_probe.exs` had already measured both references
+  > drawing the SAME line. The diagnosis and its control were sound; the
+  > claim that the references differ from each other was not.
 
 - [Verified] **The residue is small enough to name case by case, and byes
   turn out to be necessary for every one of them.** 43 disagreements in

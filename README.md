@@ -16,9 +16,11 @@ shape, and is verified against two independent reference implementations.
 bbpPairings 6.0.0 exactly across 2.5 billion compared pairings, in six
 separate corpora that between them vary every input the harness can vary.
 Article 4's candidate ordering is verified against the regulations
-directly, and one point of Article 5 is settled *against* both reference
-engines, from the handbook's own text. Both are documented rather than
-hidden - see [What is not settled](#what-is-not-settled).
+directly. One point of Article 5 was settled *against this engine* on
+2026-08-27 by the FIDE Systems of Pairings and Programs Commission, and
+the engine now conforms. Both are documented rather than hidden - see
+[What is not settled](#what-is-not-settled) and
+[A dispute this engine lost](#a-dispute-this-engine-lost).
 
 ---
 
@@ -90,9 +92,10 @@ one per 3 million - nearly four orders of magnitude inside the bar.
 against ONE oracle, and agreement with a single reference cannot detect a
 rule both engines read the same wrong way. The check on that is the
 three-way harness, where Gacrux gives a genuinely independent third
-opinion - and it has run over 3,352 rounds, not 217 million, because it
-is a Python implementation roughly 35x the cost per round. Those 3,352
-bound the two references' mutual disagreement at about 0.09%, which is
+opinion - and it has run 649,207 rounds, not 217 million, because it
+is a Python implementation roughly 35x the cost per round. Those 649,207
+bound the two references' mutual disagreement far more tightly than the
+3,352 this sentence used to quote, which is
 the real precision of the ruler every other number here is measured with.
 Raising that bound is worth more now than another billion two-way
 pairings.
@@ -307,39 +310,66 @@ This has never produced a measured disagreement. "Not observed" is not
 "cannot happen", and it is the only place left in the pairing itself where
 one could come from.
 
-### A second dispute, settled from the handbook
+## A dispute this engine lost
 
-**Article 5.2.5 - which number the parity is taken on.** The article gives
-the initial colour to the higher-ranked player when their **TPN** is odd,
-and C.04.2 Article 2 fixes a TPN for the tournament: it moves only for a
-ranking-data correction (barred after round four) or the closing of the
-participant list. Nothing renumbers it around players sitting a round out.
+Promoted out of "what is not settled" on 2026-08-27, because it is settled
+now - against us.
 
-Both references renumber anyway, skipping players who have never
-participated - measured, and they agree with each other, so Gacrux does
-not break this tie the way it breaks the other one. On a full field all
-three engines agree; they diverge once somebody has been registered
-without ever being paired.
+**Article 5.2.5 - which number the parity is taken on.** This engine took
+it on the TPN exactly as the file gives it. Both references take it on a
+numbering that skips players who have never been paired. On 2026-08-27 the
+FIDE Systems of Pairings and Programs Commission answered the question:
+the references are right and Ainalrami was wrong. The engine has been
+changed to match.
 
-Their reading is not unreasonable: 2.5 makes TPNs provisional until the
-participant list closes. What decides it the other way is 2.4 - a late
-entry is *"given an appropriate TPN and paired only when they actually
-arrive"*, so the TPN exists first and the pairing waits. This engine
-follows the article.
+The crux is worth stating plainly, because both sides argued from the
+**same sentence**. C.04.2:2.4 says a late entry is *"given an appropriate
+TPN and paired only when they actually arrive."* This engine read that as:
+the TPN exists before the arrival, and it is the pairing that waits. The
+SPP reads the identical clause as *"players who have yet to arrive don't
+have a TPN."* We read it the wrong way round.
 
-Measured over 200 seven-round tournaments - note the axes without byes,
-which are the control:
+The superseded argument, kept because it is why the engine behaved this
+way for months: C.04.2 Article 2 fixes a TPN for the tournament, moving it
+only for a ranking-data correction (barred after round four) or the
+closing of the participant list, and nothing in either article renumbers
+around players sitting a round out. That reading was rejected.
 
-| axis | boards differing |
+**There is a second retraction, and it is the worse one.** The other named
+reason for not complying was a claim, published in
+docs/dispute-initial-colour.md, that the two references renumber
+differently *from each other* - "so agreeing with the references is not
+even a well-defined target". They do not differ; they agree, as the next
+paragraph says. That claim was false when written: a pre-probe hypothesis
+printed as a finding, refuted by this project's own `tools/rip_probe.exs`
+in the same document's own evidence section, and re-confirmed against the
+local binary on 2026-08-27. It was load-bearing in three places - the
+decision not to fix, this README, and a test harness's classifier, which it
+weakened.
+
+What was measured stands. The two references agree with each other -
+Gacrux does not break this tie the way it breaks the other one - and they
+skip players who have never participated, not players who have played and
+are merely absent this round. On a full field all three engines always
+agreed; they diverged only once somebody had been registered without ever
+being paired. Colour is allocated *after* the pairing, so none of it ever
+moved a player to a different board: every axis reports 100.00% pairing
+agreement and zero illegal rounds.
+
+Measured over 200 seven-round tournaments, **before the fix**. These are
+boards where this engine was wrong, not boards where it was different:
+
+| axis | boards differing (old engine) |
 |---|---|
 | plain, forfeits, `XXP`, Baku | **0** |
 | 15% arbiter byes, `152 W` | 670 |
 | 15% arbiter byes, `152 B` | 1175 |
 
-Colour is allocated *after* the pairing, so this cannot move a player to a
-different board: every axis above still reports 100.00% pairing agreement
-and zero illegal rounds. Full argument, with the handbook text and a
-reproducible probe, in
+The corpus has **not** been re-run on the corrected engine. Both bye rows
+are expected to become 0; that is an expectation, not a measurement, and
+nothing in this repo should be read as claiming otherwise until the run
+happens. The full account, with the handbook text, the ruling and a
+reproducible probe, is in
 [docs/dispute-initial-colour.md](docs/dispute-initial-colour.md).
 
 ## Documentation
@@ -352,6 +382,7 @@ reproducible probe, in
 | [docs/fide-criteria.md](docs/fide-criteria.md) | the maintained rules-to-code map (C1-C21) |
 | [docs/dispute-seed735265.md](docs/dispute-seed735265.md) | the one disagreement, argued from the regulations |
 | [docs/bbppairings-c2-bug-report.md](docs/bbppairings-c2-bug-report.md) | that dispute as a submittable upstream report |
+| [docs/dispute-initial-colour.md](docs/dispute-initial-colour.md) | the Article 5.2.5 dispute this engine lost, and the SPP ruling that closed it |
 | [docs/engineering-log.md](docs/engineering-log.md) | the dated build history, including what measured worse |
 | [TODO.md](TODO.md) | open work |
 

@@ -5,11 +5,20 @@ Working notes on the FIDE Swiss Team Pairing System **effective 1 February
 written before any code exists so the reading can be checked against the
 regulation rather than against an implementation.
 
-Checking the effective date first is deliberate. The individual rules were
-rewritten in the same February 2026 wave, and every reference
-implementation still carries the pre-2026 reading of Article 5.2.5 - see
-[dispute-initial-colour.md](dispute-initial-colour.md). The version-till
-page for this chapter exists too; this document is about the current one.
+Checking the effective date first is deliberate: the individual rules were
+rewritten in the same February 2026 wave.
+
+This paragraph used to continue "and every reference implementation still
+carries the pre-2026 reading of Article 5.2.5", and offered that as part of
+the case for reading the regulation before reading an implementation. **The
+claim was false.** The FIDE Systems of Pairings and Programs Commission
+ruled on 2026-08-27 that the references' behaviour is what the current text
+requires and that this engine's reading was the wrong one - see
+[dispute-initial-colour.md](dispute-initial-colour.md) and Article 4 below.
+Reading the regulation first is still the right method for this chapter,
+where no reference exists to read at all; it was never a licence to
+discount an implementation that disagreed. The version-till page for this
+chapter exists too; this document is about the current one.
 
 ## The short version
 
@@ -93,17 +102,82 @@ involved in team pairing at all.
   score, else the higher secondary score, else the smaller TPN.
 * **4.3** Descending priority. **4.3.1**: when both teams have yet to play
   a match, if the first-team has an **odd TPN** it takes the
-  initial-colour, otherwise the opposite. 4.3.2-4.3.9 then apply colour
+  initial-colour, otherwise the opposite. "Odd TPN" is the article's own
+  wording and is quoted here as such; which number that parity is actually
+  taken on is the point the SPP settled, immediately below.
+  4.3.2-4.3.9 then apply colour
   preferences, strong preferences (Type B), colour difference, historical
   alternation, and the first-team's preference.
 
 The board-one colour cascades to the remaining boards.
 
 > **4.3.1 is the same TPN-parity rule as the individual 5.2.5**, and that
-> rule is currently the subject of an open question to the SPP (see
-> [spp-question-initial-colour.md](spp-question-initial-colour.md)).
-> Whatever answer comes back applies here too. Team colour allocation
-> should not be finalised before it arrives, or it will be built twice.
+> rule was put to the SPP (see
+> [spp-question-initial-colour.md](spp-question-initial-colour.md)) and
+> **answered on 2026-08-27, against this engine.**
+>
+> The parity is *not* taken on the TPN as the file gives it. It is taken on
+> a numbering that counts only the participants who have arrived,
+> recomputed each round. The SPP's reasoning is C.04.2 Article 2.4: a late
+> entry is "given an appropriate TPN and paired only when they actually
+> arrive", so a participant who has not arrived holds no TPN at all. Both
+> reference implementations already did this and were right to.
+>
+> The crux is worth carrying here rather than only in the dispute
+> document, because it is the part a future reader can use. **Both sides
+> argued from that same sentence.** This project's case was "the TPN
+> exists before the arrival; it is the *pairing* that waits". The SPP
+> reads the identical clause as "no TPN until arrival". We read it the
+> wrong way round.
+
+It applies here unchanged, and the team side implements it now:
+`TeamPairing.pair_round/2` builds the round's numbering once via
+`Colour.parity_numbers/1` and threads it through `Colour.allocate/3`'s
+`:parity_numbers` option to `initial_colour_by_parity/2`.
+
+This document warned that team colour allocation should not be finalised
+before the answer arrived, or it would be built twice. **The warning was
+written and then ignored.** Article 4.3.1 was implemented on the reading
+the SPP overturned - `initial_colour_by_parity(first.tpn, initial)`, under
+a moduledoc asserting that line was "the single line that would change" -
+and the ruling rewrote it. The change was four functions, not one line:
+`Colour.parity_numbers/1` is new, `decide/5` became `decide/6`,
+`allocate/3` grew the `:parity_numbers` option, and
+`TeamPairing.pair_round/2` with `allocate_colours/5` (now `/6`) changed to
+build the numbering and carry it down. Article 4 was built twice, exactly
+as predicted, by the project that predicted it. Writing the warning down
+was not the same as acting on it, and this paragraph exists so the next
+reader does not mistake a recorded risk for a managed one.
+
+What the individual ruling does **not** settle is what "arrived" means for
+a TEAM. C.04.6 has no Article 2.4 of its own, and `%Team{}` carries no
+per-round history, so a team's arrival is not reconstructible from the
+struct the way a player's is from their TRF game list. The engine's
+numbering is therefore position in ascending TPN over exactly the list
+`pair_round/2` is handed: roster membership, nothing else.
+
+For a team that has NEVER arrived that is the right answer - a host that
+omits it gets the renumbering for free, and a host that keeps it in the
+list would have it paired.
+
+For a team that arrived and is then **absent** - sitting a round out, or
+withdrawn after playing - it is the wrong one, and it is a defect rather
+than a licensed difference between the two chapters. The individual rule
+keeps such a player numbered forever (`Pairing.arrived_for?/2`'s second
+clause: participated in any earlier round). Nothing in C.04.6 says teams
+should behave differently; the team side loses the number only because the
+absent team is not in the list, and everyone below it silently shifts. It
+is reachable inside 4.3.1's own window: a team that takes the
+pairing-allocated bye in round 1 has arrived with zero played matches, and
+if it sits round 2 out it can still meet 4.3.1 in round 3 with the wrong
+parity for every team below it.
+
+`Colour` cannot fix that - the absent team is not in its scope at all - so
+the fix belongs on `TeamPairing.pair_round/2`, as an explicit roster or
+absentee argument distinct from "the teams to pair this round". Until then
+the divergence is stated in `Colour`'s moduledoc and pinned by a test
+rather than left for a reader to discover. **Not measured, because there is
+nothing to measure it against**: C.04.6 has no automatable oracle (below).
 
 ## Type A and Type B
 
@@ -277,8 +351,26 @@ previous-round floaters than a later one.
 
 ## Open questions
 
-* **4.3.1 and the TPN-parity dispute.** Blocked on the SPP reply. Build
-  the rest first.
+* ~~**4.3.1 and the TPN-parity dispute.** Blocked on the SPP reply. Build
+  the rest first.~~ **Closed 2026-08-27**: answered against this engine,
+  and implemented on the team side (Article 4 above). This was the only
+  item on the team system whose *correct answer* was unknown rather than
+  merely unwritten, so team-pairing validation no longer has a colour
+  question hanging over it - the small-bracket exhaustive proof covers who
+  plays whom, and colour now has a settled rule to test against instead of
+  a pending one.
+
+  Nothing measured in this document moves as a result, for the plain
+  reason that nothing here was ever measured: C.04.6 has no automatable
+  oracle (see above), so there is no team corpus to re-run. The individual
+  side's disputed-board counts do move, and re-measuring them is that
+  side's work, not recorded here.
+* **The absent team's number (4.3.1).** Open, and a defect rather than an
+  unwritten rule: a team that arrived and is then absent for a round loses
+  its number here, where the individual side keeps it. `pair_round/2` needs
+  an absentee or full-roster argument to tell "never arrived" from "arrived,
+  not playing today"; `Colour` cannot see the difference. See Article 4
+  above and `Colour`'s moduledoc.
 * **Board order.** Unspecified by FIDE; needs a product decision, and it
   interacts with whatever the host application stores per player.
 * **Forfeited matches.** [C2] mentions winning a match by forfeit, which

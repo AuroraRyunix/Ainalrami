@@ -30,9 +30,33 @@ defmodule Ainalrami.LateEntrantTest do
   What is genuinely NOT modelled here is 2.5 - TPNs are provisional until
   the participant list closes, so a real late entry can renumber everyone.
   This engine takes TPNs as given in the file and never assigns them, so
-  that is the caller's job and out of scope. See
-  `docs/dispute-initial-colour.md`, where the fixedness of a TPN is the
-  whole argument.
+  that is the caller's job and out of scope.
+
+  ## The other half of 2.4, which this file does not test
+
+  Read the quotation above again, because it is also the sentence the FIDE
+  Systems of Pairings and Programs Commission ruled on for Article 5.2.5,
+  on 2026-08-27 - and it ruled AGAINST this engine. Anyone who arrives at
+  2.4 through this file needs to know which way, because this file used to
+  send them the other way: it closed by citing
+  `docs/dispute-initial-colour.md` "where the fixedness of a TPN is the
+  whole argument", and that argument is the one that lost.
+
+  Both sides argued from these same words. This engine read "given an
+  appropriate TPN and paired only when they actually arrive" as granting
+  the number up front and making only the pairing wait. The SPP reads it as
+  withholding the number until the arrival - so 5.2.5's parity is taken on
+  a player's position among those who have arrived, and a late entrant
+  shifts everyone below them the moment they turn up. The engine has been
+  changed to match.
+
+  None of that touches the four equivalences pinned below. They are about
+  SCORING and FLOATING a blank round, not numbering one, and all four still
+  hold - the ruling changed which number 5.2.5's parity is taken on, not
+  what a blank round is worth. But 2.4 is now quoted here for one purpose
+  and famous for another, so the citation is worth keeping straight.
+  `Ainalrami.Pairing`'s `arrival_numbers/2` carries the ruling in full, and
+  `Ainalrami.InitialColourTest` is the numbering's own test file.
   """
 
   use ExUnit.Case, async: true

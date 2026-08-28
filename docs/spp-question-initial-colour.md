@@ -1,5 +1,48 @@
 # Question for the SPP: Article 5.2.5 and the definition of TPN
 
+**Sent 2026-08-21. Answered 2026-08-27. The answer is (b). We were wrong.**
+
+The letter asked whether 5.2.5's parity is taken on **(a)** the TPN as C.04.2
+Article 2 defines it, unaffected by anyone's non-participation, or **(b)** a
+numbering that skips players who have never been paired. This engine
+implemented (a). Both references implement (b).
+
+The SPP answered **(b)**:
+
+> Because of C.04.2:2.4 which states "A Late Entry is a participant who is
+> only taken into account for the pairing of rounds after the first. If
+> admitted to the tournament, LATE ENTRIES receive no points for unplayed
+> rounds ... and ARE GIVEN AN APPROPRIATE TPN AND PAIRED ONLY WHEN THEY
+> ACTUALLY ARRIVE." ... players who have yet to arrive don't have a TPN.
+
+**The crux: both sides argued from that same sentence.** This letter did not
+quote 2.4 - it cited 2.3 and 2.5, and made the general claim that C.04.2
+Article 2 "makes no distinction between a registered player who has been
+paired and one who has not". But 2.4 is where this project's own written
+position rested hardest (`docs/dispute-initial-colour.md`, `README.md`), and
+it rested on the identical clause the SPP has now quoted back. Our reading of
+it was: *the TPN exists before the arrival; it is the pairing that waits, so a
+registered player who has not yet played still holds a TPN, and 5.2.5 asks for
+the parity of a TPN.* The SPP reads "given an appropriate TPN and paired only
+when they actually arrive" as making the TPN itself wait: no arrival, no TPN,
+nothing to take a parity of. Same sentence, opposite conclusion, and we had it
+the wrong way round.
+
+**What followed.** The engine changed: 5.2.5's parity is now taken on a
+numbering that omits players never paired, in both the individual and the team
+system, and the harnesses' "known dispute" buckets are gone rather than
+zeroed. Both reference implementations are vindicated - they were not carrying
+a pre-2026 reading, they were right, and the shared-lineage argument this
+project used to explain away their agreement explained away correct evidence.
+The corpus has **not** been re-run at scale yet: the expectation is that the
+64,131 disputed boards in `docs/validation.md` collapse to zero, and that is an
+expectation, not a measurement.
+
+The question text below is left exactly as sent. It is the record of what was
+asked and how; the annotations are all at the bottom.
+
+---
+
 Ready to send. Keep it this short - one question, one example, one table.
 Everything else is available on request and should stay on request.
 
@@ -113,3 +156,57 @@ am happy to supply the TRF file and each program's raw output if that
 helps, and I am grateful for your time.
 
 With many thanks,
+
+---
+
+## Annotations, written after the reply (2026-08-27)
+
+The letter above is unedited. These note where it was right and where it was
+wrong, in the order the passages appear.
+
+**"Read literally, the current text gives (a). Every program I tested gives
+(b)."** - This is the reading that was submitted and rejected. The SPP holds
+that the current text, read together with C.04.2:2.4, gives (b). "Read
+literally" was doing more work than it could carry: it meant *read 5.2.5 and
+2.3 and 2.5 literally*, and it did not reach the one sub-article that decides
+the matter. The second half of the sentence stands and was the warning sign.
+
+**The comparison table.** The measurements are correct and unchanged - board
+2 v 7 is still the single board where the two parities disagree, and the
+programs still answer 2. What inverts is the column heading. "5.2.5 read
+literally" gave 7; the answer 5.2.5 actually gives is 2, so on that board it
+was this engine's reading that departed from the article, not the programs'.
+
+**"I note that JaVaFo predates the current wording ... That is why I am asking
+whether the February rewrite was intended to change behaviour."** - The premise
+was sound and the conclusion was too generous to us. The February rewrite is
+beside the point: C.04.2:2.4 sits outside C.04.3 entirely and was untouched by
+it, so behaviour (b) is founded on a clause the rewrite never reached. The
+argument that renumbering was "defensible under the old wording and baseless
+under the new" - which appears in `CHANGELOG.md` and elsewhere - fails on that.
+
+**"Why it matters."** - Unchanged, and the blast radius is now this engine's,
+not the programs'. Colour is allocated after the pairing, so nothing here moves
+a player to a different board; every affected axis still reports 100.00%
+pairing agreement.
+
+**"What I think is most likely."** - This paragraph was right, and it is the
+most useful thing in the letter. Three independent programs agreeing did mean
+the reader had misunderstood the rule. The thing that was missing was not a
+settled convention invisible from the text, as guessed: it was a single
+sub-article of C.04.2 that this project had in fact read, quoted, and built its
+case on, and had construed backwards. That is a worse failure than the one
+predicted, and closer to home.
+
+**The decision to keep this engine out of the table** (see the preamble) was
+right for a reason that only became visible with the answer. The question put
+was the published rule against every program, so the reply is a ruling on the
+rule rather than a defect report about a newcomer, and it is quotable as such
+by anyone. Had the letter argued Ainalrami's case, the answer would have read
+as a correction of one program instead of a construction of C.04.2:2.4.
+
+**Closing expecting to be wrong** was also right, and cheaply so: a letter that
+asks to be corrected got back the reasoning, not just the verdict. The
+reasoning is the part worth having - the verdict alone would have said (b)
+without saying why, and the *why* is what the rest of the repository now has to
+be rewritten around.

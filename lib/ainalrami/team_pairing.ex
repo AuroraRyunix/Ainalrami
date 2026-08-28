@@ -116,10 +116,16 @@ defmodule Ainalrami.TeamPairing do
 
     with {:ok, bye, rest} <- assign_bye(teams, mode),
          {:ok, brackets} <- pair_brackets(rest, mode, base) do
+      # Article 4.3.1's numbering, built ONCE for the round over the whole
+      # roster. Per pair it would be rebuilt for every board, which is the
+      # class of regression the individual engine has already paid for
+      # twice - see `Ainalrami.Pairing`'s note on `score_before/3`.
+      numbers = Colour.parity_numbers(teams)
+
       pairs =
         brackets
         |> Enum.flat_map(& &1.pairs)
-        |> Enum.map(&allocate_colours(&1, teams, mode, opts, last_round?))
+        |> Enum.map(&allocate_colours(&1, teams, numbers, mode, opts, last_round?))
 
       {:ok, %{pairs: pairs, bye: bye && bye.tpn, brackets: brackets}}
     end
@@ -339,7 +345,7 @@ defmodule Ainalrami.TeamPairing do
   # Article 4 - colours
   # ---------------------------------------------------------------------
 
-  defp allocate_colours({a_tpn, b_tpn}, teams, mode, opts, last_round?) do
+  defp allocate_colours({a_tpn, b_tpn}, teams, numbers, mode, opts, last_round?) do
     by_tpn = Map.new(teams, &{&1.tpn, &1})
     a = Map.fetch!(by_tpn, a_tpn)
     b = Map.fetch!(by_tpn, b_tpn)
@@ -349,7 +355,12 @@ defmodule Ainalrami.TeamPairing do
       score_mode: mode,
       use_secondary?: Keyword.get(opts, :use_secondary?, true),
       type: Keyword.get(opts, :type, :a),
-      last_round?: last_round?
+      last_round?: last_round?,
+      # 4.3.1's parity is taken on this, not on the TPN. Passed rather than
+      # derived here: `allocate/3` would otherwise default to numbering the
+      # two teams of this board alone, which is the right answer for a
+      # two-team tournament and the wrong one inside a real roster.
+      parity_numbers: numbers
     ]
 
     {white, black} = Colour.allocate(a, b, colour_opts)
