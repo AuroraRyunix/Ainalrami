@@ -34,9 +34,9 @@ system, and the harnesses' "known dispute" buckets are gone rather than
 zeroed. Both reference implementations are vindicated - they were not carrying
 a pre-2026 reading, they were right, and the shared-lineage argument this
 project used to explain away their agreement explained away correct evidence.
-The corpus has **not** been re-run at scale yet: the expectation is that the
-64,131 disputed boards in `docs/validation.md` collapse to zero, and that is an
-expectation, not a measurement.
+Re-run at scale on 2026-08-28, on the same seeds: the 64,131 disputed boards
+are **zero**, over 750,449 rounds and 7,392,594 boards, with every axis at
+100.0% and nothing unexplained. See `docs/validation.md`.
 
 The question text below is left exactly as sent. It is the record of what was
 asked and how; the annotations are all at the bottom.

@@ -362,14 +362,16 @@ boards where this engine was wrong, not boards where it was different:
 | axis | boards differing (old engine) |
 |---|---|
 | plain, forfeits, `XXP`, Baku | **0** |
-| 15% arbiter byes, `152 W` | 670 |
-| 15% arbiter byes, `152 B` | 1175 |
+| 15% arbiter byes, `152 W` | 670 → **0** |
+| 15% arbiter byes, `152 B` | 1175 → **0** |
 
-The corpus has **not** been re-run on the corrected engine. Both bye rows
-are expected to become 0; that is an expectation, not a measurement, and
-nothing in this repo should be read as claiming otherwise until the run
-happens. The full account, with the handbook text, the ruling and a
-reproducible probe, is in
+Re-measured on 2026-08-28, on the same seeds: **750,449 rounds, 7,392,594
+boards, zero colour differences** against bbpPairings. A second corpus on
+different seeds agrees at larger scale. The two boards where the two
+REFERENCES contradict each other survived the re-run on the same two axes,
+which is the control that says the instrument still sees what it used to.
+The full account, with the handbook text, the ruling and a reproducible
+probe, is in
 [docs/dispute-initial-colour.md](docs/dispute-initial-colour.md).
 
 ## Documentation

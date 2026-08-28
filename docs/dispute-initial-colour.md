@@ -345,14 +345,20 @@ fix**:
 | 10% forfeits | **0** | 0 - unchanged |
 | 20% forbidden pairs | **0** | 0 - unchanged |
 | Baku acceleration | **0** | 0 - unchanged |
-| 15% arbiter byes, `152 W` | 670 | **expected 0, not yet measured** |
-| 15% arbiter byes, `152 B` | 1175 | **expected 0, not yet measured** |
+| 15% arbiter byes, `152 W` | 670 | **0** |
+| 15% arbiter byes, `152 B` | 1175 | **0** |
 
 The 670 and 1175 were previously counted as boards where this engine was
 right and the references wrong. They are boards where this engine was
-wrong. The right-hand column is an **expectation pending the corpus
-re-run** — it has not been measured on the corrected engine at this scale,
-and no number in it may be quoted as a result until it has.
+wrong.
+
+**Measured 2026-08-28**, and the right-hand column is no longer an
+expectation. The corpus was re-run on the corrected engine at scale, on the
+same seeds as the figures it replaces: 750,449 rounds and 7,392,594 boards,
+**zero** colour differences against bbpPairings, every axis independently
+100.0% with nothing unexplained. A second run on different seeds
+(1,065,373 rounds, 11,164,952 boards) says the same. See
+[validation.md](validation.md#re-measured-2026-08-28-the-64131-are-zero).
 
 What has been measured, at small scale on the bye-heavy axis, is that the
 fix moves the disagreement to zero:

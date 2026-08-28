@@ -209,6 +209,20 @@ changed to match both references. What is left is one limit of method.
 
 ## Harness
 
+- [x] ~~**Re-run the corpus on the corrected engine.**~~ **Done 2026-08-28.**
+      Paired against the figures it replaces - same nine axes, same seeds
+      (95,000,001 onward): **750,449 rounds, 7,392,594 boards, zero colour
+      differences** against bbpPairings, every axis 100.0% with nothing
+      unexplained. The banked 64,131 are gone.
+
+      An independent run on different seeds (32,000,001 onward, seven axes)
+      agrees at larger scale: 1,065,373 rounds, 11,164,952 boards, also zero.
+
+      Both controls held: the no-bye axes stayed at zero, and the two
+      reference-against-reference boards survived on the same two axes,
+      outside 5.2.5's reach. See
+      [docs/validation.md](docs/validation.md#re-measured-2026-08-28-the-64131-are-zero).
+
 - [ ] **Strengthen the three-way harness's `:reach` classifier, and re-read
       whatever it filed.** On a bbpPairings-vs-Gacrux board neither side is
       this engine, so `explained_by_article_5_2_5?/4` drops to `:reach` -

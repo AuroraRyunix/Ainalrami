@@ -196,11 +196,24 @@ reference implementations were right. This version conforms.
   the initial colour to a drawing of lots and C.04.3 says nothing about
   recovering a lost one, so the reference is the only rule there is.
 
-- [Verified] **Not yet re-measured at corpus scale.** The last corpus run
-  recorded 64,131 colour differences against bbpPairings out of 6,242,974
-  boards, every one attributed to this dispute. Those figures describe the
-  superseded behaviour. They are expected to collapse to zero, and that is
-  an expectation, not a measurement, until the corpus is re-run.
+- [Verified] **Re-measured 2026-08-28: the 64,131 are zero.** The corpus was
+  re-run on the same seeds as the figures it replaces - 750,449 rounds,
+  7,392,594 boards, **zero** colour differences against bbpPairings, every
+  axis independently 100.0% with nothing unexplained. A second corpus on
+  different seeds agrees at larger scale: 1,065,373 rounds, 11,164,952
+  boards, also zero.
+
+  The run had to show two other things for the zero to mean anything, and
+  did. The no-bye control stayed at zero, as it was before the fix. And the
+  two boards where bbpPairings and Gacrux contradict *each other* survived,
+  on the same two axes and still outside 5.2.5's reach - if the ruling had
+  swallowed those, the instrument would have changed rather than the engine.
+
+  The sharpest control is smaller: on 400 identical bye-heavy tournaments,
+  v0.12.0 reports 1,255 differing boards and v0.14.0 reports 0, with pairing
+  composition byte-identical across both. The instrument produced a nonzero
+  on the old engine minutes before producing zero on the new one, which is
+  what makes the zero a result rather than an absence.
 
 ## [0.13.0] - 2026-08-27
 

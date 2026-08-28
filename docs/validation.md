@@ -252,18 +252,52 @@ on which this engine was wrong. The claim that used to stand here - that
 this was the strongest statement the project had about Article 5 - is
 withdrawn outright.
 
-#### The re-measurement is PENDING, and no zero has been observed
+#### Re-measured 2026-08-28: the 64,131 are zero
 
-The engine now numbers the way the references do. The corpus has **not**
-been re-run. The expectation is that the same 6,242,974 boards come back
-6,242,974 agreed and zero differing, since the one documented cause of the
-64,131 has been removed - but that is an EXPECTATION, not a measurement,
-and this project has been burned by carried-forward numbers before. No zero
-appears on this page until one has been observed.
+The corpus was re-run on the fixed engine, on **the same seeds**, and the
+64,131 are gone.
 
-Until the re-run, the honest statement of this engine's colour agreement
-with bbpPairings at scale is: **unmeasured on the current engine.** The
-figure that stands is the superseded one above.
+| | rounds | boards | Ainalrami vs bbpPairings |
+|---|---|---|---|
+| `threeway_run`, pre-fix, 8 axes | 649,207 | 6,242,974 | 6,178,843 agreed, **64,131 differing** |
+| `spp5225b`, post-fix, 9 axes | 750,449 | 7,392,594 | 7,392,594 agreed, **0 differing** |
+
+Same nine axes, same parameters, seeds 95,000,001 onward in both. The
+post-fix run covers more because it got all nine; the pre-fix one lost its
+ninth axis to resource starvation, as recorded above. That axis is exactly
+the difference - 101,242 rounds.
+
+**Not a like-for-like board count, and it does not need to be.** Every axis
+independently reports 100.0% with zero unexplained, so there is no residue
+hiding in the extra coverage.
+
+An independent run on different seeds (`spp5225`, seeds 32,000,001 onward,
+seven axes) says the same thing at larger scale: **1,065,373 rounds and
+11,164,952 boards, zero colour differences against bbpPairings.** Two
+corpora, one paired and one independent, both flat.
+
+##### What the run was required to show, and did
+
+A re-run that only produced zeroes would be as consistent with a broken
+instrument as with a fixed engine, so the script demanded two other things
+of it.
+
+**The no-bye control had to stay at zero.** It did. Those axes read zero
+before the fix as well - the divergence was only ever the renumbering, so
+an axis where the two numberings coincide had nothing to change.
+
+**The two reference-against-reference boards had to survive.** They did,
+on the same two axes: one on `forfeits10`, one on
+`everything-gacrux-allows`, both labelled `0 within 5.2.5's reach` and so
+outside the article entirely. If the ruling had somehow swallowed them, the
+instrument would have changed rather than the engine.
+
+A small-scale paired control makes the same point from the other end: on
+400 identical bye-heavy tournaments, v0.12.0 reports **1,255 differing
+boards** and v0.14.0 reports **0**, with pairing composition byte-identical
+across both (33,419/33,419). The instrument reported a nonzero on the old
+engine minutes before reporting zero on the new one, which is what makes
+the zero a result rather than an absence.
 
 **And the two references contradict each other.** On the forfeit axis and
 on the combined axis, one board each where bbpPairings and Gacrux disagree
@@ -273,8 +307,9 @@ Gacrux is alone.
 
 **The ruling does not touch those two boards and does not resolve them.**
 They fall outside 5.2.5 by construction, which is why they were reported
-separately in the first place; they are still open, still unadjudicated,
-and the re-run above will not close them.
+separately in the first place; they are still open and still unadjudicated.
+The 2026-08-28 re-run found them again, on the same two axes, which is the
+control that says the instrument still sees what it used to.
 
 Two boards in 6.2 million is a rate of 3.2e-5%, and it is not zero. Nobody
 had measured it before, because measuring it needs an instrument that
