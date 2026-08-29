@@ -38,6 +38,19 @@ defmodule Ainalrami.Test.ColourArticle do
   come back: a fourth copy of the overturned parity rule sitting in the test
   tree is exactly the drift this moduledoc's second paragraph is about.
 
+  ## The answer is computable again
+
+  `white_by_5_2_5/3` is back, and it is not the model that was deleted. That
+  one took the parity of the fixed TPN - the reading the SPP overturned - and
+  it was a MODEL of this engine's guess at a disputed article. This one calls
+  `Ainalrami.Pairing.arrival_numbers/2`, which is the article as ruled, and
+  which all three engines implement.
+
+  The difference matters and is the whole reason the harness may use it. A
+  test that predicts a reference's internals proves nothing when they differ.
+  A test that applies an agreed rule and finds a reference breaking it has
+  found a defect in the reference.
+
   ## The rule that is left
 
   > **5.2.5** If the higher ranked player has an odd TPN, give them the
@@ -57,5 +70,106 @@ defmodule Ainalrami.Test.ColourArticle do
   """
   def no_colour_preference?(player) do
     Enum.all?(player.games, &(&1.result not in ~w(1 = 0)))
+  end
+
+  @doc """
+  Which of a 5.2.5 board's two players takes White, given the initial colour.
+
+  Returns the rank of the player who should be White, or `nil` when 5.2.5 does
+  not decide this board - either player holding a colour preference, or a
+  player the round's numbering does not cover.
+
+  The higher ranked player is the one with the lower rank number. At 5.2.5
+  neither has played, so Article 1.2's "score first, then TPN" has nothing to
+  separate them on but the TPN - which is what makes this the one place in
+  Article 5.2 where rank alone is the whole of "higher ranked".
+  """
+  def white_by_5_2_5({rank_a, rank_b}, by_rank, numbers, initial_white?) do
+    a = Map.get(by_rank, rank_a)
+    b = Map.get(by_rank, rank_b)
+
+    top = min(rank_a, rank_b)
+    bottom = max(rank_a, rank_b)
+    number = Map.get(numbers, top)
+
+    cond do
+      is_nil(a) or is_nil(b) -> nil
+      not no_colour_preference?(a) -> nil
+      not no_colour_preference?(b) -> nil
+      is_nil(number) -> nil
+      # 5.2.5: the higher ranked player holds the initial colour on an odd
+      # number and the opposite on an even one.
+      rem(number, 2) == 1 == initial_white? -> top
+      true -> bottom
+    end
+  end
+
+  @doc """
+  The initial colour a single board IMPLIES, or `nil` if 5.2.5 does not decide
+  it.
+
+  `true` for "white was the initial colour", `false` for black.
+
+  This is the inverse of `white_by_5_2_5/4`, and it exists because the initial
+  colour is not recoverable from a position: FIDE leaves the very first colour
+  to a literal drawing of lots, and an engine's own choice is not a rule
+  anybody can reproduce.
+
+  So the harness does not need to know it. Every board a round decides by
+  5.2.5 implies one, and they must all agree - which turns an unknowable
+  constant into a testable consistency claim.
+  """
+  def implied_initial_colour({white_rank, black_rank}, by_rank, numbers) do
+    a = Map.get(by_rank, white_rank)
+    b = Map.get(by_rank, black_rank)
+
+    top = min(white_rank, black_rank)
+    number = Map.get(numbers, top)
+
+    cond do
+      is_nil(a) or is_nil(b) -> nil
+      not no_colour_preference?(a) -> nil
+      not no_colour_preference?(b) -> nil
+      is_nil(number) -> nil
+      # The top player took White iff they hold the initial colour on an odd
+      # number, so: odd and White means the initial colour was white; odd and
+      # Black means it was black; and the even cases invert.
+      true -> top == white_rank == (rem(number, 2) == 1)
+    end
+  end
+
+  @doc """
+  Whether one engine's answers for a round can all be explained by a single
+  initial colour.
+
+  Returns `:consistent`, `:not_applicable` (no board in the round is 5.2.5's
+  to decide), or `{:inconsistent, whites, blacks}` with how many boards
+  implied each - a straight count of the contradiction.
+
+  ## Why this and not "is this board right"
+
+  Because "right" needs the initial colour, and there is no such thing to
+  know: Article 5.1 leaves it to a drawing of lots. What IS knowable is that
+  5.2.5 gives one answer per board from one constant, so an engine whose
+  boards imply both colours has broken the article on at least one of them,
+  whatever the constant was.
+
+  That is a real conformance claim about a reference, computed from an agreed
+  rule - which is what `:reach` could not make while the article was disputed.
+  """
+  def article_5_2_5_consistency(boards, by_rank, numbers) do
+    implied =
+      boards
+      |> Enum.map(&implied_initial_colour(&1, by_rank, numbers))
+      |> Enum.reject(&is_nil/1)
+
+    whites = Enum.count(implied, & &1)
+    blacks = length(implied) - whites
+
+    cond do
+      implied == [] -> :not_applicable
+      whites == 0 or blacks == 0 -> :consistent
+      true -> {:inconsistent, whites, blacks}
+    end
   end
 end

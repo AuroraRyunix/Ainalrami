@@ -1225,7 +1225,24 @@ defmodule Ainalrami.Pairing do
   # the letter spellings `W` `D` `L`), `+` counts with or without an
   # opponent, `-` counts only WITH one, and `U` counts. `H`, `F`, `Z`,
   # opponentless `-` and a blank round do not.
-  defp arrival_numbers(players, round) do
+  @doc """
+  The numbering Article 5.2.5's parity is taken on: `%{rank => number}`.
+
+  Public because it is a RULE rather than an internal. Until the SPP's
+  2026-08-27 ruling on C.04.2 Article 2.4, what 5.2.5 counted was disputed,
+  and the comparison harness deliberately refused to compute it - modelling a
+  reference's internals is not a conformance test, it is a prediction. The
+  ruling settled it, all three engines now implement the same reading, and
+  applying an agreed article is exactly what a conformance test is.
+
+  So the harness calls this instead of keeping a fourth copy of the rule in
+  the test tree. That copy is the drift `Ainalrami.Test.ColourArticle`'s
+  moduledoc is about, and it has already cost this repo once.
+
+  A player who has not arrived is absent from the map rather than numbered
+  late - see `number_arrivals/2`.
+  """
+  def arrival_numbers(players, round) do
     number_arrivals(players, &arrived_for?(&1, round))
   end
 

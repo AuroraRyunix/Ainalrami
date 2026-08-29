@@ -26,6 +26,12 @@ defmodule Ainalrami.CLI do
   @doc false
   def main(argv), do: argv |> run() |> System.halt()
 
+  # Wraps `run/1`'s body so a value-level complaint thrown from option parsing
+  # comes back as an ordinary usage error. A throw rather than a return value
+  # because those parsers are called for their VALUE - `option/2` hands back an
+  # integer, and there is nowhere in `seed: option(flags, "seed")` for an error
+  # tuple to go that is not just as silent as the bug this fixes.
+
   @doc "Runs the CLI and returns an exit code, without halting the VM - see moduledoc."
   def run(argv) do
     {flags, positional} = split_flags(argv)
@@ -38,25 +44,81 @@ defmodule Ainalrami.CLI do
       end
     )
 
-    cond do
-      "-h" in flags or "--help" in flags -> print_help_and_ok()
-      "--version" in flags -> print_version_and_ok()
-      true -> dispatch(positional, flags)
+    try do
+      cond do
+        # Before --help and --version, so a mistyped option is reported rather
+        # than swallowed by a run that was going to print help anyway.
+        complaint = bad_flag(flags) -> usage_error(complaint)
+        "-h" in flags or "--help" in flags -> print_help_and_ok()
+        "--version" in flags -> print_version_and_ok()
+        true -> dispatch(positional, flags)
+      end
+    catch
+      {:usage, message} -> usage_error(message)
     end
   end
 
-  defp split_flags(argv) do
-    known_bare_flags = ~w(-p -g -c -x --explain -q --quiet -d --debug -h --help --version)
-    Enum.split_with(argv, &(&1 in known_bare_flags or &1 =~ ~r/^--[a-z-]+=/))
+  # Every flag this CLI accepts. Both lists are checked rather than pattern
+  # matched, because the failure they prevent is silence.
+  #
+  # `--player=30` (singular) used to run with a RANDOM roster size.
+  # `--initial-colour=x` used to quietly pick White. And
+  # `ainalrami -g out.trf --seed 42` - a space instead of an equals sign -
+  # used to write the file and ignore the seed, which makes the run
+  # unreproducible, which is the whole argument for the generator existing.
+  #
+  # Each of those is a command that appears to work. The seed one is the worst
+  # kind: it produces a real tournament that can never be produced again, and
+  # nothing says so.
+  @bare_flags ~w(-p -g -c -x --explain -q --quiet -d --debug -h --help --version)
+  @valued_flags ~w(seed players rounds forfeit-pct bye-pct forbidden-pct
+                   acceleration initial-colour initial-color)
+
+  defp split_flags(argv), do: Enum.split_with(argv, &String.starts_with?(&1, "-"))
+
+  # The first flag this program does not accept, described, or nil.
+  defp bad_flag(flags), do: Enum.find_value(flags, &flag_complaint/1)
+
+  defp flag_complaint(flag) do
+    cond do
+      flag in @bare_flags ->
+        nil
+
+      String.contains?(flag, "=") and name_of(flag) in @valued_flags ->
+        nil
+
+      # Written correctly but not a flag this program has. Named back, because
+      # the mistake is almost always a plural or a spelling.
+      String.contains?(flag, "=") ->
+        "unknown option --#{name_of(flag)}"
+
+      # A valued flag with a space instead of an equals sign. Worth its own
+      # message: the shell has already split it, so the value is sitting in
+      # the positional arguments looking like a file name, and the run happens
+      # without the option.
+      String.trim_leading(flag, "-") in @valued_flags ->
+        "#{flag} takes its value with an equals sign, as #{flag}=VALUE - " <>
+          "written with a space the value is read as a file name and the option is lost"
+
+      true ->
+        "unknown option #{flag}"
+    end
+  end
+
+  defp name_of(flag) do
+    flag |> String.trim_leading("-") |> String.split("=") |> hd()
   end
 
   # The one `-g` option whose value is a word rather than an integer.
-  # Anything other than the two known modes is treated as absent, which is
-  # the same silence `option/2` gives an unparsable integer.
+  #
+  # An unknown value is refused rather than treated as absent. The name being
+  # known is not enough - `--acceleration=bakku` is a request for something
+  # this program does not do, and running without acceleration is not that.
   defp acceleration_option(flags) do
     Enum.find_value(flags, fn
       "--acceleration=baku" -> :baku
       "--acceleration=random" -> :random
+      "--acceleration=" <> other -> refuse("unknown acceleration \"#{other}\" - baku or random")
       _ -> nil
     end)
   end
@@ -66,11 +128,22 @@ defmodule Ainalrami.CLI do
   # used implicitly before the option existed.
   defp initial_colour_option(flags) do
     Enum.find_value(flags, "w", fn
-      "--initial-colour=" <> value -> normalise_colour(value)
-      "--initial-color=" <> value -> normalise_colour(value)
+      "--initial-colour=" <> value -> normalise_colour(value) || bad_colour(value)
+      "--initial-color=" <> value -> normalise_colour(value) || bad_colour(value)
       _ -> nil
     end)
   end
+
+  # Refused rather than silently defaulted. Somebody who typed a colour has an
+  # answer in mind, and quietly running the opposite one is worse than
+  # stopping.
+  defp bad_colour(value) do
+    refuse("unknown initial colour \"#{value}\" - white/w or black/b")
+  end
+
+  # A complaint from deep inside option parsing, where returning an exit code
+  # would just be ignored by the caller expecting a value. Caught in `run/1`.
+  defp refuse(message), do: throw({:usage, message})
 
   defp normalise_colour(value) do
     case String.downcase(value) do
@@ -82,17 +155,22 @@ defmodule Ainalrami.CLI do
 
   # `--key=value` options, used only by `-g`. Anything unrecognised is left
   # for the mode to reject rather than silently ignored.
+  # An unparsable value is refused, not treated as absent. `--seed=fourty2`
+  # producing a random seed is the same unreproducible run as `--seed 42` did.
   defp option(flags, key) do
     prefix = "--#{key}="
 
-    Enum.find_value(flags, fn flag ->
-      if String.starts_with?(flag, prefix) do
-        flag |> String.trim_leading(prefix) |> Integer.parse()
-      end
-    end)
-    |> case do
-      {value, ""} -> value
-      _ -> nil
+    case Enum.find(flags, &String.starts_with?(&1, prefix)) do
+      nil ->
+        nil
+
+      flag ->
+        value = String.trim_leading(flag, prefix)
+
+        case Integer.parse(value) do
+          {parsed, ""} -> parsed
+          _ -> refuse("--#{key} takes a whole number, not \"#{value}\"")
+        end
     end
   end
 

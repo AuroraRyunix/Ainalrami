@@ -407,6 +407,13 @@ defmodule Ainalrami.ThreeWayComparisonTest do
 
     %{
       bbp_gac: colours_between({"bbpPairings", "Gacrux"}, bbp, gac, by_rank, :reach, where),
+      # Asked of each reference's own round, not of the pair: an engine can be
+      # internally inconsistent whether or not the other one agrees with it,
+      # and that is a finding about THAT engine.
+      article: %{
+        bbp: article_consistency(bbp, by_rank, players, where, "bbpPairings"),
+        gac: article_consistency(gac, by_rank, players, where, "Gacrux")
+      },
       ours_bbp: colours_between({"Ainalrami", "bbpPairings"}, ours, bbp, by_rank, :none, where),
       ours_gac: colours_between({"Ainalrami", "Gacrux"}, ours, gac, by_rank, :none, where)
     }
@@ -510,13 +517,22 @@ defmodule Ainalrami.ThreeWayComparisonTest do
   # kept because a weaker word is the honest one for a board this engine did
   # not form.
   #
-  # It can now be STRENGTHENED, and should be. The ruling fixed what the
-  # article's answer is, and computing it is no longer "modelling a
-  # reference's internals" - it is applying the rule all three engines now
-  # implement, this one included. That turns these boards back into a real
-  # conformance test OF THE REFERENCES, which is the only instrument that
-  # has ever caught them contradicting each other. Left for the corpus
-  # re-run, where it can be measured rather than asserted. See TODO.md.
+  # STRENGTHENED 2026-08-29. The ruling fixed the article's answer, so
+  # computing it is applying a rule all three engines implement rather than
+  # predicting an internal - and `article_5_2_5_consistency/3` now makes a
+  # real claim about a reference from it.
+  #
+  # The claim is not "this board is right", because that needs the initial
+  # colour and Article 5.1 leaves it to a literal drawing of lots. It is that
+  # every board a round decides by 5.2.5 must imply the SAME initial colour.
+  # An engine whose round implies both has broken the article on at least one
+  # of those boards, whatever the constant was - which is a defect in a
+  # reference, found by applying an agreed article to its output.
+  #
+  # `explained_by_article_5_2_5?/4` keeps its old job: deciding whether a
+  # DISAGREEING board is one 5.2.5 was deciding at all. The consistency check
+  # is the separate, stronger question, asked per round rather than per
+  # board, and reported beside it.
   defp explained_by_article_5_2_5?({white, black}, by_rank, _round, mode) do
     a = Map.get(by_rank, white)
     b = Map.get(by_rank, black)
@@ -527,6 +543,34 @@ defmodule Ainalrami.ThreeWayComparisonTest do
       not ColourArticle.no_colour_preference?(a) -> false
       not ColourArticle.no_colour_preference?(b) -> false
       true -> true
+    end
+  end
+
+  # Whether one engine's answers for this round can all be explained by a
+  # single initial colour - see `ColourArticle.article_5_2_5_consistency/3`.
+  #
+  # An inconsistent round is printed immediately rather than only counted:
+  # this is the strongest claim the harness can make against a reference, it
+  # is expected never to fire, and a rate that ticks up in a summary is not
+  # something anybody would go looking for the position behind.
+  defp article_consistency(:raised, _by_rank, _players, _where, _name), do: :not_applicable
+
+  defp article_consistency(boards, by_rank, players, where, name) do
+    numbers = Pairing.arrival_numbers(players, where.round)
+
+    case ColourArticle.article_5_2_5_consistency(boards, by_rank, numbers) do
+      {:inconsistent, whites, blacks} = verdict ->
+        IO.puts(
+          "
+  #{name} broke Article 5.2.5 on seed #{where.seed}, round #{where.round}: " <>
+            "#{whites} board(s) imply an initial white, #{blacks} imply black. " <>
+            "One constant decides them all, so at least one board is wrong."
+        )
+
+        verdict
+
+      verdict ->
+        verdict
     end
   end
 

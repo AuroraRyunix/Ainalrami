@@ -223,8 +223,37 @@ changed to match both references. What is left is one limit of method.
       outside 5.2.5's reach. See
       [docs/validation.md](docs/validation.md#re-measured-2026-08-28-the-64131-are-zero).
 
-- [ ] **Strengthen the three-way harness's `:reach` classifier, and re-read
-      whatever it filed.** On a bbpPairings-vs-Gacrux board neither side is
+- [x] ~~**Strengthen the three-way harness's `:reach` classifier.**~~
+      **Done 2026-08-29.** The re-read of what it filed is still open and is
+      folded into the superseded-count item below, since both want the same
+      corpus run.
+
+      `Ainalrami.Pairing.arrival_numbers/2` is public now - it is the article
+      as the SPP ruled it, so exposing it is exposing a RULE rather than an
+      internal, and it stops the harness keeping a fourth copy of the
+      numbering in the test tree.
+
+      The claim the harness makes is deliberately not "this board is right":
+      that needs the initial colour, and Article 5.1 leaves it to a literal
+      drawing of lots, so there is nothing to look up. It is that **every
+      board a round decides by 5.2.5 must imply the SAME initial colour.** An
+      engine whose round implies both has broken the article on at least one
+      of them, whatever the constant was - which is a real conformance
+      finding about a reference, computed from an agreed rule.
+
+      `article_5_2_5_consistency/3` in `test/support/colour_article.ex`, ten
+      unit tests in `test/ainalrami/colour_article_5_2_5_test.exs`, and it is
+      reported per reference per round in the three-way harness. An
+      inconsistent round prints immediately rather than only counting: it is
+      the strongest claim this instrument can make, it should never fire, and
+      nobody goes looking for the position behind a number in a summary.
+
+      Not yet measured - that needs bbpPairings and Gacrux, so it runs on
+      Photon with the next corpus pass.
+
+      The original note:
+
+- [ ] **Re-read what `:reach` filed while it was weakened.** On a bbpPairings-vs-Gacrux board neither side is
       this engine, so `explained_by_article_5_2_5?/4` drops to `:reach` -
       "5.2.5 decided this board" rather than any conformance claim. That was
       the honest ceiling while the article's answer was disputed: computing
@@ -496,7 +525,27 @@ million tournaments (see [docs/validation.md](docs/validation.md)).
 
 ## Diagnostics
 
-- [ ] **The CLI silently ignores a mistyped or space-separated option.**
+- [x] ~~**The CLI silently ignores a mistyped or space-separated option.**~~
+      **Fixed 2026-08-29.** An allowlist of bare and valued flags, checked
+      before `--help` so a typo alongside it is not swallowed by usage text
+      exiting 0. Values are checked too: `--seed=fourty2`,
+      `--acceleration=bakku` and `--initial-colour=x` are refused rather than
+      silently defaulted, since defaulting a seed produces exactly the
+      unreproducible run the space-separated form did.
+
+      A value-level complaint throws and is caught in `run/1` rather than
+      returning `usage_error/1`'s exit code - those parsers are called for
+      their VALUE, and there is nowhere in `seed: option(flags, "seed")` for
+      an error tuple to go that is not as silent as the bug being fixed.
+
+      Ten tests in `test/ainalrami/cli_options_test.exs`, which capture BOTH
+      streams: the complaint goes to stderr and the usage text to stdout, and
+      reading one of them proves an exit code while saying nothing about what
+      the user was told.
+
+      The original note:
+
+- [ ] **(historic) The CLI silently ignores a mistyped or space-separated option.**
       `split_flags/1` takes a fixed list of bare flags plus anything
       matching `--name=`, and validates no name. `--player=30` runs with a
       random roster size, `--initial-colour=x` silently picks White, and
