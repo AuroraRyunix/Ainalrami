@@ -253,7 +253,27 @@ changed to match both references. What is left is one limit of method.
 
       The original note:
 
-- [ ] **Re-read what `:reach` filed while it was weakened.** On a bbpPairings-vs-Gacrux board neither side is
+- [ ] **Re-read what `:reach` filed while it was weakened.**
+
+      **Blocked on a re-run, 2026-08-29, and for a reason worth recording:
+      the first measurement measured the instrument.** Replaying `spp5225`'s
+      seeds with the new `article_5_2_5_consistency/3` fired 53 times in
+      fifteen minutes of one axis - with bbpPairings and Gacrux "breaking
+      the article" identically on the same seeds, which is the tell, since
+      two independent engines do not fail in lockstep. Two firings were
+      traced to completion by hand (seeds 32000121 r2 and 32000287 r2) and
+      both dissolved: consistent once Article 1.2 is applied correctly.
+
+      The checker took the lower TPN as the higher ranked player. Fixed, with
+      four regression tests - see the CHANGELOG entry. **Nothing is known
+      about the references from that run**; the re-read still wants a clean
+      corpus pass on the corrected instrument.
+
+      What the run DID establish is in the entry below: seven of the
+      `spp5225` boards now have their positions recorded, which they never
+      had before.
+
+      The original note: On a bbpPairings-vs-Gacrux board neither side is
       this engine, so `explained_by_article_5_2_5?/4` drops to `:reach` -
       "5.2.5 decided this board" rather than any conformance claim. That was
       the honest ceiling while the article's answer was disputed: computing
@@ -334,19 +354,59 @@ changed to match both references. What is left is one limit of method.
       decide which reference is right on each, and file the seven against
       Gacrux.
 
+      **Seven of the thirteen combined-axis positions were captured on
+      2026-08-29** and are recorded here because until now this finding was
+      a count with nothing behind it - the original `spp5225` run did not
+      set `COLOUR_DEBUG=1`, so the boards were never printed. Ainalrami
+      sides with bbpPairings on all seven.
+
+      Outside 5.2.5's reach (five), all the same mechanism as the filed
+      5.2.4 finding - a forfeit or bye levels 5.2.1 to 5.2.3, 5.2.4 then
+      decides on score-then-TPN, and Gacrux uses TPN alone:
+
+      | seed | round | players | bbp + Ainalrami | Gacrux |
+      |---|---|---|---|---|
+      | 32001383 | 4 | 5 | `#4` White | `#2` |
+      | 32002861 | 3 | 4 | `#2` White | `#3` |
+      | 32006167 | 4 | 4 | `#4` White | `#2` |
+      | 32009900 | 7 | 6 | `#5` White | `#3` |
+      | 32012072 | 6 | 9 | `#8` White | `#4` |
+
+      Within 5.2.5's reach (two). Both players tied on points in each, so
+      these are NOT explained by the instrument defect above - they are
+      genuine 5.2.5 boards:
+
+      | seed | round | players | bbp + Ainalrami | Gacrux |
+      |---|---|---|---|---|
+      | 32004024 | 2 | 7 | `#6` White (0.0, `[b-]`) | `#2` (0.0, `[w-]`) |
+      | 32012339 | 2 | 4 | `#2` White (0.0, `[b-]`) | `#3` (0.0, `[w-]`) |
+
+      The remaining six combined-axis boards and all three forfeit-axis
+      boards were not observed before the run was stopped. Why Gacrux
+      answers as it does is deliberately not investigated: that needs
+      reading its source, which this project does not do.
+
       The original note, still accurate for its own corpus:
 
-- [ ] **Read the two boards where the two REFERENCES disagree about
-      colour.** The three-way run of 2026-08-27 measured reference-against-
-      reference colour agreement for the first time: 6,242,974 boards, and
-      two on which bbpPairings and Gacrux contradict each other OUTSIDE
-      Article 5.2.5's reach - i.e. on 5.2.1 to 5.2.4, which nobody
-      disputes. One on the 10%-forfeit axis, one on the combined axis.
-      Ainalrami agrees with bbpPairings in both, so this is not a finding
-      against this engine; it is a finding about the ruler. Reproduce with
-      `COLOUR_DEBUG=1` on those axes and seeds, decide which reference is
-      right, and file it upstream if it is Gacrux. See
-      [docs/validation.md](docs/validation.md#colour-measured-three-ways-for-the-first-time).
+- [x] ~~**Read the two boards where the two REFERENCES disagree about
+      colour.**~~ **Adjudicated 2026-08-28, reconfirmed 2026-08-29.** Both
+      are Gacrux reading Article 5.2.4's "higher ranked" as TPN order when
+      Article 1.2 defines it as score first, then TPN.
+      [docs/finding-gacrux-5-2-4.md](docs/finding-gacrux-5-2-4.md) carries
+      the claim, both positions and the reasoning, and is ready to file.
+      Reproduced independently on Photon (`/root/adjudicate2/`) with
+      `COLOUR_DEBUG=1` on the exact axes and seeds.
+
+      Only the FILING is left, and it belongs with the C2 report under
+      Upstream - the maintainer sends those.
+
+      Worth keeping beside the entry below: the 5.2.5 consistency checker
+      built to catch this class of error **made the same mistake itself**,
+      one article down, and had to be fixed before it could measure
+      anything. Three independent places have now got "higher ranked"
+      wrong in the same direction - Gacrux at 5.2.4, this engine at 5.2.4
+      (fixed 2026-08-27), and this engine's own instrument at 5.2.5. The
+      rule is easy to state and easy to half-remember.
 
 - [x] ~~**Brute-force the exhaustion refusals on the 4-6 player axis.**~~
       **Done 2026-08-27** (`20c4cb4`). 880,000 tournaments, 805,807 refusals,

@@ -79,29 +79,59 @@ defmodule Ainalrami.Test.ColourArticle do
   not decide this board - either player holding a colour preference, or a
   player the round's numbering does not cover.
 
-  The higher ranked player is the one with the lower rank number. At 5.2.5
-  neither has played, so Article 1.2's "score first, then TPN" has nothing to
-  separate them on but the TPN - which is what makes this the one place in
-  Article 5.2 where rank alone is the whole of "higher ranked".
+  "Higher ranked" is Article 1.2 - **score first, then TPN ascending** - and
+  not the TPN alone. This function said otherwise until 2026-08-29 and was
+  wrong, on a justification worth keeping as a warning: *"at 5.2.5 neither
+  has played, so there is nothing to separate them on but the TPN."*
+
+  `no_colour_preference?/1` excludes only COLOUR-FORMING games. A half-point
+  bye is worth half a point and forms no colour; a zero-point bye, an
+  absence and a forfeit likewise. So two players can both reach 5.2.5 and
+  hold different scores, and on any such board this picked the wrong player
+  and inverted the answer.
+
+  The engine had already found and fixed exactly this in itself - see
+  `Pairing.order_by_placement/2` and the comment above its call site, which
+  records the same defect one article up at 5.2.4 and notes it is
+  "reachable wherever a player has no PLAYED games at all, which arbiter
+  byes produce routinely". This instrument reintroduced it, and because byes
+  are common it fired constantly, which would have buried any real finding
+  in noise.
   """
   def white_by_5_2_5({rank_a, rank_b}, by_rank, numbers, initial_white?) do
     a = Map.get(by_rank, rank_a)
     b = Map.get(by_rank, rank_b)
 
-    top = min(rank_a, rank_b)
-    bottom = max(rank_a, rank_b)
-    number = Map.get(numbers, top)
-
     cond do
-      is_nil(a) or is_nil(b) -> nil
-      not no_colour_preference?(a) -> nil
-      not no_colour_preference?(b) -> nil
-      is_nil(number) -> nil
-      # 5.2.5: the higher ranked player holds the initial colour on an odd
-      # number and the opposite on an even one.
-      rem(number, 2) == 1 == initial_white? -> top
-      true -> bottom
+      is_nil(a) or is_nil(b) ->
+        nil
+
+      not no_colour_preference?(a) ->
+        nil
+
+      not no_colour_preference?(b) ->
+        nil
+
+      true ->
+        {top, bottom} = order_by_placement(a, b)
+
+        case Map.get(numbers, top.rank) do
+          nil ->
+            nil
+
+          # 5.2.5: the higher ranked player holds the initial colour on an
+          # odd number and the opposite on an even one.
+          number ->
+            if (rem(number, 2) == 1) == initial_white?, do: top.rank, else: bottom.rank
+        end
     end
+  end
+
+  # Article 1.2, and deliberately the same expression as the engine's own
+  # `Pairing.order_by_placement/2` rather than a second spelling of it: two
+  # implementations of one rule is what put the bug here in the first place.
+  defp order_by_placement(x, y) do
+    if {-x.points, x.rank} <= {-y.points, y.rank}, do: {x, y}, else: {y, x}
   end
 
   @doc """
@@ -123,18 +153,32 @@ defmodule Ainalrami.Test.ColourArticle do
     a = Map.get(by_rank, white_rank)
     b = Map.get(by_rank, black_rank)
 
-    top = min(white_rank, black_rank)
-    number = Map.get(numbers, top)
-
     cond do
-      is_nil(a) or is_nil(b) -> nil
-      not no_colour_preference?(a) -> nil
-      not no_colour_preference?(b) -> nil
-      is_nil(number) -> nil
-      # The top player took White iff they hold the initial colour on an odd
-      # number, so: odd and White means the initial colour was white; odd and
-      # Black means it was black; and the even cases invert.
-      true -> top == white_rank == (rem(number, 2) == 1)
+      is_nil(a) or is_nil(b) ->
+        nil
+
+      not no_colour_preference?(a) ->
+        nil
+
+      not no_colour_preference?(b) ->
+        nil
+
+      true ->
+        # Article 1.2, not the TPN alone - see `white_by_5_2_5/4`, which
+        # carried that defect until 2026-08-29 and inverted this answer on
+        # every board where the two players held different scores.
+        {top, _bottom} = order_by_placement(a, b)
+
+        case Map.get(numbers, top.rank) do
+          nil ->
+            nil
+
+          # The top player took White iff they hold the initial colour on an
+          # odd number, so: odd and White means the initial colour was white;
+          # odd and Black means it was black; and the even cases invert.
+          number ->
+            (top.rank == white_rank) == (rem(number, 2) == 1)
+        end
     end
   end
 

@@ -22,10 +22,18 @@ defmodule Ainalrami.ColourArticle525Test do
 
   # A player who has never played: no games, so no colour preference, so
   # inside 5.2.5's reach.
-  defp fresh(rank), do: %{rank: rank, games: []}
+  defp fresh(rank), do: %{rank: rank, points: 0.0, games: []}
 
   # One who has, so 5.2.5 is not deciding their board.
-  defp played(rank), do: %{rank: rank, games: [%{opponent: 99, colour: "w", result: "1"}]}
+  defp played(rank),
+    do: %{rank: rank, points: 1.0, games: [%{opponent: 99, colour: "w", result: "1"}]}
+
+  # The case that broke this. A half-point bye is worth half a point and
+  # forms no colour, so this player is INSIDE 5.2.5's reach while outscoring
+  # a fresh one - which is what makes "neither has played, so rank is all we
+  # have" false.
+  defp half_bye(rank),
+    do: %{rank: rank, points: 0.5, games: [%{opponent: nil, colour: nil, result: "H"}]}
 
   defp roster(players), do: Map.new(players, &{&1.rank, &1})
 
@@ -73,8 +81,9 @@ defmodule Ainalrami.ColourArticle525Test do
     end
 
     test "an even-numbered one takes the opposite", ctx do
-      # Rank 2 is arrival 2. Ranks are what decides who is "higher ranked" at
-      # 5.2.5: neither has played, so Article 1.2 has nothing but the TPN.
+      # Rank 2 is arrival 2. Every player here is on the same score, so the
+      # TPN is what separates them - see the describe block below for why
+      # that is a property of this fixture and not of Article 5.2.5.
       assert ColourArticle.white_by_5_2_5({2, 3}, ctx.by_rank, ctx.numbers, true) == 3
       assert ColourArticle.white_by_5_2_5({2, 3}, ctx.by_rank, ctx.numbers, false) == 2
     end
@@ -87,6 +96,67 @@ defmodule Ainalrami.ColourArticle525Test do
         assert ColourArticle.implied_initial_colour({white, black}, ctx.by_rank, ctx.numbers) ==
                  initial
       end
+    end
+  end
+
+  describe "\"higher ranked\" is Article 1.2, not the TPN alone" do
+    # The defect this block exists to keep out, found on Photon 2026-08-29.
+    #
+    # `white_by_5_2_5/4` took the lower TPN as the higher ranked player, on
+    # the stated reasoning that a player inside 5.2.5's reach has never
+    # played and so has no score to compare. That reasoning is false:
+    # `no_colour_preference?/1` excludes only COLOUR-FORMING games, and a
+    # half-point bye is worth half a point while forming no colour. Byes
+    # produce this constantly, so the wrong player got the parity rule on a
+    # large share of bye-heavy rounds - and the check fired 53 times in
+    # fifteen minutes of one axis, which would have buried any real finding.
+    #
+    # The engine had already found and fixed the identical defect in itself
+    # one article up, at 5.2.4: see `Pairing.order_by_placement/2` and the
+    # comment above its call site, which says in as many words that it is
+    # "reachable wherever a player has no PLAYED games at all, which arbiter
+    # byes produce routinely".
+    setup do
+      # Rank 3 outscores rank 1 on a half-point bye, so score order and rank
+      # order disagree. Both hold ODD arrival numbers (1 and 3), which is
+      # what makes the two readings give different answers rather than
+      # cancelling: on a mixed-parity board, swapping the top player also
+      # swaps the parity and the error hides itself.
+      players = [fresh(1), fresh(2), half_bye(3), fresh(4)]
+      {:ok, by_rank: roster(players), numbers: numbers(players, 2)}
+    end
+
+    test "the higher-SCORED player is the top one, not the lower rank", ctx do
+      assert ctx.numbers[1] == 1
+      assert ctx.numbers[3] == 3
+
+      # Rank 3 holds more points, so rank 3 is higher ranked and takes the
+      # initial colour on its odd number. Comparing TPN alone answers rank 1
+      # to both of these.
+      assert ColourArticle.white_by_5_2_5({1, 3}, ctx.by_rank, ctx.numbers, true) == 3
+      assert ColourArticle.white_by_5_2_5({1, 3}, ctx.by_rank, ctx.numbers, false) == 1
+    end
+
+    test "and the implied colour follows the same player", ctx do
+      assert ColourArticle.implied_initial_colour({3, 1}, ctx.by_rank, ctx.numbers) == true
+      assert ColourArticle.implied_initial_colour({1, 3}, ctx.by_rank, ctx.numbers) == false
+    end
+
+    test "a board of equal scores still turns on the TPN", ctx do
+      # The original reading was not wrong about this case, only about
+      # believing it was the only case.
+      assert ColourArticle.white_by_5_2_5({1, 2}, ctx.by_rank, ctx.numbers, true) == 1
+    end
+
+    test "so a round mixing the two is consistent, not a finding", ctx do
+      # The shape that fired on Photon: one board of equal scores and one
+      # straddling a score group. Read correctly they agree, and an
+      # instrument that called this an inconsistency was reporting its own
+      # arithmetic as a reference defect.
+      boards = [{1, 2}, {3, 4}]
+
+      assert ColourArticle.article_5_2_5_consistency(boards, ctx.by_rank, ctx.numbers) ==
+               :consistent
     end
   end
 

@@ -65,6 +65,44 @@ with the reference on every one of them.
 
 ### Fixed
 
+- [Fix] **The new Article 5.2.5 consistency check reported its own
+  arithmetic as a reference defect.** `ColourArticle.white_by_5_2_5/4` and
+  `implied_initial_colour/3` took the lower TPN as the higher ranked player.
+  "Higher ranked" is Article 1.2 &mdash; **score first, then TPN** &mdash;
+  and the two disagree far more often than the docstring claimed.
+
+  Its stated reasoning was that a player inside 5.2.5's reach has never
+  played, so there is nothing to compare but the TPN. That is false:
+  `no_colour_preference?/1` excludes only *colour-forming* games, and a
+  half-point bye is worth half a point while forming no colour. A zero-point
+  bye, an absence and a forfeit do the same. So two players reach 5.2.5 on
+  different scores routinely, and on every such board the parity rule was
+  applied to the wrong player and the implied colour came out inverted.
+
+  Measured on Photon on 2026-08-29, replaying `spp5225`'s seeds with the new
+  classifier: it fired **53 times in the first fifteen minutes of one axis**,
+  with bbpPairings and Gacrux "breaking the article" identically on the same
+  seeds &mdash; which is itself the tell, since two independent engines do
+  not fail in lockstep. Two firings were traced by hand to completion and
+  both dissolved: seed 32000121 round 2 and seed 32000287 round 2 are
+  **consistent** once Article 1.2 is applied correctly.
+
+  This is the same defect the engine already found and fixed in itself one
+  article up, at 5.2.4 (`order_by_placement/2`, whose call-site comment says
+  it is "reachable wherever a player has no PLAYED games at all, which
+  arbiter byes produce routinely") &mdash; and structurally the same defect
+  filed against Gacrux in
+  [docs/finding-gacrux-5-2-4.md](docs/finding-gacrux-5-2-4.md). The
+  instrument reintroduced it in a third place. It now calls
+  `order_by_placement/2`'s exact expression rather than spelling the rule a
+  second time, and four tests pin a board where score order and rank order
+  disagree on *same-parity* arrival numbers &mdash; the case that does not
+  cancel, and so the only one that can catch this.
+
+  **No published figure moves.** This code shipped 2026-08-29 and had never
+  been run against a reference before this measurement, so nothing in
+  [docs/validation.md](docs/validation.md) was computed with it.
+
 - [Fix] **A corpus axis could report a clean colour result over zero
   boards.** `PAIRING_FUZZ_INITIAL_COLOUR=b` - lowercase, which nothing
   documented as different from `B` - was written into the TRF verbatim as
