@@ -17,9 +17,10 @@ that looked obviously correct and measured *worse* - is in
 > infeasible blossom duals per 800 nine-round tournaments while agreeing
 > with the reference on all of them.
 >
-> Still open from the sweep's lower sections, and listed under Diagnostics
-> and Harness below: the CLI's silently-ignored options, the three-way
-> harness's missing colour instrument, and two optimizations.
+> All of those are now closed too: the CLI validates its options
+> (2026-08-29), and the three-way harness has its colour instrument -
+> `article_5_2_5_consistency/3` - built, corrected and measured at corpus
+> scale on 2026-08-29. Two optimizations remain, and nothing else.
 
 ## Conformance
 
@@ -89,9 +90,11 @@ changed to match both references. What is left is one limit of method.
       The last sentence is the bitter one: C.04.2 *was* read, and read
       backwards. 2.4 is the clause both sides quoted.
 
-      The corpus has NOT been re-run on the corrected engine. Every
-      quoted 5.2.5 divergence count in this repo is expected to collapse
-      to zero and none of it is measured yet.
+      **Re-run twice since, and the collapse happened.** `spp5225`
+      (2026-08-28, 1,065,373 rounds on the post-ruling engine) and
+      `ain_val_run` (2026-08-29, same seeds on the corrected checker) both
+      report Ainalrami vs bbpPairings at 100.0% on every axis, rounds and
+      colours. The divergence counts this note expected to collapse did.
 
 ## Performance
 
@@ -253,7 +256,34 @@ changed to match both references. What is left is one limit of method.
 
       The original note:
 
-- [ ] **Re-read what `:reach` filed while it was weakened.**
+- [x] ~~**Re-read what `:reach` filed while it was weakened.**~~ **Measured
+      2026-08-29** (`/root/ain_val_run/` on Photon, engine `af6261c`). What
+      it produced is a candidate, not a verdict - see the entry below it.
+
+      The corrected checker was replayed over `spp5225`'s seven axes,
+      **1,065,373 rounds**, with `COLOUR_DEBUG=1` so positions were printed
+      rather than counted. `article_5_2_5_consistency/3` fired **17 times,
+      every one against Gacrux, every one in round 2**. bbpPairings and
+      Ainalrami: zero, on every axis.
+
+      That asymmetry is the whole result. The broken checker fired on
+      bbpPairings AND Gacrux identically on the same seeds, which is how it
+      was caught - two independent engines do not fail in lockstep. One
+      engine firing is what a real finding looks like, and round 2 is where
+      5.2.5 applies, since that is when round-1 byes first get paired.
+
+      Not adjudicated. A subtler checker defect that only trips on Gacrux's
+      output would look identical from here, and two earlier candidates from
+      this instrument dissolved on inspection. Reading one of the 17
+      positions by hand settles it.
+
+      **The engine itself is clean**: Ainalrami vs bbpPairings is 100.0% on
+      every axis, rounds and colours - 1,886,132/1,886,132 colour boards on
+      the combined axis alone. Where Gacrux differs it differs from BOTH
+      other engines by the identical set, so the two reference-vs-Gacrux
+      rates are the same number.
+
+      The original note:
 
       **Blocked on a re-run, 2026-08-29, and for a reason worth recording:
       the first measurement measured the instrument.** Replaying `spp5225`'s
@@ -324,7 +354,27 @@ changed to match both references. What is left is one limit of method.
       Still to do: send it. It is inference from behaviour rather than a
       reading of their source, and the report says so.
 
-- [ ] **Superseded note - the earlier count of 16 was a different corpus.**
+- [x] ~~**Superseded note - the earlier count of 16 was a different
+      corpus.**~~ **Positions captured 2026-08-29.** The original `spp5225`
+      run counted these boards without printing them, which is why this sat
+      open: a count is not a finding. The re-run set `COLOUR_DEBUG=1`, so
+      each disagreement is now in `/root/ain_val_run/<axis>.log` with both
+      players' full colour histories.
+
+      The combined axis reports **13 colour boards out of 1,885,349** where
+      the references differ, 5 of them within 5.2.5's reach; the forfeits
+      axis 3 of 1,608,663, 2 within reach. Ainalrami sides with bbpPairings
+      on every one.
+
+      Worth carrying forward: the same run shows Gacrux **crashed on 4,517
+      of 253,372 attempted rounds** on the combined axis and refused 14 more
+      that bbpPairings paired. Those are excluded from every rate, being
+      neither a pairing nor a refusal - but they are the reason the
+      round-agreement figure against Gacrux reads 99.77% while the colour
+      figure reads 99.9993%. Quoting the first as a disagreement rate would
+      be reporting a tool falling over as a difference of opinion.
+
+      The original note:
 
       **Updated 2026-08-28 from `spp5225`**, a 1,065,373-round independent
       run on the post-ruling engine (seeds 32.0M-32.6M, seven axes,
