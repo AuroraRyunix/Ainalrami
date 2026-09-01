@@ -4,7 +4,17 @@ Open work only. The history - including everything closed, and the changes
 that looked obviously correct and measured *worse* - is in
 [docs/engineering-log.md](docs/engineering-log.md).
 
-> **A whole-codebase sweep ran on 2026-08-26**; its findings are in
+> **A second whole-codebase sweep ran on 2026-09-01**; its findings are in
+> [docs/sweep-2026-09-01.md](docs/sweep-2026-09-01.md) - 6 High, 6 Medium,
+> 5 Low, 3 leads, none fixed yet. The engine core is clean again; the
+> findings are at the edges: the TRF reader indexes columns by grapheme
+> (a byte-padded file with one accented name loses a player's round
+> history), the CLI crashes on a `260` line and overwrites the input when
+> given the same path for output, a BOM drops line one, and team pairing's
+> budget cannot bound the infeasible case. The corpus never generated a
+> non-ASCII name, which is why the first of those was never seen.
+>
+> **The earlier sweep ran on 2026-08-26**; its findings are in
 > [docs/sweep-2026-08-26.md](docs/sweep-2026-08-26.md) - 19 items for this
 > repository. The engine core came back clean of confirmed logic bugs.
 >
