@@ -430,3 +430,15 @@ cleanest way to honour that rather than leaving it ambiguous.
 changed.
 
 JaVaFo is © Roberto Ricca, is not open source, and is not bundled here.
+
+## Licence
+
+Apache-2.0 (see [LICENSE](LICENSE)), © 2026 Jorian Burssens.
+
+Deliberately permissive: a pairing engine is only worth anything if other
+people can check it, run it against their own tournaments and disagree with
+it in public. Use it, fork it, ship it in something commercial - the terms
+ask only that you keep the notices.
+
+The vendored bbpPairings binaries and JaVaFo are covered separately; see
+[NOTICE](NOTICE).
