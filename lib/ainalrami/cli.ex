@@ -53,6 +53,23 @@ defmodule Ainalrami.CLI do
         "--version" in flags -> print_version_and_ok()
         true -> dispatch(positional, flags)
       end
+    rescue
+      # The backstop. Everything below here that CAN be predicted is already
+      # reported as a message and an exit code - an unreadable file, an
+      # invalid TRF, an option this program does not have. What was left was
+      # everything else: a `260` line in the trace (sweep H2) reached the
+      # user as `** (Protocol.UndefinedError) protocol Enumerable not
+      # implemented for Tuple`, an escript stack trace with no indication of
+      # which file or which line, and - because `main/1` halts on `run/1`'s
+      # return value and an uncaught raise never returns one - an exit status
+      # that depended on the VM rather than on this program.
+      #
+      # So an unexpected exception becomes the same contract as every
+      # expected one: a message on stderr, exit 1. Without the help text,
+      # which is for a caller who typed something wrong, not for this.
+      e ->
+        Log.error("unexpected error: #{Exception.message(e)}")
+        1
     catch
       {:usage, message} -> usage_error(message)
     end
@@ -184,7 +201,7 @@ defmodule Ainalrami.CLI do
     cond do
       "-g" in flags -> generate(positional, flags)
       positional == [] -> usage_error("missing input TRF file")
-      "-p" in flags -> pair(hd(positional), tl(positional))
+      "-p" in flags -> pair_checked(hd(positional), tl(positional))
       "-c" in flags -> check(hd(positional))
       "-x" in flags or "--explain" in flags -> explain(hd(positional))
       true -> usage_error("missing mode flag: one of -p, -g, -c, -x")
@@ -217,15 +234,37 @@ defmodule Ainalrami.CLI do
     Log.detail("seed #{seed}")
 
     case positional do
-      [output_path | _] ->
-        File.write!(output_path, text)
-        Log.detail("wrote #{output_path}")
-
-      [] ->
-        IO.write(text)
+      [output_path | _] -> write_file!(output_path, text)
+      [] -> IO.write(text)
     end
 
     0
+  end
+
+  # `-p`'s output is not a TRF - it is JaVaFo's bare board list, a count line
+  # and one "white black" per pair. `ainalrami live.trf -p live.trf` therefore
+  # did not "update" the tournament, it REPLACED it: 361 bytes of roster and
+  # history became 13 bytes of board numbers, and the exit code was 0.
+  #
+  # Refused before anything is read, and on `Path.expand/1` of both sides so
+  # `./live.trf` and `live.trf` are the same file here as they are on disk.
+  # A caller who genuinely wants to overwrite can write elsewhere and move it,
+  # which at least leaves a moment where both files exist.
+  defp pair_checked(input_path, positional_rest) do
+    case positional_rest do
+      [output_path | _] ->
+        if Path.expand(output_path) == Path.expand(input_path) do
+          usage_error(
+            "the output file is the input file (#{input_path}) - " <>
+              "-p writes a board list, not a tournament, so this would destroy it"
+          )
+        else
+          pair(input_path, positional_rest)
+        end
+
+      [] ->
+        pair(input_path, positional_rest)
+    end
   end
 
   defp pair(input_path, positional_rest) do
@@ -401,7 +440,7 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
   # trace should make impossible to miss.
   defp report_extensions(parsed) do
     for group <- parsed.tournament[:forbidden_pairs] || [] do
-      Log.detail("forbidden pairing: #{Enum.map_join(group, " / ", &"##{&1}")}")
+      Log.detail("forbidden pairing: #{describe_group(group)}")
     end
 
     for player <- parsed.players, player[:accelerations] not in [nil, []] do
@@ -415,6 +454,23 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
       )
     end
   end
+
+  # A forbidden-pair group is EITHER a bare list of starting ranks (`XXP`)
+  # or the round-limited `{ids, first, last}` a `260` line parses into. The
+  # trace joined the group directly, so a `260` reached `Enum.map_join/3`
+  # with a tuple and took `-p` and `-x` down with "protocol Enumerable not
+  # implemented for Tuple" - on a file the engine itself pairs correctly.
+  # `Trf` has its own private `group_ids/1` for exactly this; the shape is
+  # part of the parse result's public surface, so the CLI matches it here
+  # rather than reaching into the parser.
+  defp describe_group({ids, first, last}) when is_list(ids) do
+    "#{join_ids(ids)} (rounds #{first}-#{last})"
+  end
+
+  defp describe_group(ids) when is_list(ids), do: join_ids(ids)
+  defp describe_group(other), do: inspect(other)
+
+  defp join_ids(ids), do: Enum.map_join(ids, " / ", &"##{&1}")
 
   # Pairings Checker (FPC). Replays a completed tournament round by round,
   # re-pairing each round from the state that preceded it and diffing
@@ -606,13 +662,36 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
     output_text = format_pairs(pairs)
 
     case positional_rest do
-      [output_path | _] ->
-        File.write!(output_path, output_text)
-        Log.detail("wrote #{output_path}")
-
-      [] ->
-        IO.write(output_text)
+      [output_path | _] -> write_file!(output_path, output_text)
+      [] -> IO.write(output_text)
     end
+  end
+
+  # Written to a sibling temp file and renamed into place, so an interrupted
+  # or failing write leaves the previous file untouched rather than a
+  # half-written one. Same directory on purpose: `File.rename/2` is only
+  # atomic within a filesystem, and `System.tmp_dir!/0` is routinely on
+  # another one.
+  defp write_file!(output_path, text) do
+    temp_path = "#{output_path}.#{System.unique_integer([:positive])}.tmp"
+
+    try do
+      File.write!(temp_path, text)
+
+      case File.rename(temp_path, output_path) do
+        :ok ->
+          :ok
+
+        {:error, reason} ->
+          raise File.Error, reason: reason, action: "write to file", path: output_path
+      end
+    rescue
+      e ->
+        File.rm(temp_path)
+        reraise e, __STACKTRACE__
+    end
+
+    Log.detail("wrote #{output_path}")
   end
 
   defp board_description(white, nil), do: "##{white} - pairing-allocated bye"
