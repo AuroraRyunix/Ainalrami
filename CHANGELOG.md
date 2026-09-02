@@ -65,6 +65,15 @@ with the reference on every one of them.
 
 ### Fixed
 
+- [Fix] **The command line no longer crashes on a round-limited forbidden-pairing (`260`) line.** The file writer was taught that shape in August; the CLI's own report step was named in that fix and missed. Any unexpected exception now ends as a one-line message and exit 1 rather than a stack trace.
+- [Fix] **`-p` and `-g` refuse to write over their own input**, and write through a temporary file renamed into place, so a failed write never leaves half a file. `ainalrami x.trf -p x.trf` used to replace the tournament with a three-line board list at exit 0.
+- [Fix] **`--rounds=0` no longer plays two rounds and `--players=-5` is refused** - Elixir ranges count down when the end is below the start; every `1..n` in the generator is now `1..n//1`, and both options are validated.
+- [Feature] **The generator can write non-ASCII names** (`names: :unicode` - Đurić, Björn, Nguyễn and friends), off by default so every recorded seed still reproduces byte for byte. This is the axis the corpus never had, and why the byte-column bug went unseen.
+- [Fix] **Team pairing has a walk budget** (`:max_steps`, forwarded by `pair_round/2`), returning `{:error, :budget_exhausted}` instead of running for as long as an infeasible bracket takes to disprove; the twenty-team construction that took 12.5 s answers in 370 ms with `max_steps: 200_000`. The default bounds a hang, not latency; a host wanting a latency bound passes its own.
+- [Fix] **Three public team-pairing entry points validate their input** - an unknown `:score_mode`, a `:parity_numbers` map missing a team, and `Team.score/2` on an unknown mode - returning or raising a named error instead of a bare crash.
+- [Fix] The Gacrux harness validates `GACRUX_TIMEOUT` before it reaches a shell string.
+- [Feature] **The repository has CI**: compile with warnings as errors, format check, and the suite, on every push.
+
 - [Fix] **A file padded by bytes with one accented name no longer loses that player's round history.** The TRF16 reader indexed fixed columns by grapheme; Swiss-Manager and bbpPairings pad by byte, so "Björn" shifted every later column one place - the rating read 200 for 2200, the federation "ER", and the round's colour and result read as blank, which downstream is "not yet played". Columns are now read and written by byte; an over-long name is cut on a grapheme boundary, never mid-character. A golden fixture pins the serialised output of every ASCII test file, byte for byte, so the corpus parity is untouched. The generator had only ever written ASCII names, which is why 488 million pairings never asked.
 - [Fix] **A UTF-8 byte-order mark no longer swallows the first line.** Notepad's default "UTF-8" writes one; the parser dispatched on the first three characters and dropped whatever line carried it - a player, or the tournament name.
 - [Fix] **A line cut off inside a round block no longer reads as a shorter opponent number.** A round counts only when its whole block, through the result column, is present; a partial trailing block is ignored, which is what bbpPairings does.
