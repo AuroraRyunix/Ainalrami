@@ -200,8 +200,21 @@ defmodule Ainalrami.TeamPairing.Team do
   """
   def score(%__MODULE__{} = team, :match_points), do: team.match_points
   def score(%__MODULE__{} = team, :game_points), do: team.game_points
+  def score(%__MODULE__{}, mode), do: raise_bad_mode(mode)
 
   @doc "The secondary score - the other one (1.2.1), used by 4.2.2."
   def secondary_score(%__MODULE__{} = team, :match_points), do: team.game_points
   def secondary_score(%__MODULE__{} = team, :game_points), do: team.match_points
+  def secondary_score(%__MODULE__{}, mode), do: raise_bad_mode(mode)
+
+  # 1.2.1 defines exactly two scores, so a third mode is a caller's mistake
+  # and not a case to add. What it was NOT is a FunctionClauseError naming
+  # `Ainalrami.TeamPairing.Team.score/2` and printing the whole team struct,
+  # which is what a host application driving this module directly used to
+  # get - the one thing it did not say was which atom it had passed.
+  defp raise_bad_mode(mode) do
+    raise ArgumentError,
+          "unknown score mode #{inspect(mode)} - Article 1.2.1 defines only " <>
+            ":match_points and :game_points"
+  end
 end

@@ -138,7 +138,7 @@ defmodule Ainalrami.TeamPairing.Colour do
     use_secondary? = Keyword.get(opts, :use_secondary?, true)
     type = Keyword.get(opts, :type, :a)
     last_round? = Keyword.get(opts, :last_round?, false)
-    numbers = Keyword.get(opts, :parity_numbers) || parity_numbers([a, b])
+    numbers = validate_parity_numbers!(Keyword.get(opts, :parity_numbers), a, b)
 
     {first, other} = first_team(a, b, mode, use_secondary?)
 
@@ -149,6 +149,31 @@ defmodule Ainalrami.TeamPairing.Colour do
       :white -> {first, other}
       :black -> {other, first}
     end
+  end
+
+  # 4.3.1 reads the parity off the ROUND's arrival numbering, so `decide/6`
+  # takes `Map.fetch!(numbers, first.tpn)` - deliberately, because falling
+  # back to the TPN would silently restore the reading the SPP overturned.
+  # But `allocate/3`'s own `@doc` invites a host to build that numbering and
+  # pass it in, and a numbering that does not cover this pair came back as
+  # `** (KeyError) key 7 not found` out of a private function, naming
+  # neither the option nor the team. Checked at the boundary instead.
+  defp validate_parity_numbers!(nil, a, b), do: parity_numbers([a, b])
+
+  defp validate_parity_numbers!(numbers, a, b) when is_map(numbers) do
+    missing = Enum.reject([a.tpn, b.tpn], &Map.has_key?(numbers, &1))
+
+    if missing == [] do
+      numbers
+    else
+      raise ArgumentError,
+            ":parity_numbers must cover both teams of the pair (Article 4.3.1) - " <>
+              "no number for #{Enum.map_join(missing, " and ", &"TPN #{&1}")}"
+    end
+  end
+
+  defp validate_parity_numbers!(numbers, _a, _b) do
+    raise ArgumentError, ":parity_numbers must be a map of tpn => number, got #{inspect(numbers)}"
   end
 
   @doc """
