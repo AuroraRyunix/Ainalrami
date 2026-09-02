@@ -6,7 +6,7 @@ that looked obviously correct and measured *worse* - is in
 
 > **A second whole-codebase sweep ran on 2026-09-01**; its findings are in
 > [docs/sweep-2026-09-01.md](docs/sweep-2026-09-01.md) - 6 High, 6 Medium,
-> 5 Low, 3 leads, none fixed yet. The engine core is clean again; the
+> 5 Low, 3 leads - all fixed by 2026-09-02, shipped as v0.15.0. The engine core is clean again; the
 > findings are at the edges: the TRF reader indexes columns by grapheme
 > (a byte-padded file with one accented name loses a player's round
 > history), the CLI crashes on a `260` line and overwrites the input when

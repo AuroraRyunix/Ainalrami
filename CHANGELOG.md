@@ -61,9 +61,12 @@ invisible to any corpus this generator can produce and a third had been
 breaking a matcher invariant 734 times per 800 tournaments while agreeing
 with the reference on every one of them.
 
-## [Unreleased]
+## [0.15.0] - 2026-09-02
 
 ### Fixed
+
+- [Change] **The matcher breaks free-vertex ties on a fixed rule** (`{resistance, vertex}`) instead of whichever entry a map happened to yield first. Same machine, same answer as before; the difference is that a different Erlang release can no longer change a pairing. Checked on 645 tournaments, 4,365 rounds, 72,140 pairings: byte-identical output before and after.
+- [Fix] The two tree walks in the matcher have a step budget like their siblings, so a corrupted tree would raise a diagnostic instead of looping forever; the trace level is per process rather than per VM; a field with two players sharing a starting rank is refused with the ranks named; and the comment on `top_blossoms/1` describes the code that exists.
 
 - [Fix] **The command line no longer crashes on a round-limited forbidden-pairing (`260`) line.** The file writer was taught that shape in August; the CLI's own report step was named in that fix and missed. Any unexpected exception now ends as a one-line message and exit 1 rather than a stack trace.
 - [Fix] **`-p` and `-g` refuse to write over their own input**, and write through a temporary file renamed into place, so a failed write never leaves half a file. `ainalrami x.trf -p x.trf` used to replace the tournament with a three-line board list at exit 0.
