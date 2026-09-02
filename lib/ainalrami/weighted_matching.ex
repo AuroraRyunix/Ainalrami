@@ -1086,15 +1086,25 @@ defmodule Ainalrami.WeightedMatching do
   # Every currently top-level blossom id - vertices not absorbed into a
   # larger blossom, plus every non-trivial blossom with no parent.
   #
-  # SORTED, and that is not cosmetic. `Map.values/1` returns Erlang's
-  # internal order, which changes shape at the 32-key flatmap-to-hashmap
-  # transition, and every consumer here breaks ties with a strict `<` -
-  # first encountered wins. `min_free_or_zero_to_outer/1`, `min_outer_edge/2`,
-  # `outer_vertices/1`, `min_outer_outer/1` and `grow/1`'s `Enum.find` for a
-  # zero-dual outer vertex all inherit whatever order this returns. So when
-  # several maximum-weight matchings tie, which one came back was decided by
-  # map internals: reproducible for identical input, but not canonical, and
-  # free to change with the field size or an Erlang release.
+  # SORTED, and that is not cosmetic. The set comes from `state.label`'s
+  # keys, and Erlang's map order changes shape at the 32-key
+  # flatmap-to-hashmap transition, so an unsorted result would hand each
+  # consumer an order that is a property of the runtime rather than of the
+  # graph.
+  #
+  # Most consumers do not care: `apply_delta/2`, `even_up_exposed_duals/1`
+  # and `resolve_all_matching/1` are order-independent folds - each visits
+  # every blossom and the edits commute. The one that does is
+  # `min_inner_blossom_dual/1`, which takes `Enum.min_by/2` over the inner
+  # blossoms' duals - and `Enum.min_by/2` returns the FIRST minimum. With
+  # the list sorted, an equal-dual tie there resolves to the lowest blossom
+  # id; without it, to whichever the map happened to yield.
+  #
+  # The caches are no longer in that group. `best_outer` and the cross
+  # table are keyed by vertex and blossom pair and do their own canonical
+  # tie-break on `{r, v}` / `{r, a, b}` (`scan_row/5`, `offer/4`,
+  # `min_free_or_zero_to_outer/1`, `cross_offer/6`), so they no longer
+  # inherit any order from here.
   #
   # Blossom ids are integers (vertices are `0..n-1`, blossoms are allocated
   # above that), so sorting gives a total order that is stable, cheap, and
@@ -1110,9 +1120,9 @@ defmodule Ainalrami.WeightedMatching do
     # `in_blossom` -- as this used to -- was O(V) per call plus a sort, and
     # this is called four thousand times per solve on a 209-player field.
     #
-    # Still SORTED, for the reason the comment above gives: several
-    # consumers take the first strict minimum, and Erlang's map order is
-    # not stable across the 32-key flatmap-to-hashmap transition.
+    # Still SORTED, for the reason the comment above gives:
+    # `min_inner_blossom_dual/1` takes the first minimum, and Erlang's map
+    # order is not stable across the 32-key flatmap-to-hashmap transition.
     #
     # And CACHED: `state.tops` is that sorted list, rebuilt by `init_labels/1`
     # once per stage and patched in place by the four structural events
