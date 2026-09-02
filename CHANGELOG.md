@@ -65,6 +65,16 @@ with the reference on every one of them.
 
 ### Fixed
 
+- [Fix] **A file padded by bytes with one accented name no longer loses that player's round history.** The TRF16 reader indexed fixed columns by grapheme; Swiss-Manager and bbpPairings pad by byte, so "Björn" shifted every later column one place - the rating read 200 for 2200, the federation "ER", and the round's colour and result read as blank, which downstream is "not yet played". Columns are now read and written by byte; an over-long name is cut on a grapheme boundary, never mid-character. A golden fixture pins the serialised output of every ASCII test file, byte for byte, so the corpus parity is untouched. The generator had only ever written ASCII names, which is why 488 million pairings never asked.
+- [Fix] **A UTF-8 byte-order mark no longer swallows the first line.** Notepad's default "UTF-8" writes one; the parser dispatched on the first three characters and dropped whatever line carried it - a player, or the tournament name.
+- [Fix] **A line cut off inside a round block no longer reads as a shorter opponent number.** A round counts only when its whole block, through the result column, is present; a partial trailing block is ignored, which is what bbpPairings does.
+- [Fix] **`initial_colour` accepts `white`/`black` and their initials in either case, and refuses anything else with a `ValidationError`** instead of a `FunctionClauseError`.
+- [Fix] **A blank or unreadable `142` line is no assertion of zero rounds**, matching how `XXR` was already read; it neither sets the count nor argues with `XXR`.
+- [Fix] Trailing spaces on an `XXA` line no longer invent a phantom round; a malformed `250` line's error names the `250` field rather than a `260` one.
+
+
+### Fixed
+
 - [Fix] **The new Article 5.2.5 consistency check reported its own
   arithmetic as a reference defect.** `ColourArticle.white_by_5_2_5/4` and
   `implied_initial_colour/3` took the lower TPN as the higher ranked player.
