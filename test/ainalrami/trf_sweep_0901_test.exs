@@ -117,6 +117,7 @@ defmodule Ainalrami.TrfSweep0901Test do
         "test/fixtures/serialize_golden.txt"
         |> File.read!()
         |> String.split("\n", trim: true)
+        |> Enum.map(&String.trim/1)
         |> Enum.chunk_every(2)
         |> Map.new(fn [file, digest] -> {file, digest} end)
 

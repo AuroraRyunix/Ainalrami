@@ -906,6 +906,13 @@ defmodule Ainalrami.Trf do
   end
 
   # Placements are collected as {start_col, text} and rendered in one pass.
+  #
+  # Truncation and padding are counted in BYTES, for the same reason
+  # `read/2` indexes in bytes: a column is a byte everywhere this file's
+  # output is read. Padding by grapheme instead shifted every field after a
+  # name with an accent in it one column early for the reader on the other
+  # end - FIDE's rating server, SWAR, Swiss-Manager - and, on the way back
+  # in, for this module's own `read/2`.
   defp place(placements, {start_col, end_col}, value, opts \\ []) do
     width = end_col - start_col + 1
 
@@ -913,14 +920,33 @@ defmodule Ainalrami.Trf do
       (value || "")
       |> to_string()
       |> strip_controls()
-      |> String.slice(0, width)
-      |> then(fn s ->
-        if opts[:align] == :right,
-          do: String.pad_leading(s, width),
-          else: String.pad_trailing(s, width)
-      end)
+      |> truncate_bytes(width)
+      |> pad_bytes(width, opts[:align])
 
     [{start_col, text} | placements]
+  end
+
+  # A field narrower than its value is cut on a GRAPHEME boundary, never
+  # mid-codepoint: half a UTF-8 sequence in the middle of a line is not a
+  # short name, it is a file no reader can decode. The remaining columns are
+  # then filled with spaces, so the row keeps its byte width either way.
+  defp truncate_bytes(text, width) when byte_size(text) <= width, do: text
+
+  defp truncate_bytes(text, width) do
+    text
+    |> String.graphemes()
+    |> Enum.reduce_while({[], 0}, fn grapheme, {kept, size} ->
+      next = size + byte_size(grapheme)
+      if next > width, do: {:halt, {kept, size}}, else: {:cont, {[grapheme | kept], next}}
+    end)
+    |> elem(0)
+    |> Enum.reverse()
+    |> IO.iodata_to_binary()
+  end
+
+  defp pad_bytes(text, width, align) do
+    pad = String.duplicate(" ", max(width - byte_size(text), 0))
+    if align == :right, do: pad <> text, else: text <> pad
   end
 
   # TRF is line- and column-oriented: a newline, carriage return or tab
@@ -929,30 +955,29 @@ defmodule Ainalrami.Trf do
   # to spaces before the value is placed.
   defp strip_controls(text), do: String.replace(text, ~r/[\x00-\x1F\x7F]/, " ")
 
-  # The other way a field can shift the row. `strip_controls/1` above stops a
-  # name from splitting the line; this stops one from lengthening it. TRF16
-  # addresses its fields by COLUMN, and the readers of a submitted file
-  # (FIDE's rating server, SWAR, Swiss-Manager) count one column as one
-  # byte, while `place/4` and `render/1` count graphemes. The two agree only
-  # for ASCII: "Hendricks, Björn" is 16 graphemes but 17 bytes, so a
-  # byte-counting reader sees every field after the name one column early -
-  # FIDE id 1001 read as 100, rating 2400 as 240, the whole round history
-  # blank. One accented letter in one name is enough.
+  # Folding to ASCII (é -> e), which is what FIDE itself stores names as.
   #
-  # Folding to ASCII (é -> e), which is what FIDE itself stores names as,
-  # makes graphemes and bytes the same thing again. Applied to the whole
-  # `data` map up front rather than inside `place/4`, because the shift is
-  # not a property of the name field: the `012`/`022`/`102` headers, the
-  # `013` team names and anything else free-text carry it too, and folding
-  # once means no future placed field can be forgotten.
+  # This was introduced as the fix for a column shift: `place/4` and
+  # `render/1` counted graphemes while every reader of a submitted file
+  # counts bytes, so one accented letter in one name moved every later
+  # field a column early, and folding made the two counts the same thing
+  # again. `place/4` now pads by byte, so that shift is gone and this is no
+  # longer load-bearing for alignment. It is kept, still opt-in, for the
+  # other half of what it was worth: a caller submitting to a registry that
+  # wants plain ASCII names, or printing to a device that cannot render the
+  # accents, can ask for the transliteration without doing it by hand.
   #
-  # OFF by default, and that default is the load-bearing half. The pairing
-  # path writes a TRF that only an engine reads back, and bbpPairings and
-  # JaVaFo both decode UTF-8 correctly - their pairings are byte-identical
-  # with and without accents, and those exact bytes are what the
-  # differential corpus validated this engine against. Folding there would
-  # change the input the agreement was measured on to fix a problem it does
-  # not have. Only a caller writing a file for FIDE or for a human asks.
+  # Applied to the whole `data` map up front rather than inside `place/4`,
+  # because the request is not a property of the name field: the
+  # `012`/`022`/`102` headers, the `013` team names and anything else
+  # free-text carry names too, and folding once means no future placed
+  # field can be forgotten.
+  #
+  # OFF by default, and that default is still the important half. The
+  # pairing path writes a TRF that only an engine reads back, and
+  # bbpPairings and JaVaFo both decode UTF-8 correctly - their pairings are
+  # byte-identical with and without accents, and those exact bytes are what
+  # the differential corpus validated this engine against.
   defp maybe_fold_ascii(data, true), do: deep_ascii(data)
   defp maybe_fold_ascii(data, _), do: data
 
@@ -1013,7 +1038,8 @@ defmodule Ainalrami.Trf do
     placements
     |> Enum.sort_by(&elem(&1, 0))
     |> Enum.reduce({[], 1}, fn {start, text}, {io, pos} ->
-      {[io, String.duplicate(" ", max(start - pos, 0)), text], start + String.length(text)}
+      # `byte_size`, not `String.length`: see `place/4` - a column is a byte.
+      {[io, String.duplicate(" ", max(start - pos, 0)), text], start + byte_size(text)}
     end)
     |> elem(0)
     |> IO.iodata_to_binary()
@@ -1701,8 +1727,33 @@ defmodule Ainalrami.Trf do
     end)
   end
 
+  # TRF16 addresses its fields by COLUMN, and a column is a BYTE: the
+  # format predates Unicode, the specification's own layouts are counted in
+  # characters of a single-byte encoding, and every implementation whose
+  # files this one has to read - Swiss-Manager, bbpPairings, JaVaFo - pads
+  # and indexes by byte. This used to be `String.slice/3`, which counts
+  # graphemes, and the two agree only for ASCII: a byte-padded row carrying
+  # "Hendricks, Björn" (16 graphemes, 17 bytes) read its rating 2200 as
+  # 200, its federation "GER" as "ER" and its whole round history as blank.
+  # One accented letter in one name was enough.
+  #
+  # A short line yields whatever part of the field is there (possibly ""),
+  # which is what `parse_games/1`'s completeness rule and every
+  # `parse_int/1 || default` above already expect. A field that starts or
+  # ends mid-codepoint - only reachable from a file some other writer
+  # mis-padded - comes back as the raw bytes; `String.trim/1` leaves an
+  # invalid binary alone rather than raising, and the numeric fields it
+  # could land in fail their `Integer.parse/1` the same way any other
+  # garbage would.
   defp read(line, {start_col, end_col}) do
-    line |> String.slice(start_col - 1, end_col - start_col + 1) |> String.trim()
+    size = byte_size(line)
+    start = start_col - 1
+
+    if start >= size do
+      ""
+    else
+      line |> binary_part(start, min(end_col - start, size - start)) |> String.trim()
+    end
   end
 
   defp parse_header_line(acc, code, line) do

@@ -924,21 +924,24 @@ defmodule Ainalrami.TrfTest do
       assert byte_col(line, 99, 99) == "1"
     end
 
-    test "without the option that same row shifts every field after the name" do
+    test "without the option the row keeps its byte columns and its accents" do
       line = "Hendricks, Björn" |> byte_roster() |> Trf.serialize() |> first_player_line()
 
-      # One byte longer than it has characters - the whole cause.
+      # One byte longer than it has characters - which used to be the whole
+      # cause, back when `place/4` padded by grapheme: the name field then
+      # ran a byte short and rating 2400 read as 240, FIDE id 1001 as 100,
+      # the round history blank. `place/4` pads by byte now, so the accent
+      # survives AND every later field is where the spec puts it. Sweep
+      # 2026-09-01, H1.
       assert byte_size(line) == String.length(line) + 1
 
-      # Rating 2400 reads as 240, FIDE id 1001 as 100, and the round history
-      # goes blank. Asserted rather than merely refuted, so the damage is on
-      # the record if anyone ever makes this the default: the pairing path
-      # wants exactly these bytes, and every engine that reads them decodes
-      # UTF-8 properly.
-      assert byte_col(line, 49, 52) == " 240"
-      assert byte_col(line, 58, 68) == "        100"
-      assert byte_col(line, 92, 95) == "    "
-      assert byte_col(line, 99, 99) == " "
+      assert line |> byte_col(15, 47) |> String.trim() == "Hendricks, Björn"
+      assert byte_col(line, 49, 52) == "2400"
+      assert byte_col(line, 58, 68) == "       1001"
+      assert byte_col(line, 81, 84) == " 1.0"
+      assert byte_col(line, 92, 95) == "   2"
+      assert byte_col(line, 97, 97) == "w"
+      assert byte_col(line, 99, 99) == "1"
     end
 
     test "folds the letters NFD alone cannot decompose" do
