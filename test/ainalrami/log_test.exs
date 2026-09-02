@@ -94,5 +94,44 @@ defmodule Ainalrami.LogTest do
       Log.set_quiet(true)
       assert Log.quiet?()
     end
+
+    # L2. The level used to live in Application env, so one process's
+    # set_level/1 re-levelled the whole VM and a host pairing several
+    # tournaments at once would interleave their traces.
+    test "set_level/1 affects only the calling process" do
+      Application.delete_env(:ainalrami, :log_level)
+      me = self()
+
+      other =
+        spawn(fn ->
+          Log.set_level(:debug)
+          send(me, {:other, Log.level()})
+
+          receive do
+            :check_again -> send(me, {:other_again, Log.level()})
+          end
+        end)
+
+      assert_receive {:other, :debug}
+      assert Log.level() == :normal
+      refute Log.debug?()
+
+      send(other, :check_again)
+      assert_receive {:other_again, :debug}
+      assert Log.level() == :normal
+    end
+
+    test "the application env is the default for a process that never set one" do
+      on_exit(fn -> Application.delete_env(:ainalrami, :log_level) end)
+      Application.put_env(:ainalrami, :log_level, :quiet)
+      me = self()
+
+      spawn(fn -> send(me, {:inherited, Log.level()}) end)
+      assert_receive {:inherited, :quiet}
+
+      # And a process that DID set one wins over that default.
+      Log.set_level(:debug)
+      assert Log.level() == :debug
+    end
   end
 end

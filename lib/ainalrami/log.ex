@@ -42,26 +42,44 @@ defmodule Ainalrami.Log do
   `:quiet` and a file with a trace in it at any louder level - which is
   why quiet exists.
 
-  The level is process-global for the lifetime of one CLI invocation (set
-  once, read many times from deep inside whatever's running) - an
-  `Application.env` flag rather than threading an option through every
-  call site, since a single escript run is single-purpose and
-  single-threaded from the caller's perspective.
+  The level is PER-PROCESS: `set_level/1` writes the calling process's
+  dictionary and affects nothing else, so a host that pairs several
+  tournaments concurrently gets one level per worker instead of the last
+  writer deciding for everybody. It is still a stash rather than an option
+  threaded through every call site, because it is set once and read from
+  deep inside whatever is running.
+
+  `Application.get_env(:ainalrami, :log_level)` remains the fallback for a
+  process that never called `set_level/1` - that is how a host sets a
+  default for processes it does not own - and `:normal` the fallback for
+  that. Note that a spawned process does NOT inherit its parent's level;
+  it falls back to the application default.
   """
 
   @app :ainalrami
+  @key :ainalrami_log_level
 
   @levels %{quiet: 0, normal: 1, debug: 2}
 
   @doc """
-  Sets the trace level to `:quiet`, `:normal` or `:debug`.
+  Sets the trace level to `:quiet`, `:normal` or `:debug` FOR THE CALLING
+  PROCESS ONLY.
   """
   def set_level(level) when is_map_key(@levels, level) do
-    Application.put_env(@app, :log_level, level)
+    Process.put(@key, level)
+    :ok
   end
 
-  @doc "The current level. `:normal` unless something set it."
-  def level, do: Application.get_env(@app, :log_level, :normal)
+  @doc """
+  The current level: this process's if it set one, otherwise the
+  application-wide default, otherwise `:normal`.
+  """
+  def level do
+    case Process.get(@key) do
+      nil -> Application.get_env(@app, :log_level, :normal)
+      level -> level
+    end
+  end
 
   @doc """
   Back-compatible switch for the two-state world this module started in.
