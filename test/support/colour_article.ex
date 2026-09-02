@@ -122,7 +122,7 @@ defmodule Ainalrami.Test.ColourArticle do
           # 5.2.5: the higher ranked player holds the initial colour on an
           # odd number and the opposite on an even one.
           number ->
-            if (rem(number, 2) == 1) == initial_white?, do: top.rank, else: bottom.rank
+            if rem(number, 2) == 1 == initial_white?, do: top.rank, else: bottom.rank
         end
     end
   end
@@ -177,7 +177,7 @@ defmodule Ainalrami.Test.ColourArticle do
           # odd number, so: odd and White means the initial colour was white;
           # odd and Black means it was black; and the even cases invert.
           number ->
-            (top.rank == white_rank) == (rem(number, 2) == 1)
+            top.rank == white_rank == (rem(number, 2) == 1)
         end
     end
   end
