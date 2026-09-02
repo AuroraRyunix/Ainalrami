@@ -158,6 +158,13 @@ defmodule Ainalrami.CLI do
     refuse("unknown initial colour \"#{value}\" - white/w or black/b")
   end
 
+  defp bounded(nil, _key, _minimum), do: nil
+  defp bounded(value, _key, minimum) when value >= minimum, do: value
+
+  defp bounded(value, key, minimum) do
+    refuse("--#{key} must be at least #{minimum}, not #{value}")
+  end
+
   # A complaint from deep inside option parsing, where returning an exit code
   # would just be ignored by the caller expecting a value. Caught in `run/1`.
   defp refuse(message), do: throw({:usage, message})
@@ -216,8 +223,12 @@ defmodule Ainalrami.CLI do
     opts =
       [
         seed: option(flags, "seed"),
-        players: option(flags, "players"),
-        rounds: option(flags, "rounds"),
+        # `Generator.generate/1` raises on these too, but a caller who typed
+        # `--players=-5` deserves the usage error rather than the backstop's
+        # "unexpected error". The two agree on the bounds on purpose: a
+        # roster of at least one, and a round count of at least none.
+        players: bounded(option(flags, "players"), "players", 1),
+        rounds: bounded(option(flags, "rounds"), "rounds", 0),
         forfeit_pct: option(flags, "forfeit-pct"),
         requested_bye_pct: option(flags, "bye-pct"),
         forbidden_pct: option(flags, "forbidden-pct"),
