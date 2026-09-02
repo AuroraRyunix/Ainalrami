@@ -811,9 +811,35 @@ defmodule Ainalrami.Trf do
   # the line outright unless it is exactly five characters, so this is
   # built directly rather than through `header/2`, whose trailing trim
   # would be harmless but whose lowercase value would not.
+  #
+  # Spelled out and case-insensitive, because "white"/"black" is what
+  # `CLI.normalise_colour/1` accepts from an operator and what
+  # `Generator.generate/1`'s undocumented `:initial_colour` option passes
+  # straight through. Three literal clauses meant those crashed
+  # `serialize/2` with a `FunctionClauseError` from a private function -
+  # no message, no line, nothing naming the option. Anything else raises a
+  # `ValidationError` that says what was given, which is what the rest of
+  # this module does with a value it cannot use. Sweep 2026-09-01, M3.
   defp initial_colour_line(nil), do: nil
-  defp initial_colour_line(colour) when colour in ["w", "W"], do: "152 W"
-  defp initial_colour_line(colour) when colour in ["b", "B"], do: "152 B"
+
+  defp initial_colour_line(colour) when is_binary(colour) do
+    case String.downcase(colour) do
+      c when c in ["w", "white"] ->
+        "152 W"
+
+      c when c in ["b", "black"] ->
+        "152 B"
+
+      _ ->
+        raise ValidationError,
+          message: "initial colour must be one of w/W/white or b/B/black, got #{inspect(colour)}"
+    end
+  end
+
+  defp initial_colour_line(colour) do
+    raise ValidationError,
+      message: "initial colour must be a string (w/W/white or b/B/black), got #{inspect(colour)}"
+  end
 
   # The round count goes out under one spelling or the other, never both -
   # see `serialize/2`'s `opts[:xxr]`.
@@ -1565,7 +1591,8 @@ defmodule Ainalrami.Trf do
   # bbpPairings' own Baku pass measured that at 66.12% of rounds when
   # `XXA` was being dropped.
   defp parse_250(acc, line) do
-    if String.length(line) < 31 do
+    # Byte length, like every other column measurement in this module.
+    if byte_size(line) < 31 do
       raise ValidationError, message: "250 line is too short: #{line}"
     end
 
@@ -1589,10 +1616,10 @@ defmodule Ainalrami.Trf do
           value
       end
 
-    first_round = round_field!(line, {15, 18}, line)
-    last_round = round_field!(line, {19, 22}, line)
-    first_player = round_field!(line, {23, 27}, line)
-    last_player = round_field!(line, {28, 32}, line)
+    first_round = positive_field!(line, {15, 18}, line, "250", "first round number")
+    last_round = positive_field!(line, {19, 22}, line, "250", "last round number")
+    first_player = positive_field!(line, {23, 27}, line, "250", "first player starting rank")
+    last_player = positive_field!(line, {28, 32}, line, "250", "last player starting rank")
 
     if first_round > last_round or first_player > last_player do
       raise ValidationError, message: "250 line has an inverted range: #{line}"
@@ -1625,12 +1652,12 @@ defmodule Ainalrami.Trf do
   # prevent, in a different spelling, and it was verified happening before
   # this was written.
   defp parse_260(acc, line) do
-    if String.length(line) < 18 do
+    if byte_size(line) < 18 do
       raise ValidationError, message: "260 line is too short to hold a round range: #{line}"
     end
 
-    first = round_field!(line, {5, 7}, line)
-    last = round_field!(line, {9, 11}, line)
+    first = positive_field!(line, {5, 7}, line, "260", "first round number")
+    last = positive_field!(line, {9, 11}, line, "260", "last round number")
 
     ids = read_260_ids(line, 13, [])
 
@@ -1648,14 +1675,19 @@ defmodule Ainalrami.Trf do
   # (`trf.cpp:113-140`) rejects a round index of 0 outright before
   # converting to its own 0-based form. This keeps the 1-based value, since
   # that is what the engine compares against the round being paired.
-  defp round_field!(line, cols, whole) do
+  # Shared by `parse_250/2` and `parse_260/2`, so the line code and the
+  # field's meaning are PARAMETERS: the message used to say "260 line has
+  # an unreadable round number" for a `250` line's player range, sending a
+  # reader to the wrong line looking for the wrong field. Sweep
+  # 2026-09-01, L3.
+  defp positive_field!(line, cols, whole, code, field) do
     case line |> read(cols) |> Integer.parse() do
       {value, ""} when value > 0 ->
         value
 
       _ ->
         raise ValidationError,
-          message: "260 line has an unreadable round number in columns #{inspect(cols)}: #{whole}"
+          message: "#{code} line has an unreadable #{field} in columns #{inspect(cols)}: #{whole}"
     end
   end
 
@@ -1717,7 +1749,12 @@ defmodule Ainalrami.Trf do
   end
 
   defp parse_xxa_points(line) do
-    length = String.length(line)
+    # Trimmed first, and measured in bytes, exactly as `parse_games/1`
+    # does it: five trailing spaces on an `XXA` line used to buy a phantom
+    # round of 0.0 acceleration, and a trailing tab or stray character a
+    # `ValidationError` blaming a round that is not in the file. Sweep
+    # 2026-09-01, L1.
+    length = line |> String.trim_trailing() |> byte_size()
     {_round1_start, round1_end} = xxa_points_cols(1)
 
     round_count =
@@ -1795,10 +1832,21 @@ defmodule Ainalrami.Trf do
       f when f in [:start_date, :end_date] ->
         put_in(acc.tournament[f], String.replace(value, "/", "-"))
 
+      # An unparsable value is NO ASSERTION, the same rule `parse_xxr/2`
+      # already applies to its own spelling of this field: `|| 0` turned a
+      # blank `142` into a claim that the tournament has zero rounds -
+      # silently on its own, and as a false "two different round counts (9
+      # and 0)" beside an `XXR 9`. `142` and `XXR` are the same field and
+      # have to fail the same way. Sweep 2026-09-01, M4.
       :number_of_rounds ->
-        rounds = parse_int(value) || 0
-        check_round_count_agreement!(acc.tournament[:number_of_rounds], rounds)
-        put_in(acc.tournament[:number_of_rounds], rounds)
+        case parse_int(value) do
+          nil ->
+            acc
+
+          rounds ->
+            check_round_count_agreement!(acc.tournament[:number_of_rounds], rounds)
+            put_in(acc.tournament[:number_of_rounds], rounds)
+        end
 
       f
       when f in [
