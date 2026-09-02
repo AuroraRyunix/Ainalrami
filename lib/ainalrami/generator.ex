@@ -53,6 +53,12 @@ defmodule Ainalrami.Generator do
     * `:acceleration` - `:baku` for FIDE C.04.7's virtual points, or
       `:random` for arbitrary per-player-per-round ones; emitted as `XXA`
       lines (default: none)
+    * `:names` - `:ascii` (default) for `Player17`, or `:unicode` to draw
+      surnames with multibyte characters
+
+  `:players` must be a positive integer and `:rounds` a non-negative one.
+  Either given otherwise raises `ArgumentError` rather than being quietly
+  turned into a tournament nobody asked for - see `validate_count!/3`.
 
   Returns `{trf_text, seed}`.
   """
@@ -60,13 +66,19 @@ defmodule Ainalrami.Generator do
     seed = Keyword.get_lazy(opts, :seed, fn -> :erlang.unique_integer([:positive]) end)
     :rand.seed(:exsss, {seed, seed * 7919, seed * 104_729})
 
-    players = Keyword.get_lazy(opts, :players, fn -> Enum.random(10..60) end)
+    names = validate_names!(Keyword.get(opts, :names, :ascii))
+
+    players =
+      opts
+      |> Keyword.get_lazy(:players, fn -> Enum.random(10..60) end)
+      |> validate_count!(:players, 1)
 
     # A round-robin exhausts the field after `players - 1` rounds, and the
     # pairing has nothing legal left. Cap rather than let the engine fail.
     rounds =
       opts
       |> Keyword.get_lazy(:rounds, fn -> Enum.random(5..11) end)
+      |> validate_count!(:rounds, 0)
       |> min(players - 1)
 
     forfeit_pct = Keyword.get(opts, :forfeit_pct, 0)
@@ -91,7 +103,8 @@ defmodule Ainalrami.Generator do
     # tournament at the last round that actually completed rather than
     # letting one bad round crash the whole generation.
     final =
-      Enum.reduce_while(1..rounds, roster(players, accelerations), fn _round_no, current ->
+      Enum.reduce_while(1..rounds//1, roster(players, accelerations, names), fn _round_no,
+                                                                                current ->
         try do
           next =
             current
@@ -140,11 +153,17 @@ defmodule Ainalrami.Generator do
     {text, seed}
   end
 
-  defp roster(count, accelerations) do
-    for rank <- 1..count do
+  # `1..count//1` and `1..rounds//1` throughout, not `1..count`. Elixir's
+  # two-argument range steps by -1 when its end is below its start, so
+  # `1..0` was TWO rounds and `1..-5` was seven players with ranks running
+  # 1, 0, -1 ... -5 - written to a file, exit 0, nothing said. The counts
+  # are validated on the way in as well, because a caller who asked for -5
+  # players wants to hear about it rather than get an empty roster.
+  defp roster(count, accelerations, names) do
+    for rank <- 1..count//1 do
       player = %{
         rank: rank,
-        name: "Player#{rank}",
+        name: player_name(names, rank),
         fide_rating: Enum.random(1400..2700),
         points: 0.0,
         games: []
@@ -155,6 +174,58 @@ defmodule Ainalrami.Generator do
         values -> Map.put(player, :accelerations, values)
       end
     end
+  end
+
+  defp validate_count!(value, _key, minimum) when is_integer(value) and value >= minimum,
+    do: value
+
+  defp validate_count!(value, key, minimum) do
+    raise ArgumentError,
+          "#{inspect(key)} must be an integer of at least #{minimum}, got #{inspect(value)}"
+  end
+
+  # ---------------------------------------------------------------------
+  # Names
+  # ---------------------------------------------------------------------
+
+  # The corpus's blind spot, made visible.
+  #
+  # Every one of the ~488M validated pairings went through a TRF this
+  # generator wrote and this engine read, and the names in it were always
+  # `Player17`. So the question TRF16 actually asks - what a "column" is
+  # when the name field holds multibyte characters - was never put to the
+  # corpus at all. bbpPairings counts bytes, JaVaFo counts Java chars, this
+  # engine counts bytes since the 2026-09-01 sweep; on ASCII all three
+  # agree, and a fuzz corpus made only of ASCII cannot tell them apart.
+  #
+  # Off by default, deliberately and permanently: every recorded seed has to
+  # keep producing the same bytes it produced before this option existed, or
+  # the validated corpus stops being reproducible. `names: :unicode` is an
+  # axis a run opts into.
+  #
+  # The list is short and chosen for coverage rather than realism - two-byte
+  # Latin-1 supplements, a three-byte combining case, a Vietnamese name
+  # whose diacritics stack, and one with a space in it (surnames with spaces
+  # are the other thing a fixed-width name field has to survive).
+  @unicode_surnames [
+    "Đurić",
+    "Björn",
+    "Ó Súilleabháin",
+    "Nguyễn",
+    "Łukasiewicz",
+    "Ștefănescu"
+  ]
+
+  defp validate_names!(mode) when mode in [:ascii, :unicode], do: mode
+
+  defp validate_names!(mode) do
+    raise ArgumentError, ":names must be :ascii or :unicode, got #{inspect(mode)}"
+  end
+
+  defp player_name(:ascii, rank), do: "Player#{rank}"
+
+  defp player_name(:unicode, rank) do
+    "#{Enum.at(@unicode_surnames, rem(rank - 1, length(@unicode_surnames)))} #{rank}"
   end
 
   # One `XXP` group of two per selected player. Groups are emitted verbatim

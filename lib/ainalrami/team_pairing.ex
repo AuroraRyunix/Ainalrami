@@ -87,8 +87,11 @@ defmodule Ainalrami.TeamPairing do
       round", which switches off Type B mild preferences. Given neither, the
       engine assumes it is NOT near the end - the conservative choice, since
       it keeps criteria switched on.
-    * `:max_candidates` - per-bracket search budget (see
-      `Ainalrami.TeamPairing.Bracket`).
+    * `:max_candidates` - per-bracket candidate budget, and `:max_steps` its
+      walk budget (see `Ainalrami.TeamPairing.Bracket`). Exceeding the walk
+      budget comes back as `{:error, :budget_exhausted}`, which is NOT
+      `{:error, :no_legal_pairing}` - it means the search stopped, not that
+      it finished.
 
   ## Why it returns brackets too
 
@@ -100,7 +103,21 @@ defmodule Ainalrami.TeamPairing do
   individual engine grew `explain_round/3`.
   """
   def pair_round(teams, opts \\ []) when is_list(teams) do
-    mode = Keyword.get(opts, :score_mode, :match_points)
+    with {:ok, mode} <- validate_score_mode(Keyword.get(opts, :score_mode, :match_points)) do
+      do_pair_round(teams, opts, mode)
+    end
+  end
+
+  # `pair_round/2`'s `@doc` promises `{:ok, _} | {:error, _}`, and an unknown
+  # `:score_mode` did not keep that promise: it was threaded unvalidated into
+  # `Team.score/2`, which had clauses for the two modes 1.2.1 defines and no
+  # third, so the caller got a FunctionClauseError from three frames down
+  # naming a private helper rather than the option they had mistyped. The
+  # option is a caller's, so it is checked where the caller's options arrive.
+  defp validate_score_mode(mode) when mode in [:match_points, :game_points], do: {:ok, mode}
+  defp validate_score_mode(mode), do: {:error, {:invalid_option, :score_mode, mode}}
+
+  defp do_pair_round(teams, opts, mode) do
     round = Keyword.get(opts, :round)
     expected = Keyword.get(opts, :expected_rounds)
 
@@ -113,6 +130,14 @@ defmodule Ainalrami.TeamPairing do
       last_two_rounds?: last_two?,
       max_candidates: Keyword.get(opts, :max_candidates, 200_000)
     ]
+
+    # Forwarded only when given, so the bracket's own default stays the one
+    # documented place the number lives.
+    base =
+      case Keyword.fetch(opts, :max_steps) do
+        {:ok, max_steps} -> Keyword.put(base, :max_steps, max_steps)
+        :error -> base
+      end
 
     with {:ok, bye, rest} <- assign_bye(teams, mode),
          {:ok, brackets} <- pair_brackets(rest, mode, base) do

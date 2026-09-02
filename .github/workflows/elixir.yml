@@ -1,0 +1,81 @@
+# This workflow uses actions that are not certified by GitHub.
+# They are provided by a third-party and are governed by
+# separate terms of service, privacy policy, and support
+# documentation.
+
+name: Elixir CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build and test
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Elixir
+      uses: erlef/setup-beam@v1
+      with:
+        elixir-version: '1.20' # [Required] Define the Elixir version
+        otp-version: '29.0'    # [Required] Define the Erlang/OTP version
+
+    - name: Restore build cache
+      uses: actions/cache@v4
+      with:
+        path: |
+          deps
+          _build
+        key: ${{ runner.os }}-mix-${{ hashFiles('mix.exs') }}
+        restore-keys: ${{ runner.os }}-mix-
+
+    # This project has no dependencies at all - deliberately, see mix.exs -
+    # so there is no mix.lock and nothing to fetch. The step is kept anyway
+    # because the day a dependency IS added is exactly the day a runner that
+    # never fetched would start testing against whatever it had cached.
+    - name: Install dependencies
+      run: mix deps.get --check-locked
+
+    - name: Compile
+      run: mix compile --warnings-as-errors
+
+    # test/support/colour_article.ex is excluded, and only that file. The
+    # formatter wants to strip the parentheses out of
+    # `(a == b) == (c == d)`; the expression is Article 5.2.5's parity rule
+    # written to be checkable line by line against the regulation text, and
+    # `a == b == c` is the same value written so that nobody can check it.
+    # Excluded here rather than reformatted, so `mix format` on the rest of
+    # the tree stays enforced.
+    #
+    # The file list mirrors `.formatter.exs`'s own `:inputs` rather than
+    # "every .ex in the repo": `tools/` is outside it and is not formatted,
+    # and widening the check here would fail the build over a file the
+    # project does not ask to be formatted.
+    - name: Check formatting
+      run: |
+        mix format --check-formatted $(
+          git ls-files config lib test mix.exs .formatter.exs \
+            | grep -E '\.exs?$' \
+            | grep -v '^test/support/colour_article\.ex$'
+        )
+
+    # javafo.jar and bbpPairings.exe are third-party binaries this repo does
+    # not vendor (see test/test_helper.exs and the two harness moduledocs);
+    # Gacrux is Otto Milvang's pairingchecker.py from the FIDE Tie Break
+    # Server. On a runner none of the three is present, and test_helper.exs
+    # already prints a notice and excludes their comparisons rather than
+    # failing - confirmed by running the suite here with all three pointed
+    # at a path that does not exist. What CI covers is therefore this
+    # engine's own conformance suite, not the cross-engine harness, and that
+    # is a known and permanent gap rather than something a fetch step could
+    # close.
+    - name: Run tests
+      run: mix test

@@ -119,7 +119,25 @@ defmodule Ainalrami.Test.Gacrux do
   raiseable for a large-field axis via `GACRUX_TIMEOUT`. It exists to bound
   a HANG, not to police slowness.
   """
-  def timeout_seconds, do: System.get_env("GACRUX_TIMEOUT", "180")
+  # Validated because the value is spliced into a `sh -c` string, and it is
+  # the one thing in that call that is not passed as `"$0" "$@"`. It is
+  # test-only and operator-set, so this is not a vulnerability so much as
+  # the last unchecked interpolation in the harness - and an operator who
+  # exports `GACRUX_TIMEOUT=3m` (which `timeout` itself would accept, but
+  # nothing here validates) deserves to be told rather than to have `sh`
+  # decide what the rest of the line means.
+  def timeout_seconds do
+    value = System.get_env("GACRUX_TIMEOUT", "180")
+
+    case Integer.parse(value) do
+      {seconds, ""} when seconds > 0 ->
+        seconds
+
+      _ ->
+        raise ArgumentError,
+              "GACRUX_TIMEOUT must be a positive whole number of seconds, got #{inspect(value)}"
+    end
+  end
 
   # Gacrux reports failure INSIDE the output file, with exit status 0:
   # `commonmain.py:289` writes `### Error <code>` there and leaves the
