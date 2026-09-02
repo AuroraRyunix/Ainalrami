@@ -1834,15 +1834,31 @@ defmodule Ainalrami.Trf do
   # round" for a late entrant, and can legitimately be followed by real
   # games in later rounds. Stopping at the first one silently drops every
   # game after it.
+  #
+  # A round counts only if its WHOLE block is on the line - opponent id,
+  # colour and result, columns 92-99 for round one and every ten columns
+  # after. Counting from the block's first column instead let a line
+  # truncated inside the opponent field contribute a round anyway, and
+  # `read/2` on a short line returned the digits that were there: opponent
+  # 2034 cut at column 93 read as 20, cut at 92 as 2. Either is a
+  # different real player, or a dangling reference `validate_games!/2`
+  # documents as not an error - a wrong pairing history from a wrong file,
+  # with nothing to say so.
+  #
+  # A partial TRAILING block is IGNORED rather than fatal, matching
+  # bbpPairings' reader, whose loop condition (`startIndex <= line.size() -
+  # 8u`, cited by `render/1` above) simply stops. The last round of a
+  # hand-edited file is exactly where a line loses its tail, and the rounds
+  # before it are still perfectly readable.
   defp parse_games(line) do
-    trimmed_length = line |> String.trim_trailing() |> String.length()
-    {round1_start, _} = round_cols(1).id
+    trimmed_length = line |> String.trim_trailing() |> byte_size()
+    {_, round1_end} = round_cols(1).result
 
     round_count =
-      if trimmed_length < round1_start do
+      if trimmed_length < round1_end do
         0
       else
-        div(trimmed_length - round1_start, 10) + 1
+        div(trimmed_length - round1_end, 10) + 1
       end
 
     Enum.map(1..round_count//1, &parse_game_at_round(line, &1))
