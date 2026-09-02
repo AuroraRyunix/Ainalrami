@@ -1727,16 +1727,22 @@ defmodule Ainalrami.WeightedMatching do
 
       if keep? do
         r = dual_v + Map.fetch!(state.dual, u) - w
-        if best == nil or r < elem(best, 0), do: {r, u}, else: best
+        # Ties on resistance break on the lower vertex id, so the winner is
+        # a property of the graph rather than of `row`'s map order - the
+        # same `{r, v}` rule the cross table uses (see `cross_offer/6`).
+        if best == nil or {r, u} < best, do: {r, u}, else: best
       else
         best
       end
     end)
   end
 
+  # An equal-resistance offer replaces the incumbent only when it names a
+  # lower vertex, so `best_outer[u]` is the `{r, v}`-minimum over the
+  # offers rather than whichever arrived first.
   defp offer(cache, u, r, v) do
     case cache do
-      %{^u => {best, _}} when best <= r -> cache
+      %{^u => {best, best_v}} when {best, best_v} <= {r, v} -> cache
       _ -> Map.put(cache, u, {r, v})
     end
   end
@@ -1774,8 +1780,12 @@ defmodule Ainalrami.WeightedMatching do
   # every (non-outer, outer) pair on every delta step.
   defp min_free_or_zero_to_outer(state) do
     state.best_outer
-    |> Enum.reduce({nil, nil}, fn {v, {r, _u}}, {best, best_v} ->
-      if best == nil or r < best, do: {r, v}, else: {best, best_v}
+    # The fold is over a plain map, so "first seen wins" would make the
+    # answer an artefact of Erlang's map order. Ties break on the lower
+    # vertex id instead: canonical, and stable across OTP releases and
+    # across the 32-key flatmap/hashmap boundary.
+    |> Enum.reduce({nil, nil}, fn {v, {r, _u}}, {best, best_v} = acc ->
+      if best == nil or {r, v} < {best, best_v}, do: {r, v}, else: acc
     end)
     |> case do
       {nil, _} -> {nil, nil}
