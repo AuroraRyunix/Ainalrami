@@ -1147,6 +1147,9 @@ defmodule Ainalrami.Trf do
 
   defp player_label(p), do: to_string(p[:name] || p[:rank])
 
+  defp strip_bom("﻿" <> rest), do: rest
+  defp strip_bom(text), do: text
+
   ## ---------- Parsing ----------
 
   @doc """
@@ -1168,6 +1171,18 @@ defmodule Ainalrami.Trf do
   def parse(text) do
     lines =
       text
+      # A UTF-8 byte-order mark, dropped ONCE before anything else looks at
+      # the text. Windows Notepad writes one by default and this project
+      # ships a Windows binary, so an arbiter editing a TRF by hand is the
+      # ordinary way to acquire one. Three bytes ahead of the first line's
+      # code makes that line's code `"﻿00"`, which matches nothing:
+      # the file's first record - a `012` name, or a whole player - was
+      # silently discarded and the parse succeeded. Sweep 2026-09-01, H4.
+      #
+      # Only leading, and only one: a BOM anywhere else in a TRF is a
+      # zero-width no-break space inside a field, which is the field's
+      # business, not this function's.
+      |> strip_bom()
       # All three line endings, not just the two anyone expects. Real
       # bbpPairings writes its generated TRFs with a BARE `\r` and no `\n`
       # at all -- 212 of them in a 209-player file, zero newlines -- so
