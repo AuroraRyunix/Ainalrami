@@ -2426,22 +2426,58 @@ defmodule Ainalrami.WeightedMatching do
   # through: how the walk entered it, and how it leaves), which is what
   # `add_connectors/2` and `resolve_internal/3` both need and
   # `blossom_path_to_root/2` alone cannot provide.
-  defp path_to_target(_state, target, entry_vertex, target), do: [entry_vertex]
+  defp path_to_target(state, b, entry_vertex, target),
+    do: path_to_target(state, b, entry_vertex, target, walk_budget(state))
 
-  defp path_to_target(state, b, entry_vertex, target) do
+  defp path_to_target(_state, target, entry_vertex, target, _budget), do: [entry_vertex]
+
+  defp path_to_target(state, _b, _entry_vertex, _target, 0),
+    do: walk_exhausted!(state, "path_to_target/4")
+
+  defp path_to_target(state, b, entry_vertex, target, budget) do
     case Map.get(state.label, b) do
       :outer ->
         base = base_vertex(state, b)
         mate_v = Map.fetch!(state.blossom_match, b)
         next_blossom = Map.fetch!(state.in_blossom, mate_v)
-        [entry_vertex, base] ++ path_to_target(state, next_blossom, mate_v, target)
+        [entry_vertex, base] ++ path_to_target(state, next_blossom, mate_v, target, budget - 1)
 
       :inner ->
         {labeling_v, labeled_v} = Map.fetch!(state.label_edge, b)
         next_blossom = Map.fetch!(state.in_blossom, labeling_v)
-        [entry_vertex, labeled_v] ++ path_to_target(state, next_blossom, labeling_v, target)
+
+        [entry_vertex, labeled_v] ++
+          path_to_target(state, next_blossom, labeling_v, target, budget - 1)
     end
   end
+
+  # The step budget both tree walks below share, and the same `2n + 5` and
+  # the same reasoning as `augment_until_done/1`'s stage budget: a walk
+  # from a blossom up to its tree root passes through each top-level
+  # blossom at most once, and there are fewer of those than vertices, so
+  # anything longer means `label_edge`/`blossom_match` has a cycle in it.
+  # No input is known to produce one - `grow/1`'s and
+  # `augment_until_done/1`'s budgets were added after hunting exactly this
+  # class of bug twice - but a cycle here spins for ever inside `Map.fetch!`
+  # with no output at all, and failing loudly beats hanging silently.
+  defp walk_budget(state), do: 2 * state.n + 5
+
+  defp walk_exhausted!(state, what) do
+    raise "WeightedMatching: exceeded #{what} step budget " <>
+            "(#{walk_budget(state)} steps, n=#{state.n})"
+  end
+
+  @doc false
+  # Test hook, not API. The two walks above are only reachable through a
+  # `solve/2` that has already built a well-formed tree, so the budget
+  # they carry cannot be exercised end to end; this drives them against a
+  # hand-built state whose `label_edge` / `blossom_match` deliberately
+  # cycles, which is the shape the budget exists to catch.
+  def __walk_for_test__(:blossom_ids_to_root, state, b),
+    do: blossom_ids_to_root(state, b)
+
+  def __walk_for_test__(:path_to_target, state, {b, entry_vertex, target}),
+    do: path_to_target(state, b, entry_vertex, target)
 
   # Full path from `b` up to (and including) its tree root, WITHOUT
   # skipping any blossom along the way - unlike an earlier version of
@@ -2460,7 +2496,11 @@ defmodule Ainalrami.WeightedMatching do
   # recursing over that broken structure never terminated. Found by
   # tracing that exact minimal case after the triangle hung with no
   # output at all.
-  defp blossom_ids_to_root(state, b) do
+  defp blossom_ids_to_root(state, b), do: blossom_ids_to_root(state, b, walk_budget(state))
+
+  defp blossom_ids_to_root(state, _b, 0), do: walk_exhausted!(state, "blossom_ids_to_root/2")
+
+  defp blossom_ids_to_root(state, b, budget) do
     case Map.get(state.label, b) do
       :outer ->
         case Map.get(state.blossom_match, b) do
@@ -2469,12 +2509,12 @@ defmodule Ainalrami.WeightedMatching do
 
           partner ->
             next_blossom = Map.fetch!(state.in_blossom, partner)
-            [b | blossom_ids_to_root(state, next_blossom)]
+            [b | blossom_ids_to_root(state, next_blossom, budget - 1)]
         end
 
       :inner ->
         {labeling_v, _} = Map.fetch!(state.label_edge, b)
-        [b | blossom_ids_to_root(state, Map.fetch!(state.in_blossom, labeling_v))]
+        [b | blossom_ids_to_root(state, Map.fetch!(state.in_blossom, labeling_v), budget - 1)]
     end
   end
 

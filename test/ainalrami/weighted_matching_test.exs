@@ -192,6 +192,52 @@ defmodule Ainalrami.WeightedMatchingTest do
     Enum.reduce(pairs, 0, fn {a, b}, acc -> acc + pair_weight_fun.(a, b) end)
   end
 
+  # Ld1. Both tree walks recurse by `Map.fetch!` on `label_edge` /
+  # `blossom_match`, structures no reachable input is known to make
+  # cyclic - but a cycle would spin for ever with no output, which is
+  # exactly how the blossom-resolution bug in this file's history
+  # presented. The budget turns that into a raise.
+  describe "tree-walk step budgets" do
+    test "blossom_ids_to_root/2 raises rather than looping on a cyclic label_edge" do
+      # Two INNER blossoms whose labelling edges point at each other.
+      state = %{
+        n: 4,
+        label: %{0 => :inner, 1 => :inner},
+        label_edge: %{0 => {1, 1}, 1 => {0, 0}},
+        in_blossom: %{0 => 0, 1 => 1},
+        blossom_match: %{}
+      }
+
+      assert_raise RuntimeError, ~r/blossom_ids_to_root\/2 step budget/, fn ->
+        WeightedMatching.__walk_for_test__(:blossom_ids_to_root, state, 0)
+      end
+    end
+
+    test "path_to_target/4 raises rather than looping on a cyclic label_edge" do
+      state = %{
+        n: 4,
+        label: %{0 => :inner, 1 => :inner},
+        label_edge: %{0 => {1, 1}, 1 => {0, 0}},
+        in_blossom: %{0 => 0, 1 => 1},
+        blossom_match: %{}
+      }
+
+      # Target 9 is on neither end of the cycle, so the walk never lands.
+      assert_raise RuntimeError, ~r/path_to_target\/4 step budget/, fn ->
+        WeightedMatching.__walk_for_test__(:path_to_target, state, {0, 0, 9})
+      end
+    end
+
+    test "a well-formed walk of more than the budget's worth of vertices still completes" do
+      # 40 vertices, a path graph: the ordinary solve path is unaffected
+      # by the budget for any structure it actually builds.
+      edges = for i <- 0..38, do: {i, i + 1, 10 + rem(i * 7, 5)}
+      matching = WeightedMatching.solve(40, edges)
+      assert map_size(matching) > 0
+      assert valid_matching?(matching, edges)
+    end
+  end
+
   defp total_weight(matching, edges) do
     lookup = Map.new(edges, fn {a, b, w} -> {{a, b}, w} end)
 
