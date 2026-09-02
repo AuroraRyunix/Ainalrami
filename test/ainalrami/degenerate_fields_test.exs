@@ -94,6 +94,33 @@ defmodule Ainalrami.DegenerateFieldsTest do
     end
   end
 
+  # Ld2. `Ainalrami.Trf.parse/1` accepts a file whose `001` lines repeat a
+  # starting rank, and `field_index` is a `Map.new` over that rank, so the
+  # duplicate used to be absorbed silently into one vertex id - degrading
+  # the colliding pair's rank-spread tie-break with no complaint.
+  describe "duplicate starting ranks" do
+    test "the field is refused rather than paired on a collapsed index" do
+      played = fn rank, opponent, colour, result ->
+        %{
+          player(rank)
+          | points: if(result == "1", do: 1.0, else: 0.0),
+            games: [%{opponent_rank: opponent, colour: colour, result: result}]
+        }
+      end
+
+      field = [
+        played.(1, 2, "w", "1"),
+        played.(2, 1, "b", "0"),
+        played.(3, 4, "w", "1"),
+        %{played.(4, 3, "b", "0") | rank: 3}
+      ]
+
+      assert_raise ArgumentError, ~r/duplicate starting rank\(s\).*3 \(x2\)/, fn ->
+        pair(field)
+      end
+    end
+  end
+
   defp invert("w"), do: "b"
   defp invert("b"), do: "w"
 

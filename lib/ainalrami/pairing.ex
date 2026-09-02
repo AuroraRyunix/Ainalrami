@@ -1874,6 +1874,7 @@ defmodule Ainalrami.Pairing do
   # themselves are per bracket - see `pair_bracket/6`.
   defp global_context(field) do
     bye_score = Process.get(@bye_score_key)
+    check_unique_ranks!(field)
 
     # The weight bands, computed ONCE over the whole field and shared by
     # every bracket of the round. They used to be re-derived per bracket
@@ -1906,6 +1907,30 @@ defmodule Ainalrami.Pairing do
         reserve: 2 * count_span * count_span * count_span
       }
     }
+  end
+
+  # `field_index` is `Map.new` over `p.rank`, so two players sharing a
+  # starting rank silently collapse onto one vertex id. Nothing upstream
+  # refuses that - `Ainalrami.Trf.parse/1` accepts a file with two `001`
+  # lines carrying the same rank, checked - and the damage is quiet rather
+  # than loud: the colliding pair's rank-spread addend, the lowest rung of
+  # `edge_weigher/3`, is computed against the wrong position. Unique
+  # starting ranks are what a TRF's rank column MEANS, so a duplicate is a
+  # caller bug; say so here rather than pair on a degraded tie-break.
+  defp check_unique_ranks!(field) do
+    field
+    |> Enum.frequencies_by(& &1.rank)
+    |> Enum.filter(fn {_rank, n} -> n > 1 end)
+    |> case do
+      [] ->
+        :ok
+
+      dups ->
+        raise ArgumentError,
+              "duplicate starting rank(s) in the field: " <>
+                Enum.map_join(Enum.sort(dups), ", ", fn {rank, n} -> "#{rank} (x#{n})" end) <>
+                " - every player needs a distinct starting rank"
+    end
   end
 
   # dutch.cpp:879-892. Rank the played-game counts of everyone who could
