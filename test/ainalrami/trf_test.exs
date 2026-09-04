@@ -1137,11 +1137,17 @@ defmodule Ainalrami.TrfTest do
       refute text =~ ~r/^1234567890/m
     end
 
-    test "a roster with no rounds yet gets no legend" do
-      # `legend_lines/2` is guarded `when max_round > 0`. A ruler over a row
-      # that stops at the rank column would be pointing at nothing, and the
-      # blank line it leads with is the part a stricter reader could trip
-      # on - so the option produces no lines at all rather than three.
+    test "a roster with no rounds yet still gets its legend" do
+      # This used to be guarded `when max_round > 0`, on the reasoning that a
+      # ruler over a row stopping at the rank column would point at nothing.
+      # It does not: the row still carries name, rating, federation, FIDE id,
+      # birth date, points and rank, and a registration list is exactly when
+      # somebody squints at whether a name has overrun its 33 characters.
+      #
+      # The other half of that reasoning - that the leading blank line could
+      # trip a stricter reader - is true, and unchanged by round count: the
+      # with-rounds case has always emitted it. It was never a reason to treat
+      # a round-less file differently.
       text =
         Trf.serialize(
           %{
@@ -1151,8 +1157,17 @@ defmodule Ainalrami.TrfTest do
           column_legend: true
         )
 
-      refute text =~ "DDD"
-      refute text =~ ~r/^1234567890/m
+      assert text =~ "DDD SSSS sTTT"
+      assert text =~ ~r/^1234567890/m
+
+      # ...and it stops at the rank column, with no game blocks invented for
+      # rounds that do not exist.
+      legend =
+        text
+        |> String.split("\n")
+        |> Enum.find(&String.starts_with?(&1, "DDD"))
+
+      refute legend =~ "1111"
     end
   end
 end

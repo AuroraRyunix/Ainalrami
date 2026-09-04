@@ -718,7 +718,7 @@ defmodule Ainalrami.Trf do
       Enum.map(ranged, fn {ids, first, last} -> forbidden_260_line(ids, first, last) end)
   end
 
-  defp legend_lines(true, max_round) when max_round > 0 do
+  defp legend_lines(true, max_round) when max_round >= 0 do
     legend = legend_line(max_round)
     width = String.length(legend)
     ["", ruler_line(width, :tens), ruler_line(width, :units), legend]
@@ -742,6 +742,15 @@ defmodule Ainalrami.Trf do
     |> legend_games(max_round)
     |> render()
   end
+
+  # No rounds is not a reason to withhold the legend.
+  #
+  # This used to require `max_round > 0`, so an export taken before the first
+  # pairing - a registration list, the commonest thing to eyeball against the
+  # column positions - came out with no ruler at all. The player columns are
+  # exactly as meaningful without games, and that is precisely when somebody
+  # is checking whether a name has overrun its 33 characters.
+  defp legend_games(acc, 0), do: acc
 
   defp legend_games(acc, max_round) do
     Enum.reduce(1..max_round, acc, fn round, acc ->

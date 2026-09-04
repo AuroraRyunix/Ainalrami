@@ -61,6 +61,19 @@ invisible to any corpus this generator can produce and a third had been
 breaking a matcher invariant 734 times per 800 tournaments while agreeing
 with the reference on every one of them.
 
+## [0.16.0] - 2026-09-04
+
+### Fixed
+
+- `Trf.serialize/2` with `column_legend: true` now writes the ruler and the
+  field legend for a tournament with no rounds yet. It was guarded on there
+  being at least one round, on the reasoning that a ruler over a row ending at
+  the rank column pointed at nothing - but that row still carries the name,
+  rating, federation, FIDE id, birth date, points and rank, and a registration
+  list taken before the first pairing is exactly when somebody checks whether
+  a name has overrun its 33 characters. The legend stops at the rank column;
+  no game blocks are invented for rounds that do not exist.
+
 ## [0.15.0] - 2026-09-02
 
 ### Fixed
