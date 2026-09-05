@@ -61,6 +61,35 @@ invisible to any corpus this generator can produce and a third had been
 breaking a matcher invariant 734 times per 800 tournaments while agreeing
 with the reference on every one of them.
 
+## [0.17.0] - 2026-09-05
+
+### Fixed
+
+- `Trf.parse/1` no longer drops a round that is paired but not yet played.
+  `serialize/1` pads a `001` line out to the last round's result column on
+  purpose, so that such a round is a whole block - without the pad bbpPairings
+  refuses the file outright. `parse_games/1` then measured the line after
+  trimming trailing whitespace, which deleted exactly that pad, so the block
+  measured short and the round was discarded in silence. A caller that writes
+  a round's pairings to a TRF and reads them back - which is how OpenPairings
+  talks to this engine - saw the round as still open and PAIRED IT A SECOND
+  TIME, publishing one set of boards and then quietly producing another. The
+  line is now measured as written, matching bbpPairings' own loop condition
+  (`startIndex <= line.size() - 8u`); trailing blocks that carry no opponent,
+  no colour and no result are dropped afterwards, so a ragged hand-edited tail
+  still costs nothing readable.
+
+- An `XXP` line written with any separator but a space now raises instead of
+  being discarded. The token parser was `Integer.parse` with the remainder
+  thrown away, so `XXP 12,13` read as the single id `12`, the line then failed
+  the "names fewer than two players" test, and the exclusion was dropped on the
+  floor - the precise failure this module's moduledoc says it raises to
+  prevent, since the engine goes on to return a complete, perfectly legal
+  looking pairing that seats the two players an arbiter said must never meet.
+  `read_260_ids/3` already refused a leftover remainder, so the two spellings
+  of one rule now agree, as does bbpPairings, whose `readPlayerId` throws
+  `InvalidLineException` here.
+
 ## [0.16.0] - 2026-09-04
 
 ### Fixed

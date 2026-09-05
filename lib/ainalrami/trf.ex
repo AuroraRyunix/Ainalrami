@@ -1570,7 +1570,21 @@ defmodule Ainalrami.Trf do
       |> String.slice(3..-1//1)
       |> String.split([" ", "\t"], trim: true)
       |> Enum.map(fn token ->
-        parse_int(token) ||
+        # STRICT: `parse_int/1` is `Integer.parse` with the remainder thrown
+        # away, so it reads "12,13" as 12 and "3x" as 3. Written with any
+        # separator but a space - a comma, a semicolon, a dash - the line
+        # therefore yielded ONE id, fell through the `length(ids) < 2`
+        # branch below, and was discarded in silence. That is the exact
+        # failure this module's moduledoc says it raises to prevent: the
+        # arbiter's "these two must never meet" dropped on the floor, and a
+        # complete, perfectly legal-looking pairing seating them together
+        # with nothing downstream able to notice.
+        #
+        # `read_260_ids/3` already matches `{id, ""}` for the same reason,
+        # so the two spellings of one rule now behave alike on the same
+        # malformed input - as does bbpPairings, whose `readPlayerId`
+        # throws `InvalidLineException` here.
+        strict_int(token) ||
           raise ValidationError,
             message: "XXP line names #{inspect(token)}, which is not a starting rank: #{line}"
       end)
@@ -1907,19 +1921,44 @@ defmodule Ainalrami.Trf do
   # 8u`, cited by `render/1` above) simply stops. The last round of a
   # hand-edited file is exactly where a line loses its tail, and the rounds
   # before it are still perfectly readable.
+  # Measured on the line AS WRITTEN, not on a trimmed copy. `serialize/1`
+  # pads a 001 line out to the last round's result column on purpose
+  # (`pad_to_last_round/2`) so that a round already paired but not yet
+  # played is a WHOLE block - without the pad bbpPairings refuses the file.
+  # Trimming here deleted exactly that pad, so the block measured short and
+  # the round was dropped: serialize a paired round, read it back, and the
+  # round was simply gone. A caller that writes a round's pairings to a TRF
+  # and parses them again - which is how the sibling app talks to this
+  # engine - then believes the round is still open and PAIRS IT A SECOND
+  # TIME, quietly producing different boards for a round already published.
+  #
+  # bbpPairings does not trim either: its loop condition is
+  # `startIndex <= line.size() - 8u` on the real line.
+  #
+  # Trailing blocks that are entirely empty are dropped afterwards instead,
+  # which keeps the promise the note above makes - a hand-edited file whose
+  # tail is ragged loses nothing readable - while a padded paired round,
+  # which always carries an opponent or a result, survives.
   defp parse_games(line) do
-    trimmed_length = line |> String.trim_trailing() |> byte_size()
+    length = byte_size(line)
     {_, round1_end} = round_cols(1).result
 
     round_count =
-      if trimmed_length < round1_end do
+      if length < round1_end do
         0
       else
-        div(trimmed_length - round1_end, 10) + 1
+        div(length - round1_end, 10) + 1
       end
 
-    Enum.map(1..round_count//1, &parse_game_at_round(line, &1))
+    1..round_count//1
+    |> Enum.map(&parse_game_at_round(line, &1))
+    |> Enum.reverse()
+    |> Enum.drop_while(&empty_game?/1)
+    |> Enum.reverse()
   end
+
+  defp empty_game?(%{opponent_rank: nil, colour: nil, result: nil}), do: true
+  defp empty_game?(_), do: false
 
   # The result column comes back exactly as the file spells it, letters
   # included. This used to rewrite `W`, `D` and `L` into `1`, `=` and `0` on
@@ -2004,6 +2043,18 @@ defmodule Ainalrami.Trf do
     case Integer.parse(s) do
       {n, _} -> n
       :error -> nil
+    end
+  end
+
+  # `parse_int/1` with the leftovers taken seriously. Fixed-column reads can
+  # afford to ignore a remainder - the column boundary already said where
+  # the number ends - but a whitespace-split token has no such boundary, so
+  # anything after the digits means the token was not a number at all. See
+  # `parse_xxp/2`.
+  defp strict_int(s) do
+    case Integer.parse(s) do
+      {n, ""} -> n
+      _ -> nil
     end
   end
 

@@ -174,6 +174,80 @@ defmodule Ainalrami.TrfTest do
     assert col(filled_line, 109, 109) == "H"
   end
 
+  # The pad above is only worth writing if it survives being read back.
+  # `parse_games/1` measured the line AFTER trimming trailing whitespace,
+  # which deleted exactly that pad, so a round already paired but not yet
+  # played measured short and was dropped. A caller that writes a round's
+  # pairings to a TRF and parses them again - which is how the sibling app
+  # talks to this engine - then saw the round as still open and paired it a
+  # SECOND time, producing different boards for a round already published.
+  test "a round that is paired but not yet played survives a round trip" do
+    data = %{
+      tournament: %{name: "Paired", type: "swiss"},
+      players: [
+        %{
+          rank: 1,
+          name: "A",
+          points: 1.0,
+          games: [
+            %{opponent_rank: 2, colour: "w", result: "1"},
+            %{opponent_rank: 2, colour: "b", result: nil}
+          ]
+        },
+        %{
+          rank: 2,
+          name: "B",
+          points: 0.0,
+          games: [
+            %{opponent_rank: 1, colour: "b", result: "0"},
+            %{opponent_rank: 1, colour: "w", result: nil}
+          ]
+        }
+      ]
+    }
+
+    parsed = Trf.parse(Trf.serialize(data))
+
+    assert Enum.map(parsed.players, &length(&1.games)) == [2, 2]
+
+    assert Enum.at(Enum.at(parsed.players, 0).games, 1) ==
+             %{opponent_rank: 2, colour: "b", result: nil}
+  end
+
+  # The other half of the same rule: dropping the trim must not turn a
+  # ragged tail into a phantom round. A block with no opponent, no colour
+  # and no result says nothing, so it is not a round.
+  test "a wholly blank trailing block is not read as a round" do
+    data = %{
+      tournament: %{name: "Ragged", type: "swiss"},
+      players: [
+        %{
+          rank: 1,
+          name: "A",
+          points: 1.0,
+          games: [
+            %{opponent_rank: 2, colour: "w", result: "1"},
+            %{opponent_rank: nil, colour: nil, result: nil}
+          ]
+        },
+        %{
+          rank: 2,
+          name: "B",
+          points: 0.0,
+          games: [
+            %{opponent_rank: 1, colour: "b", result: "0"},
+            %{opponent_rank: nil, colour: nil, result: "H"}
+          ]
+        }
+      ]
+    }
+
+    parsed = Trf.parse(Trf.serialize(data))
+
+    # B's round 2 is a recorded half-point bye and stays; A's is empty.
+    assert Enum.map(parsed.players, &length(&1.games)) == [1, 2]
+  end
+
   test "a player with no games at all is not padded out to a round block" do
     # The trim is right for every OTHER line, and for a `001` line that
     # carries no games: a round-one roster ends at the rank column.
@@ -681,6 +755,20 @@ defmodule Ainalrami.TrfTest do
     test "a malformed XXP raises rather than being skipped" do
       assert_raise Ainalrami.Trf.ValidationError, ~r/not a starting rank/, fn ->
         Ainalrami.Trf.parse(roster_trf("XXP 1 banana\r\n"))
+      end
+    end
+
+    # "banana" was caught only because it has no leading digit. The token
+    # parser threw its remainder away, so every SEPARATOR an arbiter might
+    # reasonably reach for read as a single id, the line then failed the
+    # "names fewer than two players" test one line down, and the exclusion
+    # was discarded in silence - the one outcome the test above exists to
+    # make impossible.
+    test "a separator that is not a space raises rather than dropping the pair" do
+      for line <- ["XXP 1,2\r\n", "XXP 1;2\r\n", "XXP 1-2\r\n", "XXP 1/2\r\n", "XXP 3x 4\r\n"] do
+        assert_raise Ainalrami.Trf.ValidationError, ~r/not a starting rank/, fn ->
+          Ainalrami.Trf.parse(roster_trf(line))
+        end
       end
     end
 
