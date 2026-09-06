@@ -310,6 +310,274 @@ defmodule Ainalrami.Alternatives do
     end)
   end
 
+  @doc """
+  "What if `a` played `b`?" - answered properly: the best round in which
+  they meet, found by forbidding each of them every other opponent and
+  pairing again, then judged against what was played.
+
+    * `%{outcome: :illegal, reason: ...}` - they cannot meet at all; the
+      reason is the absolute rule (rematch, colour, forbidden) that says so.
+    * `%{outcome: :impossible, reason: message}` - they could meet, but no
+      legal round contains that pair.
+    * otherwise `outcome` is `:worse`, `:tie`, `:same` or `:better` as
+      `compare/2` names it, with `differs_at`, the alternative `pairs`, and
+      `changed` - how many boards differ from what was played. That number
+      is the answer to "and what would it have cost everybody else".
+  """
+  def force_pair(players, pairs, a, b, opts \\ []) do
+    # The pair itself first. Forcing an illegal pair leaves the search with
+    # no legal round at all, and "no legal round" is the wrong answer to
+    # "why can't 1 play 5" when the true one is "they met in round 2".
+    case direct_reason(players, pairs, a, b, opts) do
+      nil -> force_legal_pair(players, pairs, a, b, opts)
+      reason -> %{outcome: :illegal, reason: reason, pairs: nil}
+    end
+  end
+
+  defp force_legal_pair(players, pairs, a, b, opts) do
+    actual = Pairing.explain_round(players, pairs, opts)
+    ranks = Enum.map(players, & &1.rank)
+
+    forced =
+      for m <- ranks, m not in [a, b], group <- [[a, m], [b, m]], do: group
+
+    forced_opts =
+      Keyword.put(opts, :forbidden_pairs, (Keyword.get(opts, :forbidden_pairs) || []) ++ forced)
+
+    try do
+      alt_pairs = Pairing.pair_next_round(players, forced_opts)
+
+      if paired_together?(alt_pairs, a, b) do
+        alt = Pairing.explain_round(players, alt_pairs, opts)
+        verdict = compare(actual, alt)
+
+        %{
+          outcome: outcome(verdict),
+          differs_at: differs_at(verdict),
+          pairs: alt_pairs,
+          changed: changed_boards(pairs, alt_pairs),
+          violations: violations(alt)
+        }
+      else
+        # Legal as a pair, but no legal round seats them together: one of
+        # them had to float or take the bye for the rest to work out.
+        %{outcome: :impossible, reason: "no legal round seats them together", pairs: nil}
+      end
+    rescue
+      e in Pairing.NoValidPairingError ->
+        %{outcome: :impossible, reason: Exception.message(e), pairs: nil}
+    end
+  end
+
+  @doc """
+  A player did not turn up. What is the least disruptive legal fix?
+
+  `absent` is their rank; `pairs` the round as announced. Returns
+  `%{needed: false, why: :had_bye | :not_seated}` when there is nothing to
+  fix, else:
+
+      %{
+        needed: true, absent:, opponent:,
+        full_repair: %{pairs:, affected: [ranks]},
+        options: [%{pairs:, affected: [ranks], outcome:, differs_at:}, ...]
+      }
+
+  `full_repair` is the engine pairing the reduced field from scratch - the
+  best round, and usually the one that moves the most people. `options` are
+  the small fixes: the stranded opponent takes the bye, or plays the bye
+  holder, or takes over one board whose displaced player then takes the
+  bye or the bye holder. Each is legal (illegal ones are dropped), lists
+  exactly who else is affected, and carries its verdict against the full
+  repair - `:same` means the small fix IS the best round. Sorted by how
+  many people it touches, then by that verdict.
+
+  Advisory. Nothing here changes a pairing; the arbiter does, by hand.
+  """
+  def no_show(players, pairs, absent, opts \\ []) do
+    case opponent_of(pairs, absent) do
+      :not_seated ->
+        %{needed: false, why: :not_seated}
+
+      nil ->
+        %{needed: false, why: :had_bye}
+
+      opponent ->
+        players = mark_absent(players, absent)
+        remaining = Enum.reject(pairs, fn {x, y} -> absent in [x, y] end)
+        full_pairs = Pairing.pair_next_round(players, opts)
+        full = Pairing.explain_round(players, full_pairs, opts)
+        holder = bye_holder(remaining)
+
+        options =
+          (small_fixes(remaining, opponent, holder) ++ board_fixes(remaining, opponent, holder))
+          |> Enum.flat_map(fn {candidate, affected} ->
+            for coloured <- colour_variants(candidate, remaining),
+                report = Pairing.explain_round(players, coloured, opts),
+                violations(report) == [] do
+              verdict = compare(full, report)
+
+              %{
+                pairs: coloured,
+                affected: Enum.sort(affected),
+                outcome: outcome(verdict),
+                differs_at: differs_at(verdict)
+              }
+            end
+          end)
+          |> Enum.sort_by(&{length(&1.affected), outcome_rank(&1.outcome)})
+          |> Enum.uniq_by(& &1.affected)
+
+        %{
+          needed: true,
+          absent: absent,
+          opponent: opponent,
+          full_repair: %{
+            pairs: full_pairs,
+            affected: affected_by(pairs, full_pairs, [absent, opponent])
+          },
+          options: options
+        }
+    end
+  end
+
+  # The stranded opponent alone: takes the bye holder's game, or the bye.
+  defp small_fixes(remaining, opponent, nil), do: [{remaining ++ [{opponent, nil}], []}]
+
+  defp small_fixes(remaining, opponent, holder),
+    do: [{replace_bye(remaining, holder, {opponent, holder}), [holder]}]
+
+  # The stranded opponent takes over a board; the player it displaces goes
+  # to the bye holder, or to the bye.
+  defp board_fixes(remaining, opponent, holder) do
+    for {x, y} <- remaining, not is_nil(y), {take, displaced} <- [{x, y}, {y, x}] do
+      others = List.delete(remaining, {x, y})
+
+      case holder do
+        nil ->
+          {others ++ [{opponent, take}, {displaced, nil}], [x, y]}
+
+        h ->
+          {others |> replace_bye(h, {displaced, h}) |> Kernel.++([{opponent, take}]), [x, y, h]}
+      end
+    end
+  end
+
+  defp replace_bye(pairs, holder, pair) do
+    Enum.map(pairs, fn
+      {^holder, nil} -> pair
+      other -> other
+    end)
+  end
+
+  # A hand-built pair has no colour decision behind it, so every new pair
+  # is tried both ways round and the ladder picks - C10-C13 are exactly the
+  # rungs that know which way is right.
+  defp colour_variants(candidate, original) do
+    known = MapSet.new(original)
+
+    candidate
+    |> Enum.reduce([[]], fn
+      {_w, nil} = pair, acc ->
+        Enum.map(acc, &[pair | &1])
+
+      {w, b} = pair, acc ->
+        if MapSet.member?(known, pair),
+          do: Enum.map(acc, &[pair | &1]),
+          else: Enum.flat_map(acc, &[[{w, b} | &1], [{b, w} | &1]])
+    end)
+    |> Enum.map(&Enum.reverse/1)
+  end
+
+  defp outcome_rank(:same), do: 0
+  defp outcome_rank(:tie), do: 1
+  defp outcome_rank(:better), do: 2
+  defp outcome_rank(:worse), do: 3
+  defp outcome_rank(_), do: 4
+
+  # Everyone (other than `except`) whose opponent differs between two rounds.
+  defp affected_by(before, after_pairs, except) do
+    partners = fn pairs ->
+      Enum.reduce(pairs, %{}, fn
+        {w, nil}, acc -> Map.put(acc, w, nil)
+        {w, b}, acc -> acc |> Map.put(w, b) |> Map.put(b, w)
+      end)
+    end
+
+    was = partners.(before)
+    now = partners.(after_pairs)
+
+    (Map.keys(was) ++ Map.keys(now))
+    |> Enum.uniq()
+    |> Enum.reject(&(&1 in except))
+    |> Enum.filter(&(Map.get(was, &1, :absent) != Map.get(now, &1, :absent)))
+    |> Enum.sort()
+  end
+
+  # Marked the way a TRF marks a player sitting a round out - a zero-point
+  # bye for the round being paired - which `active_this_round?/2` reads and
+  # `rounds_played/1` does not advance on.
+  defp mark_absent(players, rank) do
+    Enum.map(players, fn
+      %{rank: ^rank} = p ->
+        %{p | games: p.games ++ [%{result: "Z", colour: nil, opponent_rank: nil}]}
+
+      p ->
+        p
+    end)
+  end
+
+  defp opponent_of(pairs, rank) do
+    Enum.find_value(pairs, :not_seated, fn
+      {^rank, other} -> {:found, other}
+      {other, ^rank} -> {:found, other}
+      _ -> nil
+    end)
+    |> case do
+      {:found, other} -> other
+      :not_seated -> :not_seated
+    end
+  end
+
+  defp paired_together?(pairs, a, b), do: Enum.any?(pairs, &(&1 in [{a, b}, {b, a}]))
+
+  defp changed_boards(pairs, alt_pairs) do
+    unordered = fn list -> MapSet.new(list, fn {x, y} -> Enum.sort([x, y]) end) end
+    MapSet.size(MapSet.difference(unordered.(alt_pairs), unordered.(pairs)))
+  end
+
+  # Why `a` and `b` cannot meet: seat them directly (their opponents then
+  # meeting each other) and read the violation off that pairing.
+  defp direct_reason(players, pairs, a, b, opts) do
+    alt =
+      case opponent_of(pairs, a) do
+        ^b ->
+          pairs
+
+        nil ->
+          Enum.map(pairs, fn
+            {^a, nil} -> {a, b}
+            {^b, c} -> {c, nil}
+            {c, ^b} -> {c, nil}
+            pair -> pair
+          end)
+
+        :not_seated ->
+          pairs
+
+        oa ->
+          Enum.map(pairs, fn {w, k} -> {swap_seat(w, b, oa), swap_seat(k, b, oa)} end)
+      end
+
+    players
+    |> Pairing.explain_round(alt, opts)
+    |> violations()
+    |> Enum.find(&(Enum.sort(&1.players) == Enum.sort([a, b])))
+  end
+
+  defp swap_seat(rank, x, y) when rank == x, do: y
+  defp swap_seat(rank, x, y) when rank == y, do: x
+  defp swap_seat(rank, _x, _y), do: rank
+
   defp bye_holder(pairs) do
     Enum.find_value(pairs, fn
       {w, nil} -> w

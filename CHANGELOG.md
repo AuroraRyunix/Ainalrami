@@ -61,6 +61,48 @@ invisible to any corpus this generator can produce and a third had been
 breaking a matcher invariant 734 times per 800 tournaments while agreeing
 with the reference on every one of them.
 
+## [0.20.0] - 2026-09-07
+
+### Added
+
+- **Soft constraints** - `pair_next_round/2` and `explain_round/3` take
+  `soft_pairs:` (groups of starting ranks, the same shape as
+  `forbidden_pairs:`) and `soft_position: :strong | :weak`. A soft pair is
+  one the arbiter would rather avoid - two players from the same club in the
+  early rounds, a parent and child - but will accept if the alternative is
+  worse. It is one more rung on the ladder, 1 when the pair is fine and 0
+  when it is one to avoid, and it is reported like any other rung, as
+  `S soft avoid`. `:strong` puts it right above C6, so the engine would rather
+  float a player than seat the pair - what "club protection" means in
+  practice; `:weak` puts it after C21, where it separates only rounds the
+  criteria already tie on. This is not a FIDE concept: C.04.3 knows absolute
+  and quality criteria and nothing in between, and a tournament that uses it
+  is not a Dutch-system tournament in the homologation sense. With no soft
+  pairs given the ladder is untouched, byte for byte - the comparison corpus
+  runs without them and is the proof.
+
+- `Ainalrami.Alternatives.force_pair/5` - "what if A played B", answered
+  properly: the best round in which they meet, found by forbidding each of
+  them every other opponent and pairing again, judged against what was
+  played, with how many boards would change. Refused with the rule when the
+  pair itself is illegal (a rematch, a colour clash, an arbiter's exclusion),
+  which is checked first: forcing an illegal pair leaves the search no legal
+  round at all, and "no legal round" is the wrong answer to "why can't 1
+  play 5" when the true one is "they met in round 2".
+
+- `Ainalrami.Alternatives.no_show/4` - a player did not turn up: the least
+  disruptive legal fixes, ranked by how many OTHER players each one moves,
+  each carrying its verdict against a full re-pair of the reduced field. The
+  stranded opponent takes the bye, or plays the bye holder, or takes over one
+  board whose displaced player then takes the bye or the bye holder; illegal
+  ones are dropped, and every new board is tried both ways round so the
+  ladder's own colour rungs pick the colours. Advisory - nothing changes a
+  pairing.
+
+- The CLI's explain mode (`-x`) opens with a **float cascade**, one line per
+  bracket: who was there, who arrived from above, what paired, who fell.
+  `--force=A-B` and `--absent=N` print the two questions above.
+
 ## [0.19.0] - 2026-09-06
 
 ### Added

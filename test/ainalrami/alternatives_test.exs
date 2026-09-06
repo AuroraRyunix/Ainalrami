@@ -166,6 +166,80 @@ defmodule Ainalrami.AlternativesTest do
     end
   end
 
+  describe "force_pair/5 - what if they played each other" do
+    test "a pair the rules forbid is refused with the rule" do
+      pairs = Pairing.pair_next_round(roster(), @opts)
+      # 1 and 5 are both absolutely due Black.
+      assert %{outcome: :illegal, reason: %{reason: :colour}} =
+               Alternatives.force_pair(roster(), pairs, 1, 5, @opts)
+
+      # 3 and 4 met in round 1.
+      assert %{outcome: :illegal, reason: %{reason: :rematch, round: 1}} =
+               Alternatives.force_pair(roster(), pairs, 3, 4, @opts)
+    end
+
+    test "a legal pair gets the best round containing it, judged and costed" do
+      players = for r <- 1..8, do: player(r, 0.0, [])
+      pairs = Pairing.pair_next_round(players, @opts)
+      # Round one pairs 1-5; ask for 1-8 instead.
+      refute Enum.any?(pairs, &(&1 in [{1, 8}, {8, 1}]))
+
+      result = Alternatives.force_pair(players, pairs, 1, 8, @opts)
+
+      assert result.outcome in [:worse, :tie, :same, :better, :incomparable]
+      assert Enum.any?(result.pairs, &(&1 in [{1, 8}, {8, 1}]))
+      assert result.changed >= 1
+      assert result.violations == []
+    end
+  end
+
+  describe "no_show/4 - somebody did not turn up" do
+    test "the stranded opponent gets legal options, the cheapest first" do
+      players = for r <- 1..8, do: player(r, 0.0, [])
+      pairs = Pairing.pair_next_round(players, @opts)
+      {absent, opponent} = hd(pairs)
+
+      result = Alternatives.no_show(players, pairs, absent, @opts)
+
+      assert result.needed
+      assert result.opponent == opponent
+      assert result.options != []
+
+      # Sorted by how many OTHER people each fix moves; the field is now
+      # odd, so the cheapest fix is the opponent taking the bye and nobody
+      # else moving.
+      counts = Enum.map(result.options, &length(&1.affected))
+      assert counts == Enum.sort(counts)
+      assert hd(result.options).affected == []
+      assert Enum.any?(hd(result.options).pairs, &(&1 == {opponent, nil}))
+
+      # Every option is a complete legal round of the reduced field.
+      for option <- result.options do
+        refute Enum.any?(option.pairs, fn {x, y} -> absent in [x, y] end)
+        assert option.outcome in [:same, :tie, :worse, :better, :incomparable]
+      end
+
+      assert is_list(result.full_repair.pairs)
+    end
+
+    test "when the absent player held the bye there is nothing to fix" do
+      players = for r <- 1..5, do: player(r, 0.0, [])
+      pairs = Pairing.pair_next_round(players, @opts)
+      {holder, nil} = Enum.find(pairs, &match?({_, nil}, &1))
+
+      assert Alternatives.no_show(players, pairs, holder, @opts) == %{
+               needed: false,
+               why: :had_bye
+             }
+    end
+
+    test "a player who was not seated is not a no-show" do
+      players = for r <- 1..8, do: player(r, 0.0, [])
+      pairs = Pairing.pair_next_round(players, @opts)
+      assert Alternatives.no_show(players, pairs, 99, @opts) == %{needed: false, why: :not_seated}
+    end
+  end
+
   describe "Pairing.bye_eligibility/2" do
     test "names C.2's three disqualifications and nothing else" do
       players = [

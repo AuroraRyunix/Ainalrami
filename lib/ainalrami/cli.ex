@@ -89,7 +89,7 @@ defmodule Ainalrami.CLI do
   # nothing says so.
   @bare_flags ~w(-p -g -c -x --explain -q --quiet -d --debug -h --help --version)
   @valued_flags ~w(seed players rounds forfeit-pct bye-pct forbidden-pct
-                   acceleration initial-colour initial-color)
+                   acceleration initial-colour initial-color force absent)
 
   defp split_flags(argv), do: Enum.split_with(argv, &String.starts_with?(&1, "-"))
 
@@ -210,7 +210,7 @@ defmodule Ainalrami.CLI do
       positional == [] -> usage_error("missing input TRF file")
       "-p" in flags -> pair_checked(hd(positional), tl(positional))
       "-c" in flags -> check(hd(positional))
-      "-x" in flags or "--explain" in flags -> explain(hd(positional))
+      "-x" in flags or "--explain" in flags -> explain(hd(positional), flags)
       true -> usage_error("missing mode flag: one of -p, -g, -c, -x")
     end
   end
@@ -323,7 +323,7 @@ defmodule Ainalrami.CLI do
   # genuinely did not separate anything; and the rung values are SUMS over
   # a bracket's edges, so they compare across answers only when the edge
   # counts match.
-  defp explain(input_path) do
+  defp explain(input_path, flags) do
     Log.step("Loading #{input_path}")
 
     with {:ok, text} <- read_input(input_path),
@@ -335,10 +335,13 @@ defmodule Ainalrami.CLI do
 
       case pair_next_round(parsed.players, parsed.tournament) do
         {:ok, pairs} ->
-          reports =
-            Pairing.explain_round(parsed.players, pairs, pairing_opts(parsed.tournament))
+          opts = pairing_opts(parsed.tournament)
+          reports = Pairing.explain_round(parsed.players, pairs, opts)
 
+          IO.write(render_cascade(reports))
           IO.write(render_explanation(reports, pairs, round_count + 1))
+          IO.write(render_force(parsed.players, pairs, opts, flags))
+          IO.write(render_no_show(parsed.players, pairs, opts, flags))
           0
 
         {:error, :halt} ->
@@ -359,6 +362,158 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
 "
 
     header <> Enum.map_join(Enum.with_index(reports, 1), "", &render_bracket/1)
+  end
+
+  # The float cascade: how the brackets fed each other, top to bottom, in
+  # one line per bracket. The per-bracket detail below it says the same
+  # thing at length; this is the shape of the round at a glance.
+  defp render_cascade(reports) do
+    lines =
+      Enum.map(reports, fn report ->
+        residents = Enum.join(report.residents, ", ")
+        arrivals = if report.mdps == [], do: "", else: "  + #{Enum.join(report.mdps, ", ")}"
+        paired = Enum.map_join(report.pairs, ", ", fn {a, b} -> "#{a}-#{b}" end)
+
+        outcome =
+          case {report.pairs, report.floats} do
+            {[], []} -> "-"
+            {[], floats} -> "nobody pairs; #{Enum.join(floats, ", ")} float down"
+            {_, []} -> paired
+            {_, floats} -> "#{paired}; #{Enum.join(floats, ", ")} float down"
+          end
+
+        "  #{String.pad_leading(format_score(report.group), 5)}  " <>
+          "#{String.pad_trailing(residents <> arrivals, 28)} -> #{outcome}\n"
+      end)
+
+    "\nFloat cascade\n" <> Enum.join(lines) <> "\n"
+  end
+
+  # `--force=A-B`: the best round in which A and B meet, and what it costs.
+  defp render_force(players, pairs, opts, flags) do
+    case pair_option(flags, "force") do
+      nil ->
+        ""
+
+      {a, b} ->
+        result = Ainalrami.Alternatives.force_pair(players, pairs, a, b, opts)
+
+        body =
+          case result do
+            %{outcome: :illegal, reason: %{reason: why} = v} ->
+              "  they cannot meet: #{violation_words(why, v)}\n"
+
+            %{outcome: :illegal} ->
+              "  they cannot meet: no legal round seats them together\n"
+
+            %{outcome: :impossible, reason: reason} ->
+              "  no legal round contains that pair: #{reason}\n"
+
+            %{outcome: :same} ->
+              "  that is the round that was paired\n"
+
+            %{outcome: outcome, differs_at: at, changed: changed, pairs: alt} ->
+              verdict =
+                case outcome do
+                  :worse ->
+                    "legal, but worse: #{at.label} #{at.actual} -> #{at.alternative}"
+
+                  :better ->
+                    "scores HIGHER on #{at.label} (#{at.actual} -> #{at.alternative}) - the engine missed it"
+
+                  :tie ->
+                    "equal on every criterion; the transposition order decides"
+
+                  :incomparable ->
+                    "not comparable rung by rung"
+                end
+
+              "  #{verdict}\n  #{changed} board#{plural(changed)} would change\n" <>
+                Enum.map_join(alt, "", fn {w, k} -> "    #{w} (white) vs. #{k || "bye"}\n" end)
+          end
+
+        "\nForcing #{a} vs. #{b}\n" <> body
+    end
+  end
+
+  # `--absent=N`: N did not turn up. The least disruptive legal fixes.
+  defp render_no_show(players, pairs, opts, flags) do
+    case option(flags, "absent") do
+      nil ->
+        ""
+
+      absent ->
+        case Ainalrami.Alternatives.no_show(players, pairs, absent, opts) do
+          %{needed: false, why: :had_bye} ->
+            "\nIf #{absent} does not turn up\n  nothing to fix - they held the bye\n"
+
+          %{needed: false} ->
+            "\nIf #{absent} does not turn up\n  nothing to fix - they were not seated\n"
+
+          %{opponent: opponent, options: options, full_repair: full} ->
+            listed =
+              Enum.map_join(options, "", fn option ->
+                who =
+                  case option.affected do
+                    [] -> "nobody else moves"
+                    ranks -> "also moves #{Enum.join(ranks, ", ")}"
+                  end
+
+                cost =
+                  case option do
+                    %{outcome: :same} ->
+                      "this is the best round"
+
+                    %{outcome: :worse, differs_at: at} ->
+                      "costs #{at.label} (#{at.actual} -> #{at.alternative})"
+
+                    %{outcome: :tie} ->
+                      "equal to the best round on every criterion"
+
+                    %{outcome: other} ->
+                      to_string(other)
+                  end
+
+                "  #{who}: #{cost}\n" <>
+                  Enum.map_join(option.pairs -- pairs, "", fn {w, k} ->
+                    "      #{w} (white) vs. #{k || "bye"}\n"
+                  end)
+              end)
+
+            "\nIf #{absent} does not turn up (opponent #{opponent})\n" <>
+              listed <>
+              "  full re-pair moves #{length(full.affected)} other player#{plural(length(full.affected))}\n"
+        end
+    end
+  end
+
+  defp violation_words(:rematch, %{round: round}), do: "met in round #{round}"
+  defp violation_words(:colour, %{colour: colour}), do: "both absolutely due #{colour}"
+  defp violation_words(:forbidden, _v), do: "the arbiter forbade this pairing"
+  defp violation_words(other, _v), do: to_string(other)
+
+  # `--force=2-9`: two starting ranks joined by a dash.
+  defp pair_option(flags, key) do
+    prefix = "--#{key}="
+
+    case Enum.find(flags, &String.starts_with?(&1, prefix)) do
+      nil ->
+        nil
+
+      flag ->
+        value = String.trim_leading(flag, prefix)
+
+        case String.split(value, "-") do
+          [a, b] ->
+            case {Integer.parse(a), Integer.parse(b)} do
+              {{x, ""}, {y, ""}} when x != y -> {x, y}
+              _ -> refuse("--#{key} takes two starting ranks as A-B, not \"#{value}\"")
+            end
+
+          _ ->
+            refuse("--#{key} takes two starting ranks as A-B, not \"#{value}\"")
+        end
+    end
   end
 
   defp render_bracket({report, index}) do
@@ -786,6 +941,10 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
     Options:
       -q, --quiet    Warnings and errors only
       -d, --debug    Add engine internals (bracket paths, sizes, timings)
+      --force=A-B  With -x: the best round in which A and B meet, and
+                   what it costs against the round that was paired
+      --absent=N   With -x: N did not turn up - the least disruptive
+                   legal fixes, each with who else moves and what it costs
       -h, --help     Show this help
           --version  Show the version number
     """)

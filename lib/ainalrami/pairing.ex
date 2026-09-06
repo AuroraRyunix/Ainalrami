@@ -69,6 +69,11 @@ defmodule Ainalrami.Pairing do
   # tournament-level context, and threading one through purely for a rule
   # that is usually absent would touch every weight function on the way.
   @forbidden_key :ainalrami_forbidden_pairs
+  # Soft constraints - pairs the arbiter would RATHER avoid (club or school
+  # protection in the early rounds, family members), as opposed to the
+  # absolute exclusions above. nil unless a caller asked, and when nil the
+  # ladder is byte-for-byte what FIDE's is: see `soften/3`.
+  @soft_key :ainalrami_soft_pairs
   # The TOURNAMENT's played-round count, stashed for the same reason as the
   # keys above. `final_round_topscorers?/2` used `length(a.games)` - that
   # player's own game count - which is the precise indexing bug this module
@@ -185,6 +190,7 @@ defmodule Ainalrami.Pairing do
       # rounds, so the map cannot be built until the round being paired is
       # known.
       Process.put(@forbidden_key, forbidden_map(opts[:forbidden_pairs], played + 1))
+      Process.put(@soft_key, soft_map(opts, played + 1))
 
       active = Enum.filter(players, &active_this_round?(&1, played))
 
@@ -197,6 +203,7 @@ defmodule Ainalrami.Pairing do
       # compared against: `computeMatching` runs the same bracket machinery
       # from round 1 on. So when either is in play, so does this.
       if Enum.all?(active, &(&1.games == [])) and is_nil(Process.get(@forbidden_key)) and
+           is_nil(Process.get(@soft_key)) and
            not Enum.any?(active, &(acceleration_at(&1, played) != 0.0)) do
         pair_round_one(active)
       else
@@ -212,6 +219,7 @@ defmodule Ainalrami.Pairing do
       Process.delete(@point_system_key)
       Process.delete(@played_key)
       Process.delete(@forbidden_key)
+      Process.delete(@soft_key)
       clear_env_flags()
     end
   end
@@ -346,6 +354,7 @@ defmodule Ainalrami.Pairing do
       played = rounds_played(players)
       Process.put(@played_key, played)
       Process.put(@forbidden_key, forbidden_map(opts[:forbidden_pairs], played + 1))
+      Process.put(@soft_key, soft_map(opts, played + 1))
 
       # Not read on this path today - `explain_bracket/7` grades a pairing
       # it was handed and never reaches `assign_colour_with_history/1`, so
@@ -404,6 +413,7 @@ defmodule Ainalrami.Pairing do
       Process.delete(@point_system_key)
       Process.delete(@played_key)
       Process.delete(@forbidden_key)
+      Process.delete(@soft_key)
       Process.delete(@bye_score_key)
       Process.delete(@round_matcher_key)
       Process.delete(@oracle_key)
@@ -3433,7 +3443,78 @@ defmodule Ainalrami.Pairing do
   # you whether the two implementations agreed.
   #
   # `a` is the higher-placed player of the pair, `b` the lower.
+  # The FIDE ladder, plus - only when a caller asked for it - the soft rung.
+  # Every consumer of the ladder (the matcher's weights, `explain_round/3`'s
+  # report) goes through here, so a soft constraint shows up in the report
+  # exactly where it changed the decision.
   defp edge_rungs(a, b, reach, ctx, bands, single_bye?) do
+    a |> ladder_rungs(b, reach, ctx, bands, single_bye?) |> soften(a, b)
+  end
+
+  # ---------------------------------------------------------------------
+  # Soft constraints
+  # ---------------------------------------------------------------------
+  #
+  # A soft pair is one the arbiter would rather not see - two players from
+  # the same club in round one, a parent and child - but will accept if the
+  # alternative is worse. It is not a FIDE concept. C.04.3 knows absolute
+  # criteria and quality criteria and nothing in between, so this is an
+  # explicit departure from the Dutch system, and a tournament that uses it
+  # is not a Dutch-system tournament in the homologation sense. It exists
+  # for the youth and club events where that trade is the right one.
+  #
+  # Mechanically it is one more rung on the ladder: 1 when the pair is
+  # fine, 0 when it is one to avoid, so the matcher prefers avoiding it
+  # exactly as it prefers any other criterion. WHERE the rung sits is the
+  # arbiter's choice:
+  #
+  #   :strong  right after the bye-eligibility rung, i.e. above C6. The
+  #            engine would rather float a player than seat the pair - which
+  #            is what "club protection" means in practice.
+  #   :weak    after C21. It breaks ties and nothing else.
+  #
+  # When no soft pairs are given the ladder is returned untouched, so the
+  # engine's FIDE behaviour is preserved byte for byte - the comparison
+  # corpus is the proof, since it runs without soft pairs.
+  defp soft_map(opts, round) do
+    case opts[:soft_pairs] do
+      nil ->
+        nil
+
+      [] ->
+        nil
+
+      groups ->
+        case forbidden_map(groups, round) do
+          nil -> nil
+          map -> %{map: map, position: opts[:soft_position] || :strong}
+        end
+    end
+  end
+
+  defp soft_pair?(a, b) do
+    case Process.get(@soft_key) do
+      nil -> false
+      %{map: map} -> map |> Map.get(a.rank) |> forbids?(b.rank)
+    end
+  end
+
+  defp soften(rungs, a, b) do
+    case Process.get(@soft_key) do
+      nil ->
+        rungs
+
+      %{position: position} ->
+        rung = {"S soft avoid", bit(not soft_pair?(a, b)), 2}
+
+        case position do
+          :weak -> rungs ++ [rung]
+          _strong -> List.insert_at(rungs, 1, rung)
+        end
+    end
+  end
+
+  defp ladder_rungs(a, b, reach, ctx, bands, single_bye?) do
     in_current = reach == 0
     s = bands.count_span
 
