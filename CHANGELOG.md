@@ -61,6 +61,43 @@ invisible to any corpus this generator can produce and a third had been
 breaking a matcher invariant 734 times per 800 tournaments while agreeing
 with the reference on every one of them.
 
+## [0.19.0] - 2026-09-06
+
+### Added
+
+- `Ainalrami.Alternatives` - answers to "why not THAT instead", the question
+  an arbiter is actually asked at the board and which `explain_round/3` on
+  its own cannot answer, because it describes one pairing and says nothing
+  about the ones not chosen. Every answer is built the same way: construct
+  the alternative, score it with `explain_round/3` under the real rules, and
+  compare it with what was played. So each verdict is a fact about the
+  criteria rather than a reconstruction of the search: the alternative
+  breaks an absolute rule (`violations/1` names the pair and why), or scores
+  lower on a named rung (`compare/2` names it - a port of the rule
+  `tools/adjudicate.exs` has filed every engineering-log verdict with), or
+  ties, in which case section 3's transposition order decided and the report
+  says which way.
+
+  Three shapes. `judge/4` scores a complete proposal - a swap, or "pair X
+  with Y" - directly; it is cheap and exact and is what a page runs live.
+  `float_alternatives/3` answers "why did HE float and not me": for each
+  other member of the bracket, the best pairing in which THAT player leaves
+  instead, reached by forbidding them every partner inside the bracket and
+  pairing again. `bye_alternatives/3` does the same for the pairing-allocated
+  bye, after first asking C.2 whether the rule allowed the candidate a bye at
+  all. Those two are one full search per candidate, so they are meant to be
+  computed once at pairing time and stored, and are capped at twelve
+  candidates per question.
+
+  A `:better` verdict - an alternative that scores higher than the engine's
+  own answer - should never appear. It is reported rather than hidden,
+  because it would mean the search missed a pairing its own ladder prefers,
+  and that is a bug report.
+
+- `Pairing.bye_eligibility/2` - C.2's disqualifications by rank
+  (`:pairing_bye`, `:forfeit_win`, `:full_point_bye`, or nil), derived from
+  the same predicate the pairing uses under the same point system.
+
 ## [0.18.0] - 2026-09-06
 
 ### Added

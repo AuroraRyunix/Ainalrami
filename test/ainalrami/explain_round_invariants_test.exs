@@ -93,12 +93,16 @@ defmodule Ainalrami.ExplainRoundInvariantsTest do
           whites = Enum.count(state.colours, &(&1 == "w"))
           blacks = Enum.count(state.colours, &(&1 == "b"))
           assert state.difference == whites - blacks, "#{where}: ##{state.rank} difference"
-          assert state.whites == whites and state.blacks == blacks, "#{where}: ##{state.rank} counts"
+
+          assert state.whites == whites and state.blacks == blacks,
+                 "#{where}: ##{state.rank} counts"
         end
 
         for x <- bracket.exclusions do
           [a, b] = x.players
-          assert a in bracket.order and b in bracket.order, "#{where}: exclusion names an outsider"
+
+          assert a in bracket.order and b in bracket.order,
+                 "#{where}: exclusion names an outsider"
 
           if x.reason == :rematch do
             assert met_in?(by_rank, a, b, x.round),

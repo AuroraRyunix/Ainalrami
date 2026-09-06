@@ -4918,6 +4918,42 @@ defmodule Ainalrami.Pairing do
   # `BBU 0.0` would have handed a second bye to somebody who already had a
   # forfeit win.
 
+  @doc """
+  Why each player may not receive the pairing-allocated bye - C.2, as this
+  engine applies it - keyed by rank: `nil` when eligible, else
+  `:pairing_bye` (already had one), `:forfeit_win` (won a game without
+  playing it) or `:full_point_bye`.
+
+  Public for `Ainalrami.Alternatives`, which answers "why did HE get the
+  bye and not me" and has to say, for every other candidate, whether the
+  rule even allowed it. Derived from the same `bye_disqualifying?/1` the
+  pairing uses, under the same point system, so it cannot disagree with
+  what was decided.
+  """
+  def bye_eligibility(players, opts \\ []) do
+    previous = Process.get(@point_system_key)
+    Process.put(@point_system_key, opts[:point_system] || Ainalrami.Trf.default_point_system())
+
+    try do
+      Map.new(players, fn player -> {player.rank, bye_disqualification(player)} end)
+    after
+      if previous,
+        do: Process.put(@point_system_key, previous),
+        else: Process.delete(@point_system_key)
+    end
+  end
+
+  defp bye_disqualification(player) do
+    Enum.find_value(player.games, fn game ->
+      cond do
+        not bye_disqualifying?(game) -> nil
+        not is_nil(game.opponent_rank) -> :forfeit_win
+        Ainalrami.Trf.participated_in_pairing?(game) -> :pairing_bye
+        true -> :full_point_bye
+      end
+    end)
+  end
+
   defp eligible_for_bye?(player) do
     not Enum.any?(player.games, &bye_disqualifying?/1)
   end
