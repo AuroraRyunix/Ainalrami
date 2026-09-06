@@ -267,9 +267,23 @@ defmodule Ainalrami.Pairing do
   pairing implies are reconstructed from it: score groups top-down, with
   each bracket's unpaired members carried into the next as its MDPs.
 
-  Returns one map per bracket, `%{group:, mdps:, residents:, floats:,
-  rungs: [{label, total}]}`, where each total is that criterion summed
-  over the pairs the bracket keeps.
+  Returns one map per bracket. Two halves, and the difference matters:
+
+  **What the pairing produced** - `group`, `mdps`, `residents`, `pairs`,
+  `floats`, `rungs: [{label, total}]` (each total that criterion summed over
+  the pairs the bracket keeps), `edge_rungs`, `edge_count`, `order`, `lex`.
+
+  **What it was produced FROM** - `s1` / `s2` (Article 4.1's subgroups, the
+  seeds in the order they were paired off), `heterogeneous?`, `states` (per
+  player: colours had, whites/blacks, signed `difference`, `preference`,
+  FIDE `class`, and float history), and `exclusions` - the pairs inside the
+  bracket the absolute criteria FORBADE, each tagged `:forbidden`,
+  `:rematch` (with the round they met) or `:colour`.
+
+  The second half exists because the first cannot answer a question anyone
+  asks. "Why am I not playing him" is a question about a pair that was
+  removed before the optimisation began, and until 2026-09-06 the removals
+  were computed on every round and then dropped on the floor.
 
   The point is to adjudicate a disagreement rather than guess at it.
   Score both engines' answers and compare the first bracket where they
@@ -508,6 +522,7 @@ defmodule Ainalrami.Pairing do
       end)
 
     rungs = sum_rungs(kept_rungs ++ cross_rungs)
+    {s1, s2} = subgroups(bracket, score)
 
     {%{
        group: score,
@@ -542,8 +557,118 @@ defmodule Ainalrami.Pairing do
        # cannot support. See `explain_round/3`'s "What it cannot see".
        edge_count: length(edges) + length(cross_edges),
        order: Enum.map(bracket, & &1.rank),
-       lex: transposition_key(bracket, group, partner)
+       lex: transposition_key(bracket, group, partner),
+       # ---- the state the decision was made FROM ----
+       #
+       # Everything above describes the OUTCOME: who ended up where, and
+       # what the criteria cost. None of it can answer the question an
+       # arbiter is actually asked, which is never "why did this bracket
+       # score 6" but "why am I not playing HIM". That question is about a
+       # pair the engine could not use, and the pairs it could not use were
+       # computed and discarded on every round this engine has ever paired.
+       #
+       # So: the subgroups the pairing was built from, each player's colour
+       # and float state, and the pairs the absolute criteria removed.
+       heterogeneous?: s1 != [] and hd(s1).points > score,
+       s1: Enum.map(s1, & &1.rank),
+       s2: Enum.map(s2, & &1.rank),
+       states: Enum.map(bracket, &player_state/1),
+       exclusions: exclusions(bracket)
      }, floated}
+  end
+
+  # One bracket member's state, as a person would read it off a scoresheet:
+  # the colours they have actually had, what that makes them due, and
+  # whether they have floated recently (which is what C14-C21 grade).
+  defp player_state(player) do
+    stats = player.colour_stats
+    floats = Map.get(player, :floats, %{})
+
+    %{
+      rank: player.rank,
+      points: player.points,
+      colours: stats.colours,
+      whites: stats.whites,
+      blacks: stats.blacks,
+      difference: stats.difference,
+      preference: stats.preference,
+      class: colour_class(stats),
+      repeated: stats.repeated,
+      floated_last_round: Map.get(floats, 1),
+      floated_round_before: Map.get(floats, 2)
+    }
+  end
+
+  # Every pair INSIDE this bracket that the absolute criteria forbid, and
+  # why. This is the half of the reasoning that was always computed and
+  # never kept: the matcher applies these as edge filters and then optimises
+  # over what survives, so the report described the optimisation and could
+  # say nothing at all about the filter. "Why am I not playing him" is a
+  # question about a filtered edge, every time.
+  #
+  # O(n^2) over the bracket, which is what it has to be - the subject is
+  # pairs that do NOT exist, so there is nothing smaller to walk. It is also
+  # cheap where it matters: brackets are score groups and shrink as the
+  # tournament goes on, and the one bracket that holds the whole field is
+  # round one, where nobody has played anybody and the result is empty.
+  defp exclusions(bracket) do
+    for a <- bracket, b <- bracket, a.rank < b.rank do
+      exclusion_reason(a, b)
+    end
+    |> Enum.reject(&is_nil/1)
+  end
+
+  # First reason wins, most decisive first: a rematch ends the conversation
+  # in a way a colour clash does not, and a pair can be both.
+  defp exclusion_reason(a, b) do
+    met = met_in_round(a, b)
+
+    cond do
+      forbidden_pair?(a.rank, b.rank) ->
+        %{players: [a.rank, b.rank], reason: :forbidden}
+
+      met != nil ->
+        %{players: [a.rank, b.rank], reason: :rematch, round: met}
+
+      not colour_compatible?(a, b) ->
+        %{
+          players: [a.rank, b.rank],
+          reason: :colour,
+          colour: a.colour_stats.preference
+        }
+
+      true ->
+        nil
+    end
+  end
+
+  defp met_in_round(a, b) do
+    case Enum.find_index(a.games, &(played?(&1) and &1.opponent_rank == b.rank)) do
+      nil -> nil
+      index -> index + 1
+    end
+  end
+
+  @doc """
+  FIDE Article 4.1's S1/S2 split of one bracket, given that bracket's own
+  score.
+
+  A homogeneous bracket halves: S1 is the top half in Article 1.2 order, S2
+  the bottom, and the pairing is S1[i] against S2[i] before transpositions
+  and exchanges move it. A heterogeneous one splits differently - S1 is the
+  players MOVED DOWN into it, S2 everyone who belongs there - because the
+  moved-down players are paired off against the residents first.
+
+  Public, and used by both `transposition_key/3` and `explain_round/3`, so
+  that the split a report SHOWS is by construction the split the pairing
+  USED. Two copies of this rule that drifted apart would produce a panel
+  that quietly described a different tournament than the one on the board.
+  """
+  def subgroups(bracket, score) do
+    case Enum.split_with(bracket, &(&1.points > score)) do
+      {[], _residents} -> Enum.split(bracket, div(length(bracket), 2))
+      {mdps, residents} -> {mdps, residents}
+    end
   end
 
   # FIDE section 3's transposition order, as a comparable key.
@@ -585,15 +710,7 @@ defmodule Ainalrami.Pairing do
   is the whole of the remaining divergence from 3.8.1.
   """
   def transposition_key(bracket, group, partner) do
-    score = hd(group).points
-    {mdps, residents} = Enum.split_with(bracket, &(&1.points > score))
-
-    {s1, s2} =
-      if mdps == [] do
-        Enum.split(bracket, div(length(bracket), 2))
-      else
-        {mdps, residents}
-      end
+    {s1, s2} = subgroups(bracket, hd(group).points)
 
     s2_index = s2 |> Enum.map(& &1.rank) |> Enum.with_index() |> Map.new()
     unpaired = length(s2)
@@ -4493,9 +4610,46 @@ defmodule Ainalrami.Pairing do
       repeated: repeated,
       absolute_imbalance?: absolute_imbalance?,
       absolute?: absolute?,
-      strong?: not absolute? and imbalance > 0
+      strong?: not absolute? and imbalance > 0,
+      # Everything below is for `explain_round/3` and is never read by the
+      # pairing itself. `imbalance` is an ABSOLUTE value because that is all
+      # the criteria need; a person reading a colour column needs the SIGN
+      # (is this player two Whites up, or two Blacks up), and reconstructing
+      # it from `preference` is a puzzle rather than a fact.
+      whites: whites,
+      blacks: blacks,
+      difference: whites - blacks,
+      consecutive: consecutive,
+      last: last,
+      colours: Enum.map(played, & &1.colour)
     }
   end
+
+  @doc """
+  How FIDE classifies a player's colour preference: `:absolute`, `:strong`,
+  `:mild` or `:none`.
+
+  The distinction is the one an arbiter defends a pairing with, and the
+  three classes are not degrees of the same thing - they are different
+  KINDS of claim:
+
+    * `:absolute` - a colour difference beyond ±1, or the same colour in the
+      two most recent rounds. It must be granted, and two non-topscorers
+      with the same absolute preference may not meet at all. This is a
+      constraint, not a preference.
+    * `:strong` - a colour difference of exactly ±1. The player is due the
+      colour that equalises it.
+    * `:mild` - balanced, so the player is due the colour that alternates
+      from their last game.
+    * `:none` - no played games to have a preference from.
+
+  Derived from `colour_stats/1` rather than recomputed, so it can never
+  disagree with the state the pairing itself used.
+  """
+  def colour_class(%{absolute?: true}), do: :absolute
+  def colour_class(%{strong?: true}), do: :strong
+  def colour_class(%{preference: nil}), do: :none
+  def colour_class(_stats), do: :mild
 
   # How many games at the END of the list share the same colour.
   defp trailing_run([]), do: 0

@@ -170,4 +170,103 @@ defmodule Ainalrami.ExplainRoundTest do
       end
     end
   end
+
+  describe "the state the pairing was made from" do
+    # Everything in this block was computed on every round this engine has
+    # ever paired and then discarded at the report boundary. The panel that
+    # reads it could describe what the criteria cost, and could not answer
+    # the only question an arbiter is ever actually asked at the board.
+    setup do
+      %{report: Pairing.explain_round(roster(), [{1, 5}, {3, 4}, {2, 6}], expected_rounds: 9)}
+    end
+
+    test "a rematch inside a bracket is reported, with the round they met", %{report: report} do
+      # 3 and 4 are both on 1.0 and met in round 1, so the bracket they
+      # share cannot use the one pair it most obviously would.
+      bracket = Enum.find(report, &(&1.group == 1.0))
+
+      assert [%{players: [3, 4], reason: :rematch, round: 1}] = bracket.exclusions
+    end
+
+    test "two players with the same absolute colour cannot meet", %{report: report} do
+      # 1 and 5 both won twice with White: colour difference +2 each, so
+      # both are ABSOLUTELY due Black and the pair is forbidden outright.
+      bracket = Enum.find(report, &(&1.group == 2.0))
+
+      assert [%{players: [1, 5], reason: :colour, colour: "b"}] = bracket.exclusions
+    end
+
+    test "each player's colour state is reported the way FIDE classifies it", %{report: report} do
+      bracket = Enum.find(report, &(&1.group == 2.0))
+      one = Enum.find(bracket.states, &(&1.rank == 1))
+
+      assert one.colours == ["w", "w"]
+      assert one.whites == 2
+      assert one.blacks == 0
+      # Signed, unlike the `imbalance` the criteria use: "+2" and "-2" are
+      # opposite complaints and a colour column has to tell them apart.
+      assert one.difference == 2
+      assert one.preference == "b"
+      assert one.class == :absolute
+    end
+
+    test "a balanced player is mild, not strong", %{report: report} do
+      # 3 played White then Black: balanced, so due the alternation only.
+      bracket = Enum.find(report, &(&1.group == 1.0))
+      three = Enum.find(bracket.states, &(&1.rank == 3))
+
+      assert three.difference == 0
+      assert three.class == :mild
+      assert three.preference == "w"
+    end
+
+    test "float history rides along, because C14-C21 grade it", %{report: report} do
+      bracket = Enum.find(report, &(&1.group == 2.0))
+      five = Enum.find(bracket.states, &(&1.rank == 5))
+
+      # 5 (1.0) was paired against 2 (0.0) in round 2 - a downfloat.
+      assert five.floated_last_round == :down
+    end
+
+    test "the subgroups are the ones the pairing was built from", %{report: report} do
+      bracket = Enum.find(report, &(&1.group == 1.0))
+
+      # Homogeneous bracket of two: it halves.
+      refute bracket.heterogeneous?
+      assert bracket.s1 == [3]
+      assert bracket.s2 == [4]
+    end
+
+    # The split shown and the split used have to be the same object, or the
+    # panel describes a different tournament than the one on the board.
+    test "S1/S2 is the same split transposition_key/3 pairs against" do
+      bracket = [
+        player(1, 1.0, [win(2, "w")]),
+        player(3, 1.0, [win(4, "w")]),
+        player(5, 1.0, [win(6, "b")]),
+        player(7, 1.0, [win(8, "b")])
+      ]
+
+      assert Pairing.subgroups(bracket, 1.0) == {Enum.take(bracket, 2), Enum.drop(bracket, 2)}
+    end
+
+    test "a heterogeneous bracket splits into moved-down players and residents" do
+      moved_down = player(1, 2.0, [win(2, "w"), win(3, "w")])
+      resident_a = player(4, 1.0, [win(5, "w"), loss(6, "b")])
+      resident_b = player(7, 1.0, [loss(8, "b"), win(9, "w")])
+
+      {s1, s2} = Pairing.subgroups([moved_down, resident_a, resident_b], 1.0)
+
+      assert Enum.map(s1, & &1.rank) == [1]
+      assert Enum.map(s2, & &1.rank) == [4, 7]
+    end
+
+    test "round one excludes nothing - nobody has played anybody" do
+      roster = for r <- 1..6, do: player(r, 0.0, [])
+      [bracket] = Pairing.explain_round(roster, [{1, 4}, {2, 5}, {3, 6}], expected_rounds: 5)
+
+      assert bracket.exclusions == []
+      assert Enum.all?(bracket.states, &(&1.class == :none))
+    end
+  end
 end

@@ -61,6 +61,43 @@ invisible to any corpus this generator can produce and a third had been
 breaking a matcher invariant 734 times per 800 tournaments while agreeing
 with the reference on every one of them.
 
+## [0.18.0] - 2026-09-06
+
+### Added
+
+- `explain_round/3` now reports the state a bracket was paired FROM, not only
+  what the pairing produced. Each bracket gains `s1` / `s2` (Article 4.1's
+  subgroups, in the order they were paired off), `heterogeneous?`, `states`
+  (per player: the colours they have actually had, whites/blacks, the SIGNED
+  colour difference, the preference, FIDE's classification of it -
+  `:absolute` / `:strong` / `:mild` / `:none` - and float history), and
+  `exclusions`: the pairs inside the bracket that the absolute criteria
+  forbade, each tagged `:forbidden`, `:rematch` (with the round they met) or
+  `:colour`.
+
+  The engine has always worked in two stages - filter out the pairs the
+  absolute criteria forbid, then optimise over what survives - and the report
+  described only the optimisation. Every one of those filtered pairs was
+  computed on every round ever paired and then dropped on the floor. That is
+  the half an arbiter needs: nobody has ever asked why a bracket scored 6,
+  and everybody asks why they are not playing the person sitting next to
+  them. The answer is a pair that was removed before the search began.
+
+  Nothing here is recomputed - `colour_class/1` derives from the same
+  `colour_stats/1` the pairing itself used, and `subgroups/2` is now shared
+  with `transposition_key/3`, so a report cannot show a split the pairing did
+  not use.
+
+- `subgroups/2` and `colour_class/1` are public, for callers rendering a
+  bracket.
+
+### Changed
+
+- `colour_stats/1` additionally returns `whites`, `blacks`, `difference`
+  (signed), `consecutive`, `last` and `colours`. The criteria only ever
+  needed the absolute imbalance; a person reading a colour column needs the
+  sign, because "two Whites up" and "two Blacks up" are opposite complaints.
+
 ## [0.17.0] - 2026-09-05
 
 ### Fixed
