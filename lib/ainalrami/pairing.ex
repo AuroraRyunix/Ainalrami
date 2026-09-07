@@ -1250,32 +1250,16 @@ defmodule Ainalrami.Pairing do
   # for round 5) where bbpPairings pairs round 6 cleanly. docs/engineering-log.md had
   # recorded the four sibling cases as degenerate fuzz artifacts and this
   # one as an unexplained genuine bug; they are all this single rule.
-  defp rounds_played(players) do
-    base = players |> Enum.map(&paired_through/1) |> max_or_zero()
+  # The rule lives in `Ainalrami.Trf.rounds_played/1` now: the TRF26 writer
+  # needs the same count to tell a bye already in a column from one that
+  # belongs in a `240` record, and two copies of a rule this subtle would
+  # drift.
+  defp rounds_played(players), do: Ainalrami.Trf.rounds_played(players)
 
-    if players != [] and Enum.all?(players, &(length(&1.games) > base)) do
-      base + 1
-    else
-      base
-    end
-  end
-
-  defp paired_through(player) do
-    player.games
-    |> Enum.with_index(1)
-    |> Enum.filter(fn {game, _round} -> participated_in_pairing?(game) end)
-    |> Enum.map(fn {_game, round} -> round end)
-    |> max_or_zero()
-  end
-
+  # The engine's own test of a game hands it to
   # `Ainalrami.Trf.participated_in_pairing?/1`, not a private copy of its
-  # body. There WAS a private copy - identical, and identical is how these
-  # start; `played?/1` was a private copy too, and by the time anyone looked
-  # it recognised three result codes where the shared one recognised six.
+  # rule: two spellings of "took part in the pairing" would drift.
   defp participated_in_pairing?(game), do: Ainalrami.Trf.participated_in_pairing?(game)
-
-  defp max_or_zero([]), do: 0
-  defp max_or_zero(values), do: Enum.max(values)
 
   # A player is paired this round only if they don't already have a result
   # for it. bbpPairings has exactly this test - `if (player.matches.size()

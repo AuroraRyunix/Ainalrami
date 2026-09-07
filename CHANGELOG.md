@@ -61,6 +61,43 @@ invisible to any corpus this generator can produce and a third had been
 breaking a matcher invariant 734 times per 800 tournaments while agreeing
 with the reference on every one of them.
 
+## [0.22.0] - 2026-09-07
+
+### Added
+
+- **TRF26.** FIDE's Tournament Report File Format Version 2026 (approved
+  by Council on 12 May 2025, applied from 1 September 2025) replaces the
+  TRF16 this module was written against. `Trf.serialize/2` takes
+  `dialect: :trf26` and writes FIDE's spelling of the file: `142` for the
+  round count (never `XXR`), one `162` line for a non-standard point system
+  (never `BB*`), `250` and `260` for acceleration and prohibited pairings
+  (never `XXA`/`XXP`), `240` for a bye granted for a round not yet paired
+  (taken off the `001` line, with its points, and put back on the way in),
+  `299` for what `162` cannot say, and the `192`/`202`/`212`/`222` headers
+  (`tournament[:type_code]`, `[:tie_breaks]`, `[:standings_order]`,
+  `[:time_control_code]`). The type code is checked against ETT26's table
+  (`tournament_type_codes/0`, `tournament_type_code?/1`) and the time
+  control against the `222` grammar (`encoded_time_control?/1`) before a
+  line is written. `250` lines are one per rank range per round range -
+  Baku is two lines, not one per player per round.
+- **`parse/1` reads TRF26** to the same shape it always gave: `240` into
+  the players' games (and `tournament[:byes]`), `299` into the point system
+  (`forfeit_win`, `full_point_bye`, `half_point_bye`, and the two it
+  already had; `points_for/2` honours all three), the four headers as
+  above, `202`/`212` as lists of codes. A `240` that contradicts a `001`
+  column, or a typed `299` limited to a round or to named players, is
+  refused rather than dropped. Team records (`300` onwards) and
+  national-rating records are not read.
+- **`rounds_played/1`** is public, in `Trf`, and the one implementation of
+  the rule `Pairing` applied privately: the writer needs the same count to
+  tell a bye in a column from one that belongs in a `240`.
+
+### Changed
+
+- The `:engine` dialect - the default, and the only spelling until now -
+  is byte for byte what it was; the comparison corpus is measured on it,
+  and the reference programs read nothing else.
+
 ## [0.21.0] - 2026-09-07
 
 ### Fixed

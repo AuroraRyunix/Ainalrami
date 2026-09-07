@@ -32,6 +32,27 @@ defmodule Ainalrami.Trf do
   `allow_dangling_playing_code` tolerance and the `parse_games/1` blank-round
   handling below both come directly from that work, not reinvented here.
 
+  ## Two dialects
+
+  `serialize/2` writes one of two spellings of the same file, chosen with
+  `dialect:`:
+
+    * `:engine` (the default) - what the pairing programs read: JaVaFo's
+      `XXR`/`XXP`/`XXA` extension lines and bbpPairings' `BB*` point
+      directives. Byte for byte what this module has always written, and
+      what the comparison corpus is measured on.
+    * `:trf26` - FIDE's Tournament Report File Format Version 2026
+      (approved 12 May 2025, applied from 1 September 2025), the file an
+      arbiter uploads: `142` for the round count, `162` for the points,
+      `250` and `260` for acceleration and prohibited pairings, `240` for a
+      bye granted for a round not yet paired, `299` for what `162` cannot
+      say, and the `192`/`202`/`212`/`222` headers.
+
+  `parse/1` reads both, and reads them to the same players - so a round
+  paired from either spelling of one tournament is the same round. The
+  reference programs read only the first, which is why it is a dialect and
+  not a replacement.
+
   ## The `XX*` extension lines
 
   Four of JaVaFo's own `XX` extension codes are read; two of them are
@@ -125,7 +146,15 @@ defmodule Ainalrami.Trf do
     # no-preference colour inverted, and no test could see it because the
     # harness only ever wrote `152 W`.
     initial_colour: "152",
-    generator: "182"
+    generator: "182",
+    # TRF26 (FIDE Council 12 May 2025, applied from 1 September 2025): the
+    # encoded tournament type (`tournament_type_codes/0`), the tie-breaks
+    # in use, the standings order, and the encoded time control. Written
+    # in either dialect when given; read from any file.
+    type_code: "192",
+    tie_breaks: "202",
+    standings_order: "212",
+    time_control_code: "222"
   }
 
   @type_labels %{
@@ -221,9 +250,16 @@ defmodule Ainalrami.Trf do
   """
   def points_for(result), do: points_for(result, default_point_system())
 
-  def points_for(result, points) when result in ~w(1 + F W), do: points.win
+  # `+`, `F` and `H` pay the win, the win and the draw unless a TRF26 `299`
+  # record has given them a value of their own - `forfeit_win`,
+  # `full_point_bye`, `half_point_bye`, absent from `default_point_system/0`
+  # so that every existing caller sees exactly what it always saw.
+  def points_for("+", points), do: Map.get(points, :forfeit_win) || points.win
+  def points_for("F", points), do: Map.get(points, :full_point_bye) || points.win
+  def points_for("H", points), do: Map.get(points, :half_point_bye) || points.draw
+  def points_for(result, points) when result in ~w(1 W), do: points.win
   def points_for("U", points), do: points.pairing_allocated_bye
-  def points_for(result, points) when result in ~w(= H D), do: points.draw
+  def points_for(result, points) when result in ~w(= D), do: points.draw
   def points_for(result, points) when result in ~w(0 L), do: points.loss
   def points_for("-", points), do: points.forfeit_loss
   def points_for(_result, points), do: points.zero_point_bye
@@ -281,6 +317,41 @@ defmodule Ainalrami.Trf do
 
   def game_was_played?(result),
     do: result not in ~w(+ - H F U Z) and String.trim(result) != ""
+
+  @doc """
+  How many rounds the whole field has been paired for; the round to pair
+  next is one more.
+
+  The base is the last round in which anybody took part in the pairing
+  (`participated_in_pairing?/1`). A trailing column that is complete for
+  the WHOLE field - everyone has a game there, byes included - is a round
+  already fully decided, so it counts as played and the count advances; one
+  player holding a pre-recorded bye for the next round leaves everyone
+  else's history shorter, and nothing advances. That is the rule the
+  pairing engine has always applied (found via
+  `crash_reports/seed4385-r5-p4.trf`, see `Ainalrami.Pairing`), and the
+  TRF26 writer needs the same count to tell a bye that belongs in a column
+  from one that belongs in a `240` record.
+  """
+  def rounds_played(players) do
+    base = players |> Enum.map(&paired_through/1) |> Enum.max(fn -> 0 end)
+
+    if players != [] and Enum.all?(players, &(length(&1[:games] || []) > base)) do
+      base + 1
+    else
+      base
+    end
+  end
+
+  defp paired_through(player) do
+    (player[:games] || [])
+    |> Enum.with_index(1)
+    |> Enum.filter(fn {game, _round} ->
+      participated_in_pairing?(%{opponent_rank: game[:opponent_rank], result: game[:result]})
+    end)
+    |> Enum.map(fn {_game, round} -> round end)
+    |> Enum.max(fn -> 0 end)
+  end
 
   @doc """
   Whether the player took part in the PAIRING for this game, as opposed to
@@ -473,19 +544,117 @@ defmodule Ainalrami.Trf do
 
   def serialize(%{tournament: _, players: _} = given, opts) do
     %{tournament: t, players: players} = data = maybe_fold_ascii(given, opts[:ascii])
+    dialect = dialect!(opts)
 
     validate_games!(players)
+    validate_trf26_headers!(t)
     teams = Map.get(data, :teams, [])
-    max_round = Enum.reduce(players, 0, &max(&2, length(&1[:games] || [])))
 
-    header_lines(t, players, teams, opts[:xxr])
-    |> Kernel.++(point_system_lines(t[:point_system]))
+    # TRF26 carries a bye granted for a round not yet paired as a `240`
+    # record, not as a column on the `001` line - so those columns come off
+    # the players before their lines are written, and go out at the end.
+    system = t[:point_system] || default_point_system()
+    {written, future_byes} = split_future_byes(players, dialect, system)
+    max_round = Enum.reduce(written, 0, &max(&2, length(&1[:games] || [])))
+    xxr? = dialect == :engine and opts[:xxr] == true
+    numeric? = dialect == :trf26 or opts[:numeric_extensions] == true
+
+    header_lines(t, players, teams, xxr?)
+    |> Kernel.++(point_system_lines(t[:point_system], dialect))
     |> Kernel.++(legend_lines(opts[:column_legend], max_round))
-    |> Kernel.++(Enum.map(players, &player_line/1))
+    |> Kernel.++(Enum.map(written, &player_line/1))
     |> Kernel.++(Enum.map(teams, &team_line/1))
-    |> Kernel.++(xxr_line(t[:number_of_rounds], opts[:xxr]))
-    |> Kernel.++(extension_lines(t, players, max_round, opts[:numeric_extensions]))
+    |> Kernel.++(xxr_line(t[:number_of_rounds], xxr?))
+    |> Kernel.++(extension_lines(t, players, max_round, numeric?, dialect))
+    |> Kernel.++(bye_lines(future_byes))
     |> Enum.map_join("", &(&1 <> "\r\n"))
+  end
+
+  # See the moduledoc's "Two dialects".
+  defp dialect!(opts) do
+    case Keyword.get(opts, :dialect, :engine) do
+      dialect when dialect in [:engine, :trf26] ->
+        dialect
+
+      other ->
+        raise ArgumentError, "unknown TRF dialect #{inspect(other)}: use :engine or :trf26"
+    end
+  end
+
+  # A bye granted for a round the pairing has not reached - `0000 - H` in a
+  # column past the last paired round, which is how the engines are told
+  # to leave the player out (`Ainalrami.Pairing`'s `active_this_round?/2`)
+  # - is a `240` record in TRF26, and the column is not written. Only a
+  # trailing run of byes moves; anything else past the paired rounds stays
+  # where it is, since removing it would shift the columns after it.
+  defp split_future_byes(players, :engine, _system), do: {players, []}
+
+  defp split_future_byes(players, :trf26, system) do
+    played = rounds_played(players)
+
+    Enum.map_reduce(players, [], fn player, records ->
+      {kept, future} = Enum.split(player[:games] || [], played)
+
+      {byes_reversed, rest_reversed} =
+        future |> Enum.reverse() |> Enum.split_while(&future_bye?/1)
+
+      rest = Enum.reverse(rest_reversed)
+
+      new_records =
+        byes_reversed
+        |> Enum.reverse()
+        |> Enum.with_index(played + length(rest) + 1)
+        |> Enum.map(fn {game, round} ->
+          {String.upcase(String.trim(game[:result])), round, player[:rank]}
+        end)
+
+      # The `001` total is the standings total, which a bye not yet reached
+      # is not part of; the engines' convention credits it up front, so it
+      # comes off here and `attach_byes/1` puts it back on the way in.
+      moved =
+        Enum.reduce(new_records, 0.0, fn {type, _round, _rank}, sum ->
+          sum + points_for(type, system)
+        end)
+
+      player =
+        player
+        |> Map.put(:games, kept ++ rest)
+        |> Map.update(:points, 0.0, &((&1 || 0.0) - moved))
+
+      {player, records ++ new_records}
+    end)
+  end
+
+  defp future_bye?(game) do
+    is_nil(game[:opponent_rank]) and
+      String.upcase(String.trim(to_string(game[:result] || ""))) in ~w(H F Z)
+  end
+
+  # One `240` per bye type per round: type at column 5, the round in 7-9,
+  # then the starting ranks in four-character fields every five columns
+  # from 11 - the spec's own example, `240 H 003  026  047`.
+  defp bye_lines([]), do: []
+
+  defp bye_lines(records) do
+    records
+    |> Enum.group_by(fn {type, round, _rank} -> {round, type} end, fn {_, _, rank} -> rank end)
+    |> Enum.sort()
+    |> Enum.map(fn {{round, type}, ranks} ->
+      ranks
+      |> Enum.sort()
+      |> Enum.with_index()
+      |> Enum.reduce(
+        []
+        |> place({1, 3}, "240")
+        |> place({5, 5}, type)
+        |> place({7, 9}, String.pad_leading(Integer.to_string(round), 3, "0")),
+        fn {rank, i}, acc ->
+          start = 11 + i * 5
+          place(acc, {start, start + 3}, rank, align: :right)
+        end
+      )
+      |> render()
+    end)
   end
 
   # Emitted after the player rows rather than up with the headers, next to
@@ -507,9 +676,78 @@ defmodule Ainalrami.Trf do
   # `BBU` comes last on purpose - `BBW` drags the pairing-allocated bye with
   # it unless the bye has already been pinned, which is the reference's own
   # `usePairingAllocatedByeScore` behaviour and depends on the file's order.
-  defp point_system_lines(nil), do: []
+  defp point_system_lines(nil, _dialect), do: []
 
-  defp point_system_lines(system) do
+  # TRF26's own spelling: one `162` line - symbol at column 6 and the value
+  # in the four columns after it, nine columns per entry, which is what
+  # `chunk_point_entries/1` reads back - written whenever the system
+  # differs from the standard one, all five symbols at once with `P` last
+  # so it pins the bye against `W` dragging it. What `162` cannot say - a
+  # forfeit loss worth something other than the zero-point bye it folds it
+  # into, and the `299` overrides - follows as `299` records.
+  defp point_system_lines(system, :trf26) do
+    default = default_point_system()
+
+    standard? =
+      Enum.all?(default, fn {field, value} -> Map.get(system, field, value) == value end)
+
+    line_162 =
+      if standard? do
+        []
+      else
+        entries =
+          for {symbol, field} <- [
+                {"W", :win},
+                {"D", :draw},
+                {"L", :loss},
+                {"A", :zero_point_bye},
+                {"P", :pairing_allocated_bye}
+              ] do
+            value = Map.get(system, field, Map.fetch!(default, field))
+            symbol <> String.pad_leading(format_points(value), 4)
+          end
+
+        ["162  " <> Enum.join(entries, "    ")]
+      end
+
+    line_162 ++ abnormal_point_lines(system, :trf26)
+  end
+
+  defp point_system_lines(system, :engine) do
+    bb_lines(system) ++ abnormal_point_lines(system, :engine)
+  end
+
+  # `299` records for what neither the `162` line nor the `BB*` lines can
+  # carry: the three overrides, and - in the TRF26 dialect only, since the
+  # engine dialect says it with `BBF` - a forfeit loss that differs from
+  # the zero-point bye. Type at column 5, the value right-aligned in 14-17.
+  defp abnormal_point_lines(system, dialect) do
+    default = default_point_system()
+
+    overrides = [
+      {"+", Map.get(system, :forfeit_win)},
+      {"F", Map.get(system, :full_point_bye)},
+      {"H", Map.get(system, :half_point_bye)}
+    ]
+
+    forfeit_loss = Map.get(system, :forfeit_loss, default.forfeit_loss)
+    zero_point_bye = Map.get(system, :zero_point_bye, default.zero_point_bye)
+
+    forfeit =
+      if dialect == :trf26 and forfeit_loss != zero_point_bye,
+        do: [{"-", forfeit_loss}],
+        else: []
+
+    for {symbol, value} <- overrides ++ forfeit, not is_nil(value) do
+      []
+      |> place({1, 3}, "299")
+      |> place({5, 5}, symbol)
+      |> place({14, 17}, format_points(value), align: :right)
+      |> render()
+    end
+  end
+
+  defp bb_lines(system) do
     default = default_point_system()
 
     order = [
@@ -565,15 +803,57 @@ defmodule Ainalrami.Trf do
   # which is exactly why generating them matters. Until now they were
   # covered by unit tests written from its source, and never by a file the
   # real binary had to read back.
-  defp extension_lines(t, players, max_round, true) do
+  defp extension_lines(t, players, max_round, true, dialect) do
     rounds = t[:number_of_rounds] || max_round
 
-    numeric_acceleration_lines(players) ++
-      numeric_forbidden_lines(t[:forbidden_pairs], max(rounds, max_round + 1))
+    acceleration =
+      case dialect do
+        :trf26 -> compact_acceleration_lines(players)
+        :engine -> numeric_acceleration_lines(players)
+      end
+
+    acceleration ++ numeric_forbidden_lines(t[:forbidden_pairs], max(rounds, max_round + 1))
   end
 
-  defp extension_lines(t, players, _max_round, _) do
+  defp extension_lines(t, players, _max_round, _numeric?, _dialect) do
     acceleration_lines(players) ++ forbidden_pair_lines(t[:forbidden_pairs])
+  end
+
+  # One `250` per rank range per round range - the shape of TRF26's own
+  # example. Baku, the whole top half on the same virtual points for the
+  # same rounds, is two lines; anything else takes as many as it needs,
+  # down to one per player per round. A range only spans players whose
+  # ranks are consecutive AND whose virtual points agree round for round.
+  defp compact_acceleration_lines(players) do
+    players
+    |> Enum.filter(&(&1[:accelerations] not in [nil, []]))
+    |> Enum.sort_by(& &1[:rank])
+    |> Enum.chunk_while([], &chunk_consecutive/2, &{:cont, Enum.reverse(&1), []})
+    |> Enum.reject(&(&1 == []))
+    |> Enum.flat_map(fn [first | _] = chunk ->
+      last = List.last(chunk)
+
+      first[:accelerations]
+      |> Enum.with_index(1)
+      |> Enum.chunk_by(fn {points, _round} -> points end)
+      |> Enum.reject(fn [{points, _round} | _] -> points == 0 end)
+      |> Enum.map(fn run ->
+        {points, first_round} = hd(run)
+        {_points, last_round} = List.last(run)
+        line_250(points, first_round, last_round, first[:rank], last[:rank])
+      end)
+    end)
+  end
+
+  defp chunk_consecutive(player, []), do: {:cont, [player]}
+
+  defp chunk_consecutive(player, [previous | _] = chunk) do
+    if player[:rank] == previous[:rank] + 1 and
+         player[:accelerations] == previous[:accelerations] do
+      {:cont, [player | chunk]}
+    else
+      {:cont, Enum.reverse(chunk), [player]}
+    end
   end
 
   # One `250` per player per round carrying non-zero virtual points.
@@ -604,17 +884,21 @@ defmodule Ainalrami.Trf do
       # Same shape as the `XXA` column bug: a field written one column too
       # wide, tolerated by the reader we happened to test against and
       # rejected by the one that defines the format.
-      []
-      |> place({1, 3}, "250")
-      # 5-8 is MATCH points and must stay blank; bbpPairings rejects a `250`
-      # that carries any, and `parse_250/2` enforces the same on the way in.
-      |> place({10, 13}, format_points(points), align: :right)
-      |> place({15, 17}, round, align: :right)
-      |> place({19, 21}, round, align: :right)
-      |> place({23, 26}, player[:rank], align: :right)
-      |> place({28, 31}, player[:rank], align: :right)
-      |> render()
+      line_250(points, round, round, player[:rank], player[:rank])
     end
+  end
+
+  defp line_250(points, first_round, last_round, first_player, last_player) do
+    []
+    |> place({1, 3}, "250")
+    # 5-8 is MATCH points and must stay blank; bbpPairings rejects a `250`
+    # that carries any, and `parse_250/2` enforces the same on the way in.
+    |> place({10, 13}, format_points(points), align: :right)
+    |> place({15, 17}, first_round, align: :right)
+    |> place({19, 21}, last_round, align: :right)
+    |> place({23, 26}, first_player, align: :right)
+    |> place({28, 31}, last_player, align: :right)
+    |> render()
   end
 
   # One `260` per forbidden group, spanning every round.
@@ -804,10 +1088,110 @@ defmodule Ainalrami.Trf do
       round_count_header(t[:number_of_rounds], xxr?),
       initial_colour_line(t[:initial_colour]),
       round_dates_line(t[:round_dates]),
-      header(:generator, t[:generator])
+      header(:generator, t[:generator]),
+      # TRF26's headers. Written in either dialect when the caller gives
+      # them - a pairing program ignores a code it does not know - and
+      # checked first (`validate_trf26_headers!/1`), because a file that
+      # leaves the building with a typo in its type code is a file FIDE
+      # bounces.
+      header(:type_code, t[:type_code]),
+      header(:tie_breaks, code_list(t[:tie_breaks])),
+      header(:standings_order, code_list(t[:standings_order])),
+      header(:time_control_code, t[:time_control_code])
     ])
     |> Enum.reject(&(&1 in [nil, false]))
   end
+
+  defp code_list(nil), do: nil
+  defp code_list(codes) when is_list(codes), do: Enum.join(codes, ",")
+  defp code_list(codes) when is_binary(codes), do: codes
+
+  defp validate_trf26_headers!(t) do
+    code = t[:type_code]
+
+    if not is_nil(code) and not tournament_type_code?(code) do
+      raise ValidationError,
+        message: "192: #{inspect(code)} is not a tournament type code from TRF26's table"
+    end
+
+    time_control = t[:time_control_code]
+
+    if not is_nil(time_control) and not encoded_time_control?(time_control) do
+      raise ValidationError,
+        message:
+          "222: #{inspect(time_control)} is not an encoded time control " <>
+            "(d[:d] or Wd[:d]-Bd[:d], where d is [moves/]seconds[+increment])"
+    end
+
+    for list <- [t[:tie_breaks], t[:standings_order]],
+        is_list(list),
+        code <- list,
+        not (is_binary(code) and Regex.match?(~r/^[A-Z][A-Z0-9]*$/, code)) do
+      raise ValidationError, message: "202/212: #{inspect(code)} is not a tie-break code"
+    end
+
+    :ok
+  end
+
+  # The Tournament Type Code Table for `192` (FIDE handbook, ETT26), less
+  # the four parametrised families, which `tournament_type_code?/1` matches
+  # by shape.
+  @tournament_type_codes ~w(
+    FIDE_DUTCH_2017 FIDE_DUTCH_2026 FIDE_DUTCH FIDE_DUBOV FIDE_BURSTEIN
+    FIDE_DUTCH_2017_BAKU FIDE_DUTCH_2026_BAKU FIDE_DUTCH_BAKU FIDE_DUBOV_BAKU
+    FIDE_BURSTEIN_BAKU CUSTOM_SWISS FIDE_DOUBLESWISS FIDE_DOUBLESWISS_BAKU
+    CUSTOM_DOUBLESWISS
+    BERGER_ROUNDROBIN BERGER_DOUBLEROUNDROBIN FIDE_ROUNDROBIN FIDE_DOUBLEROUNDROBIN
+    CUSTOM_ROUNDROBIN FIDE_SCHILLER CUSTOM_SCHILLER FIDE_SCHEVENINGEN
+    FIDE_DOUBLESCHEVENINGEN CUSTOM_SCHEVENINGEN CUSTOM_KNOCKOUT
+    FIDE_TEAM_TYPEA_MP_GP FIDE_TEAM_TYPEA_GP_MP FIDE_TEAM_TYPEA_MP FIDE_TEAM_TYPEA_GP
+    FIDE_TEAM_TYPEB_MP_GP FIDE_TEAM_TYPEB_GP_MP FIDE_TEAM_TYPEB_MP FIDE_TEAM_TYPEB_GP
+    FIDE_TEAM_MP_GP FIDE_TEAM_GP_MP FIDE_TEAM_MP FIDE_TEAM_GP FIDE_TEAM
+    CUSTOM_TEAM_SWISS_MP CUSTOM_TEAM_SWISS_GP
+    FIDE_TEAM_TYPEA_MP_GP_BAKU FIDE_TEAM_TYPEA_MP_BAKU FIDE_TEAM_TYPEB_MP_GP_BAKU
+    FIDE_TEAM_TYPEB_MP_BAKU FIDE_TEAM_MP_GP_BAKU FIDE_TEAM_MP_BAKU FIDE_TEAM_BAKU
+    CUSTOM_TEAM_SWISS
+    BERGER_TEAM_ROUNDROBIN BERGER_TEAM_DOUBLEROUNDROBIN FIDE_TEAM_ROUNDROBIN
+    FIDE_TEAM_DOUBLEROUNDROBIN CUSTOM_TEAM_ROUNDROBIN CUSTOM_TEAM_KNOCKOUT
+  )
+
+  @doc """
+  The fixed entries of TRF26's Tournament Type Code Table, the values a
+  `192` line may carry - without the four parametrised families
+  (`BERGER_ROUNDROBIN_Gn`, `BERGER_TEAM_ROUNDROBIN_Gn`, `FIDE_SCHILLER_TxP`,
+  `FIDE_SCHEVENINGEN_Gn`), which `tournament_type_code?/1` accepts by shape.
+  """
+  def tournament_type_codes, do: @tournament_type_codes
+
+  @doc "Whether `code` is a value TRF26's `192` line may carry."
+  def tournament_type_code?(code) when is_binary(code) do
+    code in @tournament_type_codes or
+      Enum.any?(
+        [
+          ~r/^BERGER_ROUNDROBIN_G[1-9]\d*$/,
+          ~r/^BERGER_TEAM_ROUNDROBIN_G[1-9]\d*$/,
+          ~r/^FIDE_SCHILLER_[1-9]\d*x[1-9]\d*$/,
+          ~r/^FIDE_SCHEVENINGEN_G[1-9]\d*$/
+        ],
+        &Regex.match?(&1, code)
+      )
+  end
+
+  def tournament_type_code?(_code), do: false
+
+  @doc """
+  Whether `code` is an encoded time control as TRF26's `222` line defines
+  it: `d[:d]` or `Wd[:d]-Bd[:d]`, each `d` a period `[moves/]seconds[+increment]`
+  - `5400+30` for 90 minutes plus 30 seconds a move, `40/6000+30:900+30`
+  for 100 minutes for 40 moves then 15, `W300-B240` for an Armageddon.
+  """
+  def encoded_time_control?(code) when is_binary(code) do
+    period = "(?:\\d+/)?\\d+(?:\\+\\d+)?"
+    sequence = "#{period}(?::#{period})*"
+    Regex.match?(~r/^(?:#{sequence}|W#{sequence}-B#{sequence})$/, code)
+  end
+
+  def encoded_time_control?(_code), do: false
 
   # Article 5.1's drawing of lots. Parsed since 2026-08-17 but never
   # written until now, so `serialize/2` silently dropped it and a
@@ -1202,6 +1586,14 @@ defmodule Ainalrami.Trf do
   added at all when the file carries no such line, so a plain TRF parses
   to exactly the same shape it always did. A malformed one of either
   raises `Ainalrami.Trf.ValidationError` - see the moduledoc.
+
+  TRF26's records are read to the same shape: `162` and `299` into
+  `tournament[:point_system]`, `250` and `260` as above, `240` into the
+  players' games (and all of them into `tournament[:byes]`), and the
+  `192`/`202`/`212`/`222` headers into `tournament[:type_code]`,
+  `[:tie_breaks]`, `[:standings_order]` and `[:time_control_code]`. Team
+  records (`300` onwards, `310`, `801`, `802`) and national-rating records
+  are not read.
   """
   def parse(text) do
     lines =
@@ -1239,7 +1631,8 @@ defmodule Ainalrami.Trf do
       players: [],
       teams: [],
       accelerations: %{},
-      acceleration_ranges: []
+      acceleration_ranges: [],
+      byes: []
     }
 
     result =
@@ -1255,13 +1648,18 @@ defmodule Ainalrami.Trf do
           "250" -> parse_250(acc, line)
           "260" -> parse_260(acc, line)
           "162" -> parse_point_system(acc, line)
+          "240" -> parse_240(acc, line)
+          "299" -> parse_299(acc, line)
           code when code in @bb_codes -> parse_bb_points(acc, code, line)
           code -> parse_header_line(acc, code, line)
         end
       end)
 
     validate_games!(result.players, allow_dangling_playing_code: true)
-    attach_accelerations(result)
+
+    result
+    |> attach_accelerations()
+    |> attach_byes()
   end
 
   # bbpPairings' point-system directives (`trf.cpp:1203-1232`) plus TRF16's
@@ -1694,6 +2092,187 @@ defmodule Ainalrami.Trf do
     end
   end
 
+  # `240` - TRF26's bye record: a bye granted before a round is paired. For
+  # a round already in the `001` lines it duplicates the column and has to
+  # agree with it. For the round about to be paired it is the ONLY place
+  # the bye can be, and `attach_byes/1` turns it into the `0000 - H` column
+  # the engine reads (`Ainalrami.Pairing`'s `active_this_round?/2`). For a
+  # round further ahead it stays in `tournament[:byes]`, because the game
+  # list cannot hold a gap. Type at column 5, round in 7-9, starting ranks
+  # from 11 in four-character fields every five columns.
+  defp parse_240(acc, line) do
+    type = line |> read({5, 5}) |> String.upcase()
+
+    unless type in ~w(F H Z) do
+      raise ValidationError, message: "240 line has an unknown bye type #{inspect(type)}: #{line}"
+    end
+
+    round = positive_field!(line, {7, 9}, line, "240", "round number")
+    ranks = read_id_fields(line, 11)
+
+    if ranks == [] do
+      raise ValidationError, message: "240 line names nobody: #{line}"
+    end
+
+    update_in(acc.byes, &(&1 ++ [%{type: type, round: round, ranks: ranks}]))
+  end
+
+  # `299` - TRF26's abnormal point assignments. Three shapes, of which this
+  # reader takes two:
+  #
+  #   * typed, with no round and no players - "every forfeit win is worth
+  #     0.5" - sets the point system: `+` `forfeit_win`, `F`
+  #     `full_point_bye`, `H` `half_point_bye`, `Z` `zero_point_bye`, `-`
+  #     `forfeit_loss`. `W`/`D`/`L` are team match points (record `362`)
+  #     with no individual meaning, and are kept rather than applied;
+  #   * untyped - free points, a bonus or a penalty - is kept in
+  #     `tournament[:free_points]`. The `001` total already includes it,
+  #     and the total is what the engine reconciles against;
+  #   * typed and limited to a round or to named players is refused. It
+  #     would change what one game is worth for one player, which the point
+  #     system cannot express, and a rule read and dropped is the failure
+  #     this module exists to prevent.
+  defp parse_299(acc, line) do
+    type = line |> read({5, 5}) |> String.upcase()
+    match_points = line |> read({8, 11}) |> parse_float()
+    points = line |> read({14, 17}) |> parse_float()
+    round = line |> read({20, 22}) |> parse_int()
+    ranks = read_id_fields(line, 24)
+    scoped? = (round || 0) > 0 or ranks != []
+
+    record = %{type: type, match_points: match_points, points: points, round: round, ranks: ranks}
+
+    cond do
+      type == "" ->
+        update_in(acc.tournament[:free_points], &((&1 || []) ++ [record]))
+
+      type not in ~w(W D L F H Z + -) ->
+        raise ValidationError,
+          message: "299 line has an unknown assignment type #{inspect(type)}: #{line}"
+
+      scoped? ->
+        raise ValidationError,
+          message: "299 line limited to a round or to named players is not supported: #{line}"
+
+      is_nil(points) ->
+        raise ValidationError, message: "299 line has no point value: #{line}"
+
+      type in ~w(W D L) ->
+        update_in(acc.tournament[:abnormal_match_points], &((&1 || []) ++ [record]))
+
+      true ->
+        field =
+          %{
+            "+" => :forfeit_win,
+            "F" => :full_point_bye,
+            "H" => :half_point_bye,
+            "Z" => :zero_point_bye,
+            "-" => :forfeit_loss
+          }[type]
+
+        put_point(acc, field, points)
+    end
+  end
+
+  # Starting ranks in four-character fields every five columns from
+  # `start`, as `240` and `299` lay them out; a blank or zero field ends
+  # the list (`299` spells "everybody" as `000`).
+  defp read_id_fields(line, start) do
+    Stream.iterate(start, &(&1 + 5))
+    |> Enum.reduce_while([], fn col, acc ->
+      case read(line, {col, col + 3}) do
+        "" ->
+          {:halt, acc}
+
+        field ->
+          case Integer.parse(field) do
+            {0, ""} ->
+              {:halt, acc}
+
+            {id, ""} when id > 0 ->
+              {:cont, acc ++ [id]}
+
+            _ ->
+              raise ValidationError,
+                message: "unreadable starting rank #{inspect(field)} at column #{col}: #{line}"
+          end
+      end
+    end)
+  end
+
+  # `240` records, applied once every player is read - see `parse_240/2`.
+  defp attach_byes(%{byes: []} = result), do: Map.delete(result, :byes)
+
+  defp attach_byes(%{byes: byes, players: players} = result) do
+    played = rounds_played(players)
+    system = result.tournament[:point_system] || default_point_system()
+
+    by_rank =
+      Enum.reduce(byes, Map.new(players, &{&1[:rank], &1}), fn bye, by_rank ->
+        Enum.reduce(bye.ranks, by_rank, fn rank, by_rank ->
+          case Map.fetch(by_rank, rank) do
+            {:ok, player} ->
+              Map.put(by_rank, rank, apply_bye(player, bye.type, bye.round, played, system))
+
+            :error ->
+              raise ValidationError,
+                message: "240 line names starting rank #{rank}, which no 001 line has"
+          end
+        end)
+      end)
+
+    result
+    |> Map.put(:players, Enum.map(players, &Map.fetch!(by_rank, &1[:rank])))
+    |> Map.delete(:byes)
+    |> put_in([:tournament, :byes], byes)
+  end
+
+  defp apply_bye(player, type, round, played, system) do
+    games = player[:games] || []
+
+    cond do
+      # The round about to be paired, and nothing in the column yet: this
+      # is the bye, as the engine reads it. A short line (a late entrant)
+      # is padded with the blank rounds the file left off.
+      round == played + 1 and length(games) <= played ->
+        blank = %{opponent_rank: nil, colour: nil, result: nil}
+        padding = List.duplicate(blank, played - length(games))
+        bye = %{opponent_rank: nil, colour: nil, result: type}
+
+        # Credited now, as the engines' files credit a pre-recorded bye -
+        # the exact reverse of what the writer took off.
+        player
+        |> Map.put(:games, games ++ padding ++ [bye])
+        |> Map.update(:points, 0.0, &((&1 || 0.0) + points_for(type, system)))
+
+      # Already in the `001` line: it has to say the same thing. A blank
+      # column is a zero-point bye by the spec's own words.
+      round <= played + 1 ->
+        recorded =
+          case Enum.at(games, round - 1) do
+            nil -> "Z"
+            %{opponent_rank: nil, result: nil} -> "Z"
+            %{opponent_rank: nil, result: ""} -> "Z"
+            %{opponent_rank: nil, result: result} when is_binary(result) -> String.upcase(result)
+            _game -> :played
+          end
+
+        if recorded == type do
+          player
+        else
+          raise ValidationError,
+            message:
+              "240 line gives starting rank #{player[:rank]} a #{type} bye in round #{round}, " <>
+                "which its 001 line contradicts"
+        end
+
+      # Further ahead than the game list can reach: kept in
+      # `tournament[:byes]` only.
+      true ->
+        player
+    end
+  end
+
   # Round numbers in the file are 1-based, and `readRoundIndex`
   # (`trf.cpp:113-140`) rejects a round index of 0 outright before
   # converting to its own 0-based form. This keeps the 1-based value, since
@@ -1878,6 +2457,19 @@ defmodule Ainalrami.Trf do
              :number_of_teams
            ] ->
         put_in(acc.tournament[f], parse_int(value) || 0)
+
+      # TRF26's `202`/`212`: comma-separated tie-break codes. `212` is the
+      # standings order and may lead with `PTS`; without a `202` of its
+      # own, the codes after `PTS` are the tie-breaks.
+      f when f in [:tie_breaks, :standings_order] ->
+        codes = value |> String.split(~r/[,\s]+/, trim: true) |> Enum.map(&String.upcase/1)
+        acc = put_in(acc.tournament[f], codes)
+
+        if f == :standings_order and is_nil(acc.tournament[:tie_breaks]) do
+          put_in(acc.tournament[:tie_breaks], Enum.reject(codes, &(&1 == "PTS")))
+        else
+          acc
+        end
 
       f ->
         put_in(acc.tournament[f], value)
