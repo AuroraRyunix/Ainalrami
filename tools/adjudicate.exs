@@ -54,10 +54,17 @@ defmodule Adj do
           # the differences are criterial -- reporting one as the deciding
           # criterion is how `seed735265-r7-p10` came to be filed under
           # "C2/C4/C5 bye-eligibility" by an accounting difference.
+          # And not on the completion rung either, even with equal edge
+          # counts: a float edge's eligibility share depends on whom the
+          # floater meets in the NEXT bracket, so per bracket it is window
+          # accounting - see `criterial?/1` in `Ainalrami.Alternatives`,
+          # which this must not drift from.
           rung =
             if Map.get(o, :edge_count) == Map.get(t, :edge_count) do
               Enum.zip(o.rungs, t.rungs)
-              |> Enum.find(fn {{_l, ov}, {_l2, tv}} -> ov != tv end)
+              |> Enum.find(fn {{l, ov}, {_l2, tv}} ->
+                ov != tv and not String.starts_with?(l, "C2/")
+              end)
             else
               {{"incomparable: #{Map.get(o, :edge_count)} vs #{Map.get(t, :edge_count)} edges in this bracket",
                 :incomparable}, {"", :incomparable}}

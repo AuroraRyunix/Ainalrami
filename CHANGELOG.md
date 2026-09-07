@@ -61,6 +61,35 @@ invisible to any corpus this generator can produce and a third had been
 breaking a matcher invariant 734 times per 800 tournaments while agreeing
 with the reference on every one of them.
 
+## [0.21.0] - 2026-09-07
+
+### Fixed
+
+- **The completion rung is no longer compared bracket by bracket.**
+  `Alternatives.compare/2` - and `tools/adjudicate.exs`, which it was
+  ported from - ranked two answers on the first rung that differed, and the
+  first rung is the completion rung: per edge `1 + [no bye candidate] +
+  [no bye candidate]`. The `1`s count edges, which the edge-count check
+  already holds equal; the eligibility part steers the bye within a WINDOW
+  of this bracket and the next, so a float edge's share of it depends on
+  whom the floater meets below - the next bracket's decision. Attributed to
+  the upper bracket alone it is accounting. In seed 5, round 7 of a
+  JaVaFo-judging run (`test/fixtures/alternatives/float_edge_window.trf`) a
+  legal alternative scored 9 against the engine's own 8 on that rung
+  because its floater met a player who had already had a bye; the window
+  sums were equal, the search had tied them, and a page reported that the
+  engine would have preferred the alternative to its own round. Found by
+  judging 280 JaVaFo rounds (2,705 candidates): 40 "better" verdicts, 39 of
+  them real disagreements - the engine's own round differs on that very
+  rung - and this one not. The comparison now starts at C6; C.2 is held by
+  `violations/1` and C.5 by the edge count.
+
+### Added
+
+- **`max_candidates: n | :all`** for `Alternatives.float_alternatives/3`
+  and `bye_alternatives/3`: the pairing-time cap of twelve, lifted for a
+  caller that has the arbiter waiting on the answer knowingly.
+
 ## [0.20.0] - 2026-09-07
 
 ### Added

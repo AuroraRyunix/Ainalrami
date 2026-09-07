@@ -8,7 +8,7 @@ defmodule Ainalrami.AlternativesTest do
 
   use ExUnit.Case, async: true
 
-  alias Ainalrami.{Alternatives, Pairing}
+  alias Ainalrami.{Alternatives, Pairing, Trf}
 
   defp player(rank, points, games) do
     %{
@@ -23,6 +23,106 @@ defmodule Ainalrami.AlternativesTest do
       rank: rank,
       games: games
     }
+  end
+
+  defp fresh(n), do: for(r <- 1..n, do: player(r, 0.0, []))
+
+  # A JaVaFo round the engine's own search reproduces exactly, in which a
+  # legal alternative scored HIGHER on the completion rung of the 2.5
+  # bracket - 9 against 8 - because its floater met a player who had
+  # already had a bye instead of one who had not. Window accounting, not a
+  # criterion (see `criterial?/1`), and until 0.21.0 it was reported as
+  # "the engine would have preferred this" on the engine's own round.
+  describe "the completion rung is accounting, not a criterion" do
+    @float_edge_window "test/fixtures/alternatives/float_edge_window.trf"
+    @javafo_round_7 [
+      {3, 4},
+      {10, 13},
+      {9, 11},
+      {8, 6},
+      {7, 5},
+      {16, 26},
+      {14, 12},
+      {21, 17},
+      {22, 1},
+      {24, 25},
+      {23, 19},
+      {20, nil}
+    ]
+
+    defp colour_blind(pairs), do: pairs |> Enum.map(&Enum.sort(Tuple.to_list(&1))) |> Enum.sort()
+
+    defp betters(entries) do
+      for e <- List.wrap(entries),
+          e != nil,
+          c <- Map.get(e, :candidates, []),
+          c.outcome == :better,
+          do: c
+    end
+
+    test "the engine's own round, judged against every alternative, is never beaten" do
+      players = @float_edge_window |> File.read!() |> Trf.parse() |> Map.fetch!(:players)
+      opts = [expected_rounds: 7, max_candidates: :all]
+
+      own = Pairing.pair_next_round(players, expected_rounds: 7)
+      assert colour_blind(own) == colour_blind(@javafo_round_7)
+
+      assert betters(Alternatives.float_alternatives(players, own, opts)) == []
+      assert betters(Alternatives.bye_alternatives(players, own, opts)) == []
+    end
+
+    # Judged from C6 on, the alternative loses where the search said it
+    # would: 21 would float down again two rounds after floating down -
+    # C16 - which is the reason the engine paired it the way JaVaFo did.
+    test "forcing 25 out of the 2.0 bracket is worse on a real criterion, not better" do
+      players = @float_edge_window |> File.read!() |> Trf.parse() |> Map.fetch!(:players)
+      opts = [expected_rounds: 7, max_candidates: :all]
+
+      floats = Alternatives.float_alternatives(players, @javafo_round_7, opts)
+      entry = Enum.find(floats, &(&1.group == 2.0))
+      candidate = Enum.find(entry.candidates, &(&1.rank == 25))
+
+      assert candidate.outcome == :worse
+      assert candidate.differs_at.label == "C16 downfloat repeat r-2"
+      assert candidate.differs_at.group == 2.5
+      assert betters(floats) == []
+    end
+  end
+
+  # Fifteen players in round one: the bye holder's bracket is everybody,
+  # which is fourteen candidates - past the pairing-time cap, and the case
+  # the cap exists for. The option lifts it for a caller that asks.
+  describe "the candidate cap" do
+    test "past the cap the question is skipped, and says how many there were" do
+      players = fresh(15)
+      pairs = Pairing.pair_next_round(players, [])
+
+      assert %{skipped: :too_many, count: 14} = Alternatives.bye_alternatives(players, pairs, [])
+    end
+
+    test "max_candidates: :all works every candidate out" do
+      players = fresh(15)
+      pairs = Pairing.pair_next_round(players, [])
+
+      assert %{candidates: candidates} =
+               Alternatives.bye_alternatives(players, pairs, max_candidates: :all)
+
+      assert length(candidates) == 14
+      assert Enum.all?(candidates, &(&1.outcome in [:worse, :tie, :same, :incomparable]))
+    end
+
+    test "an integer cap is a cap, and the option never reaches the engine" do
+      players = fresh(15)
+      pairs = Pairing.pair_next_round(players, [])
+
+      assert %{skipped: :too_many} =
+               Alternatives.bye_alternatives(players, pairs, max_candidates: 13)
+
+      assert %{candidates: _} = Alternatives.bye_alternatives(players, pairs, max_candidates: 14)
+
+      # Round one has no floats, so nothing to skip or to work out.
+      assert Alternatives.float_alternatives(players, pairs, max_candidates: 1) == []
+    end
   end
 
   defp win(opponent, colour), do: %{result: "1", colour: colour, opponent_rank: opponent}

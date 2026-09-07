@@ -25,7 +25,8 @@ defmodule Ainalrami.Alternatives do
       pairing again - `float_alternatives/3`. One full search per candidate,
       so it is computed once when the round is paired and stored, and capped
       (see `@max_candidates`); a top bracket of a hundred players in round
-      one is not where this question gets asked.
+      one is not where this question gets asked at pairing time. A caller
+      with the arbiter knowingly waiting passes `max_candidates: :all`.
 
     * **"Why did HE get the bye and not me."** The same, forcing each
       candidate to be unpairable - `bye_alternatives/3` - after first asking
@@ -54,6 +55,15 @@ defmodule Ainalrami.Alternatives do
 
   @doc "The cap on candidates per question, for callers that want to say so."
   def max_candidates, do: @max_candidates
+
+  # The cap is an option too - `max_candidates: n | :all` - so a page that
+  # showed "not worked out" can offer to work it out, with the arbiter
+  # waiting on it knowingly. Popped before the options reach the engine,
+  # which has no such key.
+  defp pop_cap(opts), do: Keyword.pop(opts, :max_candidates, @max_candidates)
+
+  defp over_cap?(_candidates, :all), do: false
+  defp over_cap?(candidates, cap) when is_integer(cap), do: length(candidates) > cap
 
   @doc """
   The first bracket where two `explain_round/3` reports differ, and the
@@ -102,13 +112,34 @@ defmodule Ainalrami.Alternatives do
         {:incomparable, o.group}
 
       true ->
-        case Enum.find(Enum.zip(o.rungs, t.rungs), fn {{_, ov}, {_, tv}} -> ov != tv end) do
+        case Enum.find(Enum.zip(o.rungs, t.rungs), fn {{label, ov}, {_, tv}} ->
+               ov != tv and criterial?(label)
+             end) do
           nil -> {:tie, o.group, lex_pick(o, t)}
           {{label, ov}, {_, tv}} when tv > ov -> {:better, o.group, label, ov, tv}
           {{label, ov}, {_, tv}} -> {:worse, o.group, label, ov, tv}
         end
     end
   end
+
+  # The completion rung is not compared. Its weight per edge is
+  # `1 + [a is no bye candidate] + [b is no bye candidate]`: the `1`s count
+  # edges, which `edge_count` above already holds equal, and the eligibility
+  # part is how the search steers the bye within a WINDOW - this bracket and
+  # the next - so a float edge's share of it depends on whom the floater
+  # meets below, which is the next bracket's decision. Attributed to this
+  # bracket alone it is accounting, not a criterion.
+  #
+  # Seed 5, round 7 of a JaVaFo-judging run
+  # (test/fixtures/alternatives/float_edge_window.trf): the engine's own
+  # round scored 8 here in the 2.5 bracket against a legal alternative's 9,
+  # the whole difference being that the alternative's floater met a player
+  # who had already had a bye. The window sums were equal, the search had
+  # tied them - and a page reported that the engine would have preferred
+  # the alternative to its own round. C.2 itself is held by `violations/1`,
+  # C.5 by the edge count; the comparison starts at C6.
+  defp criterial?("C2/" <> _completion), do: false
+  defp criterial?(_label), do: true
 
   defp lex_pick(o, t) do
     cond do
@@ -162,7 +193,8 @@ defmodule Ainalrami.Alternatives do
   had each other member floated instead.
 
   One entry per floater: `%{group:, floater:, candidates: [...]}` or, past
-  `max_candidates/0`, `%{group:, floater:, skipped: :too_many, count: n}`.
+  `max_candidates/0` (or the `:max_candidates` option - an integer, or
+  `:all` for no cap), `%{group:, floater:, skipped: :too_many, count: n}`.
   Each candidate is `%{rank:, outcome:, ...}` with `outcome` one of
   `:impossible` (no legal pairing has them leave this bracket), `:worse`,
   `:tie`, `:better`, `:incomparable` or `:same`, plus `differs_at` (the
@@ -174,13 +206,14 @@ defmodule Ainalrami.Alternatives do
   `bye_alternatives/3`.
   """
   def float_alternatives(players, pairs, opts \\ []) do
+    {cap, opts} = pop_cap(opts)
     actual = Pairing.explain_round(players, pairs, opts)
     bye = bye_holder(pairs)
 
     for bracket <- actual, floater <- bracket.floats, floater != bye do
       candidates = bracket.order -- [floater]
 
-      if length(candidates) > @max_candidates do
+      if over_cap?(candidates, cap) do
         %{group: bracket.group, floater: floater, skipped: :too_many, count: length(candidates)}
       else
         %{
@@ -202,7 +235,9 @@ defmodule Ainalrami.Alternatives do
   after asking C.2 whether they could have.
 
   `nil` when the round has no bye. Otherwise `%{holder:, group:,
-  candidates: [...]}` (or `skipped:` past the cap), each candidate as in
+  candidates: [...]}` (or `skipped:` past the cap, which the
+  `:max_candidates` option overrides as in `float_alternatives/3`), each
+  candidate as in
   `float_alternatives/3` except that one C.2 cannot allow is
   `%{rank:, outcome: :ineligible, reason: :pairing_bye | :forfeit_win |
   :full_point_bye}` and is not searched.
@@ -213,13 +248,14 @@ defmodule Ainalrami.Alternatives do
         nil
 
       holder ->
+        {cap, opts} = pop_cap(opts)
         actual = Pairing.explain_round(players, pairs, opts)
         eligibility = Pairing.bye_eligibility(players, opts)
         bracket = Enum.find(actual, &(holder in &1.order)) || List.last(actual)
         candidates = bracket.order -- [holder]
         everyone = Enum.map(players, & &1.rank)
 
-        if length(candidates) > @max_candidates do
+        if over_cap?(candidates, cap) do
           %{holder: holder, group: bracket.group, skipped: :too_many, count: length(candidates)}
         else
           %{
