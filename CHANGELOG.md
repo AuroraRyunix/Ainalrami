@@ -61,6 +61,17 @@ invisible to any corpus this generator can produce and a third had been
 breaking a matcher invariant 734 times per 800 tournaments while agreeing
 with the reference on every one of them.
 
+## [0.23.0] - 2026-09-07
+
+### Added
+
+- **`299` free points are written, not only read.** A bonus or a penalty an
+  arbiter assigned outside the scoring system - which the `001` points
+  column cannot carry, since TRF26 defines it as the score from the games -
+  goes out as an untyped `299` record from `tournament[:free_points]`, the
+  shape `parse/1` already read them into. Both dialects, since an untyped
+  `299` is inert to a reader that does not know it.
+
 ## [0.22.0] - 2026-09-07
 
 ### Added

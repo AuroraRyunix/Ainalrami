@@ -278,6 +278,27 @@ defmodule Ainalrami.Trf26Test do
       refute engine =~ "299 -"
     end
 
+    test "free points are written back out, in either dialect" do
+      data =
+        put_in(tournament(), [:tournament, :free_points], [
+          %{type: "", match_points: nil, points: 0.5, round: nil, ranks: [3]},
+          %{type: "", match_points: nil, points: -1.0, round: 2, ranks: [4, 6]}
+        ])
+
+      for dialect <- [:engine, :trf26] do
+        all = data |> Trf.serialize(dialect: dialect) |> lines()
+
+        assert "299           0.5         3" in all
+        assert "299          -1.0  002    4    6" in all
+
+        assert Trf.parse(Enum.join(all, "
+")).tournament[:free_points] == [
+                 %{type: "", match_points: nil, points: 0.5, round: nil, ranks: [3]},
+                 %{type: "", match_points: nil, points: -1.0, round: 2, ranks: [4, 6]}
+               ]
+      end
+    end
+
     test "free points are kept, not applied - the 001 total already holds them" do
       text =
         Trf.serialize(tournament()) <> row([{1, "299"}, {14, "-1.0"}, {20, "002"}, {24, "   4"}])

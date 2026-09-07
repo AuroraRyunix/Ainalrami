@@ -561,6 +561,7 @@ defmodule Ainalrami.Trf do
 
     header_lines(t, players, teams, xxr?)
     |> Kernel.++(point_system_lines(t[:point_system], dialect))
+    |> Kernel.++(free_point_lines(t[:free_points]))
     |> Kernel.++(legend_lines(opts[:column_legend], max_round))
     |> Kernel.++(Enum.map(written, &player_line/1))
     |> Kernel.++(Enum.map(teams, &team_line/1))
@@ -716,6 +717,46 @@ defmodule Ainalrami.Trf do
   defp point_system_lines(system, :engine) do
     bb_lines(system) ++ abnormal_point_lines(system, :engine)
   end
+
+  @doc false
+  # `299` records for points assigned outside the scoring system - a bonus
+  # or a penalty an arbiter added by hand, which the `001` points column
+  # does not carry (TRF26 defines it as the tournament standings' score
+  # from the games). Untyped, value right-aligned in 14-17, an optional
+  # round in 20-22, and the starting ranks from 24 in four-character fields
+  # every five columns. The shape `parse_299/2` reads back.
+  def free_point_lines(nil), do: []
+  def free_point_lines([]), do: []
+
+  def free_point_lines(records) do
+    for record <- records, points = record[:points] || record["points"], points != nil do
+      ranks = record[:ranks] || record["ranks"] || []
+      round = record[:round] || record["round"]
+
+      base =
+        []
+        |> place({1, 3}, "299")
+        |> place({14, 17}, format_signed_points(points), align: :right)
+
+      base =
+        if round,
+          do: place(base, {20, 22}, String.pad_leading(Integer.to_string(round), 3, "0")),
+          else: base
+
+      ranks
+      |> Enum.with_index()
+      |> Enum.reduce(base, fn {rank, i}, acc ->
+        start = 24 + i * 5
+        place(acc, {start, start + 3}, rank, align: :right)
+      end)
+      |> render()
+    end
+  end
+
+  # `format_points/1` goes through `float_to_binary/2`, which keeps the
+  # sign - a penalty is a negative number and `299` says so ("free points
+  # can be a negative number").
+  defp format_signed_points(points), do: format_points(points)
 
   # `299` records for what neither the `162` line nor the `BB*` lines can
   # carry: the three overrides, and - in the TRF26 dialect only, since the
