@@ -38,7 +38,14 @@ defmodule Ainalrami.TeamSweep0901Test do
         :timer.tc(fn -> Bracket.pair(teams, max_steps: 200_000) end)
 
       assert result == {:error, :budget_exhausted}
-      assert microseconds < 1_000_000, "took #{div(microseconds, 1000)} ms"
+
+      # The budget is what this test actually proves, and the line above
+      # proves it: 200_000 steps, refused. The clock is a canary for the
+      # budget having stopped working at all - the pre-fix walk took 12.5 s
+      # here - so it is set to catch THAT, not to measure the runner. It was
+      # 1_000_000 and failed CI twice in four days at 1112 ms and 1218 ms on
+      # a shared runner, which told us nothing about this code.
+      assert microseconds < 5_000_000, "took #{div(microseconds, 1000)} ms"
     end
 
     test "budget exhaustion is distinguishable from no legal pairing" do
