@@ -5,6 +5,14 @@
 #
 # ## Why this exists
 #
+# SUPERSEDED IN PART, 2026-09-08. The claim below that the consistency
+# check cannot detect a 5.2.5 violation in Gacrux is WRONG - a recorded
+# position reproduces one, see docs/finding-gacrux-5-2-5.md. The reasoning
+# from source was sound and the conclusion false, which is worth knowing.
+# What still stands here is the numbering question and the three ways this
+# probe fails to measure it; that question is now known to be independent
+# of the finding, since the contradiction holds under either numbering.
+#
 # The 2026-08-29 corpus fired the 5.2.5 consistency check seventeen times,
 # all on Gacrux, all in round 2. Reading both sources (2026-09-08) showed
 # the check CANNOT detect a 5.2.5 violation in Gacrux: its E.5 branch

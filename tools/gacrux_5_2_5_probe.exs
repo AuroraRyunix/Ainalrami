@@ -34,6 +34,14 @@
 # and a run that reports mostly `:not_applicable` is measuring nothing -
 # check that number before believing a zero.
 #
+# ## SETTLED 2026-09-08: Gacrux does break the article
+#
+# A recorded position reproduces a contradiction - two boards of one round
+# needing opposite initial colours, robust to which numbering you use. See
+# docs/finding-gacrux-5-2-5.md and test/fixtures/gacrux_5_2_5/. This probe's
+# own clean runs below were never evidence against that; they only ever said
+# the behaviour is rare, which the corpus rate already said.
+#
 # ## Where it stands
 #
 # 500 seeds at BYE_PCT=45 over 14-30 players: 452 rounds where the article
