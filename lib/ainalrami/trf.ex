@@ -1339,7 +1339,16 @@ defmodule Ainalrami.Trf do
 
   defp pad_to_last_round(line, games) do
     {result_col, _} = round_cols(length(games)).result
-    String.pad_trailing(line, result_col)
+
+    # Padded to a BYTE count, like every other column decision in this
+    # module. `String.pad_trailing/2` counts graphemes, so a row whose name
+    # carries an accent was padded short by one byte per accent - and the
+    # thing being padded to is the result column of the last round, which is
+    # exactly the column bbpPairings refuses a file for missing (see this
+    # function's own note above). Our reader self-heals it by dropping empty
+    # trailing blocks, which is why no test here ever saw it; a third-party
+    # reader has no reason to.
+    line <> String.duplicate(" ", max(result_col - byte_size(line), 0))
   end
 
   defp place_games(acc, games) do
@@ -1679,8 +1688,19 @@ defmodule Ainalrami.Trf do
     result =
       Enum.reduce(lines, empty, fn line, acc ->
         case String.slice(line, 0, 3) do
-          "001" -> update_in(acc.players, &(&1 ++ [parse_player_line(line)]))
-          "013" -> update_in(acc.teams, &(&1 ++ [parse_team_line(line)]))
+          # PREPENDED, not appended, and reversed once below. `&1 ++ [x]`
+          # copies the whole list per record, so reading n players cost
+          # O(n^2): measured 10 ms at 1,000 records, 280 ms at 8,000, and
+          # over an hour for the million `001` lines a 5 MB file of them
+          # holds. A file that size is not a tournament - the starting-rank
+          # field is four columns, so no TRF can name more than 9,999
+          # players - but an engine should not be the thing that decides
+          # that, and the sibling app now refuses such a file at the door
+          # (`PairingsEngine.TrfImport.check_bounds/1`) BECAUSE this was
+          # quadratic. Linear here means the refusal is a policy rather
+          # than a load-bearing guard.
+          "001" -> update_in(acc.players, &[parse_player_line(line) | &1])
+          "013" -> update_in(acc.teams, &[parse_team_line(line) | &1])
           "132" -> put_in(acc.tournament[:round_dates], parse_round_dates(line))
           "XXR" -> parse_xxr(acc, line)
           "XXP" -> parse_xxp(acc, line)
@@ -1695,6 +1715,10 @@ defmodule Ainalrami.Trf do
           code -> parse_header_line(acc, code, line)
         end
       end)
+
+    # The two hot record types are accumulated in reverse (see the reduce
+    # above); every other key keeps file order as it always did.
+    result = %{result | players: Enum.reverse(result.players), teams: Enum.reverse(result.teams)}
 
     validate_games!(result.players, allow_dangling_playing_code: true)
 
@@ -2338,8 +2362,15 @@ defmodule Ainalrami.Trf do
   # takes a field only when all four characters are present, matching
   # bbpPairings' `startIndex <= line.size() - 4` condition; a trailing
   # partial field is not silently swallowed but caught below.
+  # `byte_size`, not `String.length`: a TRF column is a byte here
+  # (`read/2` takes `binary_part`, `place/4` pads to bytes), so measuring
+  # the line in graphemes was both the wrong number on any line carrying
+  # an accent AND a full walk of the line per field - quadratic on a long
+  # one. Measured on `132`/`013`: 267 ms at 50 KB, 1,057 ms at 100 KB, so
+  # a single 5 MB line was some forty-five minutes of walking. That is the
+  # "two-line file hangs the parser" case.
   defp read_260_ids(line, start, acc) do
-    if start + 3 <= String.length(line) do
+    if start + 3 <= byte_size(line) do
       case line |> read({start, start + 3}) |> Integer.parse() do
         {id, ""} ->
           read_260_ids(line, start + 5, [id | acc])
@@ -2637,7 +2668,7 @@ defmodule Ainalrami.Trf do
     {start, _} = cols
 
     cond do
-      String.length(line) < start ->
+      byte_size(line) < start ->
         %{name: read(line, @team_cols.name), player_ranks: Enum.reverse(ranks)}
 
       read(line, cols) == "" ->
@@ -2652,7 +2683,7 @@ defmodule Ainalrami.Trf do
     cols = round_date_cols(round)
     {start, _} = cols
 
-    if String.length(line) < start or read(line, cols) == "" do
+    if byte_size(line) < start or read(line, cols) == "" do
       Enum.reverse(acc)
     else
       date =

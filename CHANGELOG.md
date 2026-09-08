@@ -61,6 +61,37 @@ invisible to any corpus this generator can produce and a third had been
 breaking a matcher invariant 734 times per 800 tournaments while agreeing
 with the reference on every one of them.
 
+## [0.24.0] - 2026-09-08
+
+### Fixed
+
+- **Reading a TRF is linear in its size.** `001` and `013` records were
+  accumulated with `&1 ++ [record]`, which copies the whole list per record:
+  measured at 10 ms for 1,000 players, 280 ms for 8,000, and over an hour
+  for the million `001` lines a 5 MB file of them holds. They are prepended
+  and reversed once now - 8,000 players in 46 ms - and file order is
+  asserted rather than assumed, since building a list backwards is the kind
+  of change that silently reverses a roster.
+- **A line is measured in bytes, not graphemes.** `parse_team_line/3`,
+  `parse_round_dates/3` and `read_260_ids/3` each called
+  `String.length(line)` at every column step. That was two defects at once.
+  It was quadratic on a long line - 267 ms for a 50 KB `013`, 1,057 ms for
+  100 KB, so a single 5 MB line was about forty-five minutes, which is a
+  two-line file that hangs the reader. And it was the wrong number: every
+  column in this module is a byte (`read/2` takes a `binary_part`), so a
+  `013` whose team name carries accents stopped being read early and lost
+  the last player of the roster, one per accent. Both are one call each.
+- **`pad_to_last_round/2` pads to a byte count too.** The write-side twin of
+  the same confusion: a `001` row for a player with an accented name was
+  padded short, in the exact column bbpPairings refuses a file for missing.
+  Our own reader self-heals it by dropping empty trailing blocks, which is
+  why no test saw it; another reader has no reason to.
+
+Found by the OpenPairings audit of 2026-09-05 (findings 1 and 16) and
+measured while fixing its denial-of-service group. The sibling app now
+refuses an absurd file at the door as policy, but it should not have needed
+to as a guard.
+
 ## [0.23.0] - 2026-09-07
 
 ### Added
