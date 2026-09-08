@@ -39,7 +39,7 @@
 #
 # ## How the number is read, and the three traps on the way
 #
-# `pairingchecker.py` line 338 picks `sno = "tpn" if "TPN" in
+# The IDEA was that `pairingchecker.py` line 338 picks `sno = "tpn" if "TPN" in
 # self.params["experimental"] else "cid"`, so pairing the same file twice -
 # once plain, once with `-x TPN` - labels the same boards two ways and
 # zipping them recovers the mapping with nothing inferred.
@@ -59,9 +59,35 @@
 # Hence one run per code, tested player at rank 1, four plain players
 # behind them whose numbers are readable.
 #
-# TRAP 3, which this probe did NOT get past, and the reason its table is a
-# NEGATIVE RESULT rather than a finding. Read this before believing the
-# output.
+# TRAP 3 KILLS THIS APPROACH. The lever does not exist: `-x TPN` has NO
+# EFFECT on the `-p` pairing output.
+#
+# Proved by construction rather than argued. Build a file whose rank 1
+# cannot be numbered by any rule at all - blank round 1, so Gacrux's `rip`
+# is 0, and a round-2 `Z` so it is out of the round - and pair it twice:
+#
+#   plain:   2 | 4 2 | 3 5
+#   -x TPN:  2 | 4 2 | 3 5
+#
+# Byte identical. Had the flag done anything, ranks 2-5 would have come back
+# numbered 1,2,3,4 and the boards would read `3 1 | 2 4`. Line 338's
+# `sno = "tpn" if "TPN" in self.params["experimental"] else "cid"` governs
+# some other writer - the crosstable or the report - not the pairing file
+# this reads. So no arrangement of hold-outs, controls or codes can make
+# this method measure anything, and the table below is void for that reason
+# rather than any of the ones the earlier traps describe.
+#
+# The two earlier traps are still worth reading: both are ways this probe
+# looked like it was measuring when it was not, and both would recur in any
+# replacement.
+#
+# WHAT WOULD ACTUALLY WORK, for whoever picks this up: get the numbering out
+# of Gacrux some other way - a report mode where the `sno` switch does
+# reach the output, or a few lines of print added to a local copy of
+# `crosstable.py` after its "# update tpn" loop. The question is worth
+# answering (see "Why this exists"), but not through the pairing file.
+#
+# ---- what the earlier traps were, kept because they would recur ----
 #
 # Run it and every code, including the control, comes back "counted" from
 # Gacrux. That reads as "Gacrux counts H, F, Z and the opponentless `-`
@@ -123,7 +149,7 @@ defmodule TpnProbe do
 
   def codes, do: @codes
 
-  def pair(trf_text, experimental?) do
+  def pair(trf_text, experimental?, unpaired \\ []) do
     dir = Path.join(System.tmp_dir!(), "tpn-probe-#{System.unique_integer([:positive])}")
     File.mkdir_p!(dir)
     input = Path.join(dir, "input.trf")
@@ -141,7 +167,9 @@ defmodule TpnProbe do
         "-dT",
         "-m",
         "dutch"
-      ] ++ if experimental?, do: ["-x", "TPN"], else: []
+      ] ++
+        if(experimental?, do: ["-x", "TPN"], else: []) ++
+        if(unpaired == [], do: [], else: ["-u"] ++ Enum.map(unpaired, &to_string/1))
 
     case System.cmd(@python, args, stderr_to_stdout: true) do
       {_out, 0} -> {:ok, output |> File.read!() |> parse()}
@@ -266,8 +294,16 @@ defmodule TpnProbe do
   # lowest number among ranks 2-5 is 2 when rank 1 was counted and 1 when it
   # was not.
   def gacrux_counted_rank_one?(players) do
-    with {:ok, by_cid} <- pair(trf(players), false),
-         {:ok, by_tpn} <- pair(trf(players), true),
+    # `-u 1` is the ONLY way to hold a player out of a Gacrux round. Its TRF
+    # reader sets `"present": startno > 0` (`trf2json.py`) - every listed
+    # player, unconditionally - and `present` goes false in exactly one
+    # other place, for the competitors named by `--unpaired`
+    # (`pairingchecker.py`). So no bye code in a file can take anyone out of
+    # its pool, which is what defeated the first three attempts here, and
+    # with `-u 1` the tested player's `rfp` is false and `rip` alone decides
+    # their number - which is the question.
+    with {:ok, by_cid} <- pair(trf(players), false, [1]),
+         {:ok, by_tpn} <- pair(trf(players), true, [1]),
          true <- length(by_cid) == length(by_tpn) and by_cid != [] do
       mapping =
         [by_cid, by_tpn]
@@ -291,6 +327,30 @@ end
 unless Gacrux.available?() do
   IO.puts("Gacrux is not available at #{Gacrux.script_path()} - set GACRUX_DIR.")
   System.halt(1)
+end
+
+# Before anything else: prove the lever still does nothing, so this can
+# never again print a table that reads as a finding. Rank 1 here cannot be
+# numbered by any rule, so a working `-x TPN` MUST renumber the boards.
+ghost =
+  TpnProbe.players(:absent, 0.0)
+
+inert? =
+  case {TpnProbe.pair(TpnProbe.trf(ghost), false), TpnProbe.pair(TpnProbe.trf(ghost), true)} do
+    {{:ok, plain}, {:ok, tpn}} -> plain == tpn
+    _ -> true
+  end
+
+if inert? do
+  IO.puts("""
+  -x TPN has no effect on the -p pairing output, so this probe cannot
+  measure Gacrux's numbering. See TRAP 3 in this file's header for the
+  proof and for what would work instead.
+
+  Nothing below would mean anything, so nothing below runs.
+  """)
+
+  System.halt(0)
 end
 
 IO.puts("""
