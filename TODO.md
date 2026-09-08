@@ -266,9 +266,12 @@ changed to match both references. What is left is one limit of method.
 
       The original note:
 
-- [x] ~~**Re-read what `:reach` filed while it was weakened.**~~ **Measured
-      2026-08-29** (`/root/ain_val_run/` on Photon, engine `af6261c`). What
-      it produced is a candidate, not a verdict - see the entry below it.
+- [x] ~~**Re-read what `:reach` filed while it was weakened.**~~
+      **Adjudicated 2026-09-08** - see
+      [docs/finding-gacrux-5-2-5.md](docs/finding-gacrux-5-2-5.md), ready to
+      file upstream. Measured 2026-08-29 (`ain_val_run` on Photon, engine
+      `af6261c`; the corpus has since been rescued to
+      `../ain_val_run_2026-08-29`, sibling to this repo).
 
       The corrected checker was replayed over `spp5225`'s seven axes,
       **1,065,373 rounds**, with `COLOUR_DEBUG=1` so positions were printed
@@ -282,10 +285,11 @@ changed to match both references. What is left is one limit of method.
       engine firing is what a real finding looks like, and round 2 is where
       5.2.5 applies, since that is when round-1 byes first get paired.
 
-      Not adjudicated. A subtler checker defect that only trips on Gacrux's
-      output would look identical from here, and two earlier candidates from
-      this instrument dissolved on inspection. Reading one of the 17
-      positions by hand settles it.
+      Read by hand: seed 32007296, round 2, does not dissolve. Two of that
+      round's boards need opposite initial colours under Article 5.2.5 -
+      a genuine violation, not a checker artifact. See
+      [docs/finding-gacrux-5-2-5.md](docs/finding-gacrux-5-2-5.md) for the
+      position and the contradiction between the two boards.
 
       **The engine itself is clean**: Ainalrami vs bbpPairings is 100.0% on
       every axis, rounds and colours - 1,886,132/1,886,132 colour boards on
@@ -368,8 +372,10 @@ changed to match both references. What is left is one limit of method.
       corpus.**~~ **Positions captured 2026-08-29.** The original `spp5225`
       run counted these boards without printing them, which is why this sat
       open: a count is not a finding. The re-run set `COLOUR_DEBUG=1`, so
-      each disagreement is now in `/root/ain_val_run/<axis>.log` with both
-      players' full colour histories.
+      each disagreement is now in `3way-<axis>.log` with both players' full
+      colour histories - the run (`ain_val_run`) lived at
+      `/root/ain_val_run/` on Photon and has since been rescued to
+      `../ain_val_run_2026-08-29`, sibling to this repo.
 
       The combined axis reports **13 colour boards out of 1,885,349** where
       the references differ, 5 of them within 5.2.5's reach; the forfeits

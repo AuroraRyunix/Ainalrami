@@ -7,7 +7,7 @@ for how the engine was verified see [validation.md](validation.md).
 ## The shape of the thing
 
 ```
-  TRF16 file
+  TRF16 / TRF26 file
       │
       ▼
   Ainalrami.Trf ──────────── parse: players, games, XXR/XXP/XXA
@@ -34,7 +34,7 @@ every step by default.
 |---|---|---|
 | `Ainalrami.Pairing` | 3144 | the Dutch system: brackets, criteria, colours |
 | `Ainalrami.WeightedMatching` | 966 | maximum-weight matching in a general graph |
-| `Ainalrami.Trf` | 946 | TRF16 parse and serialize, plus `XX` extensions |
+| `Ainalrami.Trf` | 2733 | TRF16/TRF26 parse and serialize, plus `XX` extensions |
 | `Ainalrami.CLI` | 432 | `-p` / `-g` / `-c`, mirroring JaVaFo's shape |
 | `Ainalrami.Generator` | 273 | Random Tournament Generator |
 | `Ainalrami.Matching` | 220 | bitmask DP matching over one bracket |
@@ -43,9 +43,12 @@ every step by default.
 
 ### `Ainalrami.Trf`
 
-FIDE's published TRF16 specification (C.04 Annex 2), plus the three
-JaVaFo `XX` extension lines. Not derived from bbpPairings - adapted from
-the author's own OpenPairings project.
+FIDE's published TRF16 specification (C.04 Annex 2), the three JaVaFo
+`XX` extension lines, and - since v0.22.0 - FIDE's 2026 format (TRF26,
+approved by Council 12 May 2025), written when the caller asks for
+`dialect: :trf26`. The TRF16/JaVaFo spelling remains the default. Not
+derived from bbpPairings - adapted from the author's own OpenPairings
+project.
 
 Two things here are load-bearing beyond ordinary parsing:
 

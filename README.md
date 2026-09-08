@@ -9,8 +9,9 @@ external binary, no runtime dependencies.
 
 Ainalrami implements **C.04.3, the FIDE (Dutch) System, effective
 1 February 2026** - the current rules, not the 2022 edition most engines
-still ship. It reads and writes TRF16, mirrors JaVaFo's command-line
-shape, and is verified against two independent reference implementations.
+still ship. It reads and writes TRF16 and FIDE's 2026 TRF format (TRF26),
+mirrors JaVaFo's command-line shape, and is verified against two
+independent reference implementations.
 
 **Status: beta.** The engine is functionally complete and reproduces
 bbpPairings 6.0.0 exactly across 2.5 billion compared pairings, in six
@@ -280,6 +281,36 @@ Both are validated by the same oracle as everything else: **1,789,554
 rounds carrying at least one extension line, 100.00% agreement, zero
 illegal rounds** across eleven axes.
 
+## TRF26
+
+FIDE's Tournament Report File Format Version 2026 (approved by Council on
+12 May 2025, applied from 1 September 2025) is a second, complete
+spelling of the same file - not an extension of TRF16 but a distinct
+dialect, alongside the `:engine` dialect this document otherwise
+describes. `Trf.serialize/2` writes it when called with
+`dialect: :trf26`; `:engine` stays the default, is what the comparison
+corpus is measured on, and is the only spelling the CLI currently writes
+- there is no `--dialect` flag yet.
+
+| line | meaning |
+|---|---|
+| `142` | number of rounds - written by both dialects; only `:engine` can swap it for `XXR` |
+| `162` | a non-standard point system as one line - `:trf26` only, `:engine` uses `BB*` instead |
+| `299` | free points and point-system overrides `162`/`BB*` cannot say - mostly written by both dialects; the forfeit-loss override is `:trf26` only, since `:engine` says it with `BBF` |
+| `250` / `260` | acceleration and forbidden pairs (above) - written by both dialects; `:trf26` groups acceleration into ranges instead of one line per player per round |
+| `240` | a bye for a round not yet paired, moved off the player's own row - `:trf26` only; `:engine` leaves it as an ordinary column |
+| `192` / `202` / `212` / `222` | tournament type code, tie-breaks, standings order, time control code - written by both dialects whenever the data carries them |
+
+The type code is checked against FIDE's own table
+(`tournament_type_codes/0`) and the time control against its encoding
+grammar (`encoded_time_control?/1`) before either line is written.
+
+Reading does not depend on which dialect wrote the file: `parse/1` reads
+all of the above unconditionally, to the same shape `XXR`/`BB*`/`XXA`/`XXP`
+parse to, so a round paired from either spelling of one tournament is the
+same round. Team records (`300` onward, `310`, `801`, `802`) and
+national-rating records are not read.
+
 ## What is not settled
 
 Documented rather than hidden, because an engine claiming 100% owes an
@@ -385,6 +416,8 @@ probe, is in
 | [docs/dispute-seed735265.md](docs/dispute-seed735265.md) | the one disagreement, argued from the regulations |
 | [docs/bbppairings-c2-bug-report.md](docs/bbppairings-c2-bug-report.md) | that dispute as a submittable upstream report |
 | [docs/dispute-initial-colour.md](docs/dispute-initial-colour.md) | the Article 5.2.5 dispute this engine lost, and the SPP ruling that closed it |
+| [docs/finding-gacrux-5-2-4.md](docs/finding-gacrux-5-2-4.md) | Gacrux reads Article 5.2.4's "higher ranked" as TPN order, not score then TPN |
+| [docs/finding-gacrux-5-2-5.md](docs/finding-gacrux-5-2-5.md) | Gacrux breaks Article 5.2.5: two boards of one round imply opposite initial colours |
 | [docs/engineering-log.md](docs/engineering-log.md) | the dated build history, including what measured worse |
 | [TODO.md](TODO.md) | open work |
 
