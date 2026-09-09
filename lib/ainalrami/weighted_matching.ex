@@ -855,14 +855,23 @@ defmodule Ainalrami.WeightedMatching do
       # `in_blossom[v]` is always the TOP-LEVEL blossom currently
       # containing vertex v - the direct analogue of bbpPairings'
       # `Vertex.rootBlossom`.
-      in_blossom: Map.new(0..(n - 1), &{&1, &1}),
+      #
+      # The explicit `//1` is what keeps an EMPTY vertex set empty. Elixir's
+      # two-argument `0..-1` is a descending range, so it enumerates `[0,
+      # -1]` and seeds both this map and `base` below with a `-1 => -1`
+      # entry for a vertex that does not exist. Nothing reads it - an empty
+      # graph has no edges to walk - so the matching came out right either
+      # way, and the only visible symptom was the deprecation warning.
+      # Every other range in this module already carries the step; these two
+      # were missed.
+      in_blossom: Map.new(0..(n - 1)//1, &{&1, &1}),
       # Nested structure, needed only for expansion: children in cyclic
       # order starting from the child containing the base, and each
       # child's parent. Trivial (single-vertex) blossoms have no entry.
       children: %{},
       vertices_of: %{},
       parent_of: %{},
-      base: Map.new(0..(n - 1), &{&1, &1}),
+      base: Map.new(0..(n - 1)//1, &{&1, &1}),
       # Per TOP-LEVEL blossom, ASYMMETRIC: the external vertex this
       # blossom's base is matched to, or nil. This is the direct
       # analogue of bbpPairings' `RootBlossom.baseVertexMatch` - a

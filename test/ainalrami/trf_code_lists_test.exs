@@ -15,6 +15,9 @@ defmodule Ainalrami.TrfCodeListsTest do
   supposed to summarise - what `serialize/1` accepts, and where - because a
   list that no longer matches the validator is worse than no list at all: a
   caller that trusted it would build a file this module then refuses.
+
+  The two lists together are what may be WRITTEN. `result_codes/0` is what
+  may be READ, and since the `?` unknown result it is one entry larger.
   """
 
   use ExUnit.Case, async: true
@@ -64,16 +67,47 @@ defmodule Ainalrami.TrfCodeListsTest do
     test "are disjoint, and between them are exactly what serialize/1 accepts" do
       assert Trf.playing_codes() -- Trf.bye_codes() == Trf.playing_codes()
 
-      # Every published `result_codes/0` value has to land in one list or the
-      # other, or this module documents a code its own writer rejects.
+      # Every published `result_codes/0` value has to be accounted for, or
+      # this module documents a code its own writer rejects for no stated
+      # reason. `?` is the one entry that is READ and not written, so it is
+      # accounted for by being excluded on purpose rather than by appearing
+      # in a list - and the test below pins the exclusion, so the two halves
+      # cannot drift into a code that is simply missing.
       published = Trf.result_codes() |> Map.values() |> Enum.sort()
-      listed = Enum.sort(Trf.playing_codes() ++ Trf.bye_codes())
-      assert published == listed
+      writable = Enum.sort(Trf.playing_codes() ++ Trf.bye_codes())
+      assert published == Enum.sort([Trf.result_codes()[:unknown] | writable])
     end
 
     test "a code on neither list is refused, and the message says so" do
       assert {:error, message} = write(opposed("X", "X"))
       assert message =~ "unrecognized TRF result code"
+    end
+  end
+
+  describe "the unknown result `?`" do
+    test "is published, is on neither list, and is not what an invalid code is" do
+      unknown = Trf.result_codes()[:unknown]
+
+      assert unknown == "?"
+      assert Trf.unknown_result?(unknown)
+      refute unknown in Trf.playing_codes()
+      refute unknown in Trf.bye_codes()
+
+      # The distinction the letter to FIDE's TEC turned on: an unrecognized
+      # code must NOT be read as "unknown", because that silently converts a
+      # corrupt file into a plausible one.
+      refute Trf.unknown_result?("X")
+      refute Trf.unknown_result?(nil)
+    end
+
+    test "serialize/1 refuses it, and says it is read-only rather than unrecognized" do
+      # The failure mode this guards is the writer quietly accepting `?`
+      # because the validator now recognizes the character. A caller who
+      # gets "unrecognized" here would go looking for a typo in a code this
+      # module documents and reads.
+      assert {:error, message} = write(opposed("?", "?"))
+      assert message =~ "read-only result code"
+      refute message =~ "unrecognized"
     end
   end
 

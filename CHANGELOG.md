@@ -61,6 +61,72 @@ invisible to any corpus this generator can produce and a third had been
 breaking a matcher invariant 734 times per 800 tournaments while agreeing
 with the reference on every one of them.
 
+## [0.25.0] - 2026-09-09
+
+### Added
+
+- **`?`, the ITDX unknown result.** FIDE's TRF-26 symbol for a game that was
+  played and whose result is not on record - a lost scoresheet, which is
+  neither a forfeit nor a draw nor a blank column. `Trf.parse/1` reads it and
+  hands it back as `"?"`, `Trf.unknown_result?/1` is the predicate, and
+  `Trf.result_codes/0` publishes it. This is the one commitment the feedback
+  sent to FIDE's TEC on 2026-09-08 made (section C.2), and it was made
+  against the alternative reading - that a reader should treat ANY invalid
+  code as unknown - because that reading converts a corrupt file into a
+  plausible one, which is the failure mode hardest to notice. So the other
+  half is pinned too: an unrecognized code still raises
+  `Trf.ValidationError`, and `?` facing a real result across the same board
+  is refused as a contradiction rather than accepted as one lost result.
+  Knowing one seat is knowing the other.
+- **Read-only, deliberately.** `serialize/1` refuses `?` in both dialects,
+  and says the code is read-only rather than unrecognized, because a caller
+  who is told "unrecognized" goes looking for a typo in a code this module
+  documents. The engine has no unknown results of its own to report - it
+  writes pairings it computed and history it was handed - and a writable `?`
+  is a placeholder waiting to be used for "not entered yet", which is what a
+  blank column already means. The price is that a file carrying `?` does not
+  round-trip; `validate_games!/2`'s `allow_unknown_result` is the single
+  switch that would have to be opened for it to.
+- **Everything that would have to guess a value refuses instead.**
+  `points_for/2` and `points_for_game/2` raise the new
+  `Trf.UnknownResultError`: a score is a sum, a sum with an unknown term has
+  no value either, and `0` would assert that the player scored nothing.
+  `game_was_played?/1` raises for the same reason - `false` would file the
+  game with the forfeits and the byes, which is what FIDE Art. 16 means by
+  unplayed, and that answer reaches colour history and C2 bye eligibility.
+  `participated_in_pairing?/1` does NOT raise, because a `?` carries an
+  opponent and the player was in the pairing whatever became of the game, so
+  `rounds_played/1` still answers and a historical file can still be read.
+  Together: the engine reads a tournament with an unknown result and never
+  puts a value on one. The refusal comes from whichever calculation needed
+  the value rather than from a gate at the door, so a round whose decisions
+  do not touch the lost game is still paired - two players who met once,
+  lost the result and have taken a bye ever since do not stop the rest of
+  the field getting a round. A gate would stop them, and would also be a
+  second copy of a rule that already exists, which is the drift
+  `playing_codes/0` is published to prevent. The CLI reports the refusal as
+  its own condition rather than through the unexpected-error backstop, which
+  is there for defects in this program and not for facts about the file.
+
+The change is additive by construction rather than by measurement: before
+it, a file containing `?` raised `ValidationError`, so no file that parsed
+can contain the one character every new branch is keyed on. The comparison
+corpora are untouched.
+
+### Fixed
+
+- **An empty vertex set declared a vertex.** `WeightedMatching.new/3` seeded
+  `in_blossom` and `base` from a two-argument `0..(n - 1)`, which at n = 0
+  is `0..-1` - a descending range in Elixir, so it enumerated `[0, -1]` and
+  put a `-1 => -1` entry for a vertex that does not exist into both maps,
+  along with a deprecation warning. No matching was ever wrong: an empty
+  graph has no edges to walk and nothing reads those entries. Reachable
+  through `Pairing.pair_next_round([], forbidden_pairs: [...])`, where a
+  forbidden pair suppresses the round-one shortcut and a real matcher gets
+  built for a field of nobody. Every other range in the module already
+  carried `//1`; these two were missed. Finding 30 of the OpenPairings audit
+  of 2026-09-05.
+
 ## [0.24.0] - 2026-09-08
 
 ### Fixed

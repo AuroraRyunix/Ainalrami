@@ -103,6 +103,24 @@ defmodule Ainalrami.WeightedMatchingTest do
     end
   end
 
+  describe "new/3 on an empty vertex set" do
+    # `solve/2` never gets here - it answers `n <= 1` from a guard clause -
+    # so the only way in is `new/3`, which is the path `Ainalrami.Pairing`
+    # takes. Its per-vertex maps were seeded from a two-argument `0..(n -
+    # 1)`, which at n = 0 is `0..-1`: a DESCENDING range in Elixir, so it
+    # enumerated `[0, -1]` and put a `-1 => -1` entry for a vertex that does
+    # not exist into both. No matching was ever wrong - an empty graph has
+    # no edges to walk, and nothing reads those entries - but a state that
+    # describes a vertex the caller never declared is a state no invariant
+    # can be written against.
+    test "declares no vertices" do
+      state = WeightedMatching.new(0, [])
+
+      assert state.in_blossom == %{}
+      assert state.base == %{}
+    end
+  end
+
   describe "the incremental path: new/3, set_weight/4, solve/1" do
     # `solve/2` is the pure entry, and every test above uses it. `Pairing`
     # does not: it builds one state with `new/3` and then edits weights

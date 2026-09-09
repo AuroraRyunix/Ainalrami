@@ -59,6 +59,13 @@ Two things here are load-bearing beyond ordinary parsing:
 - **`parse/1` raises** on an inconsistent result - both sides claiming a
   win, both marked forfeit-win - rather than accepting it. A tournament
   file that disagrees with itself has no correct pairing.
+- **`?` is read and never written** (since v0.25.0). FIDE's TRF-26 symbol
+  for a game whose result is not on record. `parse/1` accepts it,
+  `serialize/1` refuses it, and `points_for/1` and `game_was_played?/1`
+  raise rather than supply a value nobody has - so a tournament with a lost
+  result can be read, and a round that would have to value it cannot be
+  paired. An unrecognized code is still unrecognized, which is the
+  distinction the whole symbol exists for.
 
 ### `Ainalrami.Pairing`
 

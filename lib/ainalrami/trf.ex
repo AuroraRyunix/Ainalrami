@@ -8,6 +8,22 @@ defmodule Ainalrami.Trf.ValidationError do
   defexception [:message]
 end
 
+defmodule Ainalrami.Trf.UnknownResultError do
+  @moduledoc """
+  Raised by `Ainalrami.Trf` when a calculation needs a value the file says is
+  not known: the `?` unknown-result code (see `Ainalrami.Trf`'s moduledoc)
+  reaching `points_for/2` or `game_was_played?/1`.
+
+  Deliberately not a `Ainalrami.Trf.ValidationError`. That one says the file
+  is wrong; this one says the file is right and states that a result was
+  lost. A caller has to tell those apart to say anything useful about the
+  tournament - "this report is corrupt" and "this report is honest about a
+  missing scoresheet" are different messages to put in front of an arbiter,
+  and only the second is worth loading the file for.
+  """
+  defexception [:message]
+end
+
 defmodule Ainalrami.Trf do
   @moduledoc """
   FIDE TRF16 (Tournament Report File) serializer and parser, per the official
@@ -53,6 +69,67 @@ defmodule Ainalrami.Trf do
   reference programs read only the first, which is why it is a dialect and
   not a replacement.
 
+  ## The `?` unknown result
+
+  `?` says there was a game and its result is not on record - the lost
+  scoresheet of a historical event, which is what FIDE's TRF-26 ITDX
+  conventions give the symbol for. It is READ and never written, and it is
+  interchangeable with nothing else here:
+
+    * a BLANK column means no result has been recorded YET, which is a
+      statement about the file. `?` is a statement about the tournament, and
+      `parse/1` keeps the two apart: a blank still comes back as `nil`, a
+      `?` comes back as `"?"`;
+    * an INVALID code is still invalid. The other available reading - that
+      any code a reader does not recognize means "unknown" - converts a
+      corrupt file into a plausible one, which is the failure mode hardest
+      to notice, and it is the reading this engine argued against when FIDE
+      consulted on the draft. `validate_game!/5` refuses an unrecognized
+      code exactly as it always did.
+
+  Everything downstream that would have to invent a value refuses instead:
+
+    * `points_for/2` and `points_for_game/2` raise
+      `Ainalrami.Trf.UnknownResultError`. No number is honest here: `0`
+      asserts the player scored nothing and every other value asserts more.
+      A score is a sum, and a sum with an unknown term has no value either,
+      so the refusal IS the answer rather than a policy laid over one;
+    * `game_was_played?/1` raises for the same reason. FIDE Art. 16 turns on
+      whether a game was played, and a `?` does not say - answering `false`
+      would file it with the forfeits and the byes, which is a stronger
+      claim than the file makes. Colour history and C2 bye eligibility are
+      both built on this predicate, so both refuse too;
+    * `participated_in_pairing?/1` does NOT raise: it has an honest answer.
+      A `?` carries an opponent, so the player was in the pairing whatever
+      became of the game. `rounds_played/1` rests on it, so a file with an
+      unknown result still reports how far it has been paired.
+
+  Between them those mean the engine can READ a tournament with an unknown
+  result and will never put a value on one. The refusal comes from whichever
+  calculation needed the value rather than from a gate at the door, so a
+  round whose decisions do not touch the lost game is still paired: two
+  players who met once, lost the result and have taken a bye every round
+  since do not stop the rest of the field getting a round. A gate would stop
+  them, which is worse than the disease - one missing scoresheet belonging
+  to a withdrawn player would make the tournament unpairable for the rest of
+  its life. It would also be a second copy of a rule that already exists,
+  and this module has twice paid for private copies of its code lists
+  drifting (see `playing_codes/0`).
+
+  `serialize/1` refuses `?` in BOTH dialects. This engine has no unknown
+  results of its own to report - it writes pairings it computed and history
+  it was handed - and a writable `?` is a placeholder waiting to be used for
+  "not entered yet", which is what the blank column already means. The price
+  is that a file carrying `?` does not round-trip through this module;
+  `validate_games!/2`'s `allow_unknown_result` option is the single switch
+  that would have to be opened for it to.
+
+  `parse/1` takes `?` from either dialect, because it does not know which
+  dialect it is reading - the round blocks of a `001` line are byte
+  identical in both, and only the header records differ. Refusing it in an
+  `:engine`-spelled file would mean guessing at the writer's intent from
+  records that have nothing to do with the game.
+
   ## The `XX*` extension lines
 
   Four of JaVaFo's own `XX` extension codes are read; two of them are
@@ -96,7 +173,7 @@ defmodule Ainalrami.Trf do
   again and does raise - see `check_round_count_agreement!/2`.
   """
 
-  alias Ainalrami.Trf.ValidationError
+  alias Ainalrami.Trf.{UnknownResultError, ValidationError}
 
   @player_cols %{
     code: {1, 3},
@@ -189,7 +266,12 @@ defmodule Ainalrami.Trf do
     # is a reader that loses the only thing they encode.
     unrated_win: "W",
     unrated_draw: "D",
-    unrated_loss: "L"
+    unrated_loss: "L",
+    # FIDE's TRF-26 ITDX symbol for a game whose result is not on record.
+    # The one published code `serialize/1` will not write and `points_for/2`
+    # will not score - see the moduledoc's "The `?` unknown result" for both
+    # refusals and for why they are refusals rather than defaults.
+    unknown: "?"
   }
 
   def result_codes, do: @result_codes
@@ -246,6 +328,9 @@ defmodule Ainalrami.Trf do
     * `0` `L` - a played loss pays `:loss`.
     * `-` - a forfeit loss pays `:forfeit_loss`, which an organiser may set
       above zero even though a played loss is zero.
+    * `?` - RAISES `Ainalrami.Trf.UnknownResultError`. See the moduledoc:
+      there is no honest value, and the blank-and-`Z` default below would
+      quietly assert that the player scored nothing.
     * anything else, `Z` and a blank included - `:zero_point_bye`.
   """
   def points_for(result), do: points_for(result, default_point_system())
@@ -262,6 +347,16 @@ defmodule Ainalrami.Trf do
   def points_for(result, points) when result in ~w(= D), do: points.draw
   def points_for(result, points) when result in ~w(0 L), do: points.loss
   def points_for("-", points), do: points.forfeit_loss
+
+  # Before the catch-all, and that ORDER is the whole guarantee: `?` would
+  # otherwise fall through to `zero_point_bye` and be scored as a nought,
+  # which is exactly the silent conversion of a file that says "not known"
+  # into one that says "lost".
+  def points_for("?", _points) do
+    raise UnknownResultError,
+      message: "result \"?\" is not known, so it cannot be scored"
+  end
+
   def points_for(_result, points), do: points.zero_point_bye
 
   @doc """
@@ -293,6 +388,10 @@ defmodule Ainalrami.Trf do
   Every other combination agrees with `points_for/2`, and the ones that do
   not appear here are the ones bbpPairings rejects outright: `0000 - 1`,
   `0000 - 0` and a bare `Z` against an opponent are all invalid lines.
+
+  `?` reaches `points_for/2` in every combination and raises there, opponent
+  or none. Reading the opponent could not help: knowing that a game had two
+  seats says nothing about what it was worth.
   """
   def points_for_game(game), do: points_for_game(game, default_point_system())
 
@@ -312,8 +411,21 @@ defmodule Ainalrami.Trf do
   they are letter spellings of ordinary played results rather than unplayed
   ones. Several rules turn on this distinction, C2's bye eligibility among
   them.
+
+  `?` RAISES `Ainalrami.Trf.UnknownResultError` rather than answering
+  either way. A boolean has no room for "not known", and both answers are
+  claims the file does not make: `false` files the game with the forfeits
+  and the byes, which is what FIDE Art. 16 means by unplayed, and `true`
+  asserts a game whose only record is that nobody knows. The callers that
+  matter - colour history and bye eligibility - would both act on the
+  answer, so an invented one propagates into a pairing.
   """
   def game_was_played?(nil), do: false
+
+  def game_was_played?("?") do
+    raise UnknownResultError,
+      message: "result \"?\" is not known, so whether the game was played is not known either"
+  end
 
   def game_was_played?(result),
     do: result not in ~w(+ - H F U Z) and String.trim(result) != ""
@@ -363,6 +475,12 @@ defmodule Ainalrami.Trf do
   pairing itself produced. bbpPairings expresses the same test as
   `opponent != id || resultChar == 'U' || resultChar == '+'`
   (`fileformats/trf.cpp:303`).
+
+  This is the one question a `?` game answers without complaint. It carries
+  an opponent, so the player was in the pairing, and what became of the game
+  afterwards does not bear on it. `rounds_played/1` is built from this
+  predicate alone, which is why a file with an unknown result can still say
+  how far the tournament has been paired.
   """
   def participated_in_pairing?(game) do
     not is_nil(game.opponent_rank) or game.result in ~w(U +)
@@ -388,6 +506,20 @@ defmodule Ainalrami.Trf do
   @playing_codes ~w(1 = 0 + - W D L)
   @bye_codes ~w(H F U Z)
 
+  # The read-only third category. `?` sits with neither list because it
+  # belongs to neither question those two answer: it is not a result the
+  # writer may emit (so it is outside `bye_codes/0`'s "the complement of
+  # `playing_codes/0` over everything `serialize/1` accepts"), and it is not
+  # something a scorer may treat as a played game.
+  @unknown_codes ~w(?)
+
+  # Codes that occupy an OPPONENT's slot. The structural rules are identical
+  # for a playing code and for `?` - there has to be somebody on the other
+  # side, and the two sides have to agree about what happened - so they are
+  # validated together. What separates them is only what the result is
+  # WORTH, which is `points_for/2`'s question and not the validator's.
+  @opposed_codes @playing_codes ++ @unknown_codes
+
   @doc """
   The TRF16 result codes for a round the player was PAIRED in: a played game
   (`1` `=` `0`, and the unrated letter spellings `W` `D` `L` of the same
@@ -403,6 +535,13 @@ defmodule Ainalrami.Trf do
   unpaired, and standings counted them as absences. Neither copy was wrong
   on the day it was written, which is exactly the failure mode - a private
   list cannot be corrected by fixing the canonical one.
+
+  `?` is deliberately absent, even though a `?` game does occupy an
+  opponent's slot. Every existing caller reads this list to decide what to
+  SCORE or IMPORT, and an unknown result can be neither; adding it here
+  would have changed those callers' behaviour silently, which is the one
+  thing publishing the list was meant to prevent. Ask `unknown_result?/1`
+  instead.
   """
   def playing_codes, do: @playing_codes
 
@@ -414,8 +553,29 @@ defmodule Ainalrami.Trf do
   and exported alongside it because deciding what a round MEANS needs both
   halves - `playing_codes/0` on its own cannot tell a bye from a code this
   module would refuse.
+
+  That complement is still exact with `?` in the world, because `?` is a
+  code `serialize/1` does not accept. The two lists partition what may be
+  WRITTEN; `result_codes/0` is what may be READ, and it is one entry larger.
   """
   def bye_codes, do: @bye_codes
+
+  @doc """
+  Whether a result code says the result is not known: true for `?` and for
+  nothing else.
+
+  Not true for `nil` or a blank, which is the distinction the whole code
+  exists to make. A blank column is an ABSENT result - the round has not
+  been played, or the file has not caught up - and a caller may sensibly
+  wait for it. `?` is a PRESENT statement that the result is lost, and
+  waiting will not produce one.
+
+  This is the predicate to reach for before anything that needs a value:
+  `points_for/2` and `game_was_played?/1` raise rather than guess, and
+  asking first is how a caller keeps that from being an exception it has to
+  catch.
+  """
+  def unknown_result?(result), do: result in @unknown_codes
 
   # Legal opponent-result for each of this player's playing codes. A win
   # ("1") only pairs with a loss ("0"); a played "0-0" (both players lose,
@@ -435,6 +595,13 @@ defmodule Ainalrami.Trf do
   # unrated for Black: `W`/`0` and `D`/`=` are not legal halves of one
   # result, and a file carrying them has two players disagreeing about what
   # happened rather than one unusual game.
+  #
+  # `?` pairs only with `?`, and that is a real constraint rather than a
+  # placeholder. Knowing one seat's result is knowing the other's - a win on
+  # one board is a loss on the other - so a file that spells one side `?`
+  # and the other `1` is not a file with one lost result. It is two records
+  # of the same game that contradict each other, and the whole point of
+  # having the symbol is to refuse to smooth that over.
   @legal_result_pairs %{
     "1" => ["0"],
     "0" => ["1", "0", "="],
@@ -443,7 +610,8 @@ defmodule Ainalrami.Trf do
     "-" => ["+", "-"],
     "W" => ["L"],
     "L" => ["W"],
-    "D" => ["D"]
+    "D" => ["D"],
+    "?" => ["?"]
   }
 
   # Round blocks repeat every 10 columns starting at column 92 (round 1):
@@ -1560,6 +1728,14 @@ defmodule Ainalrami.Trf do
   # matters on the way OUT (`serialize/1`); a file we're reading FROM
   # someone else, possibly TRF06-vintage, is exactly what this option
   # exists for - `parse/1` passes it, `serialize/1` never does.
+  #
+  # `opts[:allow_unknown_result]` is the same shape and the same asymmetry,
+  # and it is what makes `?` a READ-ONLY code rather than a code this module
+  # happens not to emit today. `parse/1` passes it; `serialize/1` never
+  # does, so a `?` handed to the writer is refused by name instead of being
+  # placed in a column. One switch in one place, so "the engine does not
+  # write unknown results" is a property with a single point of failure
+  # rather than a habit of the render path.
   defp validate_games!(players, opts \\ []) do
     by_rank = Map.new(players, &{&1[:rank], &1})
 
@@ -1577,19 +1753,29 @@ defmodule Ainalrami.Trf do
 
   defp validate_game!(player, round, %{result: result} = game, by_rank, opts) do
     cond do
-      result not in (@playing_codes ++ @bye_codes) ->
+      # Ahead of the recognition test, so the message says which of the two
+      # things is wrong. A caller who hands `?` to the writer has a code this
+      # module documents and reads; telling them it is "unrecognized" would
+      # send them looking for a typo.
+      result in @unknown_codes and !opts[:allow_unknown_result] ->
+        raise ValidationError,
+          message:
+            "#{player_label(player)}, round #{round}: #{inspect(result)} is a read-only result " <>
+              "code - `parse/1` accepts it, nothing writes it"
+
+      result not in (@opposed_codes ++ @bye_codes) ->
         raise ValidationError,
           message:
             "#{player_label(player)}, round #{round}: unrecognized TRF result code #{inspect(result)}"
 
-      result in @playing_codes and is_nil(game[:opponent_rank]) and
+      result in @opposed_codes and is_nil(game[:opponent_rank]) and
           !opts[:allow_dangling_playing_code] ->
         raise ValidationError,
           message:
             "#{player_label(player)}, round #{round}: opponent 0000 cannot carry played-game result " <>
               "#{inspect(result)} - opponentless games must use a bye code (F/H/Z/U)"
 
-      result in @playing_codes ->
+      result in @opposed_codes ->
         validate_playing_pair!(player, round, game, by_rank, result)
 
       true ->
@@ -1630,6 +1816,12 @@ defmodule Ainalrami.Trf do
   `allow_dangling_playing_code` option) - column positions are otherwise
   byte-identical between the two versions, so no separate TRF06 parser is
   needed, just this one relaxed rule.
+
+  Accepts the `?` unknown-result code, which `serialize/1` refuses, and
+  hands it back as `"?"` - see the moduledoc's "The `?` unknown result" for
+  what it then means to everything that reads a result. A code that is
+  neither `?` nor a real one is still refused: the concession is to one
+  documented symbol, not to unrecognized input in general.
 
   `XXP` lines land in `tournament[:forbidden_pairs]`, and `XXA` lines
   attach an `:accelerations` list to the player they name. Neither key is
@@ -1720,7 +1912,10 @@ defmodule Ainalrami.Trf do
     # above); every other key keeps file order as it always did.
     result = %{result | players: Enum.reverse(result.players), teams: Enum.reverse(result.teams)}
 
-    validate_games!(result.players, allow_dangling_playing_code: true)
+    validate_games!(result.players,
+      allow_dangling_playing_code: true,
+      allow_unknown_result: true
+    )
 
     result
     |> attach_accelerations()

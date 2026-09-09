@@ -23,6 +23,14 @@ defmodule Ainalrami.DegenerateFieldsTest do
       assert pair([]) == []
     end
 
+    test "an empty field with a forbidden pair reaches the matcher, and still pairs to nothing" do
+      # A forbidden pair suppresses the round-one shortcut, so this is the
+      # one empty-field call that builds a real matcher - `new(0, edges)`
+      # with no vertices at all. See `Ainalrami.WeightedMatchingTest`'s
+      # "new/3 on an empty vertex set" for what that used to hold.
+      assert Pairing.pair_next_round([], forbidden_pairs: [[1, 2]]) == []
+    end
+
     test "a single player takes the pairing-allocated bye" do
       assert pair(field(1)) == [{1, nil}]
     end

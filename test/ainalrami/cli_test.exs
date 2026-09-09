@@ -106,6 +106,23 @@ defmodule Ainalrami.CLITest do
     lines |> Enum.map(&if &1 == p2, do: bad_p2, else: &1) |> Enum.join("\r\n")
   end
 
+  # The same one-round file with BOTH results replaced by `?`. Both, because
+  # one side alone would be a contradiction rather than a lost result, and
+  # `Trf.parse/1` refuses that - see `Ainalrami.UnknownResultTest`.
+  defp unknown_result_trf do
+    illegal_result_trf()
+    |> String.split("\r\n")
+    |> Enum.map_join("\r\n", fn
+      "001" <> _ = line ->
+        {before, rest} = String.split_at(line, 98)
+        <<_::binary-size(1), after_::binary>> = rest
+        before <> "?" <> after_
+
+      other ->
+        other
+    end)
+  end
+
   test "-h prints help and exits 0" do
     out = capture_io(fn -> assert CLI.run(["-h"]) == 0 end)
     assert out =~ "ainalrami - a FIDE Dutch-system Swiss pairing engine"
@@ -207,6 +224,21 @@ defmodule Ainalrami.CLITest do
 
     assert code == 1
     assert out =~ "invalid TRF file"
+  end
+
+  test "-p on a file with an unknown result exits 1, and does not call it unexpected" do
+    # The file is legal and this engine reads it (`Ainalrami.Trf`, "The `?`
+    # unknown result"); what it cannot do is invent the score the pairing
+    # needs. The distinction that matters to whoever reads the message is
+    # between a corrupt file and an honest one with a lost scoresheet.
+    path = write_trf!(unknown_result_trf())
+
+    {out, code} = run_capturing(fn -> CLI.run([path, "-p"]) end)
+
+    assert code == 1
+    assert out =~ "records a result as not known"
+    refute out =~ "unexpected error"
+    refute out =~ "invalid TRF file"
   end
 
   describe "-p and the drawing of lots" do

@@ -216,18 +216,24 @@ defmodule Ainalrami.LetterResultCodesTest do
                zero_point_bye: "Z",
                unrated_win: "W",
                unrated_draw: "D",
-               unrated_loss: "L"
+               unrated_loss: "L",
+               unknown: "?"
              }
 
-      # Every published code must be one `points_for/1` actually scores, and
-      # every one must be distinct - a duplicate would silently collapse two
-      # outcomes for any caller building a file from this table.
+      # Every published code must be distinct - a duplicate would silently
+      # collapse two outcomes for any caller building a file from this table.
       values = Map.values(codes)
       assert length(Enum.uniq(values)) == length(values)
 
-      for {name, code} <- codes do
+      # And every one must be a code `points_for/1` has an answer for, where
+      # refusing to score `?` is an answer. What this rules out is a code
+      # published with no scoring rule at all, which would fall through to
+      # the zero-point-bye default and be worth nought by accident.
+      for {name, code} <- Map.delete(codes, :unknown) do
         assert Trf.points_for(code) in [0.0, 0.5, 1.0], "#{name} (#{code}) is unscored"
       end
+
+      assert_raise Trf.UnknownResultError, fn -> Trf.points_for(codes[:unknown]) end
     end
   end
 

@@ -54,6 +54,21 @@ defmodule Ainalrami.CLI do
         true -> dispatch(positional, flags)
       end
     rescue
+      # An unknown result is not an unexpected error. `?` is a code this
+      # engine reads on purpose (`Ainalrami.Trf`, "The `?` unknown result"),
+      # so a file carrying one is a file whose scores are not known, and
+      # there is nothing surprising about being unable to pair it. Left to
+      # the backstop below it was announced as "unexpected", which reads as
+      # a defect in this program rather than a fact about the file - and
+      # that is the one thing the backstop's own note says it is not for.
+      e in Trf.UnknownResultError ->
+        Log.error(
+          "this file records a result as not known (\"?\"): #{Exception.message(e)}. " <>
+            "Nothing can be paired or scored from it until the result is recovered."
+        )
+
+        1
+
       # The backstop. Everything below here that CAN be predicted is already
       # reported as a message and an exit code - an unreadable file, an
       # invalid TRF, an option this program does not have. What was left was
