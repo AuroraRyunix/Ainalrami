@@ -180,9 +180,10 @@ open only for exchanges.
 
 JaVaFo is FIDE's own reference implementation, and this engine is
 deliberately **not** measured primarily against it, because JaVaFo
-implements the superseded 2022 rules. bbpPairings and Gacrux both
-implement the 2026 edition and agree with each other on every one of 3352
-rounds tested, which is what makes them usable as a ruler.
+implements the 2017 edition, superseded on 31 January 2026. bbpPairings
+and Gacrux both implement the 2026 edition and agree with each other on
+every one of 3352 rounds tested, which is what makes them usable as a
+ruler.
 
 The ~4% gap against JaVaFo is a control, not a defect: it is the size of
 the rules change. An engine agreeing with all three at once would mean the

@@ -39,7 +39,7 @@ from measurement rather than from the rules text:
 Written down here because this project's rule is that anything touching a
 FIDE rule needs the handbook text in hand rather than a paraphrase, and
 because the numbering itself is new: the February 2026 revision introduced
-a **unified criteria numbering** (C1-C21) that the older 2022 text did not
+a **unified criteria numbering** (C1-C21) that the 2017 edition did not
 have. Quoting it once, here, means the next person does not re-derive it
 from a C++ bit layout.
 
@@ -48,11 +48,18 @@ from a C++ bit layout.
 **The 2026 one.** There are two live Dutch rulebooks and the references do
 not agree about which they implement:
 
-| engine | rulebook |
-|---|---|
-| JaVaFo 2.2 | 2022-01-01 |
-| bbpPairings 6.0.0 | 2026-02-01 |
-| Gacrux (FIDE TBS) 1.9.57 | 2026-02-01 (`DUTCH_RULES[1]`, "Approved by FIDE Council on 01/02/2026") |
+| engine | Gacrux's tag (`DUTCH_RULES`) | FIDE edition |
+|---|---|---|
+| JaVaFo 2.2 | 2022-01-01 | 2017 |
+| bbpPairings 6.0.0 | 2026-02-01 | 2026 |
+| Gacrux (FIDE TBS) 1.9.57 | 2026-02-01 (`DUTCH_RULES[1]`, "Approved by FIDE Council on 01/02/2026") | 2026 |
+
+The middle column is Gacrux's own bookkeeping, quoted from
+`pairingdutch.py` - `2022-01-01` is not a FIDE edition year, it is the
+date Gacrux attaches to the ruleset it replaces. FIDE's own name for that
+ruleset is the 2017 edition (approved at the 87th Congress, Baku 2016;
+Terms and Definitions and Pairing Guidelines For Programmers added at the
+88th, Goynuk 2017), right column above.
 
 Measured over **3352 comparable rounds**, bbpPairings and Gacrux agree
 with each other **100%**, while JaVaFo differs from both on 2.47%. That

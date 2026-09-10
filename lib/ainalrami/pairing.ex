@@ -1044,7 +1044,7 @@ defmodule Ainalrami.Pairing do
   implementation - sides with this engine.
 
   Against **javafo.jar** it measures ~96%, and that gap is the control
-  rather than an error: javafo implements the 2022 rules, so an engine
+  rather than an error: javafo implements the 2017 edition, so an engine
   agreeing with all three at once would mean the comparison was measuring
   nothing. See docs/engineering-log.md for the measured history.
 

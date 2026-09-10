@@ -61,6 +61,40 @@ invisible to any corpus this generator can produce and a third had been
 breaking a matcher invariant 734 times per 800 tournaments while agreeing
 with the reference on every one of them.
 
+## [0.26.0] - 2026-09-10
+
+### Fixed
+
+- [Fix] **There is no 2022 edition of FIDE Handbook C.04.3 - this project
+  called the pre-2026 Dutch rulebook "the 2022 rules" throughout its own
+  docs, an engine comment and a test fixture key, and none of that is
+  FIDE's name for it.** FIDE's handbook page for the superseded version
+  records "Version approved at the 87th FIDE Congress in Baku 2016" and
+  the Terms and Definitions / Pairing Guidelines For Programmers added at
+  the 88th, Goynuk 2017 - no 2021, no 2022, anywhere on it. FIDE's own
+  name for the edition is "the 2017 edition", which is what ETT26's own
+  Tournament Type Code Table for field `192` calls it.
+
+  The code never had the bug: `@tournament_type_codes`
+  (`lib/ainalrami/trf.ex`) has always listed `FIDE_DUTCH_2017`,
+  `FIDE_DUTCH_2026` and `FIDE_DUTCH`, with no `_2022` variant, matching
+  ETT26 exactly. Only the prose around it was wrong.
+
+  The year came from one place: Gacrux's `pairingdutch.py` carries
+  `DUTCH_RULES = { 0: "2022-01-01", 1: "2026-02-01" }`, quoted in
+  `test/support/gacrux.ex` and `docs/engineering-log.md`. `2022-01-01` is
+  Gacrux's own bookkeeping tag for the ruleset it replaces, not a FIDE
+  edition year, and it was read as one - then repeated from there into
+  `README.md`, `docs/architecture.md`, `docs/validation.md`,
+  `docs/fide-criteria.md` and a comment in `lib/ainalrami/pairing.ex`.
+  Fixed to name the edition ("the 2017 edition") where naming was the
+  point and to a date ("superseded on 31 January 2026") where currency
+  was; the two verbatim quotations of Gacrux's string are left as Gacrux
+  wrote them, with the prose around each now saying plainly what the
+  quoted label is and is not. The `test/fixtures/rule_delta/manifest.exs`
+  fixture key `rules_2022:` is renamed `rules_2017:`, so the file itself
+  cannot re-seed the same misreading.
+
 ## [0.25.0] - 2026-09-09
 
 ### Added

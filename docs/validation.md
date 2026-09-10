@@ -14,7 +14,7 @@ Three external implementations, used for different purposes.
 |---|---|---|
 | **bbpPairings 6.0.0** | 2026 | the primary oracle; run directly, not read |
 | **Gacrux / TieBreakServer** | 2026 | independent third opinion; Python, literal enumeration |
-| **JaVaFo** | 2022 | a *control*, not a target |
+| **JaVaFo** | 2017 | a *control*, not a target |
 
 None is vendored. Each is located at runtime:
 
@@ -27,9 +27,10 @@ GACRUX_PYTHON=python3
 
 **Why bbpPairings is the primary oracle and JaVaFo is not.** JaVaFo is
 FIDE's own reference implementation, which makes it the intuitive target
-and the wrong one: it implements the superseded 2022 rules. bbpPairings
-and Gacrux both implement the 2026 edition. Over 3352 rounds those two
-agreed with each other on **every single one**, which bounds their mutual
+and the wrong one: it implements the 2017 edition, superseded on
+31 January 2026. bbpPairings and Gacrux both implement the 2026 edition.
+Over 3352 rounds those two agreed with each other on **every single
+one**, which bounds their mutual
 disagreement at ~0.09% and is what makes them usable as a ruler at all.
 
 Ainalrami disagrees with JaVaFo, and that is the expected result rather
@@ -53,7 +54,7 @@ process errors:
 Round one is identical, which is what you would expect of a rules change
 that lives in the bracket cascade rather than the initial split. Every
 axis that puts an UNPLAYED game on a scorecard - a bye, a forfeit - is
-where the 2022 and 2026 texts part company, and it compounds with the
+where the 2017 and 2026 texts part company, and it compounds with the
 round count. The same axes measure 100.00% against bbpPairings, which is
 the whole reason bbpPairings is the oracle here and JaVaFo is the control.
 
@@ -535,7 +536,7 @@ mix test --only bbppairings
 | `javafo` | composition against real JaVaFo, every round (seven axes only - see above) |
 | `three_way` | Ainalrami vs bbpPairings vs Gacrux on identical positions |
 | `taxonomy` | classify disagreements by first differing bracket |
-| `rule_delta` | pinned cases where the 2022 and 2026 rules differ |
+| `rule_delta` | pinned cases where the 2017 and 2026 rules differ |
 
 Every axis is a set of environment variables:
 

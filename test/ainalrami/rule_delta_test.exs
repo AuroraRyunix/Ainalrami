@@ -1,9 +1,9 @@
 defmodule Ainalrami.RuleDeltaTest do
   @moduledoc """
-  The eight positions where the 2022 and 2026 Dutch rulebooks actually
+  The eight positions where the 2017 and 2026 Dutch rulebooks actually
   disagree, pinned as fixtures.
 
-  They were found by running JaVaFo 2.2 (2022 rules) against bbpPairings
+  They were found by running JaVaFo 2.2 (2017 rules) against bbpPairings
   6.0.0 and Gacrux 1.9.57 (both 2026) over 324 rounds and keeping every
   round where the two 2026 engines agreed with each other and JaVaFo
   differed. That filter is what makes them valuable: bbpPairings and
@@ -32,7 +32,7 @@ defmodule Ainalrami.RuleDeltaTest do
       alone fixed fixture 2, a 5-player round-2 case where the bye had to
       move from a 0.5 player to a 0.0 one.
 
-  Of the six that still pair the 2022 way, four (fixtures 1, 4, 6, 7)
+  Of the six that still pair the 2017 way, four (fixtures 1, 4, 6, 7)
   share a shape: the 2026 answer keeps adjacent top seeds together
   ([1,2] or [2,3]) where JaVaFo splits them across the field. Pairing the
   top two changes WHICH players downfloat, which is what C8 governs - so
@@ -72,7 +72,7 @@ defmodule Ainalrami.RuleDeltaTest do
         verdict =
           cond do
             actual == entry.rules_2026 -> :rules_2026
-            actual == entry.rules_2022 -> :rules_2022
+            actual == entry.rules_2017 -> :rules_2017
             true -> :neither
           end
 
@@ -90,7 +90,7 @@ defmodule Ainalrami.RuleDeltaTest do
     #{@matches_2026_floor}.
 
     This engine targets the 2026 rulebook, so a drop here means a change moved it back \
-    toward the superseded 2022 behaviour. See docs/fide-criteria.md.
+    toward the superseded 2017 behaviour. See docs/fide-criteria.md.
 
     #{detail}
     """

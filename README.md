@@ -8,7 +8,7 @@ external binary, no runtime dependencies.
 > the regulations point, rather than somewhere reasonable nearby.
 
 Ainalrami implements **C.04.3, the FIDE (Dutch) System, effective
-1 February 2026** - the current rules, not the 2022 edition most engines
+1 February 2026** - the current rules, not the 2017 edition most engines
 still ship. It reads and writes TRF16 and FIDE's 2026 TRF format (TRF26),
 mirrors JaVaFo's command-line shape, and is verified against two
 independent reference implementations.
@@ -125,10 +125,10 @@ submittable report in
 [docs/bbppairings-c2-bug-report.md](docs/bbppairings-c2-bug-report.md).
 
 Against **JaVaFo** the engine measures 96.26%, and it *should not* be
-100%: JaVaFo implements the superseded 2022 rules and differs from both
-2026 references by roughly the same margin. That gap is the control. An
-engine agreeing with all three at once would mean the harness was
-measuring nothing.
+100%: JaVaFo implements the 2017 edition, superseded on 31 January 2026,
+and differs from both 2026 references by roughly the same margin. That
+gap is the control. An engine agreeing with all three at once would mean
+the harness was measuring nothing.
 
 Full methodology, per-axis detail and the reasoning behind each number:
 [docs/validation.md](docs/validation.md).

@@ -525,6 +525,16 @@ PERFECTLY while JaVaFo 2.2 differs from both on the same 2.47%. That
 every comparison in this file above was measured against JaVaFo, i.e.
 against the superseded rules.
 
+> **Correction (2026-09-10):** the "2022" in "2022 -> 2026 rule change"
+> above is not a FIDE edition - it is read straight off `DUTCH_RULES[0]`
+> in the Gacrux quotation two lines up, Gacrux's own bookkeeping tag for
+> the ruleset it replaces, not an edition year FIDE ever published. FIDE's
+> name for that ruleset is the 2017 edition - approved at the 87th
+> Congress, Baku 2016, with Terms and Definitions and Pairing Guidelines
+> For Programmers added at the 88th, Goynuk 2017 - in force until 31
+> January 2026. The label spread through this file and others from this
+> one line; see `docs/fide-criteria.md` for the corrected naming.
+
 ### 324 rounds was not enough to call the references a ruler
 
 The "100% agreement" above was originally measured over **324 rounds**,
@@ -611,8 +621,8 @@ all" - has now been acted on and is resolved; see below.**
 
 Verified on a second, independent code path: the three-way harness has
 Ainalrami matching **both** references on 1261/1261 rounds. And javafo
-stays at 96.26%, which is the control - it implements the 2022 rules, so
-an engine that agreed with all three at once would mean the harness was
+stays at 96.26%, which is the control - it implements the 2017 edition,
+so an engine that agreed with all three at once would mean the harness was
 measuring nothing.
 
 **The last fix was C8 counting the wrong pairs.** `lowerPlayerInNextBracket`
@@ -1303,7 +1313,8 @@ moved away from - which is why it reads as disagreeing with the stages
 when the stages are right. Do not chase the 71 as a tie-break bug.
 
 Against javafo at 4-40 the same swap is 89.31% -> 94.18%, and javafo is
-on the superseded 2022 rules, so full agreement there is not the goal.
+on the 2017 edition, superseded on 31 January 2026, so full agreement
+there is not the goal.
 
 The gain is largest exactly where it matters: a 60-80 player open is the
 ordinary case, and the engine went from getting four rounds in five right
