@@ -51,25 +51,23 @@ jobs:
     - name: Compile
       run: mix compile --warnings-as-errors
 
-    # test/support/colour_article.ex is excluded, and only that file. The
-    # formatter wants to strip the parentheses out of
-    # `(a == b) == (c == d)`; the expression is Article 5.2.5's parity rule
-    # written to be checkable line by line against the regulation text, and
-    # `a == b == c` is the same value written so that nobody can check it.
-    # Excluded here rather than reformatted, so `mix format` on the rest of
-    # the tree stays enforced.
+    # Plain, with no exclusions - which it was not until 2026-09-10.
     #
-    # The file list mirrors `.formatter.exs`'s own `:inputs` rather than
-    # "every .ex in the repo": `tools/` is outside it and is not formatted,
-    # and widening the check here would fail the build over a file the
-    # project does not ask to be formatted.
+    # test/support/colour_article.ex used to be excluded by name, because the
+    # formatter wanted to strip the parentheses out of
+    # `(rem(number, 2) == 1) == initial_white?` and `a == b == c` is the same
+    # value written so that nobody can check it against the regulation. That
+    # was a fair reason to refuse the formatter and a poor reason to keep a
+    # special case in CI forever: binding the parity to a name says what the
+    # expression MEANS, reads better than either version, and the formatter
+    # has no opinion about it.
+    #
+    # No file list either. `mix format` with no arguments uses
+    # `.formatter.exs`'s own `:inputs`, which is what the hand-built list was
+    # imitating - `tools/` sits outside those inputs and is not formatted, so
+    # nothing widens and nothing has to be kept in step by hand.
     - name: Check formatting
-      run: |
-        mix format --check-formatted $(
-          git ls-files config lib test mix.exs .formatter.exs \
-            | grep -E '\.exs?$' \
-            | grep -v '^test/support/colour_article\.ex$'
-        )
+      run: mix format --check-formatted
 
     # javafo.jar and bbpPairings.exe are third-party binaries this repo does
     # not vendor (see test/test_helper.exs and the two harness moduledocs);

@@ -122,7 +122,16 @@ defmodule Ainalrami.Test.ColourArticle do
           # 5.2.5: the higher ranked player holds the initial colour on an
           # odd number and the opposite on an even one.
           number ->
-            if (rem(number, 2) == 1) == initial_white?, do: top.rank, else: bottom.rank
+            odd? = rem(number, 2) == 1
+
+            # Named rather than inlined, because the formatter removes the
+            # parentheses from `(rem(number, 2) == 1) == initial_white?` -
+            # correctly, since `==` is left-associative, but the result reads
+            # as a chained comparison and chained comparisons are usually a
+            # bug. This file is the instrument that decides whether an engine
+            # obeys Article 5.2.5; it is the last place to leave an
+            # expression that looks wrong to somebody checking it.
+            if odd? == initial_white?, do: top.rank, else: bottom.rank
         end
     end
   end
@@ -177,7 +186,15 @@ defmodule Ainalrami.Test.ColourArticle do
           # odd number, so: odd and White means the initial colour was white;
           # odd and Black means it was black; and the even cases invert.
           number ->
-            (top.rank == white_rank) == (rem(number, 2) == 1)
+            top_took_white? = top.rank == white_rank
+            odd? = rem(number, 2) == 1
+
+            # Both sides named, for the same reason as `initial_colour/3`
+            # above: the formatter reduces the parenthesised form to
+            # `a == b == (c == d)`, which is the same value written so that
+            # nobody can check it against the regulation. Two bindings and
+            # one comparison say what the rule is.
+            top_took_white? == odd?
         end
     end
   end
