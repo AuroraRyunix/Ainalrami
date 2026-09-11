@@ -268,8 +268,8 @@ changed to match both references. What is left is one limit of method.
 
 - [x] ~~**Re-read what `:reach` filed while it was weakened.**~~
       **Adjudicated 2026-09-08** - see
-      [docs/finding-gacrux-5-2-5.md](docs/finding-gacrux-5-2-5.md), ready to
-      file upstream. Measured 2026-08-29 (`ain_val_run` on Photon, engine
+      [docs/finding-gacrux-5-2-5.md](docs/finding-gacrux-5-2-5.md), and
+      reported upstream. Measured 2026-08-29 (`ain_val_run` on Photon, engine
       `af6261c`; the corpus has since been rescued to
       `../ain_val_run_2026-08-29`, sibling to this repo).
 
@@ -346,8 +346,8 @@ changed to match both references. What is left is one limit of method.
 
 - [x] ~~**Read the boards where the two REFERENCES disagree about colour.**~~
       **Adjudicated 2026-08-28** - see
-      [docs/finding-gacrux-5-2-4.md](docs/finding-gacrux-5-2-4.md), ready to
-      file upstream.
+      [docs/finding-gacrux-5-2-4.md](docs/finding-gacrux-5-2-4.md), and
+      reported upstream.
 
       The paired corpus run found exactly **two** such boards in 7,392,594,
       one on the forfeit axis and one on the combined axis, and re-running

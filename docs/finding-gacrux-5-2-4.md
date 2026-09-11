@@ -1,6 +1,6 @@
 # Finding: Gacrux reads Article 5.2.4's "higher ranked" as TPN order
 
-**Status: adjudicated 2026-08-28, ready to file upstream.**
+**Status: adjudicated 2026-08-28, and reported upstream.**
 Not a finding against this engine. Ainalrami and bbpPairings agree on both
 boards; Gacrux is alone.
 
