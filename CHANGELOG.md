@@ -61,7 +61,7 @@ invisible to any corpus this generator can produce and a third had been
 breaking a matcher invariant 734 times per 800 tournaments while agreeing
 with the reference on every one of them.
 
-## [Unreleased]
+## [0.26.1] - 2026-09-11
 
 ### Fixed
 
