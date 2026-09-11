@@ -61,6 +61,41 @@ invisible to any corpus this generator can produce and a third had been
 breaking a matcher invariant 734 times per 800 tournaments while agreeing
 with the reference on every one of them.
 
+## [Unreleased]
+
+### Fixed
+
+- [Fix] **A valid TRF-2026 file could be rejected over its own points table.**
+  FIDE's published TRF-2026 defines, in the `162` points-table line, the
+  symbol `X`: the points an UNKNOWN result (`?`) is worth - "like for
+  instance in an adjourned game", a draw's points by default. `parse_point_system/2`
+  (`lib/ainalrami/trf.ex`) refused any `162` line containing `X` outright,
+  so a file that used FIDE's own symbol failed to parse, and OpenPairings'
+  TRF import - which delegates to this reader - failed on it too.
+
+  `X` is now read like the other four `162` symbols and stored under the
+  point system's `:unknown` key. The refusal this project argued for is
+  unchanged: `points_for/2` and `points_for_game/2` still raise
+  `UnknownResultError` for a `?` result when the file declared no `X` -
+  guessing a draw by the spec's own default would be exactly the invented
+  value this module has refused everywhere else since `?` was read. Once a
+  file's own `162` line HAS declared `X`, though, returning that value is
+  reading the file rather than guessing past it, so `points_for/2` and
+  `points_for_game/2` now return it. `game_was_played?/1` still raises for
+  `?` regardless of a declared `X`: `X` is a score, not a statement about
+  whether a game was played, and that predicate cannot see a point system
+  at all. A symbol the `162` line does not define - anything other than
+  `W`/`D`/`L`/`Z`/`A`/`P`/`X` - is still refused exactly as before.
+
+  The `:trf26` writer (`point_system_lines/2`) now carries a declared `X`
+  back out on a round trip, appended after `P` even when every other value
+  is the standard one - otherwise a file read in with an `X` and written
+  back out would silently lose it. `:unknown` is only ever present when a
+  `162` line put it there, so a file without `X` writes the identical `162`
+  line (or absence of one) it always did; the `:engine` dialect has no `X`
+  equivalent to lose, since bbpPairings does not implement the symbol
+  either.
+
 ## [0.26.0] - 2026-09-10
 
 ### Fixed

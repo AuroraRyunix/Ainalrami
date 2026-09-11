@@ -129,11 +129,26 @@ defmodule Ainalrami.PointSystemTest do
       assert t[:point_system].forfeit_loss == 0.3
     end
 
-    test "the symbol the reference refuses is refused here too" do
-      # `X` throws `InvalidLineException("symbol X not supported")` there.
-      # Guessing at it would mean pairing a tournament on invented scores.
-      assert_raise Trf.ValidationError, ~r/symbol X/, fn ->
-        Trf.parse("012 P\n162  X 1.0 \n")
+    test "X parses like the other symbols, stored under :unknown" do
+      # FIDE TRF-2026's own symbol for what an unknown (`?`) result is
+      # worth - unimplemented by the reference, which predates TRF-2026, but
+      # a file that declares it is stating a value, not asking this engine
+      # to invent one. `Ainalrami.UnknownResultTest` covers what happens
+      # once `points_for/2` sees a declared X against a `?` result.
+      line = "162  " <> "W 2.0    " <> "D 1.0    " <> "X 0.5    "
+
+      %{tournament: t} = Trf.parse("012 P\n" <> line <> "\n")
+
+      assert t[:point_system].win == 2.0
+      assert t[:point_system].draw == 1.0
+      assert t[:point_system].unknown == 0.5
+    end
+
+    test "a symbol nothing defines is still refused" do
+      # `X` moved from "refused" to "read"; a symbol that is not `X` either
+      # must not follow it there by accident.
+      assert_raise Trf.ValidationError, ~r/unknown result symbol/, fn ->
+        Trf.parse("012 P\n162  Q 1.0 \n")
       end
     end
 
@@ -244,6 +259,51 @@ defmodule Ainalrami.PointSystemTest do
         |> Trf.parse()
 
       assert round_tripped.tournament[:point_system] == system
+    end
+
+    test "a declared X is appended after P and leaves the rest of the line untouched" do
+      system = %{Trf.default_point_system() | win: 2.0}
+      base_data = %{tournament: %{name: "P", type: "swiss", point_system: system}, players: []}
+
+      without_x = Trf.serialize(base_data, dialect: :trf26)
+
+      with_x =
+        base_data
+        |> put_in([:tournament, :point_system], Map.put(system, :unknown, 0.5))
+        |> Trf.serialize(dialect: :trf26)
+
+      line_162 = fn text ->
+        text |> String.split("\r\n") |> Enum.find(&String.starts_with?(&1, "162"))
+      end
+
+      assert line_162.(with_x) == line_162.(without_x) <> "    X 0.5"
+    end
+
+    test "a declared X survives a :trf26 round trip even when every other field is standard" do
+      # The one case the "write nothing when it's all standard" rule would
+      # otherwise get wrong: a file read in with an X and written back out
+      # must not silently lose the one thing it declared.
+      system = Map.put(Trf.default_point_system(), :unknown, 0.5)
+      data = %{tournament: %{name: "P", type: "swiss", point_system: system}, players: []}
+
+      trf = Trf.serialize(data, dialect: :trf26)
+      assert trf =~ "162"
+
+      round_tripped = Trf.parse(trf)
+      assert round_tripped.tournament[:point_system][:unknown] == 0.5
+    end
+
+    test "a system with no declared X writes the :trf26 162 line exactly as before" do
+      # `Ainalrami.Trf26Test` already pins one full 162 line byte for byte;
+      # this pins that adding X support did not touch the "nothing declared"
+      # path for the other four symbols either.
+      system = %{Trf.default_point_system() | win: 2.0, draw: 1.0}
+      data = %{tournament: %{name: "P", type: "swiss", point_system: system}, players: []}
+
+      trf = Trf.serialize(data, dialect: :trf26)
+      line = trf |> String.split("\r\n") |> Enum.find(&String.starts_with?(&1, "162"))
+
+      assert line == "162  W 2.0    D 1.0    L 0.0    A 0.0    P 1.0"
     end
   end
 

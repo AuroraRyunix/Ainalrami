@@ -87,18 +87,32 @@ defmodule Ainalrami.Trf do
       consulted on the draft. `validate_game!/5` refuses an unrecognized
       code exactly as it always did.
 
-  Everything downstream that would have to invent a value refuses instead:
+  Everything downstream that would have to invent a value refuses instead,
+  with one exception the FILE itself can open:
 
     * `points_for/2` and `points_for_game/2` raise
-      `Ainalrami.Trf.UnknownResultError`. No number is honest here: `0`
-      asserts the player scored nothing and every other value asserts more.
-      A score is a sum, and a sum with an unknown term has no value either,
-      so the refusal IS the answer rather than a policy laid over one;
-    * `game_was_played?/1` raises for the same reason. FIDE Art. 16 turns on
-      whether a game was played, and a `?` does not say - answering `false`
-      would file it with the forfeits and the byes, which is a stronger
-      claim than the file makes. Colour history and C2 bye eligibility are
-      both built on this predicate, so both refuse too;
+      `Ainalrami.Trf.UnknownResultError` - UNLESS the file's own `162` line
+      declared `X`, FIDE TRF-2026's symbol for what an unknown result is
+      worth (`parse_point_system/2` stores it under the point system's
+      `:unknown` key). Then they return that declared value instead. This is
+      not the invented default the rest of this section refuses: the FILE
+      made the claim, not the engine, so reading it back is reading the
+      file rather than guessing past it. With no `X` declared, the refusal
+      is exactly as before - `0` asserts the player scored nothing and
+      every other value asserts more, a score is a sum, and a sum with an
+      unknown term has no value either, so the refusal IS the answer rather
+      than a policy laid over one. The spec's own "a draw's points by
+      default" is deliberately NOT applied to an undeclared `X`: assuming a
+      draw on the engine's own authority is exactly the invention this
+      module refuses everywhere else;
+    * `game_was_played?/1` raises for the same reason, and a declared `X`
+      changes nothing about it. FIDE Art. 16 turns on whether a game was
+      played, and a `?` does not say - answering `false` would file it with
+      the forfeits and the byes, which is a stronger claim than the file
+      makes. `X` is a SCORE, not a statement about whether a game took
+      place, so it cannot settle this question even when declared. Colour
+      history and C2 bye eligibility are both built on this predicate, so
+      both refuse too;
     * `participated_in_pairing?/1` does NOT raise: it has an honest answer.
       A `?` carries an opponent, so the player was in the pairing whatever
       became of the game. `rounds_played/1` rests on it, so a file with an
@@ -328,9 +342,12 @@ defmodule Ainalrami.Trf do
     * `0` `L` - a played loss pays `:loss`.
     * `-` - a forfeit loss pays `:forfeit_loss`, which an organiser may set
       above zero even though a played loss is zero.
-    * `?` - RAISES `Ainalrami.Trf.UnknownResultError`. See the moduledoc:
-      there is no honest value, and the blank-and-`Z` default below would
-      quietly assert that the player scored nothing.
+    * `?` - the declared `X` value from the file's own `162` line, under the
+      `:unknown` key `parse_point_system/2` stores it in - or, if the file
+      declared none, RAISES `Ainalrami.Trf.UnknownResultError`. See the
+      moduledoc: with no `X` declared there is no honest value, and the
+      blank-and-`Z` default below would quietly assert that the player
+      scored nothing.
     * anything else, `Z` and a blank included - `:zero_point_bye`.
   """
   def points_for(result), do: points_for(result, default_point_system())
@@ -351,10 +368,19 @@ defmodule Ainalrami.Trf do
   # Before the catch-all, and that ORDER is the whole guarantee: `?` would
   # otherwise fall through to `zero_point_bye` and be scored as a nought,
   # which is exactly the silent conversion of a file that says "not known"
-  # into one that says "lost".
-  def points_for("?", _points) do
-    raise UnknownResultError,
-      message: "result \"?\" is not known, so it cannot be scored"
+  # into one that says "lost". `:unknown` is only ever present here because
+  # the FILE's own `162` line declared an `X` value (`parse_point_system/2`)
+  # - never defaulted - so returning it is reading the file's claim, not
+  # inventing one.
+  def points_for("?", points) do
+    case Map.fetch(points, :unknown) do
+      {:ok, value} ->
+        value
+
+      :error ->
+        raise UnknownResultError,
+          message: "result \"?\" is not known, so it cannot be scored"
+    end
   end
 
   def points_for(_result, points), do: points.zero_point_bye
@@ -389,9 +415,11 @@ defmodule Ainalrami.Trf do
   not appear here are the ones bbpPairings rejects outright: `0000 - 1`,
   `0000 - 0` and a bare `Z` against an opponent are all invalid lines.
 
-  `?` reaches `points_for/2` in every combination and raises there, opponent
-  or none. Reading the opponent could not help: knowing that a game had two
-  seats says nothing about what it was worth.
+  `?` reaches `points_for/2` in every combination and behaves exactly as it
+  does there, opponent or none: raises unless the file's own `162` line
+  declared `X`, in which case it returns that declared value. Reading the
+  opponent could not help either way - knowing that a game had two seats
+  says nothing about what an unknown result was worth.
   """
   def points_for_game(game), do: points_for_game(game, default_point_system())
 
@@ -413,12 +441,15 @@ defmodule Ainalrami.Trf do
   them.
 
   `?` RAISES `Ainalrami.Trf.UnknownResultError` rather than answering
-  either way. A boolean has no room for "not known", and both answers are
-  claims the file does not make: `false` files the game with the forfeits
-  and the byes, which is what FIDE Art. 16 means by unplayed, and `true`
-  asserts a game whose only record is that nobody knows. The callers that
-  matter - colour history and bye eligibility - would both act on the
-  answer, so an invented one propagates into a pairing.
+  either way, and a declared `X` (see `points_for/2`) changes nothing about
+  that: `X` is a score, not a statement about whether the game was played,
+  so it cannot answer this predicate even when the file has declared one.
+  A boolean has no room for "not known", and both answers are claims the
+  file does not make: `false` files the game with the forfeits and the
+  byes, which is what FIDE Art. 16 means by unplayed, and `true` asserts a
+  game whose only record is that nobody knows. The callers that matter -
+  colour history and bye eligibility - would both act on the answer, so an
+  invented one propagates into a pairing.
   """
   def game_was_played?(nil), do: false
 
@@ -854,14 +885,24 @@ defmodule Ainalrami.Trf do
   # so it pins the bye against `W` dragging it. What `162` cannot say - a
   # forfeit loss worth something other than the zero-point bye it folds it
   # into, and the `299` overrides - follows as `299` records.
+  #
+  # A declared `X` (`:unknown`, see `parse_point_system/2`) is appended
+  # after `P` whenever the system carries one, even if the other five
+  # values are all standard - otherwise a file read in with an `X` and
+  # written back out would silently lose it, which is the one thing a
+  # round trip must not do to a value the file itself declared. `:unknown`
+  # is never present unless a `162` line put it there, so a file without
+  # `X` writes exactly the `162` line (or absence of one) it always did.
   defp point_system_lines(system, :trf26) do
     default = default_point_system()
 
     standard? =
       Enum.all?(default, fn {field, value} -> Map.get(system, field, value) == value end)
 
+    declared_unknown = Map.get(system, :unknown)
+
     line_162 =
-      if standard? do
+      if standard? and is_nil(declared_unknown) do
         []
       else
         entries =
@@ -875,6 +916,11 @@ defmodule Ainalrami.Trf do
             value = Map.get(system, field, Map.fetch!(default, field))
             symbol <> String.pad_leading(format_points(value), 4)
           end
+
+        entries =
+          if declared_unknown,
+            do: entries ++ ["X" <> String.pad_leading(format_points(declared_unknown), 4)],
+            else: entries
 
         ["162  " <> Enum.join(entries, "    ")]
       end
@@ -1963,8 +2009,13 @@ defmodule Ainalrami.Trf do
 
   # `162 <char><score> <char><score> ...`, nine columns per entry starting at
   # column 6 (`readPointSystem`, trf.cpp:573-631). `A` is a synonym for `Z`
-  # and sets the forfeit loss along with it; `X` is explicitly unsupported by
-  # the reference, so it is refused here rather than guessed at.
+  # and sets the forfeit loss along with it. `X` is FIDE TRF-2026's symbol
+  # for what an unknown (`?`) result is worth - unimplemented by the
+  # reference, which predates TRF-2026, but a file that declares it is
+  # stating a value, not asking this engine to invent one, so it is stored
+  # under `:unknown` rather than refused; see the moduledoc's "The `?`
+  # unknown result" for what reads it back and what still refuses without a
+  # declared `X`.
   defp parse_point_system(acc, line) do
     line
     |> String.slice(5..-1//1)
@@ -1994,8 +2045,7 @@ defmodule Ainalrami.Trf do
           acc |> put_point(:pairing_allocated_bye, score) |> Map.put(:pab_pinned?, true)
 
         "X" ->
-          raise ValidationError,
-            message: "162 line uses symbol X, which no reference implements: #{line}"
+          put_point(acc, :unknown, score)
 
         other ->
           raise ValidationError,

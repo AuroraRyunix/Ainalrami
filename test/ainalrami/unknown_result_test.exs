@@ -167,6 +167,75 @@ defmodule Ainalrami.UnknownResultTest do
     end
   end
 
+  describe "a declared X value" do
+    # FIDE TRF-2026 defines, in the `162` points-table line, the symbol `X`:
+    # the points an unknown (`?`) result is worth - "like for instance in an
+    # adjourned game", a draw's points by default. `Ainalrami.PointSystemTest`
+    # covers `162` itself (parsing X, and the writer carrying a declared one
+    # back out); this section covers what `?` is worth once the file has
+    # made that claim.
+    test "? scores the declared X value, not the default draw" do
+      system = Map.put(Trf.default_point_system(), :unknown, 0.0)
+      assert Trf.points_for("?", system) == 0.0
+    end
+
+    test "? scores the declared X value when it happens to be a draw" do
+      system = Map.put(Trf.default_point_system(), :unknown, 0.5)
+      assert Trf.points_for("?", system) == 0.5
+    end
+
+    test "? as a game scores the declared X value too, opponent or none" do
+      system = Map.put(Trf.default_point_system(), :unknown, 0.25)
+
+      assert Trf.points_for_game(%{opponent_rank: 2, result: "?"}, system) == 0.25
+      assert Trf.points_for_game(%{opponent_rank: nil, result: "?"}, system) == 0.25
+    end
+
+    test "without a declared X, ? still raises exactly as before" do
+      # The spec's own "a draw's points by default" is deliberately not
+      # applied here: an undeclared X is this engine's existing refusal,
+      # unchanged.
+      assert_raise UnknownResultError, fn -> Trf.points_for("?") end
+      assert_raise UnknownResultError, fn -> Trf.points_for("?", Trf.default_point_system()) end
+
+      assert_raise UnknownResultError, fn ->
+        Trf.points_for_game(%{opponent_rank: 2, result: "?"})
+      end
+    end
+
+    test "whether the game was played still raises, whatever X says" do
+      # `game_was_played?/1` takes no point system at all - it cannot see a
+      # declared X, and would not act on one if it could: X is a score, not
+      # a statement about whether the game was played.
+      assert_raise UnknownResultError, fn -> Trf.game_was_played?("?") end
+    end
+
+    test "a declared X settles the score but not whether the game was played" do
+      # `points_for/2` no longer raises here - the file declared X - but
+      # colour history and float direction both ask `game_was_played?/1`
+      # too, and that predicate does not look at the point system at all
+      # (see above). A `?` in the most recent round still stops the round
+      # it would have stopped before pairing needed a score at all; a
+      # declared X settles what the game was WORTH, not whether it happened.
+      players = [
+        player(1, [%{opponent_rank: 2, colour: "w", result: "?"}]),
+        player(2, [%{opponent_rank: 1, colour: "b", result: "?"}]),
+        player(3, [%{opponent_rank: 4, colour: "w", result: "1"}]),
+        player(4, [%{opponent_rank: 3, colour: "b", result: "0"}])
+      ]
+
+      system = Map.put(Trf.default_point_system(), :unknown, 0.5)
+
+      assert_raise UnknownResultError, fn ->
+        Pairing.pair_next_round(players,
+          expected_rounds: 5,
+          initial_colour: "w",
+          point_system: system
+        )
+      end
+    end
+  end
+
   describe "serialize/1" do
     test "refuses ?, in both dialects, and says it is read-only" do
       for dialect <- [:engine, :trf26] do
