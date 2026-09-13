@@ -63,6 +63,8 @@ with the reference on every one of them.
 
 ## [Unreleased]
 
+## [0.27.0] - 2026-09-13
+
 ### TRF writer
 
 - [Feature] **`Trf.serialize/2` takes `xxc: true`**, writing the initial
