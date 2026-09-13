@@ -29,3 +29,12 @@ erl_crash.dump
 # nothing.
 /forced_exchange.trf
 /solve_input.bin
+
+# AI assistant files (Claude Code and other coding agents): kept locally, never committed
+CLAUDE.md
+CLAUDE.local.md
+AGENTS.md
+agents.md
+.claude/
+.mcp.json
+graphify-out/
