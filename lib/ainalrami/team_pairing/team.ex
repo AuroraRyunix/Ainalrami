@@ -44,6 +44,20 @@ defmodule Ainalrami.TeamPairing.Team do
       FIDE-deprecated full-point bye. [C2] bars these from the PAB on the
       same footing as a previous PAB, which is why they are one condition
       (`pab_ineligible?/1`) rather than three checks at the call site.
+      **Open question 6** - what "won a match by forfeit" means - is the
+      host's to answer, because only the host knows how a match was
+      recorded; this engine takes the boolean. The reading OpenPairings
+      implements, and the one this project proposes: the opponent did not
+      turn up as a team, i.e. every board it should have filled was
+      forfeited. A match with at least one board actually played is not a
+      forfeit win, however many other boards were. The research note of
+      2026-09-13 (docs/conformance-c0406-teams.md, "Research findings")
+      supports it at high confidence: the 2024 [C2] said "without playing";
+      Double-Swiss C.04.5, which shares the 2026 wording, defines a
+      forfeited match as one where a side forfeited every game; TRF-2026's
+      record 330 is "one or both teams didn't show up". Whether a match
+      forfeited "by decision" after games were played counts is left open
+      (medium confidence that it does not).
     * `:floated_last_round?` - was a floater (1.5: played an opponent with a
       different score) in the previous round. Read by [C7] and [C10], both
       of which stop applying in the last two rounds.

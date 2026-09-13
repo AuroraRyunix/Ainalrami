@@ -174,10 +174,13 @@ parity for every team below it.
 
 `Colour` cannot fix that - the absent team is not in its scope at all - so
 the fix belongs on `TeamPairing.pair_round/2`, as an explicit roster or
-absentee argument distinct from "the teams to pair this round". Until then
-the divergence is stated in `Colour`'s moduledoc and pinned by a test
-rather than left for a reader to discover. **Not measured, because there is
-nothing to measure it against**: C.04.6 has no automatable oracle (below).
+absentee argument distinct from "the teams to pair this round".
+
+**Fixed 2026-09-13 (branch `team-swiss`):** `pair_round/2` takes
+`:absent`, the TPNs of teams that have arrived but are not in this round's
+field, and `Colour.parity_numbers/2` numbers them without pairing them. The
+host holds the round-by-round record, so the host names them; a host that
+omits the option gets the old numbering.
 
 ## Type A and Type B
 
@@ -307,21 +310,27 @@ says "[C5] determines that two upfloaters must have 3 points and the other
 which is a *larger* score difference. It asserts that step rather than
 deriving it, and no other article visible in the chapter forces it.
 
-**The implementation follows the article, not the example**: [C5] takes the
-highest-scoring candidates, so the same position produces {2,6,8}. The
-example's own ORDERING - `{2,6,1} < {2,6,3} < {2,6,5} < {2,8,1} < ...` - is
-unambiguous and is implemented and tested exactly as written; only the
-profile it starts from is in question.
+**The implementation follows the article, judged over legal sets**
+(`TeamPairing.c5_profile_key/2`, reached only for sets that pass
+`legal_set?/3`): [C5] takes the best score profile among the sets of the
+[C4]-minimal size whose bracket can be paired and whose remainder can too.
+With no history the example's position produces {2,6,8}; if {2,6,8} cannot
+be paired, it produces the example's {2,6,1}. The example's own ORDERING -
+`{2,6,1} < {2,6,3} < {2,6,5} < {2,8,1} < ...` - is implemented and tested
+exactly as written.
 
-Both readings are pinned by tests in `team_pairing_test.exs` ("3.5.4 orders
-candidate sets lexicographically by TPN" and "[C5] takes every top-scoring
-candidate when it can"), so whichever way this is resolved, the test that
-fails names the decision.
+Pinned both ways in `team_pairing_test.exs`: "[C5] takes every top-scoring
+candidate when it can" and "the 3.5.4 example exactly as printed: {2,6,8}
+cannot be paired, so {2,6,1}".
 
-One possibility worth checking with the SPP: the example may be carrying an
-unstated [C6] constraint, since taking all three 3-pointers empties that
-scoregroup and [C6]'s "unless ... this scoregroup is now empty" clause turns
-off exactly when it does.
+The [C6] explanation this section once suggested is **ruled out** by the
+research findings below: 3.5.5 has [C4]/[C5] met "by construction" before
+[C6] is looked at, and the same example is in the 2024 edition, which had
+no "unless ... empty" clause.
+
+**The first cut got [C4] and [C5] the wrong way round**: it fixed the
+profile from raw scores and, when no set with that profile was pairable,
+grew the set by two. That broke [C4] to keep [C5]. Fixed 2026-09-13.
 
 ### 3.6.4 names minimisation criteria as if they were predicates
 
@@ -341,13 +350,59 @@ and most ordinary brackets hit on the first try.
 ### [C7] is a minimisation applied to a choice between sets
 
 2.3.4 minimises upfloaters that were floaters in the previous round, and
-3.5.5 asks for "the first set that ... complies with [C6] and [C7]". The
-implementation takes 3.5.4's order and applies legality plus [C6] as a gate,
-which means [C7] currently acts as part of the ordering rather than as a
-separate ranking pass. A stricter reading would rank surviving sets by their
-[C7] count before applying 3.5.4's tie-break. Recorded rather than guessed;
-it changes behaviour only when a lexicographically earlier set carries more
-previous-round floaters than a later one.
+3.5.5 asks for "the first set that ... complies with [C6] and [C7]".
+
+**What this section used to say was not what the code did.** It described
+legality plus [C6] as a gate with [C7] "acting as part of the ordering".
+In fact `workable?/3` checked only that the bracket could be paired: not
+[C3] for the teams outside it, not [C6] (whatever its comment said), and
+[C7] had no effect whatsoever.
+
+Since 2026-09-13 `TeamPairing.select_upfloaters/4` applies, in 2.3's order:
+[C4] (the smallest size with a legal set - bracket pairable AND the rest
+pairable, [C1] and [C3]); [C5] among those; then the least [C6] excess
+(`c6_excess/4`: how many more upfloaters than the parity minimum the
+following scoregroup's bracket would need, [C1]/[C3]/[C4] there, zero
+when that scoregroup is emptied); then the least [C7] count
+(`c7_previous_floaters/2`, zero in the last two rounds); then 3.5.4's order.
+
+The two readings question 7 put to the SPP ("rank by [C7], then 3.5.4" and
+"the first set in 3.5.4's order achieving the minimum") choose the same set.
+The reading that differs, and is rejected, is "the first legal set in 3.5.4's
+order whatever its [C7] count" - the first cut's behaviour.
+
+## Research findings, 2026-09-13 (not SPP rulings)
+
+A research pass answered open questions 5-7 from the 2024 edition's edit
+history, Double-Swiss C.04.5 and Dubov C.04.4.1 from the same 2026 wave,
+TRF-2026, the 2026 Olympiad regulations and the Swiss-Manager guide. No
+published event could be checked: Olympiads are paired by the Olympiad
+Pairing Rules, and Swiss-Manager only switched its team Swiss to Gacrux in
+July 2026.
+
+| Q | Reading implemented | Where | Confidence |
+|---|---|---|---|
+| 5 | [C5]'s best profile among LEGAL sets ([C3] kept) of the [C4]-minimal size; the 3.5.4 example holds when {2,6,8} cannot be paired. Not [C6]. | `TeamPairing.c5_profile_key/2`, `legal_set?/3` | medium-high (high that it is not [C6]) |
+| 6 | A match is won by forfeit when the opponent played no game in it (every board forfeited). One game played makes it a played match, which does not bar the bye. | the host's `%Team{won_by_forfeit?: _}`; documented on `Team` | high; medium for matches forfeited by decision after play |
+| 7 | Minimise [C7] among compliant sets, then 3.5.4's order. | `TeamPairing.c7_previous_floaters/2` | high |
+
+Evidence in brief. **Q5:** the example is word for word in the 2024 edition
+and in Double-Swiss, both with the same maximin [C5]; 3.5.2's note says the
+criteria "somehow" determine the count and scores, and Dubov 2026 says the
+count is the minimum "needed to obtain a legal pairing". **Q6:** 2024's
+[C2] said "without playing"; Double-Swiss, which shares the 2026 wording,
+says a match "ends by forfeit only if at least one player forfeits both
+games" and treats partial forfeits as played; TRF-2026 record 330 is "one or
+both teams didn't show up", a team showing up "if at least one player is
+present"; the 2026 Olympiad defines an unplayed match as one where "all
+games were scored as defaults". **Q7:** 2.3 says "as much as possible ...
+in descending priority", "the first X that complies with [a minimisation]"
+is the chapter's standing phrasing (3.6.4), Dubov 2026 says "complies at
+best", and 2026 moved floater avoidance up into set selection.
+
+C.04.2 3.5 also settles a point the host needs: "two paired participants,
+who did not play their game or match, may be paired together in a future
+round" - a match forfeited as a whole is not a meeting for [C1].
 
 ## Open questions
 
@@ -365,14 +420,37 @@ previous-round floaters than a later one.
   oracle (see above), so there is no team corpus to re-run. The individual
   side's disputed-board counts do move, and re-measuring them is that
   side's work, not recorded here.
-* **The absent team's number (4.3.1).** Open, and a defect rather than an
-  unwritten rule: a team that arrived and is then absent for a round loses
-  its number here, where the individual side keeps it. `pair_round/2` needs
-  an absentee or full-roster argument to tell "never arrived" from "arrived,
-  not playing today"; `Colour` cannot see the difference. See Article 4
-  above and `Colour`'s moduledoc.
-* **Board order.** Unspecified by FIDE; needs a product decision, and it
-  interacts with whatever the host application stores per player.
-* **Forfeited matches.** [C2] mentions winning a match by forfeit, which
-  implies a match-level forfeit concept distinct from a board-level one.
-  Needs its own pass against Article 1.
+* ~~**The absent team's number (4.3.1).**~~ **Closed 2026-09-13**:
+  `pair_round/2`'s `:absent`. See Article 4 above.
+* **Board order.** Unspecified by FIDE; a product decision for the host
+  (OpenPairings: the Teams page's roster order).
+* ~~**Forfeited matches.**~~ **Answered 2026-09-13** by research (question
+  6 above): the opponent played no game in the match. The host computes it.
+* **Questions 5-7** are answered by research, not ruled on. Still worth
+  sending to the SPP with the wording in OpenPairings'
+  `docs/teams-phase-2-plan.md`.
+
+## Validation, 2026-09-13
+
+`test/ainalrami/team_pairing_validation_test.exs`:
+
+* **A brute-force whole-round reference**, written from Articles 3.4-3.6
+  and 4 without sharing code with the engine, agrees on 371 reachable rounds
+  of 4-10 teams (generated by playing events through the engine with random
+  results, whole-match forfeits, byes and teams sitting out): 259 with an
+  upfloater bracket, 192 with a bye, 105 with an absent team.
+* **Absolute criteria** on generated events of 12, 17, 24, 31, 40 and 60
+  teams, every round: [C1], [C2], [C3], a bye exactly when the field is odd,
+  and every board's colours against the reference Article 4.
+* **Hand-worked positions** for [C3], [C4] (an even scoregroup that needs
+  upfloaters; [C4] over [C5]), [C5] (both variants of the 3.5.4 example),
+  [C6], [C7], [C6] over [C7], [C10] and 3.6.3.
+* **Mutation check**: removing [C3]'s look past the bracket, [C6], [C7],
+  [C5]-over-legal-sets, [C4]'s growth for even scoregroups, the absent
+  numbering, [C2]'s forfeit clause, 4.3.1's parity, 4.3.5 or [C10]'s
+  per-team count each fails at least one test. The whole-round reference
+  alone catches [C3], [C5], [C7], [C2] and 4.3.5; it does **not** catch
+  [C6] or the absent numbering (the generator rarely reaches positions they
+  decide), which only the hand-worked tests pin.
+
+Not done: the large-field crash and budget fuzz on the fuzz server.

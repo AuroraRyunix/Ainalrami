@@ -391,9 +391,15 @@ defmodule Ainalrami.TeamPairing.Bracket do
       if ctx.last_two_rounds? or MapSet.size(ctx.upfloaters) == 0 do
         0
       else
-        Enum.count(pairs, fn {a, b} ->
-          opponent_of_upfloater_floated?(a, b, ctx) or
-            opponent_of_upfloater_floated?(b, a, ctx)
+        # Counted per TEAM, as 2.3.7 reads ("the number of upfloaters'
+        # opponents"): when two upfloaters meet and both floated last round,
+        # each is an upfloater's opponent that floated, and that is two. It
+        # was counted once per pair; found by reading while writing the
+        # whole-round reference in `team_pairing_validation_test.exs`, whose
+        # generated rounds had not happened to reach the shape.
+        Enum.reduce(pairs, 0, fn {a, b}, n ->
+          n + bool_to_int(opponent_of_upfloater_floated?(a, b, ctx)) +
+            bool_to_int(opponent_of_upfloater_floated?(b, a, ctx))
         end)
       end
 
@@ -411,6 +417,9 @@ defmodule Ainalrami.TeamPairing.Bracket do
     MapSet.member?(ctx.upfloaters, upfloater_tpn) and
       Map.fetch!(ctx.by_tpn, opponent_tpn).floated_last_round?
   end
+
+  defp bool_to_int(true), do: 1
+  defp bool_to_int(false), do: 0
 
   defp done?(%{out_of_steps: true}), do: true
   defp done?(%{best_scores: {0, 0, 0}}), do: true

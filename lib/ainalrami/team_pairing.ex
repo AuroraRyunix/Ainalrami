@@ -63,6 +63,11 @@ defmodule Ainalrami.TeamPairing do
 
   import Bitwise
 
+  # How many candidate upfloater sets of one size 3.5 may enumerate. A set of
+  # one from sixty lower teams is sixty; a set of three is 34,220. Beyond this
+  # the round refuses rather than grinding - see `select_upfloaters/4`.
+  @default_max_upfloater_sets 200_000
+
   @doc """
   Pairs one round.
 
@@ -82,6 +87,16 @@ defmodule Ainalrami.TeamPairing do
     * `:type` - `:a` (default) or `:b` colour preferences (1.7).
     * `:initial_colour` - `:white` (default) or `:black`, drawn by lot
       before round one (4.1).
+    * `:absent` - TPNs of teams that have ARRIVED (played, or held a bye, in
+      an earlier round) but are not in this round's field: sitting a round
+      out, or withdrawn after playing. They are not paired, but they keep
+      their place in Article 4.3.1's arrival numbering, exactly as an absent
+      player does on the individual side. A team that has never arrived is
+      simply left out of both lists. A TPN in both `teams` and `:absent` is
+      `{:error, {:invalid_option, :absent, tpns}}`.
+    * `:max_upfloater_sets` - how many candidate upfloater sets 3.5 may
+      enumerate for one set size (default 200_000); beyond it the round is
+      `{:error, :budget_exhausted}`.
     * `:round` / `:expected_rounds` - both optional; together they decide
       "the last two rounds", which switch off [C7] and [C10], and "the last
       round", which switches off Type B mild preferences. Given neither, the
@@ -103,10 +118,26 @@ defmodule Ainalrami.TeamPairing do
   individual engine grew `explain_round/3`.
   """
   def pair_round(teams, opts \\ []) when is_list(teams) do
-    with {:ok, mode} <- validate_score_mode(Keyword.get(opts, :score_mode, :match_points)) do
-      do_pair_round(teams, opts, mode)
+    with {:ok, mode} <- validate_score_mode(Keyword.get(opts, :score_mode, :match_points)),
+         {:ok, absent} <- validate_absent(Keyword.get(opts, :absent, []), teams) do
+      do_pair_round(teams, opts, mode, absent)
     end
   end
+
+  defp validate_absent(absent, teams) when is_list(absent) do
+    if Enum.all?(absent, &is_integer/1) do
+      playing = MapSet.new(teams, & &1.tpn)
+
+      case Enum.filter(absent, &MapSet.member?(playing, &1)) do
+        [] -> {:ok, Enum.uniq(absent)}
+        both -> {:error, {:invalid_option, :absent, both}}
+      end
+    else
+      {:error, {:invalid_option, :absent, absent}}
+    end
+  end
+
+  defp validate_absent(absent, _teams), do: {:error, {:invalid_option, :absent, absent}}
 
   # `pair_round/2`'s `@doc` promises `{:ok, _} | {:error, _}`, and an unknown
   # `:score_mode` did not keep that promise: it was threaded unvalidated into
@@ -117,7 +148,7 @@ defmodule Ainalrami.TeamPairing do
   defp validate_score_mode(mode) when mode in [:match_points, :game_points], do: {:ok, mode}
   defp validate_score_mode(mode), do: {:error, {:invalid_option, :score_mode, mode}}
 
-  defp do_pair_round(teams, opts, mode) do
+  defp do_pair_round(teams, opts, mode, absent) do
     round = Keyword.get(opts, :round)
     expected = Keyword.get(opts, :expected_rounds)
 
@@ -128,7 +159,8 @@ defmodule Ainalrami.TeamPairing do
       type: Keyword.get(opts, :type, :a),
       last_round?: last_round?,
       last_two_rounds?: last_two?,
-      max_candidates: Keyword.get(opts, :max_candidates, 200_000)
+      max_candidates: Keyword.get(opts, :max_candidates, 200_000),
+      max_upfloater_sets: Keyword.get(opts, :max_upfloater_sets, @default_max_upfloater_sets)
     ]
 
     # Forwarded only when given, so the bracket's own default stays the one
@@ -145,7 +177,11 @@ defmodule Ainalrami.TeamPairing do
       # roster. Per pair it would be rebuilt for every board, which is the
       # class of regression the individual engine has already paid for
       # twice - see `Ainalrami.Pairing`'s note on `score_before/3`.
-      numbers = Colour.parity_numbers(teams)
+      #
+      # Over the teams paired AND the arrived-but-absent ones, so a team
+      # sitting this round out keeps its number and nobody below it shifts
+      # parity. Without `:absent` this is the list alone, as before.
+      numbers = Colour.parity_numbers(teams, absent)
 
       pairs =
         brackets
@@ -271,99 +307,270 @@ defmodule Ainalrami.TeamPairing do
   their TPNs. 3.5.5 take the first that yields a legal pairing also
   complying with [C6] and [C7].
 
-  [C4] and [C5] are satisfied *by construction* rather than searched for:
-  the count is forced (a bracket must be even, so it is 0 or 1 more than
-  parity demands... see below), and [C5] fixes which scores the upfloaters
-  must have. Only then does 3.5.4's order over the remaining freedom matter.
+  `lower` is EVERY team still to be paired below the top-scoregroup, not a
+  sample of it: [C3] is judged on what is left, so the residents and `lower`
+  together must be an even field (the PAB already taken out). An odd one is
+  `{:error, :odd_field}`.
 
-  ## What [C4] actually forces
+  ## The order the criteria are applied in
 
-  The bracket must be even (1.3.2). A scoregroup with an even number of
-  residents needs no upfloaters at all - and [C4] says minimise, so it takes
-  none. An odd one needs at least one. It can need more than one only when
-  the smaller count admits no legal pairing, which is why this returns the
-  first *workable* count rather than assuming the minimum works.
+  2.3 gives them "in descending priority", and that is the order here:
+
+    1. **[C4]** - the fewest upfloaters. The bracket must be even (1.3.2), so
+       the count starts at the residents' parity and grows by two, and a
+       count is only accepted if some set of that size is LEGAL: the bracket
+       it forms can be paired without a rematch ([C1]) and so can everything
+       left below it ([C3]).
+    2. **[C5]** - among the legal sets of that size, the best score profile
+       (`c5_profile_key/2`, where open question 5 is isolated).
+    3. **[C6]** - among those, the fewest extra upfloaters the following
+       scoregroup's bracket would need (`c6_excess/4`).
+    4. **[C7]** - then the fewest upfloaters that floated last round
+       (`c7_previous_floaters/2`, where open question 7 is isolated).
+    5. **3.5.4** - then the first set in lexicographic TPN order.
+
+  This replaced a first cut that took the minimum count only for an ODD
+  scoregroup (an even one could never float anyone in, so two residents who
+  had met stopped the round), jumped to a larger set when the best-profile
+  sets were illegal rather than relaxing [C5] first, never looked past the
+  bracket for [C3], and applied neither [C6] nor [C7].
   """
   def select_upfloaters(residents, lower, mode, base \\ [])
 
-  def select_upfloaters(residents, _lower, _mode, _base) when rem(length(residents), 2) == 0,
-    do: {:ok, []}
+  def select_upfloaters(residents, lower, _mode, _base)
+      when rem(length(residents) + length(lower), 2) == 1,
+      do: {:error, :odd_field}
 
-  def select_upfloaters(_residents, [], _mode, _base), do: {:error, :no_upfloaters_available}
+  def select_upfloaters(residents, [], _mode, _base) when rem(length(residents), 2) == 1,
+    do: {:error, :no_upfloaters_available}
 
   def select_upfloaters(residents, lower, mode, base) do
-    # [C4]: try 1 upfloater, then 3, then 5... Parity means the count must be
-    # odd when the residents are odd. Growing by two rather than one is not
-    # an optimisation, it is the only way the bracket stays even.
-    max_count = length(lower)
+    # [C4]: the fewest upfloaters that work. The bracket must be even
+    # (1.3.2), so the count starts at the residents' parity - 0 for an even
+    # scoregroup, 1 for an odd one - and grows by two. An EVEN scoregroup can
+    # need upfloaters too: two residents who have already met cannot be a
+    # bracket on their own, and neither can a scoregroup whose pairing would
+    # strand the teams below it ([C3]).
+    start = rem(length(residents), 2)
 
-    1..max_count//2
-    |> Enum.reduce_while({:error, :no_legal_upfloater_set}, fn count, _acc ->
-      case upfloater_sets(lower, count, mode) do
-        [] ->
-          {:cont, {:error, :no_legal_upfloater_set}}
-
-        sets ->
-          case Enum.find(sets, &workable?(residents, &1, base)) do
-            nil -> {:cont, {:error, :no_legal_upfloater_set}}
-            set -> {:halt, {:ok, set}}
-          end
+    start..length(lower)//2
+    # Nothing at any size: no bracket for these residents can be paired with
+    # the rest still pairable, which is 3.3.3's "impossible to complete a
+    # round-pairing" - the same answer `Bracket.pair/2` gives.
+    |> Enum.reduce_while({:error, :no_legal_pairing}, fn count, acc ->
+      case best_set_of_size(residents, lower, count, mode, base) do
+        {:ok, set} -> {:halt, {:ok, set}}
+        :none -> {:cont, acc}
+        {:error, _} = error -> {:halt, error}
       end
     end)
+  catch
+    {__MODULE__, :budget_exhausted} -> {:error, :budget_exhausted}
   end
 
-  # 3.5.2 with [C5], then 3.5.3 and 3.5.4.
+  # One set size ([C4] has fixed it). Every set of that size is ranked by
+  # [C5], then 3.5.3/3.5.4's TPN order; the answer is the first LEGAL set
+  # (the bracket can be paired, and so can everything left below it - [C1]
+  # and [C3]) with the best [C5] profile any legal set has, taking among
+  # those the least [C6], then the least [C7], then 3.5.4's order.
   #
-  # [C5] - "minimise the score differences (taken in descending order) in the
-  # pairs involving upfloaters, i.e. maximise the scores (taken in ascending
-  # order) of the upfloaters" - fixes the multiset of SCORES the set must
-  # have: the highest available. The regulation's own example makes this
-  # concrete: with 2,6,8 on 3 points and 1,3,5 on 2.5, a set of three must
-  # take two 3-pointers and one 2.5-pointer. So the score profile is
-  # computed first, and only teams matching it are combined.
-  defp upfloater_sets(lower, count, mode) do
-    sorted = Enum.sort_by(lower, fn t -> {-Team.score(t, mode), t.tpn} end)
-    profile = sorted |> Enum.take(count) |> Enum.map(&Team.score(&1, mode))
+  # ## Why [C5] is judged over legal sets, not all of them
+  #
+  # 3.5.2 reads as "[C4] and [C5] first, legality after". Taken literally
+  # that leaves no answer when every set with the best score profile is
+  # illegal but a set of the same size with a slightly lower profile is
+  # fine - and the literal fallback, a larger set, would break [C4] to save
+  # [C5], inverting their priority (2.3: "given in descending priority").
+  # Judging [C5] among legal sets is the same answer whenever the literal
+  # one exists, and the priority-respecting one when it does not.
+  defp best_set_of_size(residents, lower, count, mode, base) do
+    limit = Keyword.get(base, :max_upfloater_sets, @default_max_upfloater_sets)
 
-    profile
-    |> Enum.frequencies()
-    |> Enum.map(fn {score, n} ->
+    if binomial(length(lower), count) > limit do
+      {:error, :budget_exhausted}
+    else
       lower
-      |> Enum.filter(&(Team.score(&1, mode) == score))
-      |> Enum.sort_by(& &1.tpn)
-      |> combinations(n)
-    end)
-    |> cartesian()
-    |> Enum.map(fn groups ->
-      groups
-      |> List.flatten()
-      # 3.5.3 - within a set: descending score, then ascending TPN.
-      |> Enum.sort_by(fn t -> {-Team.score(t, mode), t.tpn} end)
-    end)
-    # 3.5.4 - between sets: lexicographic by their TPNs.
-    |> Enum.sort_by(fn set -> Enum.map(set, & &1.tpn) end)
+      |> combinations(count)
+      |> Enum.map(fn set ->
+        # 3.5.3 - within a set: descending score, then ascending TPN.
+        ordered = Enum.sort_by(set, fn t -> {0 - Team.score(t, mode), t.tpn} end)
+        {c5_profile_key(ordered, mode), Enum.map(ordered, & &1.tpn), ordered}
+      end)
+      # [C5] first, then 3.5.4 - between sets, lexicographic by their TPNs.
+      |> Enum.sort_by(fn {profile, tpns, _set} -> {profile, tpns} end)
+      |> Enum.reduce_while(nil, fn {profile, _tpns, set}, best ->
+        cond do
+          best != nil and profile != best.profile ->
+            {:halt, best}
+
+          not legal_set?(residents, lower, set) ->
+            {:cont, best}
+
+          true ->
+            key = {c6_excess(set, lower, mode, base), c7_previous_floaters(set, base)}
+            candidate = %{profile: profile, key: key, set: set}
+
+            cond do
+              # Nothing can beat a set that fully complies with both; being
+              # the first such set in 3.5.4's order, it is the answer.
+              key == {0, 0} -> {:halt, candidate}
+              best == nil or key < best.key -> {:cont, candidate}
+              true -> {:cont, best}
+            end
+        end
+      end)
+      |> case do
+        nil -> :none
+        %{set: set} -> {:ok, set}
+      end
+    end
   end
 
-  # 3.5.5 - the set must produce a legal pairing, and comply with [C6] and
-  # [C7].
+  # OPEN QUESTION 5 ([C5] against the 3.5.4 example) - the reading lives
+  # here and nowhere else.
   #
-  # [C6] (2.3.3) is the only criterion that reaches FORWARD: unless the
-  # following scoregroup is emptied by the upfloating, the set must be chosen
-  # so that [C1], [C3] and [C4] can still be met in the bracket where that
-  # scoregroup is paired. Checked here as a feasibility question about what
-  # would be left, which is what it is.
+  # 2.3.2: "Minimise the score differences (taken in descending order) in the
+  # pairs involving upfloaters, i.e. maximise the scores (taken in ascending
+  # order) of the upfloaters." So a set's [C5] quality is its upfloaters'
+  # scores sorted ascending, and a lexicographically LARGER list is better.
+  # Returned negated so an ascending sort puts the best profile first.
   #
-  # [C7] (2.3.4) - minimise upfloaters that were floaters in the previous
-  # round - is a minimisation, so it cannot be a yes/no on one set. It is
-  # applied in `select_upfloaters/4` by preferring, among sets that pass this
-  # gate, the one 3.5.4's order reaches first; the ordering below is 3.5.4's
-  # and this predicate is the gate. A stricter reading would rank sets by
-  # their [C7] count first; that is recorded as an open question in
-  # docs/conformance-c0406-teams.md rather than guessed at here.
-  defp workable?(residents, set, _base) do
-    bracket = residents ++ set
-    {mask, adj} = adjacency(bracket)
+  # This follows the ARTICLE, and the profile is compared only among LEGAL
+  # sets (`best_set_of_size/5` never reaches a set that fails
+  # `legal_set?/3`). The example under 3.5.4 - 2, 6, 8 on 3 points, 1, 3, 5
+  # on 2.5, three upfloaters - says [C5] "determines that two upfloaters must
+  # have 3 points and the other 2.5". Under this reading the example is right
+  # exactly when {2, 6, 8} cannot be paired with the residents (or strands
+  # the rest), which it does not say but does not rule out; when {2, 6, 8}
+  # can be, this takes all three.
+  #
+  # The research note of 2026-09-13 (docs/conformance-c0406-teams.md,
+  # "Research findings") settles the reading at medium-high confidence: the
+  # identical example is in the 2024 edition and in Double-Swiss C.04.5,
+  # both of whose [C5] is the same maximin, and 3.5.2's own note ("This
+  # SOMEHOW determines the number of upfloaters in the set and their
+  # scores") and Dubov 2026 3.2.1 ("needed to obtain a legal pairing") put
+  # legality inside [C4]/[C5]. It is NOT [C6]: 3.5.5 says [C4] and [C5] are
+  # met "by construction" before [C6] is consulted, and the 2024 example
+  # predates [C6]'s "unless ... empty" clause. Not an SPP ruling; if one says
+  # the profile comes from raw scores, this function and `legal_set?/3`'s
+  # place in the walk are what change.
+  #
+  # `0 - score` rather than `-score`: a negated float zero is `-0.0`, which
+  # compares equal but is a different term, and the profiles are compared
+  # with `!=` in `best_set_of_size/5`.
+  defp c5_profile_key(set, mode) do
+    set
+    |> Enum.map(&Team.score(&1, mode))
+    |> Enum.sort()
+    |> Enum.map(&(0 - &1))
+  end
+
+  # [C1] and [C3] for a candidate set: the bracket it forms can be paired
+  # without a rematch, and so can every team left below it. The second half
+  # is what keeps the procedure from walking into a dead end two brackets
+  # later - a bracket's own pairing cannot strand anyone outside it, but the
+  # choice of who floats into it can.
+  defp legal_set?(residents, lower, set) do
+    feasible?(residents ++ set) and feasible?(without(lower, set))
+  end
+
+  # [C6] (2.3.3), as a count to minimise: how many MORE upfloaters than the
+  # parity minimum the following scoregroup's bracket would need, given this
+  # set. 0 means [C6] is complied with.
+  #
+  # "Unless all the teams in the following scoregroup became or are
+  # upfloaters (thus this scoregroup is now empty), choose the set of
+  # upfloaters so that criteria [C1], [C3] and [C4] ... are complied with in
+  # the bracket where this (not empty) scoregroup is paired." The following
+  # scoregroup is the highest score below the residents; what is left of it
+  # after this set floats up will be the residents of the next bracket. [C4]
+  # there is "the fewest upfloaters", so the look-ahead finds the fewest that
+  # give a bracket pairable under [C1] with everything below it still
+  # pairable ([C3]). Only [C1], [C3] and [C4] - not [C5]: the next bracket's
+  # upfloaters are not constrained by score for this question.
+  #
+  # Sets with the same [C5] profile take the same number of teams out of the
+  # following scoregroup, so the parity minimum is the same for every set
+  # this is compared across, and "excess over it" ranks exactly as "count".
+  defp c6_excess(_set, [], _mode, _base), do: 0
+
+  defp c6_excess(set, lower, mode, base) do
+    remaining = without(lower, set)
+    following_score = lower |> Enum.map(&Team.score(&1, mode)) |> Enum.max()
+    {following, below} = Enum.split_with(remaining, &(Team.score(&1, mode) == following_score))
+
+    if following == [] do
+      0
+    else
+      start = rem(length(following), 2)
+      limit = Keyword.get(base, :max_upfloater_sets, @default_max_upfloater_sets)
+
+      needed =
+        Enum.find(start..length(below)//2, fn count ->
+          if binomial(length(below), count) > limit, do: throw({__MODULE__, :budget_exhausted})
+
+          below
+          |> combinations(count)
+          |> Enum.any?(fn up -> feasible?(following ++ up) and feasible?(without(below, up)) end)
+        end)
+
+      # `legal_set?/3` already proved everything below the residents can be
+      # paired, so some count works; the fallback is unreachable and ranks
+      # worst rather than crashing if it ever is not.
+      div((needed || length(lower) + 1) - start, 2)
+    end
+  end
+
+  # OPEN QUESTION 7 ([C7] as a ranking in 3.5.5) - the reading lives here.
+  #
+  # 3.5.5 asks for "the first set that ... complies with [C6] and [C7]", and
+  # [C7] (2.3.4) is a minimisation: "with the exception of the last two
+  # rounds, minimise the number of upfloaters that were floaters in the
+  # previous round". Read as a minimisation, a set complies by achieving the
+  # least count any legal, [C6]-best set achieves, and among those 3.5.4's
+  # order picks the first. That is what `best_set_of_size/5` does with the
+  # number this returns.
+  #
+  # The two readings the SPP question names - rank by [C7] first then take
+  # 3.5.4's order, or take the first set in 3.5.4's order that achieves the
+  # minimum - choose the SAME set: both are "the lexicographically first
+  # among the sets with the least count". The reading that actually differs
+  # is the one this engine had before, which applied no [C7] at all and took
+  # the first legal set. Making this function return 0 restores that.
+  #
+  # The research note of 2026-09-13 (docs/conformance-c0406-teams.md,
+  # "Research findings") confirms this at high confidence: 2.3 applies the
+  # quality criteria "as much as possible ... in descending priority" and
+  # 3.5.4's order is only the final tie-break; "the first X that complies
+  # with [a minimisation]" is the chapter's standing phrasing (3.6.4, the
+  # 2024 edition's 2.2.5); Dubov 2026 3.2.2 says "complies at best"; and the
+  # 2026 edition moved floater avoidance up into set selection, which only
+  # matters if it can override the lexicographic order. Not an SPP ruling.
+  defp c7_previous_floaters(set, base) do
+    if Keyword.get(base, :last_two_rounds?, false) do
+      0
+    else
+      Enum.count(set, & &1.floated_last_round?)
+    end
+  end
+
+  defp feasible?(teams) do
+    {mask, adj} = adjacency(teams)
     Matching.feasible?(mask, adj)
+  end
+
+  defp without(teams, removed) do
+    gone = MapSet.new(removed, & &1.tpn)
+    Enum.reject(teams, &MapSet.member?(gone, &1.tpn))
+  end
+
+  defp binomial(n, k) when k < 0 or k > n, do: 0
+  defp binomial(_n, 0), do: 1
+
+  defp binomial(n, k) do
+    k = min(k, n - k)
+    Enum.reduce(1..k//1, 1, fn i, acc -> div(acc * (n - k + i), i) end)
   end
 
   # ---------------------------------------------------------------------
@@ -428,11 +635,5 @@ defmodule Ainalrami.TeamPairing do
 
   defp combinations([h | t], n) do
     Enum.map(combinations(t, n - 1), &[h | &1]) ++ combinations(t, n)
-  end
-
-  defp cartesian([]), do: [[]]
-
-  defp cartesian([head | rest]) do
-    for h <- head, r <- cartesian(rest), do: [h | r]
   end
 end

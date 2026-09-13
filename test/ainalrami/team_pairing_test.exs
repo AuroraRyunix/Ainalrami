@@ -272,9 +272,14 @@ defmodule Ainalrami.TeamPairingTest do
   # ------------------------------------------------------------------
 
   describe "upfloater selection (3.5)" do
+    # `lower` is every team left below the residents, and [C3] is judged on
+    # it, so each position here is an even field - the PAB already taken
+    # out, as `pair_round/2` guarantees. These positions used to be odd
+    # (the selection looked only at the bracket), and each gained one team
+    # on the lowest score that changes nothing about the set chosen.
     test "an even scoregroup floats nobody - [C4] minimises the count" do
       residents = [team(1, mp: 1.0), team(2, mp: 1.0)]
-      lower = [team(3, mp: 0.0)]
+      lower = [team(3, mp: 0.0), team(4, mp: 0.0)]
 
       assert {:ok, []} = TeamPairing.select_upfloaters(residents, lower, :match_points)
     end
@@ -292,7 +297,8 @@ defmodule Ainalrami.TeamPairingTest do
         team(8, mp: 3.0),
         team(1, mp: 2.5),
         team(3, mp: 2.5),
-        team(5, mp: 2.5)
+        team(5, mp: 2.5),
+        team(7, mp: 2.5)
       ]
 
       {:ok, set} = TeamPairing.select_upfloaters(residents, lower, :match_points)
@@ -357,11 +363,43 @@ defmodule Ainalrami.TeamPairingTest do
         team(8, mp: 3.0),
         team(1, mp: 2.5),
         team(3, mp: 2.5),
-        team(5, mp: 2.5)
+        team(5, mp: 2.5),
+        team(7, mp: 2.5)
       ]
 
       {:ok, set} = TeamPairing.select_upfloaters(residents, lower, :match_points)
       assert Enum.map(set, & &1.tpn) == [2, 6, 8]
+    end
+
+    test "the 3.5.4 example exactly as printed: {2,6,8} cannot be paired, so {2,6,1}" do
+      # The reading of open question 5 (research note 2026-09-13): [C5]'s
+      # profile is the best among sets that give a LEGAL bracket with the
+      # rest still pairable. Here 8 has already played all three residents,
+      # so a bracket holding 8 cannot pair every resident with an upfloater,
+      # and the best legal profile is 3/3/2.5 - the example's. 3.5.4's order
+      # then picks {2,6,1}.
+      #
+      # The first cut fixed the profile from raw scores (3/3/3), found no
+      # workable set with it, and jumped to five upfloaters - [C5] above
+      # [C4]. This test is that defect's pin.
+      residents = [
+        team(10, mp: 4.0, opponents: [11, 12, 8]),
+        team(11, mp: 4.0, opponents: [10, 12, 8]),
+        team(12, mp: 4.0, opponents: [10, 11, 8])
+      ]
+
+      lower = [
+        team(2, mp: 3.0),
+        team(6, mp: 3.0),
+        team(8, mp: 3.0, opponents: [10, 11, 12]),
+        team(1, mp: 2.5),
+        team(3, mp: 2.5),
+        team(5, mp: 2.5),
+        team(7, mp: 2.5)
+      ]
+
+      {:ok, set} = TeamPairing.select_upfloaters(residents, lower, :match_points)
+      assert Enum.map(set, & &1.tpn) == [2, 6, 1]
     end
 
     test "[C5] takes the highest available scores, not the lowest TPNs" do
@@ -472,12 +510,33 @@ defmodule Ainalrami.TeamPairingTest do
       assert {white.tpn, black.tpn} == {3, 5}
     end
 
-    test "4.3.1 - KNOWN DEFECT: an arrived-then-absent team gives its number back" do
-      # Pins the divergence from the individual rule that
-      # `Ainalrami.TeamPairing.Colour`'s moduledoc records. This asserts
-      # what the engine DOES, not what C.04.6 should say; when
-      # `pair_round/2` grows a way to name an absent team, this is the test
-      # that fails and names the decision.
+    test "4.3.1 - an arrived-then-absent team named in :absent keeps its number" do
+      # This was "KNOWN DEFECT: an arrived-then-absent team gives its number
+      # back", pinning the divergence from the individual rule. `pair_round/2`
+      # now takes `:absent`, so the host can say the team has arrived.
+      absent = team(1, pab: true)
+      present = [team(3, mp: 1.0), team(5, mp: 0.0)]
+
+      assert Colour.parity_numbers(present, [absent.tpn]) == %{1 => 1, 3 => 2, 5 => 3}
+
+      # Both teams of the pair have yet to play, so 4.3.1 decides: first-team
+      # 3 (higher score) is number 2 - even - and takes the opposite of the
+      # initial colour.
+      {:ok, round} = TeamPairing.pair_round(present, absent: [1], initial_colour: :white)
+      assert [%{white: 5, black: 3}] = round.pairs
+
+      # Without it, 3 is number 1 and takes White: the old answer, still what
+      # a host that does not know about arrivals gets.
+      {:ok, round} = TeamPairing.pair_round(present, initial_colour: :white)
+      assert [%{white: 3, black: 5}] = round.pairs
+    end
+
+    test ":absent must not name a team that is also being paired" do
+      assert {:error, {:invalid_option, :absent, [3]}} =
+               TeamPairing.pair_round([team(3), team(5)], absent: [3])
+    end
+
+    test "4.3.1 - omitting :absent still renumbers, as the defect was" do
       #
       # TPN 1 arrived in round 1 and took the pairing-allocated bye, so it
       # has `had_pab?` set and `Team.matches_played/1` of 0 - arrived, with

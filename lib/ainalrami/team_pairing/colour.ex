@@ -61,7 +61,15 @@ defmodule Ainalrami.TeamPairing.Colour do
   Sitting out is expressed by leaving the team OUT of that list, which is
   where the next section starts.
 
-  ## The divergence from the individual rule, which is a DEFECT
+  ## The divergence from the individual rule, which WAS a defect
+
+  **Fixed on the `team-swiss` branch (2026-09-13):** `pair_round/2` takes an
+  `:absent` option naming the teams that have arrived but are not in this
+  round's field, and `parity_numbers/2` numbers them without pairing them.
+  The host knows who has arrived - it holds the round-by-round record this
+  struct does not - so the host says so, and the struct stays history-free.
+  A host that omits `:absent` gets exactly the old numbering. What follows
+  is the defect as it stood, kept because it explains the option.
 
   A team that has ARRIVED and is then absent - sitting a round out, or
   withdrawn after playing - is numbered differently here than the same
@@ -98,9 +106,10 @@ defmodule Ainalrami.TeamPairing.Colour do
   enough of a per-round record on `Ainalrami.TeamPairing.Team` to tell
   "never arrived" from "arrived, not playing today" - the struct has no
   such field today, and `:had_pab?` covers only the one arrival that leaves
-  no colour behind. Pinned by a test in `team_pairing_test.exs` so the
-  behaviour is recorded rather than assumed, and listed in
-  `docs/conformance-c0406-teams.md`'s open questions.
+  no colour behind. The fix took the first route - an absentee argument -
+  and needed no per-round record on the struct, because "arrived" is a
+  question about the tournament, which the host can answer, rather than
+  about the team's match list.
   """
 
   alias Ainalrami.TeamPairing.Team
@@ -188,11 +197,26 @@ defmodule Ainalrami.TeamPairing.Colour do
   `allocate/3` directly across a roster should do the same rather than let
   each call default to a two-team numbering.
   """
-  def parity_numbers(teams) when is_list(teams) do
+  def parity_numbers(teams) when is_list(teams), do: parity_numbers(teams, [])
+
+  @doc """
+  The arrival numbering over the teams being paired AND `absent_tpns`, the
+  TPNs of teams that have arrived but are not in this round's field.
+
+  An absent team is numbered - it keeps its place - but is not paired, so
+  nobody below it shifts parity while it sits a round out. This is the
+  individual rule (`Ainalrami.Pairing`'s `arrived_for?/2`, second clause)
+  applied to teams; `Ainalrami.TeamPairing.pair_round/2` takes the list as its
+  `:absent` option.
+  """
+  def parity_numbers(teams, absent_tpns) when is_list(teams) and is_list(absent_tpns) do
     teams
-    |> Enum.sort_by(& &1.tpn)
+    |> Enum.map(& &1.tpn)
+    |> Kernel.++(absent_tpns)
+    |> Enum.uniq()
+    |> Enum.sort()
     |> Enum.with_index(1)
-    |> Map.new(fn {team, number} -> {team.tpn, number} end)
+    |> Map.new()
   end
 
   @doc """

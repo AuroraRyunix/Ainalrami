@@ -83,10 +83,26 @@ defmodule Ainalrami.TeamSweep0901Test do
     end
 
     test "pair_round/2 forwards the budget and reports its exhaustion" do
+      # A legal twenty-team round one, walked with a budget too small to
+      # finish even the first candidate. This used to use the infeasible
+      # bracket below, but since [C3] is judged on the whole field before a
+      # bracket is walked, that one never reaches the walk (next test).
+      teams = for tpn <- 1..20, do: team(tpn)
+
+      assert TeamPairing.pair_round(teams, max_steps: 5) == {:error, :budget_exhausted}
+    end
+
+    test "pair_round/2 proves the infeasible twenty-team field impossible instead of walking it" do
+      # 3.5's legality check asks the completion oracle about the whole
+      # field first, and the oracle answers this shape outright - so the
+      # answer is the proof, not a spent budget.
       teams = infeasible_bracket(20, 11)
 
-      assert TeamPairing.pair_round(teams, max_steps: 200_000) ==
-               {:error, :budget_exhausted}
+      {microseconds, result} =
+        :timer.tc(fn -> TeamPairing.pair_round(teams, max_steps: 200_000) end)
+
+      assert result == {:error, :no_legal_pairing}
+      assert microseconds < 5_000_000, "took #{div(microseconds, 1000)} ms"
     end
   end
 

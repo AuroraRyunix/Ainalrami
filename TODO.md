@@ -554,7 +554,27 @@ million tournaments (see [docs/validation.md](docs/validation.md)).
       needs no reference implementation - which is the point, since none
       exists.
 
-      Still open before this is usable:
+      **Phase 2, 2026-09-13 (branch `team-swiss`):** the items below were
+      closed, and the open questions answered by a research note rather than
+      the SPP (see the conformance doc's "Research findings"):
+
+      * [x] [C5] is judged among LEGAL sets, [C4] ahead of it (question 5).
+      * [x] [C7] is a minimisation before 3.5.4's order (question 7); [C6]
+        is applied as a look-ahead minimisation; [C3] is judged on the teams
+        outside the bracket. None of the three was enforced before.
+      * [x] The absent team keeps its 4.3.1 number (`pair_round/2`'s
+        `:absent`).
+      * [x] "Won a match by forfeit" defined (question 6) - the host's
+        boolean, documented on `Team`.
+      * [x] Fuzzing for legality: `team_pairing_validation_test.exs` plays
+        generated events up to 60 teams and checks [C1]-[C3] and Article 4
+        every round, and diffs 371 reachable rounds of 4-10 teams against a
+        brute-force whole-round reference.
+      * [x] Host integration: OpenPairings' team Swiss.
+      * [ ] Large-field crash/budget fuzz on the fuzz server - not run.
+      * [ ] The three readings are research, not SPP rulings.
+
+      The list as it stood before phase 2:
 
       * **[C5] vs the 3.5.4 example.** Article 2.3.2 says maximise the
         upfloaters' scores; the example under 3.5.4 assumes 2/6/8 all hold

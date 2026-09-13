@@ -61,6 +61,49 @@ invisible to any corpus this generator can produce and a third had been
 breaking a matcher invariant 734 times per 800 tournaments while agreeing
 with the reference on every one of them.
 
+## [Unreleased]
+
+### Team pairing (C.04.6)
+
+- [Fix] **[C4] now comes before [C5].** `select_upfloaters/4` fixed the
+  upfloaters' score profile from the raw scores and, when no set with that
+  profile could be paired, grew the set by two - breaking [C4] (fewest
+  upfloaters) to keep [C5] (their scores), the opposite of 2.3's priority.
+  In the 3.5.4 example's position with 8 unable to meet the residents, it
+  went to five upfloaters instead of the example's {2,6,1}. The profile is
+  now the best among the LEGAL sets of the smallest workable size.
+- [Fix] **[C3] is judged on the teams outside the bracket.** A set of
+  upfloaters was accepted when the bracket could be paired, even if the
+  teams left below could not, so a round could dead-end two brackets later.
+- [Fix] **[C6] and [C7] were not applied.** The comment above `workable?/3`
+  said [C6] was checked there; nothing was, and [C7] had no effect at all.
+  [C6] is now a look-ahead (the fewest extra upfloaters the following
+  scoregroup's bracket needs), [C7] a minimisation ahead of 3.5.4's order.
+- [Fix] **An even scoregroup can take upfloaters.** Two residents who had
+  already met stopped the round, because an even scoregroup was never given
+  any.
+- [Fix] **[C10] counts per team.** Two upfloaters meeting, both having
+  floated last round, counted once instead of twice.
+- [Fix] **An absent team keeps its 4.3.1 number.** `pair_round/2` takes
+  `:absent`, the TPNs of teams that have arrived but are not in this round's
+  field; `Colour.parity_numbers/2` numbers them without pairing them.
+- [Change] A field with no legal pairing at any bracket size is now
+  `{:error, :no_legal_pairing}` (was `:no_legal_upfloater_set`), and is
+  usually proved by the completion oracle before any bracket is walked.
+  `select_upfloaters/4` refuses an odd field (`:odd_field`), and takes a
+  `:max_upfloater_sets` budget.
+- [Verified] **Open questions 5-7 answered by research, not by the SPP.**
+  Each reading is isolated in one function (`c5_profile_key/2`,
+  `c7_previous_floaters/2`; question 6 on `Team`'s `:won_by_forfeit?`) and
+  recorded in `docs/conformance-c0406-teams.md`.
+- [Verified] `test/ainalrami/team_pairing_validation_test.exs`: a
+  brute-force whole-round reference written from Articles 3.4-3.6 and 4
+  agrees with the engine on 371 reachable rounds of 4-10 teams (259 with an
+  upfloater bracket, 192 with a bye, 105 with a team sitting out), and
+  generated events of 12 to 60 teams keep [C1], [C2], [C3] and Article 4 on
+  every round. Hand-worked positions pin [C3], [C4], [C5], [C6], [C7], [C10]
+  and 3.6.3; each rule was mutation-checked.
+
 ## [0.26.1] - 2026-09-11
 
 ### Fixed
