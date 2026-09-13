@@ -147,8 +147,10 @@ defmodule Ainalrami.Trf do
   ## The `XX*` extension lines
 
   Four of JaVaFo's own `XX` extension codes are read; two of them are
-  written. The two that are not - `XXR` and `XXC` - each have a TRF16
-  spelling that `serialize/1` emits in their place:
+  written by default. The two that are not - `XXR` and `XXC` - each have a
+  TRF16 spelling that `serialize/1` emits in their place, and each is
+  written on request (`serialize/2`'s `:xxr` and `:xxc`) for a file JaVaFo
+  will read:
 
     * `XXR n` - the round count (see `parse_xxr/2`), which is the same field
       as TRF16's `142`. A file may carry both spellings, but they must
@@ -738,6 +740,14 @@ defmodule Ainalrami.Trf do
   that only one reader will ever open is a second thing to keep in step for
   no reader's benefit, and `parse/1` already refuses a file whose two
   spellings disagree - a refusal a writer should not be able to provoke.
+
+  `opts[:xxc]`: write `tournament[:initial_colour]` as JaVaFo's `XXC white1`
+  / `XXC black1` INSTEAD of the `152` header, for the same reason and with
+  the same only-one rule as `:xxr`. JaVaFo does not read `152`: measured
+  2026-09-13 on a six-player round one, a file carrying `152 B` - or `152 W`,
+  or no line at all - was paired with the top seed on White in some runs and
+  on Black in others, because JaVaFo draws the colour itself when it is not
+  told, while `XXC black1` gave Black on every run. bbpPairings reads both.
   """
   def serialize(data, opts \\ [])
 
@@ -756,15 +766,17 @@ defmodule Ainalrami.Trf do
     {written, future_byes} = split_future_byes(players, dialect, system)
     max_round = Enum.reduce(written, 0, &max(&2, length(&1[:games] || [])))
     xxr? = dialect == :engine and opts[:xxr] == true
+    xxc? = dialect == :engine and opts[:xxc] == true
     numeric? = dialect == :trf26 or opts[:numeric_extensions] == true
 
-    header_lines(t, players, teams, xxr?)
+    header_lines(t, players, teams, xxr?, xxc?)
     |> Kernel.++(point_system_lines(t[:point_system], dialect))
     |> Kernel.++(free_point_lines(t[:free_points]))
     |> Kernel.++(legend_lines(opts[:column_legend], max_round))
     |> Kernel.++(Enum.map(written, &player_line/1))
     |> Kernel.++(Enum.map(teams, &team_line/1))
     |> Kernel.++(xxr_line(t[:number_of_rounds], xxr?))
+    |> Kernel.++(xxc_line(t[:initial_colour], xxc?))
     |> Kernel.++(extension_lines(t, players, max_round, numeric?, dialect))
     |> Kernel.++(bye_lines(future_byes))
     |> Enum.map_join("", &(&1 <> "\r\n"))
@@ -865,6 +877,21 @@ defmodule Ainalrami.Trf do
   # the extension block to be.
   defp xxr_line(rounds, true) when not is_nil(rounds), do: ["XXR #{rounds}"]
   defp xxr_line(_rounds, _xxr), do: []
+
+  # `XXC white1` / `XXC black1`, JaVaFo's spelling of the drawing of lots -
+  # see `serialize/2`'s `opts[:xxc]`. The value goes through
+  # `initial_colour_line/1` first so a bad one raises the same
+  # `ValidationError` either spelling would.
+  defp xxc_line(nil, _xxc), do: []
+
+  defp xxc_line(colour, true) do
+    case initial_colour_line(colour) do
+      "152 W" -> ["XXC white1"]
+      "152 B" -> ["XXC black1"]
+    end
+  end
+
+  defp xxc_line(_colour, _xxc), do: []
 
   # Written as `BB*` rather than as a `162` line: the `BB` directives are one
   # value per line, so a file carrying them says exactly which settings were
@@ -1323,7 +1350,7 @@ defmodule Ainalrami.Trf do
     1..width |> Enum.map_join("", &Integer.to_string(rem(&1, 10)))
   end
 
-  defp header_lines(t, players, teams, xxr?) do
+  defp header_lines(t, players, teams, xxr?, xxc?) do
     [
       header(:name, t[:name]),
       header(:city, t[:city]),
@@ -1341,7 +1368,7 @@ defmodule Ainalrami.Trf do
     |> Kernel.++([
       header(:time_control, t[:time_control]),
       round_count_header(t[:number_of_rounds], xxr?),
-      initial_colour_line(t[:initial_colour]),
+      if(xxc?, do: nil, else: initial_colour_line(t[:initial_colour])),
       round_dates_line(t[:round_dates]),
       header(:generator, t[:generator]),
       # TRF26's headers. Written in either dialect when the caller gives

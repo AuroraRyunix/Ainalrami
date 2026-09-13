@@ -63,6 +63,17 @@ with the reference on every one of them.
 
 ## [Unreleased]
 
+### TRF writer
+
+- [Feature] **`Trf.serialize/2` takes `xxc: true`**, writing the initial
+  colour as JaVaFo's `XXC white1` / `XXC black1` instead of `152`, the way
+  `xxr: true` already spells the round count. JaVaFo does not read `152`:
+  measured on a six-player round one, a file with `152 B`, `152 W` or no
+  line at all was paired with the top seed on White in some runs and Black
+  in others - JaVaFo draws the colour itself when not told - while
+  `XXC black1` gave Black every run. Engine dialect only; `:trf26` keeps
+  `152`.
+
 ### Team pairing (C.04.6)
 
 - [Fix] **[C4] now comes before [C5].** `select_upfloaters/4` fixed the

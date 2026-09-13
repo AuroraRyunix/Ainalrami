@@ -211,6 +211,46 @@ defmodule Ainalrami.TrfSweep0901Test do
     end
   end
 
+  describe "xxc: true - the initial colour spelled for JaVaFo" do
+    defp with_xxc(colour, opts) do
+      Trf.serialize(
+        %{
+          tournament: %{initial_colour: colour},
+          players: [%{rank: 1, name: "Alpha", points: 0.0, games: []}]
+        },
+        opts
+      )
+    end
+
+    test "writes XXC white1 / black1 instead of 152, never both" do
+      white = with_xxc("w", xxc: true)
+      black = with_xxc("black", xxc: true)
+
+      assert white =~ ~r/^XXC white1\r$/m
+      assert black =~ ~r/^XXC black1\r$/m
+      refute white =~ ~r/^152/m
+      refute black =~ ~r/^152/m
+    end
+
+    test "round-trips through parse/1 to the same colour" do
+      assert Trf.parse(with_xxc("b", xxc: true)).tournament[:initial_colour] == "b"
+      assert Trf.parse(with_xxc("w", xxc: true)).tournament[:initial_colour] == "w"
+    end
+
+    test "writes nothing without a colour, and 152 without the option" do
+      refute with_xxc(nil, xxc: true) =~ "XXC"
+      assert with_xxc("b", []) =~ ~r/^152 B\r$/m
+    end
+
+    test "a bad colour still raises" do
+      assert_raise Trf.ValidationError, ~r/initial colour/, fn -> with_xxc("green", xxc: true) end
+    end
+
+    test "the trf26 dialect keeps 152" do
+      assert with_xxc("b", xxc: true, dialect: :trf26) =~ ~r/^152 B\r$/m
+    end
+  end
+
   # ---------- M4 · a blank 142 ----------
 
   describe "M4 an unparsable 142 value" do
