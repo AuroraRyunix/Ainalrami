@@ -695,6 +695,316 @@ defmodule Ainalrami.TeamPairingTest do
   end
 
   # ------------------------------------------------------------------
+  # The explanation (explain: true)
+  # ------------------------------------------------------------------
+
+  describe "explain: true - the 3.5.4 example variants" do
+    defp residents_who_have_met(extra \\ []) do
+      [
+        team(10, mp: 4.0, opponents: [11, 12 | extra]),
+        team(11, mp: 4.0, opponents: [10, 12 | extra]),
+        team(12, mp: 4.0, opponents: [10, 11 | extra])
+      ]
+    end
+
+    defp explained_selection(teams, opts \\ []) do
+      {:ok, round} = TeamPairing.pair_round(teams, [explain: true] ++ opts)
+      {:ok, plain} = TeamPairing.pair_round(teams, opts)
+      assert Map.delete(round, :explanation) == plain
+      {round, hd(round.explanation.brackets).selection}
+    end
+
+    test "only 2 and 6 on 3 points: {2,6,1} over {2,6,3} on 3.5.4's order" do
+      lower = [
+        team(2, mp: 3.0),
+        team(6, mp: 3.0),
+        team(1, mp: 2.5),
+        team(3, mp: 2.5),
+        team(5, mp: 2.5)
+      ]
+
+      {_round, s} = explained_selection(residents_who_have_met() ++ lower)
+
+      assert s.chosen == %{upfloaters: [2, 6, 1], c4: 3, c5: [2.5, 3.0, 3.0], c6: 0, c7: 0}
+      assert s.runner_up == %{upfloaters: [2, 6, 3], c4: 3, c5: [2.5, 3.0, 3.0], c6: 0, c7: 0}
+      assert s.decided_by == "3.5.4"
+
+      # [C4]: one upfloater cannot pair three residents who have all met.
+      assert s.sizes_without_legal_set == [1]
+
+      assert Enum.map(s.rejected, &{&1.upfloaters, &1.failed}) == [
+               {[2], "C1"},
+               {[6], "C1"},
+               {[1], "C1"},
+               {[3], "C1"},
+               {[5], "C1"}
+             ]
+    end
+
+    test "2, 6 and 8 on 3 points: all three taken, and [C5] is what beat the next set" do
+      lower = [
+        team(2, mp: 3.0),
+        team(6, mp: 3.0),
+        team(8, mp: 3.0),
+        team(1, mp: 2.5),
+        team(3, mp: 2.5),
+        team(5, mp: 2.5),
+        team(7, mp: 2.5)
+      ]
+
+      {_round, s} = explained_selection(residents_who_have_met() ++ lower)
+
+      assert s.chosen == %{upfloaters: [2, 6, 8], c4: 3, c5: [3.0, 3.0, 3.0], c6: 0, c7: 0}
+      assert s.runner_up == %{upfloaters: [2, 6, 1], c4: 3, c5: [2.5, 3.0, 3.0], c6: nil, c7: nil}
+      assert s.decided_by == "C5"
+    end
+
+    test "as printed, {2,6,8} cannot be paired: rejected on [C1], and {2,6,1} wins on 3.5.4" do
+      lower = [
+        team(2, mp: 3.0),
+        team(6, mp: 3.0),
+        team(8, mp: 3.0, opponents: [10, 11, 12]),
+        team(1, mp: 2.5),
+        team(3, mp: 2.5),
+        team(5, mp: 2.5),
+        team(7, mp: 2.5)
+      ]
+
+      {_round, s} = explained_selection(residents_who_have_met([8]) ++ lower)
+
+      assert {s.chosen.upfloaters, s.runner_up.upfloaters, s.decided_by} ==
+               {[2, 6, 1], [2, 6, 3], "3.5.4"}
+
+      assert List.last(s.rejected) == %{
+               upfloaters: [2, 6, 8],
+               c4: 3,
+               c5: [3.0, 3.0, 3.0],
+               failed: "C1"
+             }
+
+      # Seven single sets and {2,6,8}.
+      assert length(s.rejected) == 8 and s.rejected_omitted == 0
+    end
+
+    test "the bound: :explain_limit keeps that many entries and counts the rest" do
+      lower = [
+        team(2, mp: 3.0),
+        team(6, mp: 3.0),
+        team(8, mp: 3.0, opponents: [10, 11, 12]),
+        team(1, mp: 2.5),
+        team(3, mp: 2.5),
+        team(5, mp: 2.5),
+        team(7, mp: 2.5)
+      ]
+
+      {round, s} = explained_selection(residents_who_have_met([8]) ++ lower, explain_limit: 3)
+
+      assert round.explanation.limit == 3
+      assert Enum.map(s.rejected, & &1.upfloaters) == [[2], [6], [8]]
+      assert s.rejected_omitted == 5
+      assert length(s.considered) + s.considered_omitted == 2
+      # The winner and runner-up are kept whatever the limit.
+      assert {s.chosen.upfloaters, s.runner_up.upfloaters} == {[2, 6, 1], [2, 6, 3]}
+
+      {_round, s} = explained_selection(residents_who_have_met([8]) ++ lower, explain_limit: 0)
+      assert {s.rejected, s.rejected_omitted, s.considered} == {[], 8, []}
+      assert s.decided_by == "3.5.4"
+    end
+
+    test "the runner-up search stops at its bound and then claims no reason" do
+      # 2 floats into 1's bracket at once ({0, 0}). Every other single set
+      # holds a team that has met 1, so the look past the winner finds only
+      # sets rejected on [C1] - sixty of them, more than it examines.
+      others = for tpn <- 3..62, do: team(tpn, mp: 3.0, opponents: [1])
+      field = [team(1, mp: 5.0, opponents: Enum.to_list(3..62)), team(2, mp: 4.0) | others]
+
+      {_round, s} = explained_selection(field)
+
+      assert s.chosen.upfloaters == [2]
+      assert s.runner_up == nil
+      assert s.decided_by == nil
+      assert length(s.rejected) == 10
+      assert s.rejected_omitted == Ainalrami.TeamPairing.Explanation.look_past() - 10
+    end
+
+    test "without :explain there is no :explanation, and a bad :explain_limit is refused" do
+      teams = for n <- 1..4, do: team(n)
+      {:ok, round} = TeamPairing.pair_round(teams)
+      refute Map.has_key?(round, :explanation)
+
+      assert {:error, {:invalid_option, :explain_limit, -1}} =
+               TeamPairing.pair_round(teams, explain: true, explain_limit: -1)
+    end
+  end
+
+  describe "explain: true - the bye (3.4)" do
+    test "3.4.1 - the teams passed over, in order, and the tie-break against the next" do
+      teams = [
+        team(1, mp: 0.0, opponents: [2, 3]),
+        team(2, mp: 0.0, opponents: [1, 3]),
+        team(3, mp: 0.0, opponents: [1, 2]),
+        team(4, mp: 0.0),
+        team(5, mp: 0.0)
+      ]
+
+      {:ok, round} = TeamPairing.pair_round(teams, explain: true)
+      bye = round.explanation.bye
+
+      assert round.bye == 3
+      # 5 then 4 come first by 3.4.4, and each would strand 1, 2 and 3.
+      assert Enum.map(bye.passed_over, & &1.tpn) == [5, 4]
+      assert bye.next == %{tpn: 2, score: 0.0, matches_played: 0}
+      assert bye.decided_by == "3.4.4"
+      assert bye.ineligible == []
+    end
+
+    test "[C2] - which clause took each team out; 3.4.3 against the next" do
+      teams = [
+        team(1, mp: 2.0, colours: [:white], opponents: [2]),
+        team(2, mp: 0.0, colours: [:black], opponents: [1]),
+        team(3, mp: 1.0, pab: true),
+        team(4, mp: 0.0),
+        team(5, mp: 0.0, forfeit_win: true),
+        team(6, mp: 0.0, pab: true, forfeit_win: true),
+        team(7, mp: 3.0)
+      ]
+
+      {:ok, round} = TeamPairing.pair_round(teams, round: 2, expected_rounds: 5, explain: true)
+      bye = round.explanation.bye
+
+      assert {round.bye, bye.tpn, bye.matches_played} == {2, 2, 1}
+
+      assert bye.ineligible == [
+               %{tpn: 3, reasons: [:had_pab]},
+               %{tpn: 5, reasons: [:won_by_forfeit]},
+               %{tpn: 6, reasons: [:had_pab, :won_by_forfeit]}
+             ]
+
+      assert {bye.passed_over, bye.next.tpn, bye.decided_by} == {[], 4, "3.4.3"}
+
+      {:ok, round} =
+        TeamPairing.pair_round(teams,
+          round: 2,
+          expected_rounds: 5,
+          explain: true,
+          explain_limit: 1
+        )
+
+      assert {length(round.explanation.bye.ineligible), round.explanation.bye.ineligible_omitted} ==
+               {1, 2}
+    end
+
+    test "3.4.2 against the next; and an even field has no bye account" do
+      # 2 has played more than 3, but 3's lower score already decides (3.4.2
+      # comes before 3.4.3).
+      teams = [team(1, mp: 2.0), team(2, mp: 1.0, colours: [:white]), team(3, mp: 0.0)]
+      {:ok, round} = TeamPairing.pair_round(teams, explain: true)
+
+      assert {round.explanation.bye.tpn, round.explanation.bye.next.tpn,
+              round.explanation.bye.decided_by} == {3, 2, "3.4.2"}
+
+      {:ok, round} = TeamPairing.pair_round(for(n <- 1..4, do: team(n)), explain: true)
+      assert round.explanation.bye == nil
+    end
+  end
+
+  describe "explain: true - the Article 4 rule that decided (named as in C.04.6)" do
+    defp rules(a, b, opts \\ []) do
+      {white, black, rules} = Colour.allocate_explained(a, b, opts)
+      # The same call without the rules gives the same colours.
+      assert {white, black} == Colour.allocate(a, b, opts)
+      {white.tpn, black.tpn, rules.first_team_rule, rules.colour_rule}
+    end
+
+    test "4.2.1, 4.2.2 and 4.2.3 name the first-team" do
+      assert {_, _, "4.2.1", _} = rules(team(5, mp: 1.0), team(2, mp: 2.0))
+      assert {_, _, "4.2.2", _} = rules(team(5, mp: 1.0, gp: 3.0), team(2, mp: 1.0, gp: 1.0))
+      assert {_, _, "4.2.3", _} = rules(team(5, mp: 1.0, gp: 1.0), team(2, mp: 1.0, gp: 1.0))
+    end
+
+    test "4.3.1 - both teams yet to play" do
+      assert rules(team(1, mp: 1.0), team(4, mp: 0.0), initial_colour: :black) ==
+               {4, 1, "4.2.1", "4.3.1"}
+    end
+
+    test "4.3.2 - only one preference" do
+      wants_white = team(1, mp: 1.0, colours: [:black, :black])
+      neutral = team(2, mp: 0.0, colours: [:white, :black])
+      assert rules(wants_white, neutral) == {1, 2, "4.2.1", "4.3.2"}
+
+      assert rules(
+               team(1, mp: 1.0, colours: [:white, :black]),
+               team(2, mp: 0.0, colours: [:black, :black])
+             ) == {2, 1, "4.2.1", "4.3.2"}
+    end
+
+    test "4.3.3 - opposite preferences" do
+      assert rules(
+               team(1, mp: 1.0, colours: [:black, :black]),
+               team(2, mp: 0.0, colours: [:white, :white])
+             ) ==
+               {1, 2, "4.2.1", "4.3.3"}
+    end
+
+    test "4.3.4 - Type B, only one strong preference" do
+      strong = team(2, mp: 0.0, colours: [:black, :black])
+      mild = team(1, mp: 1.0, colours: [:black])
+      assert rules(mild, strong, type: :b) == {2, 1, "4.2.1", "4.3.4"}
+    end
+
+    test "4.3.5 - the lower colour difference" do
+      assert rules(
+               team(1, mp: 1.0, colours: [:black, :black]),
+               team(2, mp: 0.0, colours: [:black, :black, :black])
+             ) ==
+               {2, 1, "4.2.1", "4.3.5"}
+    end
+
+    test "4.3.6 - alternate to the most recent split" do
+      assert rules(
+               team(1, mp: 1.0, colours: [:white, :black]),
+               team(2, mp: 0.0, colours: [:black, :white])
+             ) ==
+               {1, 2, "4.2.1", "4.3.6"}
+    end
+
+    test "4.3.7 - the first-team's preference" do
+      assert rules(
+               team(1, mp: 1.0, colours: [:black, :black]),
+               team(2, mp: 0.0, colours: [:black, :black])
+             ) ==
+               {1, 2, "4.2.1", "4.3.7"}
+    end
+
+    test "4.3.8 - alternate the first-team's last colour" do
+      assert rules(team(1, mp: 1.0, colours: [:white]), team(2, mp: 0.0, colours: [:white])) ==
+               {2, 1, "4.2.1", "4.3.8"}
+    end
+
+    test "4.3.9 - alternate the other team's last colour" do
+      first = team(1, mp: 1.0)
+      other = team(2, mp: 0.0, colours: [:white, :black])
+      assert rules(first, other) == {2, 1, "4.2.1", "4.3.9"}
+    end
+
+    test "pair_round's explanation carries them per pair, in the order of its pairs" do
+      teams = [
+        team(1, mp: 1.0, colours: [:black, :black], opponents: [4]),
+        team(2, mp: 1.0, colours: [:white, :white], opponents: [3]),
+        team(3, mp: 0.0, colours: [:black, :white], opponents: [2]),
+        team(4, mp: 0.0, colours: [:white, :black], opponents: [1])
+      ]
+
+      {:ok, round} = TeamPairing.pair_round(teams, explain: true)
+
+      assert Enum.map(round.explanation.pairs, &Map.take(&1, [:white, :black, :first_team])) ==
+               Enum.map(round.pairs, &Map.take(&1, [:white, :black, :first_team]))
+
+      assert Enum.all?(round.explanation.pairs, &(&1.colour_rule =~ ~r/^4\.3\.\d$/))
+    end
+  end
+
+  # ------------------------------------------------------------------
   # The completion oracle
   # ------------------------------------------------------------------
 

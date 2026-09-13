@@ -571,6 +571,10 @@ million tournaments (see [docs/validation.md](docs/validation.md)).
         every round, and diffs 371 reachable rounds of 4-10 teams against a
         brute-force whole-round reference.
       * [x] Host integration: OpenPairings' team Swiss.
+      * [x] The engine reports its reasons (`explain: true`, branch
+        `team-explain`): the bye, each bracket's upfloater sets and what
+        decided between them, each pair's Article 4 clause. Bounded, checked
+        against the whole-round reference, and shown to change no pairing.
       * [ ] Large-field crash/budget fuzz on the fuzz server - not run.
       * [ ] The three readings are research, not SPP rulings.
 

@@ -59,7 +59,7 @@ defmodule Ainalrami.TeamPairing do
   correlation, and `test/ainalrami/team_pairing_test.exs` does it.
   """
 
-  alias Ainalrami.TeamPairing.{Bracket, Colour, Matching, Team}
+  alias Ainalrami.TeamPairing.{Bracket, Colour, Explanation, Matching, Team}
 
   import Bitwise
 
@@ -72,7 +72,7 @@ defmodule Ainalrami.TeamPairing do
   Pairs one round.
 
   Returns `{:ok, %{pairs: [...], bye: tpn | nil, brackets: [...]}}` or
-  `{:error, reason}`.
+  `{:error, reason}`; with `explain: true` the map also has `:explanation`.
 
   Each entry in `pairs` is `%{white: tpn, black: tpn, first_team: tpn,
   score_difference: n}` - colours already allocated per Article 4, and
@@ -107,6 +107,15 @@ defmodule Ainalrami.TeamPairing do
       budget comes back as `{:error, :budget_exhausted}`, which is NOT
       `{:error, :no_legal_pairing}` - it means the search stopped, not that
       it finished.
+    * `:explain` - when true, the result also carries `:explanation`: why
+      the bye went where it did, which upfloater sets each bracket considered
+      and what decided between them, and which rule of Article 4 gave each
+      match its colours. Default false. Everything else in the result is
+      identical either way. Shape and bound in
+      `Ainalrami.TeamPairing.Explanation`.
+    * `:explain_limit` - how many entries each recorded list keeps (default
+      10); the rest are
+      counted, not kept.
 
   ## Why it returns brackets too
 
@@ -116,11 +125,31 @@ defmodule Ainalrami.TeamPairing do
   needs the bracket structure, not just the boards, and reconstructing it
   from the finished pairs is guesswork. This is the same reason the
   individual engine grew `explain_round/3`.
+
+  `explain: true` goes the rest of the way: the REASONS, recorded where the
+  decisions are made - which teams the bye passed over for 3.4.1, which
+  upfloater sets were considered and rejected and the criterion that decided
+  between the chosen set and the runner-up, and the Article 4 rule behind
+  each board-1 colour. `Ainalrami.TeamPairing.Explanation` has the shape and
+  its bound.
   """
   def pair_round(teams, opts \\ []) when is_list(teams) do
     with {:ok, mode} <- validate_score_mode(Keyword.get(opts, :score_mode, :match_points)),
-         {:ok, absent} <- validate_absent(Keyword.get(opts, :absent, []), teams) do
-      do_pair_round(teams, opts, mode, absent)
+         {:ok, absent} <- validate_absent(Keyword.get(opts, :absent, []), teams),
+         {:ok, explain} <- validate_explain(opts) do
+      do_pair_round(teams, opts, mode, absent, explain)
+    end
+  end
+
+  # nil when not explaining - every recording helper is a no-op on nil, so
+  # the path without `:explain` does no bookkeeping at all.
+  defp validate_explain(opts) do
+    limit = Keyword.get(opts, :explain_limit, Explanation.default_limit())
+
+    cond do
+      not is_integer(limit) or limit < 0 -> {:error, {:invalid_option, :explain_limit, limit}}
+      Keyword.get(opts, :explain, false) == true -> {:ok, %{limit: limit}}
+      true -> {:ok, nil}
     end
   end
 
@@ -148,7 +177,7 @@ defmodule Ainalrami.TeamPairing do
   defp validate_score_mode(mode) when mode in [:match_points, :game_points], do: {:ok, mode}
   defp validate_score_mode(mode), do: {:error, {:invalid_option, :score_mode, mode}}
 
-  defp do_pair_round(teams, opts, mode, absent) do
+  defp do_pair_round(teams, opts, mode, absent, explain) do
     round = Keyword.get(opts, :round)
     expected = Keyword.get(opts, :expected_rounds)
 
@@ -171,8 +200,8 @@ defmodule Ainalrami.TeamPairing do
         :error -> base
       end
 
-    with {:ok, bye, rest} <- assign_bye(teams, mode),
-         {:ok, brackets} <- pair_brackets(rest, mode, base) do
+    with {:ok, bye, rest, bye_account} <- choose_bye(teams, mode, explain),
+         {:ok, brackets, bracket_accounts} <- pair_brackets(rest, mode, base, explain) do
       # Article 4.3.1's numbering, built ONCE for the round over the whole
       # roster. Per pair it would be rebuilt for every board, which is the
       # class of regression the individual engine has already paid for
@@ -183,12 +212,29 @@ defmodule Ainalrami.TeamPairing do
       # parity. Without `:absent` this is the list alone, as before.
       numbers = Colour.parity_numbers(teams, absent)
 
-      pairs =
+      allocated =
         brackets
         |> Enum.flat_map(& &1.pairs)
         |> Enum.map(&allocate_colours(&1, teams, numbers, mode, opts, last_round?))
 
-      {:ok, %{pairs: pairs, bye: bye && bye.tpn, brackets: brackets}}
+      pairs = Enum.map(allocated, &elem(&1, 0))
+      result = %{pairs: pairs, bye: bye && bye.tpn, brackets: brackets}
+
+      if explain do
+        explanation = %{
+          limit: explain.limit,
+          bye: bye_account,
+          brackets: bracket_accounts,
+          pairs:
+            Enum.map(allocated, fn {pair, rules} ->
+              pair |> Map.take([:white, :black, :first_team]) |> Map.merge(rules)
+            end)
+        }
+
+        {:ok, Map.put(result, :explanation, explanation)}
+      else
+        {:ok, result}
+      end
     end
   end
 
@@ -216,28 +262,87 @@ defmodule Ainalrami.TeamPairing do
   def assign_bye(teams, mode \\ :match_points)
 
   def assign_bye(teams, mode) do
+    with {:ok, bye, rest, _account} <- choose_bye(teams, mode, nil) do
+      {:ok, bye, rest}
+    end
+  end
+
+  # `assign_bye/2`, recording the reasons when `explain` is not nil. One walk
+  # either way: the recording reads what the walk already decided.
+  defp choose_bye(teams, mode, explain) do
     if rem(length(teams), 2) == 0 do
-      {:ok, nil, teams}
+      {:ok, nil, teams, nil}
     else
-      eligible = Enum.reject(teams, &Team.pab_ineligible?/1)
+      {ineligible, eligible} = Enum.split_with(teams, &Team.pab_ineligible?/1)
 
       ordered =
         Enum.sort_by(eligible, fn t ->
           {Team.score(t, mode), -Team.matches_played(t), -t.tpn}
         end)
 
-      case Enum.find(ordered, &leaves_legal_pairing?(&1, teams)) do
+      # `Enum.find/2`'s walk, with the teams it passes recorded: each one
+      # checked and found to strand the rest (3.4.1).
+      {found, passed} =
+        ordered
+        |> Enum.with_index()
+        |> Enum.reduce_while({nil, Explanation.bounded()}, fn {team, index}, {nil, passed} ->
+          if leaves_legal_pairing?(team, teams) do
+            {:halt, {{team, index}, passed}}
+          else
+            {:cont, {nil, record(passed, explain, fn -> bye_entry(team, mode) end)}}
+          end
+        end)
+
+      case found do
         nil ->
           # 3.3.3: "If it is impossible to complete a round-pairing, the
           # Chief Arbiter shall decide what to do." The engine's job is to
           # say so clearly, not to invent a rule.
           {:error, :no_legal_bye}
 
-        team ->
-          {:ok, team, Enum.reject(teams, &(&1.tpn == team.tpn))}
+        {team, index} ->
+          account =
+            explain &&
+              bye_account(team, Enum.at(ordered, index + 1), ineligible, passed, mode, explain)
+
+          {:ok, team, Enum.reject(teams, &(&1.tpn == team.tpn)), account}
       end
     end
   end
+
+  defp bye_account(team, next, ineligible, passed, mode, explain) do
+    chosen = bye_entry(team, mode)
+    next = next && bye_entry(next, mode)
+
+    ineligible =
+      Enum.reduce(ineligible, Explanation.bounded(), fn t, acc ->
+        reasons =
+          [had_pab: t.had_pab?, won_by_forfeit: t.won_by_forfeit?]
+          |> Enum.filter(&elem(&1, 1))
+          |> Enum.map(&elem(&1, 0))
+
+        Explanation.push(acc, %{tpn: t.tpn, reasons: reasons}, explain.limit)
+      end)
+
+    chosen
+    |> Map.merge(%{
+      ineligible: Explanation.items(ineligible),
+      ineligible_omitted: Explanation.omitted(ineligible),
+      passed_over: Explanation.items(passed),
+      passed_over_omitted: Explanation.omitted(passed),
+      next: next,
+      decided_by: Explanation.bye_decided_by(chosen, next)
+    })
+  end
+
+  defp bye_entry(team, mode) do
+    %{tpn: team.tpn, score: Team.score(team, mode), matches_played: Team.matches_played(team)}
+  end
+
+  # Pushes `build.()` onto a bounded list when explaining; untouched (and
+  # `build` never called) otherwise.
+  defp record(list, nil, _build), do: list
+  defp record(list, explain, build), do: Explanation.push(list, build.(), explain.limit)
 
   # 3.4.1 - the rest must still be pairable without a rematch. This is the
   # completion oracle, not a full pairing: we only need to know that one
@@ -252,20 +357,21 @@ defmodule Ainalrami.TeamPairing do
   # 3.5 / 3.6 - bracket formation and pairing
   # ---------------------------------------------------------------------
 
-  defp pair_brackets(teams, mode, base) do
-    do_pair_brackets(teams, mode, base, [])
+  defp pair_brackets(teams, mode, base, explain) do
+    do_pair_brackets(teams, mode, base, explain, {[], []})
   end
 
-  defp do_pair_brackets([], _mode, _base, acc), do: {:ok, Enum.reverse(acc)}
+  defp do_pair_brackets([], _mode, _base, explain, {acc, accounts}),
+    do: {:ok, Enum.reverse(acc), explain && Enum.reverse(accounts)}
 
-  defp do_pair_brackets(remaining, mode, base, acc) do
+  defp do_pair_brackets(remaining, mode, base, explain, {acc, accounts}) do
     # 3.2 - the top-scoregroup is the highest score among teams yet to pair.
     top_score = remaining |> Enum.map(&Team.score(&1, mode)) |> Enum.max()
     residents = Enum.filter(remaining, &(Team.score(&1, mode) == top_score))
     lower = Enum.reject(remaining, &(Team.score(&1, mode) == top_score))
 
-    case select_upfloaters(residents, lower, mode, base) do
-      {:ok, upfloaters} ->
+    case select(residents, lower, mode, base, explain) do
+      {:ok, upfloaters, selection} ->
         bracket = residents ++ upfloaters
         up_tpns = Enum.map(upfloaters, & &1.tpn)
 
@@ -286,7 +392,22 @@ defmodule Ainalrami.TeamPairing do
             still_left =
               Enum.reject(lower, fn t -> t.tpn in up_tpns end)
 
-            do_pair_brackets(still_left, mode, base, [entry | acc])
+            account =
+              explain &&
+                %{
+                  score: top_score,
+                  residents: entry.residents,
+                  upfloaters: up_tpns,
+                  selection: selection
+                }
+
+            do_pair_brackets(
+              still_left,
+              mode,
+              base,
+              explain,
+              {[entry | acc], [account | accounts]}
+            )
 
           {:error, reason} ->
             {:error, reason}
@@ -335,16 +456,22 @@ defmodule Ainalrami.TeamPairing do
   sets were illegal rather than relaxing [C5] first, never looked past the
   bracket for [C3], and applied neither [C6] nor [C7].
   """
-  def select_upfloaters(residents, lower, mode, base \\ [])
+  def select_upfloaters(residents, lower, mode, base \\ []) do
+    with {:ok, set, _selection} <- select(residents, lower, mode, base, nil) do
+      {:ok, set}
+    end
+  end
 
-  def select_upfloaters(residents, lower, _mode, _base)
-      when rem(length(residents) + length(lower), 2) == 1,
-      do: {:error, :odd_field}
+  # `select_upfloaters/4`, and with `explain` not nil the selection's account
+  # (`Ainalrami.TeamPairing.Explanation`'s `selection`) as a third element.
+  defp select(residents, lower, _mode, _base, _explain)
+       when rem(length(residents) + length(lower), 2) == 1,
+       do: {:error, :odd_field}
 
-  def select_upfloaters(residents, [], _mode, _base) when rem(length(residents), 2) == 1,
+  defp select(residents, [], _mode, _base, _explain) when rem(length(residents), 2) == 1,
     do: {:error, :no_upfloaters_available}
 
-  def select_upfloaters(residents, lower, mode, base) do
+  defp select(residents, lower, mode, base, explain) do
     # [C4]: the fewest upfloaters that work. The bracket must be even
     # (1.3.2), so the count starts at the residents' parity - 0 for an even
     # scoregroup, 1 for an odd one - and grows by two. An EVEN scoregroup can
@@ -352,18 +479,20 @@ defmodule Ainalrami.TeamPairing do
     # bracket on their own, and neither can a scoregroup whose pairing would
     # strand the teams below it ([C3]).
     start = rem(length(residents), 2)
+    rec = new_record(explain)
 
     start..length(lower)//2
     # Nothing at any size: no bracket for these residents can be paired with
     # the rest still pairable, which is 3.3.3's "impossible to complete a
     # round-pairing" - the same answer `Bracket.pair/2` gives.
-    |> Enum.reduce_while({:error, :no_legal_pairing}, fn count, acc ->
-      case best_set_of_size(residents, lower, count, mode, base) do
-        {:ok, set} -> {:halt, {:ok, set}}
-        :none -> {:cont, acc}
-        {:error, _} = error -> {:halt, error}
+    |> Enum.reduce_while({{:error, :no_legal_pairing}, rec}, fn count, {acc, rec} ->
+      case best_set_of_size(residents, lower, count, mode, base, rec) do
+        {:ok, set, selection} -> {:halt, {{:ok, set, selection}, rec}}
+        {:none, rec} -> {:cont, {acc, note_size_without_legal_set(rec, count)}}
+        {:error, _} = error -> {:halt, {error, rec}}
       end
     end)
+    |> elem(0)
   catch
     {__MODULE__, :budget_exhausted} -> {:error, :budget_exhausted}
   end
@@ -383,47 +512,257 @@ defmodule Ainalrami.TeamPairing do
   # [C5], inverting their priority (2.3: "given in descending priority").
   # Judging [C5] among legal sets is the same answer whenever the literal
   # one exists, and the priority-respecting one when it does not.
-  defp best_set_of_size(residents, lower, count, mode, base) do
+  #
+  # ## What the explanation adds, and what it must not change
+  #
+  # The walk below decides exactly as it did before explanations existed:
+  # `best` moves by the same three rules, and `rec` - nil unless explaining -
+  # only watches. `stop` records where the walk ended, so `runner_up/9` can
+  # look past that point for the set that came second without re-walking
+  # anything the choice depended on.
+  defp best_set_of_size(residents, lower, count, mode, base, rec) do
     limit = Keyword.get(base, :max_upfloater_sets, @default_max_upfloater_sets)
 
     if binomial(length(lower), count) > limit do
       {:error, :budget_exhausted}
     else
-      lower
-      |> combinations(count)
-      |> Enum.map(fn set ->
-        # 3.5.3 - within a set: descending score, then ascending TPN.
-        ordered = Enum.sort_by(set, fn t -> {0 - Team.score(t, mode), t.tpn} end)
-        {c5_profile_key(ordered, mode), Enum.map(ordered, & &1.tpn), ordered}
-      end)
-      # [C5] first, then 3.5.4 - between sets, lexicographic by their TPNs.
-      |> Enum.sort_by(fn {profile, tpns, _set} -> {profile, tpns} end)
-      |> Enum.reduce_while(nil, fn {profile, _tpns, set}, best ->
-        cond do
-          best != nil and profile != best.profile ->
-            {:halt, best}
+      sorted =
+        lower
+        |> combinations(count)
+        |> Enum.map(fn set ->
+          # 3.5.3 - within a set: descending score, then ascending TPN.
+          ordered = Enum.sort_by(set, fn t -> {0 - Team.score(t, mode), t.tpn} end)
+          {c5_profile_key(ordered, mode), Enum.map(ordered, & &1.tpn), ordered}
+        end)
+        # [C5] first, then 3.5.4 - between sets, lexicographic by their TPNs.
+        |> Enum.sort_by(fn {profile, tpns, _set} -> {profile, tpns} end)
 
-          not legal_set?(residents, lower, set) ->
-            {:cont, best}
+      {best, rec, stop} =
+        sorted
+        |> Enum.with_index()
+        |> Enum.reduce_while({nil, rec, :end}, fn {{profile, _tpns, set}, index},
+                                                  {best, rec, :end} ->
+          if best != nil and profile != best.profile do
+            {:halt, {best, rec, {:profile, index}}}
+          else
+            case legality(residents, lower, set) do
+              :legal ->
+                key = {c6_excess(set, lower, mode, base), c7_previous_floaters(set, base)}
+                candidate = %{profile: profile, key: key, set: set, index: index}
+                rec = note_considered(rec, candidate, mode)
 
-          true ->
-            key = {c6_excess(set, lower, mode, base), c7_previous_floaters(set, base)}
-            candidate = %{profile: profile, key: key, set: set}
+                cond do
+                  # Nothing can beat a set that fully complies with both; being
+                  # the first such set in 3.5.4's order, it is the answer.
+                  key == {0, 0} ->
+                    {:halt, {candidate, note_second(rec, best), {:zero, index}}}
 
-            cond do
-              # Nothing can beat a set that fully complies with both; being
-              # the first such set in 3.5.4's order, it is the answer.
-              key == {0, 0} -> {:halt, candidate}
-              best == nil or key < best.key -> {:cont, candidate}
-              true -> {:cont, best}
+                  best == nil or key < best.key ->
+                    {:cont, {candidate, note_second(rec, best), :end}}
+
+                  true ->
+                    {:cont, {best, note_second(rec, candidate), :end}}
+                end
+
+              failed ->
+                {:cont, {best, note_rejected(rec, set, failed, mode), :end}}
             end
-        end
-      end)
-      |> case do
-        nil -> :none
-        %{set: set} -> {:ok, set}
+          end
+        end)
+
+      case best do
+        nil ->
+          {:none, rec}
+
+        %{set: set} ->
+          {:ok, set, selection(rec, sorted, stop, best, residents, lower, mode, base)}
       end
     end
+  end
+
+  # [C1] and [C3] for a candidate set, naming which failed: `:legal`, `"C1"`
+  # when the bracket it forms cannot be paired without a rematch, `"C3"` when
+  # the bracket can but the teams left below it cannot. The second half is
+  # what keeps the procedure from walking into a dead end two brackets later
+  # - a bracket's own pairing cannot strand anyone outside it, but the choice
+  # of who floats into it can. Same checks, in the same order, as the boolean
+  # it replaced.
+  defp legality(residents, lower, set) do
+    cond do
+      not feasible?(residents ++ set) -> "C1"
+      not feasible?(without(lower, set)) -> "C3"
+      true -> :legal
+    end
+  end
+
+  # ---------------------------------------------------------------------
+  # Recording the selection (only when explaining; every helper is a no-op
+  # on a nil record)
+  # ---------------------------------------------------------------------
+
+  defp new_record(nil), do: nil
+
+  defp new_record(explain) do
+    %{
+      limit: explain.limit,
+      considered: Explanation.bounded(),
+      rejected: Explanation.bounded(),
+      sizes_without_legal_set: [],
+      second: nil
+    }
+  end
+
+  defp note_size_without_legal_set(nil, _count), do: nil
+
+  defp note_size_without_legal_set(rec, count),
+    do: %{rec | sizes_without_legal_set: rec.sizes_without_legal_set ++ [count]}
+
+  defp note_considered(nil, _candidate, _mode), do: nil
+
+  defp note_considered(rec, candidate, mode),
+    do: %{
+      rec
+      | considered: Explanation.push(rec.considered, set_entry(candidate, mode), rec.limit)
+    }
+
+  defp note_rejected(nil, _set, _failed, _mode), do: nil
+
+  defp note_rejected(rec, set, failed, mode) do
+    entry = %{
+      upfloaters: Enum.map(set, & &1.tpn),
+      c4: length(set),
+      c5: scores(set, mode),
+      failed: failed
+    }
+
+    %{rec | rejected: Explanation.push(rec.rejected, entry, rec.limit)}
+  end
+
+  # The best legal set other than the eventual winner: least key, then
+  # earliest in 3.5.4's order. Every legal set the walk sees has the winner's
+  # profile (a different one halts the walk), so key and order are all that
+  # rank them.
+  defp note_second(nil, _candidate), do: nil
+  defp note_second(rec, nil), do: rec
+
+  defp note_second(%{second: second} = rec, candidate) do
+    if second == nil or {candidate.key, candidate.index} < {second.key, second.index},
+      do: %{rec | second: candidate},
+      else: rec
+  end
+
+  defp set_entry(%{set: set, key: key}, mode) do
+    {c6, c7} = key || {nil, nil}
+    %{upfloaters: Enum.map(set, & &1.tpn), c4: length(set), c5: scores(set, mode), c6: c6, c7: c7}
+  end
+
+  defp scores(set, mode), do: set |> Enum.map(&Team.score(&1, mode)) |> Enum.sort()
+
+  defp selection(nil, _sorted, _stop, _best, _residents, _lower, _mode, _base), do: nil
+
+  defp selection(rec, sorted, stop, best, residents, lower, mode, base) do
+    {rec, runner_up, complete?} = runner_up(rec, sorted, stop, best, residents, lower, mode, base)
+
+    chosen = set_entry(best, mode)
+    runner_up = runner_up && set_entry(runner_up, mode)
+
+    %{
+      c4: length(best.set),
+      sizes_without_legal_set: rec.sizes_without_legal_set,
+      chosen: chosen,
+      runner_up: runner_up,
+      decided_by: if(complete?, do: Explanation.decided_by(chosen, runner_up)),
+      considered: Explanation.items(rec.considered),
+      considered_omitted: Explanation.omitted(rec.considered),
+      rejected: Explanation.items(rec.rejected),
+      rejected_omitted: Explanation.omitted(rec.rejected)
+    }
+  end
+
+  # The best other legal set of this size, `{rec, set | nil, complete?}`.
+  #
+  #   * the walk ran to the end: every set was examined, and the walk's own
+  #     second is the answer (nil when nothing else was legal);
+  #   * it halted on a profile change: every set with the winner's profile
+  #     was examined, so its second is the answer if there is one, and
+  #     otherwise the first legal set of a worse profile, found by looking on;
+  #   * it halted on a {0, 0} winner: sets with the same profile after it
+  #     were never examined, so look on through them for the least key (a
+  #     {0, 0} ends it: nothing later can beat that), and past them only if
+  #     none was legal.
+  #
+  # At most `Explanation.look_past/0` sets are examined. Running out, or a
+  # budget or oracle limit, returns `complete?: false` - the account then
+  # names no deciding criterion rather than a guessed one, and the round is
+  # never failed for it.
+  defp runner_up(rec, _sorted, :end, _best, _residents, _lower, _mode, _base),
+    do: {rec, rec.second, true}
+
+  defp runner_up(%{second: second} = rec, _sorted, {:profile, _}, _best, _r, _l, _m, _b)
+       when second != nil,
+       do: {rec, second, true}
+
+  defp runner_up(rec, sorted, {:profile, index}, best, residents, lower, mode, base),
+    do: look_on(rec, Enum.drop(sorted, index), index, best, residents, lower, mode, base)
+
+  defp runner_up(rec, sorted, {:zero, index}, best, residents, lower, mode, base),
+    do: look_on(rec, Enum.drop(sorted, index + 1), index + 1, best, residents, lower, mode, base)
+
+  defp look_on(rec, rest, from, best, residents, lower, mode, base) do
+    rest
+    |> Enum.take(Explanation.look_past() + 1)
+    |> Enum.with_index(from)
+    |> Enum.reduce_while({rec, true, 0}, fn {{profile, _tpns, set}, index}, {rec, true, seen} ->
+      cond do
+        profile != best.profile and rec.second != nil ->
+          {:halt, {rec, true, seen}}
+
+        seen == Explanation.look_past() ->
+          {:halt, {rec, false, seen}}
+
+        true ->
+          case guarded(fn ->
+                 look_at(rec, profile, set, index, best, residents, lower, mode, base)
+               end) do
+            {:ok, {:cont, rec}} -> {:cont, {rec, true, seen + 1}}
+            {:ok, {:halt, rec}} -> {:halt, {rec, true, seen + 1}}
+            :aborted -> {:halt, {rec, false, seen}}
+          end
+      end
+    end)
+    |> case do
+      {rec, complete?, _seen} -> {rec, rec.second, complete?}
+    end
+  end
+
+  # One set past the stopping point. A legal set of the winner's profile is
+  # ranked by its key; a legal set of a worse profile is the runner-up
+  # outright (the walk only gets here when no same-profile set was legal), its
+  # [C6]/[C7] left unworked because [C5] already decided.
+  defp look_at(rec, profile, set, index, best, residents, lower, mode, base) do
+    case legality(residents, lower, set) do
+      :legal when profile == best.profile ->
+        key = {c6_excess(set, lower, mode, base), c7_previous_floaters(set, base)}
+        candidate = %{profile: profile, key: key, set: set, index: index}
+        rec = rec |> note_considered(candidate, mode) |> note_second(candidate)
+        if key == {0, 0}, do: {:halt, rec}, else: {:cont, rec}
+
+      :legal ->
+        candidate = %{profile: profile, key: nil, set: set, index: index}
+        {:halt, %{note_considered(rec, candidate, mode) | second: candidate}}
+
+      failed ->
+        {:cont, note_rejected(rec, set, failed, mode)}
+    end
+  end
+
+  # The runner-up search may not fail a round the choice already made.
+  defp guarded(fun) do
+    {:ok, fun.()}
+  rescue
+    Matching.LimitError -> :aborted
+  catch
+    {__MODULE__, :budget_exhausted} -> :aborted
   end
 
   # OPEN QUESTION 5 ([C5] against the 3.5.4 example) - the reading lives
@@ -436,8 +775,8 @@ defmodule Ainalrami.TeamPairing do
   # Returned negated so an ascending sort puts the best profile first.
   #
   # This follows the ARTICLE, and the profile is compared only among LEGAL
-  # sets (`best_set_of_size/5` never reaches a set that fails
-  # `legal_set?/3`). The example under 3.5.4 - 2, 6, 8 on 3 points, 1, 3, 5
+  # sets (`best_set_of_size/6` never reaches a set that fails
+  # `legality/3`). The example under 3.5.4 - 2, 6, 8 on 3 points, 1, 3, 5
   # on 2.5, three upfloaters - says [C5] "determines that two upfloaters must
   # have 3 points and the other 2.5". Under this reading the example is right
   # exactly when {2, 6, 8} cannot be paired with the residents (or strands
@@ -453,26 +792,17 @@ defmodule Ainalrami.TeamPairing do
   # legality inside [C4]/[C5]. It is NOT [C6]: 3.5.5 says [C4] and [C5] are
   # met "by construction" before [C6] is consulted, and the 2024 example
   # predates [C6]'s "unless ... empty" clause. Not an SPP ruling; if one says
-  # the profile comes from raw scores, this function and `legal_set?/3`'s
+  # the profile comes from raw scores, this function and `legality/3`'s
   # place in the walk are what change.
   #
   # `0 - score` rather than `-score`: a negated float zero is `-0.0`, which
   # compares equal but is a different term, and the profiles are compared
-  # with `!=` in `best_set_of_size/5`.
+  # with `!=` in `best_set_of_size/6`.
   defp c5_profile_key(set, mode) do
     set
     |> Enum.map(&Team.score(&1, mode))
     |> Enum.sort()
     |> Enum.map(&(0 - &1))
-  end
-
-  # [C1] and [C3] for a candidate set: the bracket it forms can be paired
-  # without a rematch, and so can every team left below it. The second half
-  # is what keeps the procedure from walking into a dead end two brackets
-  # later - a bracket's own pairing cannot strand anyone outside it, but the
-  # choice of who floats into it can.
-  defp legal_set?(residents, lower, set) do
-    feasible?(residents ++ set) and feasible?(without(lower, set))
   end
 
   # [C6] (2.3.3), as a count to minimise: how many MORE upfloaters than the
@@ -515,7 +845,7 @@ defmodule Ainalrami.TeamPairing do
           |> Enum.any?(fn up -> feasible?(following ++ up) and feasible?(without(below, up)) end)
         end)
 
-      # `legal_set?/3` already proved everything below the residents can be
+      # `legality/3` already proved everything below the residents can be
       # paired, so some count works; the fallback is unreachable and ranks
       # worst rather than crashing if it ever is not.
       div((needed || length(lower) + 1) - start, 2)
@@ -529,7 +859,7 @@ defmodule Ainalrami.TeamPairing do
   # rounds, minimise the number of upfloaters that were floaters in the
   # previous round". Read as a minimisation, a set complies by achieving the
   # least count any legal, [C6]-best set achieves, and among those 3.5.4's
-  # order picks the first. That is what `best_set_of_size/5` does with the
+  # order picks the first. That is what `best_set_of_size/6` does with the
   # number this returns.
   #
   # The two readings the SPP question names - rank by [C7] first then take
@@ -595,15 +925,17 @@ defmodule Ainalrami.TeamPairing do
       parity_numbers: numbers
     ]
 
-    {white, black} = Colour.allocate(a, b, colour_opts)
+    {white, black, rules} = Colour.allocate_explained(a, b, colour_opts)
     {first, _} = Colour.first_team(a, b, mode, Keyword.get(opts, :use_secondary?, true))
 
-    %{
+    pair = %{
       white: white.tpn,
       black: black.tpn,
       first_team: first.tpn,
       score_difference: abs(Team.score(a, mode) - Team.score(b, mode))
     }
+
+    {pair, rules}
   end
 
   # ---------------------------------------------------------------------

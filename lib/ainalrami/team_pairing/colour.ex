@@ -142,6 +142,27 @@ defmodule Ainalrami.TeamPairing.Colour do
       overturned rule back on every path that forgot the option.
   """
   def allocate(%Team{} = a, %Team{} = b, opts \\ []) do
+    {white, black, _rules} = allocate_explained(a, b, opts)
+    {white, black}
+  end
+
+  @doc """
+  `allocate/3`, also reporting which rules decided: `{white_team, black_team,
+  %{first_team_rule: rule, colour_rule: rule}}`.
+
+  `first_team_rule` is the clause of 4.2 that named the first-team -
+  `"4.2.1"` (higher primary score), `"4.2.2"` (higher secondary score) or
+  `"4.2.3"` (smaller TPN). `colour_rule` is the clause of 4.3 that gave it its
+  colour, `"4.3.1"` to `"4.3.9"`, numbered as in the regulation; the first
+  one that applies decides, so it is the only one reported.
+
+  One code path with `allocate/3`, not a second implementation beside it:
+  `allocate/3` calls this and drops the map, so the rule reported is the rule
+  that ran. `"initial"` is the unreachable fallback at the end of `decide/6`
+  (two teams with played matches and no colour), reported rather than
+  mislabelled should it ever run.
+  """
+  def allocate_explained(%Team{} = a, %Team{} = b, opts \\ []) do
     initial = Keyword.get(opts, :initial_colour, :white)
     mode = Keyword.get(opts, :score_mode, :match_points)
     use_secondary? = Keyword.get(opts, :use_secondary?, true)
@@ -149,14 +170,16 @@ defmodule Ainalrami.TeamPairing.Colour do
     last_round? = Keyword.get(opts, :last_round?, false)
     numbers = validate_parity_numbers!(Keyword.get(opts, :parity_numbers), a, b)
 
-    {first, other} = first_team(a, b, mode, use_secondary?)
+    {first, other, first_rule} = first_team_explained(a, b, mode, use_secondary?)
 
-    first_colour =
+    {first_colour, colour_rule} =
       decide(first, other, initial, type, last_round?, numbers)
 
+    rules = %{first_team_rule: first_rule, colour_rule: colour_rule}
+
     case first_colour do
-      :white -> {first, other}
-      :black -> {other, first}
+      :white -> {first, other, rules}
+      :black -> {other, first, rules}
     end
   end
 
@@ -227,21 +250,38 @@ defmodule Ainalrami.TeamPairing.Colour do
   (1.1.1), so there is no fourth case and this always decides.
   """
   def first_team(%Team{} = a, %Team{} = b, mode \\ :match_points, use_secondary? \\ true) do
+    {first, other, _rule} = first_team_explained(a, b, mode, use_secondary?)
+    {first, other}
+  end
+
+  @doc """
+  `first_team/4`, also naming the clause of 4.2 that decided:
+  `{first, other, "4.2.1" | "4.2.2" | "4.2.3"}`.
+  """
+  def first_team_explained(
+        %Team{} = a,
+        %Team{} = b,
+        mode \\ :match_points,
+        use_secondary? \\ true
+      ) do
     cond do
       Team.score(a, mode) != Team.score(b, mode) ->
-        if Team.score(a, mode) > Team.score(b, mode), do: {a, b}, else: {b, a}
+        if Team.score(a, mode) > Team.score(b, mode),
+          do: {a, b, "4.2.1"},
+          else: {b, a, "4.2.1"}
 
       use_secondary? and Team.secondary_score(a, mode) != Team.secondary_score(b, mode) ->
         if Team.secondary_score(a, mode) > Team.secondary_score(b, mode),
-          do: {a, b},
-          else: {b, a}
+          do: {a, b, "4.2.2"},
+          else: {b, a, "4.2.2"}
 
       true ->
-        if a.tpn < b.tpn, do: {a, b}, else: {b, a}
+        if a.tpn < b.tpn, do: {a, b, "4.2.3"}, else: {b, a, "4.2.3"}
     end
   end
 
-  # Article 4.3, in descending priority. Returns the FIRST-TEAM's colour.
+  # Article 4.3, in descending priority. Returns the FIRST-TEAM's colour and
+  # the clause that gave it, `{colour, "4.3.n"}`.
   #
   # Written as one ordered `cond` rather than a chain of functions on
   # purpose: the article is an ordered list of nine rules where the first
@@ -262,27 +302,27 @@ defmodule Ainalrami.TeamPairing.Colour do
       # so it is always in the numbering. Falling back would silently
       # restore the reading the SPP overturned.
       Team.matches_played(first) == 0 and Team.matches_played(other) == 0 ->
-        initial_colour_by_parity(Map.fetch!(numbers, first.tpn), initial)
+        {initial_colour_by_parity(Map.fetch!(numbers, first.tpn), initial), "4.3.1"}
 
       # 4.3.2 - only one team has a colour preference; grant it.
       not is_nil(fc) and is_nil(oc) ->
-        fc
+        {fc, "4.3.2"}
 
       is_nil(fc) and not is_nil(oc) ->
-        opposite(oc)
+        {opposite(oc), "4.3.2"}
 
       # 4.3.3 - opposite preferences; grant them both.
       not is_nil(fc) and not is_nil(oc) and fc != oc ->
-        fc
+        {fc, "4.3.3"}
 
       # 4.3.4 - Type B only: only one has a STRONG preference; grant it.
       # Reached only when both want the same colour (4.3.3 took the opposite
       # case), so granting one is refusing the other either way.
       type == :b and Team.strong?(fp) and not Team.strong?(op) ->
-        fc
+        {fc, "4.3.4"}
 
       type == :b and Team.strong?(op) and not Team.strong?(fp) ->
-        opposite(oc)
+        {opposite(oc), "4.3.4"}
 
       # 4.3.5 - White to the team with the LOWER colour difference. The
       # article's own note: -2 is lower than -1; +1 is lower than +2. That is
@@ -290,38 +330,38 @@ defmodule Ainalrami.TeamPairing.Colour do
       # as "smaller in magnitude", which it is not.
       Team.colour_difference(first) != Team.colour_difference(other) ->
         if Team.colour_difference(first) < Team.colour_difference(other),
-          do: :white,
-          else: :black
+          do: {:white, "4.3.5"},
+          else: {:black, "4.3.5"}
 
       # 4.3.6 - alternate the colours to the most recent time one team had
       # White and the other Black.
       true ->
         case most_recent_split(first, other) do
           {:first_had, colour} ->
-            opposite(colour)
+            {opposite(colour), "4.3.6"}
 
           :none ->
             cond do
               # 4.3.7 - grant the first-team's preference.
               not is_nil(fc) ->
-                fc
+                {fc, "4.3.7"}
 
               # 4.3.8 - alternate the first-team's colour from its last
               # played round.
               (last = List.last(first.colours)) != nil ->
-                opposite(last)
+                {opposite(last), "4.3.8"}
 
               # 4.3.9 - alternate the other team's colour from its last
               # played round.
               (last = List.last(other.colours)) != nil ->
-                last
+                {last, "4.3.9"}
 
               # Both teams have played matches (4.3.1 did not fire) yet
               # neither has a colour: unreachable, since a played match has a
               # colour by 1.6.1. Fall back to the initial colour rather than
               # crash - a pairing must always produce an allocation.
               true ->
-                initial
+                {initial, "initial"}
             end
         end
     end

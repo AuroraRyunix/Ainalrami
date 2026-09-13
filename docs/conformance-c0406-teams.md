@@ -312,7 +312,7 @@ deriving it, and no other article visible in the chapter forces it.
 
 **The implementation follows the article, judged over legal sets**
 (`TeamPairing.c5_profile_key/2`, reached only for sets that pass
-`legal_set?/3`): [C5] takes the best score profile among the sets of the
+`legality/3`): [C5] takes the best score profile among the sets of the
 [C4]-minimal size whose bracket can be paired and whose remainder can too.
 With no history the example's position produces {2,6,8}; if {2,6,8} cannot
 be paired, it produces the example's {2,6,1}. The example's own ORDERING -
@@ -382,7 +382,7 @@ July 2026.
 
 | Q | Reading implemented | Where | Confidence |
 |---|---|---|---|
-| 5 | [C5]'s best profile among LEGAL sets ([C3] kept) of the [C4]-minimal size; the 3.5.4 example holds when {2,6,8} cannot be paired. Not [C6]. | `TeamPairing.c5_profile_key/2`, `legal_set?/3` | medium-high (high that it is not [C6]) |
+| 5 | [C5]'s best profile among LEGAL sets ([C3] kept) of the [C4]-minimal size; the 3.5.4 example holds when {2,6,8} cannot be paired. Not [C6]. | `TeamPairing.c5_profile_key/2`, `legality/3` | medium-high (high that it is not [C6]) |
 | 6 | A match is won by forfeit when the opponent played no game in it (every board forfeited). One game played makes it a played match, which does not bar the bye. | the host's `%Team{won_by_forfeit?: _}`; documented on `Team` | high; medium for matches forfeited by decision after play |
 | 7 | Minimise [C7] among compliant sets, then 3.5.4's order. | `TeamPairing.c7_previous_floaters/2` | high |
 
@@ -454,3 +454,67 @@ round" - a match forfeited as a whole is not a meeting for [C1].
   decide), which only the hand-worked tests pin.
 
 Not done: the large-field crash and budget fuzz on the fuzz server.
+
+## The engine reports its reasons (`explain: true`)
+
+`TeamPairing.pair_round/2` with `explain: true` adds `:explanation` to its
+result; everything else in the result is unchanged. Shape and bound are in
+`Ainalrami.TeamPairing.Explanation`'s moduledoc. What it records, and the
+reading behind each:
+
+| Decision | Recorded | Where it is recorded |
+|---|---|---|
+| The bye (3.4) | teams [C2] took out and which clause (a previous bye, a forfeit win); the eligible teams the engine tried first and found would strand the rest (3.4.1); the next eligible team and the first of 3.4.2 / 3.4.3 / 3.4.4 on which the bye ranks ahead of it | the 3.4 walk itself (`choose_bye/3`) |
+| Upfloaters (3.5) | per bracket: every set considered, in order, with its [C4] size, [C5] profile (scores ascending), [C6] and [C7]; sets rejected because no legal pairing exists, as `"C1"` (the bracket cannot be paired) or `"C3"` (the teams below cannot); sizes at which every set was rejected; the chosen set, the runner-up and `decided_by` | the 3.5 walk (`best_set_of_size/6`) |
+| Colours (Article 4) | per pair, the clause of 4.2 that named the first-team and the clause of 4.3 (4.3.1-4.3.9) that gave it its colour | `Colour.allocate_explained/3`, which `allocate/3` now calls |
+
+**What "decided by" means.** The first criterion, in 2.3's priority, on
+which the chosen set beats the runner-up - the best other set of the same
+size that can be paired: `"C5"`, `"C6"`, `"C7"`, or `"3.5.4"` when they tie
+on all three. When no other set of that size can be paired it is `"C4"`: any
+alternative would need more upfloaters. That includes a scoregroup that
+floats nobody in (the empty set is the only set of size zero).
+
+**Finding the runner-up without touching the choice.** 3.5.5 takes the
+FIRST compliant set, so the walk stops early and usually never examines the
+set that came second. With `explain: true`, and only after the choice is
+made, the engine looks on from where the walk stopped, in the same order,
+for at most 50 sets: through the remaining sets with the winner's profile
+(a `{0, 0}` on [C6]/[C7] ends it, nothing later can beat that), and past
+them to the first legal set of a worse profile only if none was legal. A
+budget or oracle limit, or the 50-set bound, ends the look with
+`decided_by: nil` - the engine claims no reason it did not establish - and
+never fails the round.
+
+**The bound.** Each recorded list (per bracket `considered` and `rejected`;
+for the bye `ineligible` and `passed_over`) keeps `:explain_limit` entries,
+default 10, and counts the rest in `*_omitted`. The chosen set, the
+runner-up, the bye's `next` and one entry per pair are always kept. So a
+round's account is O(limit x brackets + pairs) whatever the field size, and
+the extra work is at most fifty legality checks (with their [C6]
+look-aheads) per bracket.
+
+**Checked** (`team_pairing_validation_test.exs`, `team_pairing_test.exs`):
+
+* on every generated round of the whole-round reference (371 rounds, 4-10
+  teams), the result with `explain: true` minus `:explanation` is identical
+  to the result without it, and so on every round of the 12-60 team events,
+  whose accounts are also checked to stay within the bound;
+* on those same 371 rounds the recorded reasons equal the brute-force
+  reference's own - the bye's passed-over teams and deciding tie-break, each
+  bracket's chosen set and `decided_by` (computed there from every legal
+  set, not by looking past a stopping point), and both Article 4 clauses of
+  every pair. Generated rounds reach C4, C5, C6, C7 and 3.5.4, all of 3.4.1-
+  3.4.4, 4.2.1-4.2.3 and 4.3.1-4.3.3, 4.3.5, 4.3.6, 4.3.8 and 4.3.9;
+* the hand-worked positions pin their reasons: the three 3.5.4 example
+  variants (3.5.4, C5, and {2,6,8} rejected on [C1]), [C3] (the empty set
+  rejected on [C3]), [C4] (an even scoregroup, and [C4] over [C5]), [C6],
+  [C6] over [C7] (3.5.4 as worked, C6 with the tie removed), [C7] (3.5.4, C7,
+  and off in the last two rounds), [C6] switched off (C5), 3.6.3 and [C10]
+  (C4); every 4.2 and 4.3 clause, 4.3.4 and 4.3.7 included; the bound and the
+  runner-up search's own bound;
+* **mutation check**: swapping [C6] and [C7] in `decided_by/2`, dropping its
+  [C5] clause, reporting anything but C4 without a runner-up, swapping 3.4.2
+  and 3.4.3, ignoring the walk's own runner-up, skipping a worse-profile
+  runner-up, not ending the look on a `{0, 0}`, and ranking runner-ups
+  without 3.5.4's order each fail at least one test.

@@ -63,6 +63,35 @@ with the reference on every one of them.
 
 ## [Unreleased]
 
+### Team pairing (C.04.6)
+
+- [Feature] **`TeamPairing.pair_round/2` reports its reasons with
+  `explain: true`.** The result gains `:explanation`: for the bye, the teams
+  [C2] took out and why, the teams passed over because the rest could not
+  then be paired (3.4.1), and the tie-break (3.4.2-3.4.4) that put the bye
+  ahead of the next team; for each bracket, the upfloater sets considered in
+  order with their [C4] size, [C5] profile, [C6] and [C7], the sets rejected
+  because no legal pairing exists ([C1] in the bracket, [C3] below it), the
+  chosen set, the runner-up and the first criterion that decided between
+  them; for each pair, the 4.2 clause that named the first-team and the 4.3
+  clause that gave it its colour (`Colour.allocate_explained/3`). Recorded
+  inside the walks that decide, not reconstructed. Without `explain: true`
+  the result is exactly as before. Shape in
+  `Ainalrami.TeamPairing.Explanation`.
+- [Feature] **The account is bounded.** Each recorded list keeps
+  `:explain_limit` entries (default 10) and counts the rest; the runner-up
+  search looks at most 50 sets past where the choice stopped, and says
+  nothing (`decided_by: nil`) rather than guess when it runs out.
+- [Verified] **Explaining changes no pairing.** On the 371 reference rounds
+  and every round of the 12-60 team events, the result with `explain: true`
+  minus `:explanation` equals the result without. On the 371 rounds the
+  recorded reasons (bye, `decided_by` per bracket, both Article 4 clauses per
+  pair) equal the brute-force reference's, which works them out from every
+  legal set rather than by looking past a stopping point. Hand-worked
+  positions pin the reasons for the 3.5.4 example variants, [C3]-[C7], 3.6.3,
+  [C10] and every 4.2/4.3 clause; the deciding-criterion logic was
+  mutation-checked.
+
 ## [0.27.0] - 2026-09-13
 
 ### TRF writer

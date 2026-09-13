@@ -78,11 +78,40 @@ defmodule Ainalrami.TeamPairingValidationTest do
                        }}
                     )
 
-                    assert normalise(engine) == reference,
+                    assert normalise(engine) == Map.take(reference, [:bye, :pairs]),
                            """
                            #{where}
                              engine:    #{inspect(normalise(engine))}
                              reference: #{inspect(reference)}
+                             field:     #{inspect(Enum.map(field, &describe_team/1))}
+                           """
+
+                    # Recording the reasons changes nothing, and the reasons
+                    # recorded are the reference's.
+                    assert {:ok, explained} =
+                             TeamPairing.pair_round(field, [explain: true] ++ opts)
+
+                    assert Map.delete(explained, :explanation) == engine,
+                           "#{where}: explain changed the round"
+
+                    send(
+                      self(),
+                      {:reasons,
+                       Enum.map(reference.reasons.brackets, & &1.decided_by) ++
+                         Enum.map(reference.reasons.rules, &elem(&1, 3)) ++
+                         Enum.map(reference.reasons.rules, &elem(&1, 2)) ++
+                         List.wrap(reference.reasons.bye && reference.reasons.bye.decided_by) ++
+                         if(reference.reasons.bye && reference.reasons.bye.passed_over != [],
+                           do: ["3.4.1"],
+                           else: []
+                         )}
+                    )
+
+                    assert reasons(explained.explanation) == reference.reasons,
+                           """
+                           #{where}: the recorded reasons are not the reference's
+                             engine:    #{inspect(reasons(explained.explanation))}
+                             reference: #{inspect(reference.reasons)}
                              field:     #{inspect(Enum.map(field, &describe_team/1))}
                            """
 
@@ -111,6 +140,20 @@ defmodule Ainalrami.TeamPairingValidationTest do
       assert Enum.count(stats, & &1.upfloaters?) > 150
       assert Enum.count(stats, & &1.bye?) > 100
       assert Enum.count(stats, & &1.absent?) > 50
+
+      # And the recorded reasons it compared cover more than the easy ones.
+      # Measured when written: C4 550, C5 95, C7 10, C6 2, 3.5.4 117; bye
+      # 3.4.1 12, 3.4.2 79, 3.4.3 8, 3.4.4 92; 4.2.1-4.2.3 498/202/400;
+      # 4.3.1 281, 4.3.2 195, 4.3.3 18, 4.3.5 346, 4.3.6 59, 4.3.8 199, 4.3.9
+      # 2. 4.3.4 is Type B, which the reference does not play; 4.3.7 and the
+      # rest are pinned by hand in `team_pairing_test.exs`.
+      seen = collect_reasons(%{})
+
+      for reason <-
+            ~w(C4 C5 C6 C7 3.5.4 3.4.1 3.4.2 3.4.3 3.4.4 4.2.1 4.2.2 4.2.3) ++
+              ~w(4.3.1 4.3.2 4.3.3 4.3.5 4.3.6 4.3.8) do
+        assert Map.get(seen, reason, 0) > 0, "no generated round was decided by #{reason}"
+      end
     end
   end
 
@@ -133,6 +176,14 @@ defmodule Ainalrami.TeamPairingValidationTest do
 
             assert_absolute(round, field, "seed #{seed}, #{size} teams, round #{round_no}")
             assert_colours(round, field, absent, initial)
+
+            # The same round explained: identical, and its record bounded.
+            assert {:ok, explained} = TeamPairing.pair_round(field, [explain: true] ++ opts)
+
+            assert Map.delete(explained, :explanation) == round,
+                   "seed #{seed}, #{size} teams, round #{round_no}: explain changed the round"
+
+            assert_bounded(explained.explanation, round)
             round
           end)
 
@@ -339,6 +390,223 @@ defmodule Ainalrami.TeamPairingValidationTest do
   end
 
   # ==================================================================
+  # The recorded reasons, on the same hand-worked positions
+  # ==================================================================
+
+  describe "the reasons recorded with explain: true, on the hand-worked positions" do
+    # The first bracket's selection account when `residents ++ lower` is
+    # paired as a whole round. Every position here is an even field whose
+    # residents are its top scoregroup, so the first bracket is exactly the
+    # `select_upfloaters/4` call the position above makes.
+    defp first_selection(residents, lower, opts \\ []) do
+      assert {:ok, round} = TeamPairing.pair_round(residents ++ lower, [explain: true] ++ opts)
+      assert {:ok, plain} = TeamPairing.pair_round(residents ++ lower, opts)
+      assert Map.delete(round, :explanation) == plain
+      hd(round.explanation.brackets).selection
+    end
+
+    defp set(ups, c5, c6, c7), do: %{upfloaters: ups, c4: length(ups), c5: c5, c6: c6, c7: c7}
+
+    test "[C6] - 4 lost on [C6]; 5 beat 6, equal on everything, on 3.5.4's order" do
+      residents = [team(1, mp: 3.0), team(2, mp: 3.0), team(3, mp: 3.0)]
+
+      lower = [
+        team(4, mp: 2.0),
+        team(5, mp: 2.0, opponents: [6]),
+        team(6, mp: 2.0, opponents: [5]),
+        team(7, mp: 1.0),
+        team(8, mp: 1.0)
+      ]
+
+      s = first_selection(residents, lower)
+
+      assert s.chosen == set([5], [2.0], 0, 0)
+      assert s.runner_up == set([6], [2.0], 0, 0)
+      assert s.decided_by == "3.5.4"
+      assert s.considered == [set([4], [2.0], 1, 0), set([5], [2.0], 0, 0), set([6], [2.0], 0, 0)]
+      assert s.rejected == [] and s.sizes_without_legal_set == [] and s.c4 == 1
+    end
+
+    test "[C6] outranks [C7]: the position as worked above, and with the tie removed" do
+      residents = [team(1, mp: 3.0), team(2, mp: 3.0), team(3, mp: 3.0)]
+
+      lower = [
+        team(4, mp: 2.0),
+        team(5, mp: 2.0, opponents: [6], floated_last_round?: true),
+        team(6, mp: 2.0, opponents: [5], floated_last_round?: true),
+        team(7, mp: 1.0),
+        team(8, mp: 1.0)
+      ]
+
+      s = first_selection(residents, lower)
+      assert s.considered == [set([4], [2.0], 1, 0), set([5], [2.0], 0, 1), set([6], [2.0], 0, 1)]
+      assert {s.chosen.upfloaters, s.runner_up.upfloaters, s.decided_by} == {[5], [6], "3.5.4"}
+
+      # 4 has met 5 and 6 too, so only 6 floating leaves a pairable 4-5.
+      # 6 floated last round and 4 did not: 6 is worse on [C7] and better on
+      # [C6], and [C6] is the one that decides.
+      lower = [
+        team(4, mp: 2.0, opponents: [6]),
+        team(5, mp: 2.0, opponents: [6], floated_last_round?: true),
+        team(6, mp: 2.0, opponents: [4, 5], floated_last_round?: true),
+        team(7, mp: 1.0),
+        team(8, mp: 1.0)
+      ]
+
+      s = first_selection(residents, lower)
+      assert s.chosen == set([6], [2.0], 0, 1)
+      assert s.runner_up == set([4], [2.0], 1, 0)
+      assert s.decided_by == "C6"
+    end
+
+    test "[C7] - decided by [C7] only when the runner-up floated; otherwise by 3.5.4" do
+      residents = [team(1, mp: 3.0), team(2, mp: 3.0), team(3, mp: 3.0)]
+
+      lower = [
+        team(4, mp: 2.0, floated_last_round?: true),
+        team(5, mp: 2.0),
+        team(6, mp: 2.0),
+        team(7, mp: 1.0),
+        team(8, mp: 1.0)
+      ]
+
+      s = first_selection(residents, lower)
+
+      assert {s.chosen, s.runner_up, s.decided_by} ==
+               {set([5], [2.0], 0, 0), set([6], [2.0], 0, 0), "3.5.4"}
+
+      assert hd(s.considered) == set([4], [2.0], 0, 1)
+
+      # 6 floated too: the best other set is now 4, which lost on [C7].
+      lower = List.replace_at(lower, 2, team(6, mp: 2.0, floated_last_round?: true))
+      s = first_selection(residents, lower)
+
+      assert {s.chosen.upfloaters, s.runner_up, s.decided_by} ==
+               {[5], set([4], [2.0], 0, 1), "C7"}
+
+      # The last two rounds: [C7] is off, every set scores 0 on it, and 4 wins
+      # on 3.5.4's order.
+      s = first_selection(residents, lower, round: 4, expected_rounds: 5)
+      assert {s.chosen, s.decided_by} == {set([4], [2.0], 0, 0), "3.5.4"}
+    end
+
+    test "[C6] switched off when the following scoregroup is emptied: [C5] decides" do
+      residents = [
+        team(1, mp: 3.0, opponents: [2, 3]),
+        team(2, mp: 3.0, opponents: [1, 3]),
+        team(3, mp: 3.0, opponents: [1, 2])
+      ]
+
+      lower =
+        [team(4, mp: 2.0), team(5, mp: 2.0), team(6, mp: 2.0)] ++
+          for(tpn <- 7..12, do: team(tpn, mp: 1.0))
+
+      s = first_selection(residents, lower)
+
+      assert s.chosen == set([4, 5, 6], [2.0, 2.0, 2.0], 0, 0)
+      # The next set that can be paired has a 1-pointer in it; its [C6] and
+      # [C7] are never worked out because [C5] already lost.
+      assert s.runner_up == set([4, 5, 7], [1.0, 2.0, 2.0], nil, nil)
+      assert s.decided_by == "C5"
+
+      # One upfloater cannot make a bracket of residents who have all met:
+      # all nine single sets are rejected on [C1].
+      assert s.sizes_without_legal_set == [1]
+      assert length(s.rejected) == 9 and Enum.all?(s.rejected, &(&1.failed == "C1"))
+    end
+
+    test "[C4] - an even scoregroup whose residents have met: no other set, so [C4]" do
+      residents = [team(1, mp: 2.0, opponents: [2]), team(2, mp: 2.0, opponents: [1])]
+      lower = [team(3, mp: 1.0), team(4, mp: 1.0)]
+
+      s = first_selection(residents, lower)
+
+      assert s.c4 == 2 and s.sizes_without_legal_set == [0]
+      assert s.rejected == [%{upfloaters: [], c4: 0, c5: [], failed: "C1"}]
+      assert {s.chosen.upfloaters, s.runner_up, s.decided_by} == {[3, 4], nil, "C4"}
+    end
+
+    test "[C3] - no upfloaters would strand the teams below: rejected on [C3]" do
+      residents = [team(1, mp: 2.0), team(2, mp: 2.0)]
+
+      lower = [
+        team(3, mp: 1.0, opponents: [4, 5, 6]),
+        team(4, mp: 1.0, opponents: [3]),
+        team(5, mp: 1.0, opponents: [3]),
+        team(6, mp: 1.0, opponents: [3])
+      ]
+
+      s = first_selection(residents, lower)
+
+      assert s.rejected == [%{upfloaters: [], c4: 0, c5: [], failed: "C3"}]
+
+      assert {s.chosen.upfloaters, s.runner_up.upfloaters, s.decided_by} ==
+               {[3, 4], [3, 5], "3.5.4"}
+    end
+
+    test "[C4] outranks [C5]: the 2-pointer is rejected on [C1], a 1-pointer taken" do
+      residents = [
+        team(1, mp: 3.0, opponents: [4]),
+        team(2, mp: 3.0, opponents: [4]),
+        team(3, mp: 3.0, opponents: [4])
+      ]
+
+      lower = [
+        team(4, mp: 2.0, opponents: [1, 2, 3]),
+        team(5, mp: 1.0),
+        team(6, mp: 1.0),
+        team(7, mp: 1.0),
+        team(8, mp: 1.0)
+      ]
+
+      s = first_selection(residents, lower)
+
+      assert s.rejected == [%{upfloaters: [4], c4: 1, c5: [2.0], failed: "C1"}]
+      assert {s.chosen.upfloaters, s.runner_up.upfloaters, s.decided_by} == {[5], [6], "3.5.4"}
+    end
+
+    test "3.6.3 and [C10] - a bracket that needs no upfloaters, and one that needs two" do
+      # 3.6.3's position as a whole round: one scoregroup, nothing floats, so
+      # the empty set is the only set of its size.
+      teams =
+        for tpn <- [4, 6, 8, 9, 10, 11, 16, 24] do
+          case tpn do
+            4 -> team(4, opponents: [10])
+            10 -> team(10, opponents: [4])
+            n -> team(n)
+          end
+        end
+
+      assert {:ok, round} = TeamPairing.pair_round(teams, explain: true)
+      assert [%{selection: s}] = round.explanation.brackets
+      assert {s.c4, s.chosen.upfloaters, s.runner_up, s.decided_by} == {0, [], nil, "C4"}
+
+      assert round.pairs |> Enum.map(&Enum.sort([&1.white, &1.black])) |> Enum.sort() ==
+               [[4, 11], [6, 10], [8, 16], [9, 24]]
+
+      assert Enum.all?(
+               round.explanation.pairs,
+               &(&1.colour_rule == "4.3.1" and &1.first_team_rule == "4.2.3")
+             )
+
+      # [C10]'s shape: residents 3 and 4 have met, so both upfloaters come up
+      # and every pairing puts two floated teams against an upfloater.
+      teams = [
+        team(1, floated_last_round?: true),
+        team(2, floated_last_round?: true),
+        team(3, mp: 1.0, opponents: [4], floated_last_round?: true),
+        team(4, mp: 1.0, opponents: [3], floated_last_round?: true)
+      ]
+
+      assert {:ok, round} = TeamPairing.pair_round(teams, explain: true)
+      assert [%{criteria: {0, 0, 2}}] = round.brackets
+      assert [%{selection: s}] = round.explanation.brackets
+      assert s.rejected == [%{upfloaters: [], c4: 0, c5: [], failed: "C1"}]
+      assert {s.chosen.upfloaters, s.decided_by} == {[1, 2], "C4"}
+    end
+  end
+
+  # ==================================================================
   # Playing an event
   # ==================================================================
 
@@ -481,6 +749,17 @@ defmodule Ainalrami.TeamPairingValidationTest do
     end
   end
 
+  defp collect_reasons(acc) do
+    receive do
+      {:reasons, reasons} ->
+        reasons
+        |> Enum.reduce(acc, fn r, acc -> Map.update(acc, r, 1, &(&1 + 1)) end)
+        |> collect_reasons()
+    after
+      0 -> acc
+    end
+  end
+
   defp update_team(state, tpn, fun), do: Map.update!(state, tpn, &%{&1 | team: fun.(&1.team)})
 
   # ==================================================================
@@ -516,7 +795,7 @@ defmodule Ainalrami.TeamPairingValidationTest do
     numbers = ref_numbers(field, absent)
 
     for %{white: w, black: b} <- round.pairs do
-      assert ref_colours(by_tpn[w], by_tpn[b], numbers, initial) == {w, b},
+      assert match?({^w, ^b, _rules}, ref_colours(by_tpn[w], by_tpn[b], numbers, initial)),
              "Article 4 disagrees on #{w}-#{b}"
     end
   end
@@ -540,17 +819,78 @@ defmodule Ainalrami.TeamPairingValidationTest do
     numbers = ref_numbers(field, absent)
     by_tpn = Map.new(field, &{&1.tpn, &1})
 
-    with {bye, rest} <- ref_bye(field),
+    with {bye, rest, bye_reasons} <- ref_bye(field),
          true <- ref_pairable?(rest) do
-      pairs =
+      {bracket_pairs, bracket_reasons} =
         rest
         |> ref_brackets(last_two?, [])
-        |> Enum.map(fn {a, b} -> ref_colours(by_tpn[a], by_tpn[b], numbers, initial) end)
-        |> Enum.sort()
+        |> Enum.unzip()
 
-      %{bye: bye, pairs: pairs}
+      allocated =
+        bracket_pairs
+        |> Enum.concat()
+        |> Enum.map(fn {a, b} -> ref_colours(by_tpn[a], by_tpn[b], numbers, initial) end)
+
+      %{
+        bye: bye,
+        pairs: allocated |> Enum.map(fn {w, b, _rules} -> {w, b} end) |> Enum.sort(),
+        reasons: %{
+          bye: bye_reasons,
+          brackets: bracket_reasons,
+          rules:
+            allocated
+            |> Enum.map(fn {w, b, {first, colour}} -> {w, b, first, colour} end)
+            |> Enum.sort()
+        }
+      }
     else
       _ -> :impossible
+    end
+  end
+
+  # The engine's recorded reasons, cut to what the reference can say
+  # independently: the bye's passed-over teams and deciding tie-break, each
+  # bracket's chosen set and deciding criterion, each pair's Article 4 rules.
+  defp reasons(explanation) do
+    %{
+      bye:
+        explanation.bye &&
+          %{
+            tpn: explanation.bye.tpn,
+            passed_over: Enum.map(explanation.bye.passed_over, & &1.tpn),
+            decided_by: explanation.bye.decided_by
+          },
+      brackets:
+        Enum.map(explanation.brackets, fn b ->
+          %{upfloaters: b.selection.chosen.upfloaters, decided_by: b.selection.decided_by}
+        end),
+      rules:
+        explanation.pairs
+        |> Enum.map(&{&1.white, &1.black, &1.first_team_rule, &1.colour_rule})
+        |> Enum.sort()
+    }
+  end
+
+  # Every explanation is bounded, whatever the field: no recorded list longer
+  # than the limit, the omitted counts never negative, one entry per pair, and
+  # the chosen set is the bracket's upfloaters.
+  defp assert_bounded(explanation, round) do
+    limit = explanation.limit
+    assert length(explanation.pairs) == length(round.pairs)
+    assert length(explanation.brackets) == length(round.brackets)
+
+    if explanation.bye do
+      assert length(explanation.bye.ineligible) <= limit
+      assert length(explanation.bye.passed_over) <= limit
+      assert explanation.bye.ineligible_omitted >= 0 and explanation.bye.passed_over_omitted >= 0
+    end
+
+    for {account, bracket} <- Enum.zip(explanation.brackets, round.brackets) do
+      s = account.selection
+      assert length(s.considered) <= limit and length(s.rejected) <= limit
+      assert s.considered_omitted >= 0 and s.rejected_omitted >= 0
+      assert Enum.sort(s.chosen.upfloaters) == Enum.sort(bracket.upfloaters)
+      assert s.decided_by in [nil, "C4", "C5", "C6", "C7", "3.5.4"]
     end
   end
 
@@ -561,16 +901,41 @@ defmodule Ainalrami.TeamPairingValidationTest do
 
   # 3.4: [C2] first, then the first team by lowest score, most matches
   # played, largest TPN, that leaves the rest pairable (3.4.1).
-  defp ref_bye(field) when rem(length(field), 2) == 0, do: {nil, field}
+  #
+  # Also the reasons: the teams before the bye in that order (each strands
+  # the rest), and the first of 3.4.2-3.4.4 on which the bye ranks ahead of
+  # the next eligible team.
+  defp ref_bye(field) when rem(length(field), 2) == 0, do: {nil, field, nil}
 
   defp ref_bye(field) do
-    field
-    |> Enum.reject(&(&1.had_pab? or &1.won_by_forfeit?))
-    |> Enum.sort_by(&{&1.match_points, -length(&1.colours), -&1.tpn})
-    |> Enum.find(fn t -> ref_pairable?(List.delete(field, t)) end)
-    |> case do
-      nil -> :impossible
-      t -> {t.tpn, List.delete(field, t)}
+    ordered =
+      field
+      |> Enum.reject(&(&1.had_pab? or &1.won_by_forfeit?))
+      |> Enum.sort_by(&{&1.match_points, -length(&1.colours), -&1.tpn})
+
+    case Enum.find_index(ordered, fn t -> ref_pairable?(List.delete(field, t)) end) do
+      nil ->
+        :impossible
+
+      i ->
+        t = Enum.at(ordered, i)
+        next = Enum.at(ordered, i + 1)
+
+        decided_by =
+          cond do
+            next == nil -> nil
+            t.match_points != next.match_points -> "3.4.2"
+            length(t.colours) != length(next.colours) -> "3.4.3"
+            true -> "3.4.4"
+          end
+
+        reasons = %{
+          tpn: t.tpn,
+          passed_over: ordered |> Enum.take(i) |> Enum.map(& &1.tpn),
+          decided_by: decided_by
+        }
+
+        {t.tpn, List.delete(field, t), reasons}
     end
   end
 
@@ -598,16 +963,45 @@ defmodule Ainalrami.TeamPairingValidationTest do
     # list the better.
     best_c4_c5 = legal |> Enum.map(&{length(&1), c5(&1)}) |> Enum.min()
 
-    set =
+    ranked =
       legal
       |> Enum.filter(&({length(&1), c5(&1)} == best_c4_c5))
-      |> Enum.min_by(fn set ->
-        {c6(set, lower), c7(set, last_two?), set |> sort_353() |> Enum.map(& &1.tpn)}
+      |> Enum.map(fn set ->
+        {{c6(set, lower), c7(set, last_two?), set |> sort_353() |> Enum.map(& &1.tpn)}, set}
       end)
+      |> Enum.sort()
+
+    [{{c6, c7, tpns}, set} | others] = ranked
+
+    # The first criterion in 2.3's order on which the chosen set beats the
+    # best other legal set: within its [C4]/[C5] group [C6], [C7] or 3.5.4's
+    # order; otherwise the best set outside the group, which is worse on [C5]
+    # when it has the same size and on [C4] when it is larger - or no other
+    # legal set at all, which is [C4] too.
+    decided_by =
+      case others do
+        [{{o6, o7, _}, _} | _] ->
+          cond do
+            o6 != c6 -> "C6"
+            o7 != c7 -> "C7"
+            true -> "3.5.4"
+          end
+
+        [] ->
+          case legal |> Enum.reject(&({length(&1), c5(&1)} == best_c4_c5)) do
+            [] ->
+              "C4"
+
+            rest ->
+              {size, _} = rest |> Enum.map(&{length(&1), c5(&1)}) |> Enum.min()
+              if size == length(set), do: "C5", else: "C4"
+          end
+      end
 
     ups = MapSet.new(set, & &1.tpn)
     pairs = ref_bracket_pairing(residents ++ set, ups, last_two?)
-    ref_brackets(lower -- set, last_two?, Enum.reverse(pairs, acc))
+    reasons = %{upfloaters: tpns, decided_by: decided_by}
+    ref_brackets(lower -- set, last_two?, [{pairs, reasons} | acc])
   end
 
   defp c5(set), do: set |> Enum.map(& &1.match_points) |> Enum.sort() |> Enum.map(&(0 - &1))
@@ -702,18 +1096,20 @@ defmodule Ainalrami.TeamPairingValidationTest do
     end
   end
 
-  # Article 4 for one pair, returning {white_tpn, black_tpn}.
+  # Article 4 for one pair, returning {white_tpn, black_tpn, {4.2 rule, 4.3
+  # rule}} - the clause that named the first-team and the one that gave it
+  # its colour.
   defp ref_colours(a, b, numbers, initial) do
-    {first, other} =
+    {first, other, first_rule} =
       cond do
         a.match_points != b.match_points ->
-          if a.match_points > b.match_points, do: {a, b}, else: {b, a}
+          if a.match_points > b.match_points, do: {a, b, "4.2.1"}, else: {b, a, "4.2.1"}
 
         a.game_points != b.game_points ->
-          if a.game_points > b.game_points, do: {a, b}, else: {b, a}
+          if a.game_points > b.game_points, do: {a, b, "4.2.2"}, else: {b, a, "4.2.2"}
 
         true ->
-          if a.tpn < b.tpn, do: {a, b}, else: {b, a}
+          if a.tpn < b.tpn, do: {a, b, "4.2.3"}, else: {b, a, "4.2.3"}
       end
 
     fp = ref_preference(first)
@@ -723,26 +1119,22 @@ defmodule Ainalrami.TeamPairingValidationTest do
       Enum.count(t.colours, &(&1 == :white)) - Enum.count(t.colours, &(&1 == :black))
     end
 
-    colour =
+    {colour, rule} =
       cond do
-        # 4.3.1
         first.colours == [] and other.colours == [] ->
-          if rem(numbers[first.tpn], 2) == 1, do: initial, else: flip(initial)
+          {if(rem(numbers[first.tpn], 2) == 1, do: initial, else: flip(initial)), "4.3.1"}
 
-        # 4.3.2
         fp != nil and op == nil ->
-          fp
+          {fp, "4.3.2"}
 
         fp == nil and op != nil ->
-          flip(op)
+          {flip(op), "4.3.2"}
 
-        # 4.3.3
         fp != nil and op != nil and fp != op ->
-          fp
+          {fp, "4.3.3"}
 
-        # 4.3.5
         cd.(first) != cd.(other) ->
-          if cd.(first) < cd.(other), do: :white, else: :black
+          {if(cd.(first) < cd.(other), do: :white, else: :black), "4.3.5"}
 
         true ->
           # 4.3.6, counting played matches only, from the latest (C.04.2 3.4).
@@ -751,18 +1143,17 @@ defmodule Ainalrami.TeamPairingValidationTest do
             |> Enum.find(fn {x, y} -> x != y end)
 
           cond do
-            split != nil -> flip(elem(split, 0))
-            # 4.3.7
-            fp != nil -> fp
-            # 4.3.8
-            first.colours != [] -> flip(List.last(first.colours))
-            # 4.3.9
-            other.colours != [] -> List.last(other.colours)
-            true -> initial
+            split != nil -> {flip(elem(split, 0)), "4.3.6"}
+            fp != nil -> {fp, "4.3.7"}
+            first.colours != [] -> {flip(List.last(first.colours)), "4.3.8"}
+            other.colours != [] -> {List.last(other.colours), "4.3.9"}
+            true -> {initial, "initial"}
           end
       end
 
-    if colour == :white, do: {first.tpn, other.tpn}, else: {other.tpn, first.tpn}
+    if colour == :white,
+      do: {first.tpn, other.tpn, {first_rule, rule}},
+      else: {other.tpn, first.tpn, {first_rule, rule}}
   end
 
   defp flip(:white), do: :black
