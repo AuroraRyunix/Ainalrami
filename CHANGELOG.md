@@ -63,6 +63,8 @@ with the reference on every one of them.
 
 ## [Unreleased]
 
+## [0.28.0] - 2026-09-13
+
 ### Team pairing (C.04.6)
 
 - [Feature] **`TeamPairing.pair_round/2` reports its reasons with
