@@ -575,7 +575,13 @@ million tournaments (see [docs/validation.md](docs/validation.md)).
         `team-explain`): the bye, each bracket's upfloater sets and what
         decided between them, each pair's Article 4 clause. Bounded, checked
         against the whole-round reference, and shown to change no pairing.
-      * [ ] Large-field crash/budget fuzz on the fuzz server - not run.
+      * [x] Large-field crash/budget fuzz - **run 2026-09-14 locally** (150
+        events of 100-500 teams, 9-15 rounds, 1,740 rounds): zero [C1]-[C3]
+        or Article 4 failures. **Open finding:** 6 events of 200-500 teams hit
+        `:budget_exhausted` in rounds 11-14 (seeds 3, 19, 34, 57, 84, 134),
+        and at 300-500 teams 30% of rounds took over 10 s (max 49.8 s, seed
+        23, 500 teams, round 1). A first pass, not a rate: worth more seeds and
+        a look at the search budget before large team events are advertised.
       * [ ] The three readings are research, not SPP rulings.
 
       The list as it stood before phase 2:
