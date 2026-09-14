@@ -838,17 +838,10 @@ Stated so the claim's boundary is explicit:
 - ~~**Unrated players**~~ - **covered 2026-08-24.** The rating run varies
   the shape of the field's ratings across five modes, two of which put some
   or all players at 0. 285 million pairings, zero disagreements.
-- **Team tournaments and late entrants**, and files where `rounds_count`
-  disagrees with `XXR`. The harness generates none of these; see
-  [TODO.md](../TODO.md). Late entrants are the one of the three that a
-  normal club event actually produces - and since 2026-08-27 they are a
-  priority rather than a footnote, because the late entrant is exactly the
-  construct the SPP's ruling turns on. C.04.2:2.4 is a rule *about* late
-  entries, the numbering it settles only moves when somebody is registered
-  and not yet paired, and no corpus on this page has ever generated one.
-  The engine's new numbering is pinned by unit tests and by a small
-  bye-heavy probe against the real binary; it is not pinned by any axis
-  that produces the construct the rule is written for.
+- ~~**Late entrants**~~ - **covered 2026-09-14.** See "Late entrants
+  (2026-09-14)" below.
+- **Team tournaments**, and files where `rounds_count` disagrees with
+  `XXR`. The harness generates neither; see [TODO.md](../TODO.md).
 - ~~**Non-default point configuration**~~ - **covered, and it was worth
   it.** `PAIRING_FUZZ_POINT_SYSTEM` now generates `BB*` lines across seven
   named systems (half-point bye, doubled, football 3-1-0, paid loss, paid
@@ -874,6 +867,71 @@ Stated so the claim's boundary is explicit:
 - ~~**Three-way agreement at scale**~~ - **raised 2026-08-27, from 3,352
   rounds to 649,207**, and given a colour instrument it never had. See
   "The three-way run" below. It is no longer the weakest number here.
+
+## Late entrants (2026-09-14)
+
+C.04.2 Article 2 ("Initial Order and Late Entries") governs this, not
+C.04.3: **2.3** gives everyone a TPN from the pre-round-one ranking;
+**2.4** says a late entry "is only taken into account for the pairing of
+rounds after the first [round they missed]... receive[s] no points for
+unplayed rounds (unless the rules of the tournament say otherwise), and
+[is] given an appropriate TPN and paired only when [it] actually
+arrive[s]"; **2.5** says the start-of-tournament TPNs are "provisional"
+and reassigned as needed until the List of Participants closes.
+
+**Representation, checked against a real file rather than assumed.** A
+2026-08-30 TRF from a real Belgian event (the Tonoli Memorial, supplied by
+the user) has a late entrant whose pre-entry rounds read `0000 - Z` -
+opponent 0000, no colour, result code Z (zero points) - the same shape a
+full withdrawal uses in that file. Confirmed as the only shape that works
+here too: a genuinely blank result column is a different, and malformed,
+one - bbpPairings refuses the whole file for a short mid-file column (see
+`Ainalrami.Trf`'s `pad_to_last_round/2`). `PAIRING_FUZZ_LATE_BYE_TYPE=H`
+switches every late entrant's missed rounds to a half-point bye instead;
+off by default, matching C.04.2:2.4's own default.
+
+**TPN, found the hard way.** The first version of the new
+`PAIRING_FUZZ_LATE_PCT` knob kept each late entrant's ORIGINAL TPN and
+simply left its `001` row out of the file until entry. bbpPairings
+refused outright - "A pairing number is missing" - the moment the omitted
+rank was not the field's highest one, since its own TPN sequence has to
+be gap-free. A player who has not yet entered is also not invisible to
+bbpPairings' own pairing decision: a 30-seed probe with the omission
+approach still intact found it pairing every not-yet-entered player it
+could see, round 1 included. So TPNs are now reassigned once, at
+generation time - matching 2.5's "provisional... reassigned" wording -
+so every late entrant sorts after every player who is never late. The
+active roster at any round is then always the gap-free prefix
+`1..(N-K+j)` bbpPairings requires, with no renumbering needed later: a
+player's TPN, once assigned, never changes again.
+
+**The corpus.** Six axes, sized to fit a single session rather than this
+project's overnight runs:
+
+| axis | tournaments | rounds | individual pairs | exact rounds | illegal | process errors |
+|---|---|---|---|---|---|---|
+| 10% late, W drawn, 9 rounds | 300 | 2,700 | 79,925 | 100.00% | 0 | 0 |
+| 10% late, B drawn, 9 rounds | 300 | 2,700 | 79,925 | 100.00% | 0 | 0 |
+| 25% late, W drawn, 9 rounds | 300 | 2,700 | 76,537 | 100.00% | 0 | 0 |
+| 25% late, B drawn, 9 rounds | 300 | 2,700 | 76,537 | 100.00% | 0 | 0 |
+| 20% late, 10% byes, 10% forfeits, 5% withdrawals, mixed colour | 300 | 2,700 | 58,156 | 100.00% | 0 | 0 |
+| 10% late, 11 rounds | 250 | 2,750 | 81,712 | 100.00% | 0 | 0 |
+| **total** | **1,750** | **16,250** | **452,792** | **100.00%** | **0** | **0** |
+
+Zero disagreements, zero illegal rounds, zero bbpPairings process errors
+across all six. This is a session-scale corpus, not a millions-of-rounds
+one - proportionate to a single knob's first validation, not to the
+project's largest axes - and every disagreement-finding run along the way
+(before the TPN-reassignment fix) is recorded above as what it actually
+was: a harness defect, not an engine one. No Ainalrami engine change was
+made or was suggested by anything this run found.
+
+**What this does not cover.** Every axis here draws entry between round 2
+and about the middle of the event; a late entrant arriving in the LAST
+few rounds, or a field where every player is a late entrant relative to
+some other reference round, is untested. Team tournaments and the
+`rounds_count`/`XXR` mismatch remain the harness's other two gaps (see
+"Not covered" below).
 
 ## Performance
 
