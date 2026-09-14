@@ -400,9 +400,14 @@ defmodule Ainalrami.BbppairingsComparisonTest do
       Enum.reduce_while(1..rounds, {[], roster}, fn round, {acc, players} ->
         withdraw_some(round, player_count)
 
-        case play_round(players, seed, round, rounds, player_count, forbidden) do
-          {:ok, measurement, next_players} -> {:cont, {[measurement | acc], next_players}}
-          {:error, measurement} -> {:halt, {[measurement | acc], players}}
+        {active, pending} = reveal_late_entrants(players, round)
+
+        case play_round(active, seed, round, rounds, player_count, forbidden) do
+          {:ok, measurement, next_active} ->
+            {:cont, {[measurement | acc], next_active ++ pending}}
+
+          {:error, measurement} ->
+            {:halt, {[measurement | acc], active ++ pending}}
         end
       end)
 

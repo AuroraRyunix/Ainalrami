@@ -48,6 +48,180 @@ defmodule Ainalrami.Test.FuzzTournament do
   combinations nobody thought to write down.
   """
 
+  # Late entrants (C.04.2:2.3-2.5). Article 2.4: "A Late Entry is a
+  # participant who is only taken into account for the pairing of rounds
+  # after the first [round they missed]... late entries receive no points
+  # for unplayed rounds (unless the rules of the tournament say otherwise),
+  # and are given an appropriate TPN and paired only when they actually
+  # arrive." Article 2.3/2.5: the pre-round-one ranking gives everyone a
+  # TPN, but "the TPNs given at the start of the tournament are
+  # provisional. The definitive TPNs are given only when the List of
+  # Participants is closed."
+  #
+  # Two things had to be checked against the real binary rather than argued
+  # from the text alone, and both are grounded in a real TRF file (the
+  # 2026-08-30 Tonoli Memorial, `C:\Users\jorian\Downloads`) plus direct
+  # bbpPairings invocation from this repo:
+  #
+  # 1. **Missed rounds are `0000 - Z`, not a blank/absent column.** That
+  #    file's own late entrant (rank 103) carries exactly that shape for
+  #    every round before entry - opponent 0000, no colour, result code Z
+  #    (`zero_point_bye`) - the same shape a full withdrawal uses. It
+  #    round-trips through this engine's reader (`Trf.parse/1`,
+  #    `points_for/2`) and through bbpPairings' fixed-width rows; an
+  #    actually-empty result column is a different and malformed shape (see
+  #    `pad_to_last_round/2`'s note on why a short MID-file column makes
+  #    bbpPairings reject the whole file).
+  #
+  # 2. **The TPN sequence handed to bbpPairings has to be gap-free.**
+  #    Confirmed the hard way: keeping a late entrant's ORIGINAL rank and
+  #    simply omitting its `001` row for rounds before entry - the first
+  #    version of this knob - made bbpPairings refuse the file outright
+  #    ("A pairing number is missing") the moment the omitted rank was not
+  #    the highest one. And a `0000` player is NOT invisible to bbpPairings'
+  #    own pairing decision: a probe run over 30 seeds found it pairing
+  #    every not-yet-entered player it could see, round 1 included, which
+  #    only agrees with 2.4 by accident on axes where nobody happens to be
+  #    ranked below every late entrant.
+  #
+  #    So TPNs are reassigned here, once, at `begin!` time - matching 2.5's
+  #    "provisional... reassigned" wording - so that the ACTIVE set at every
+  #    round is always the gap-free prefix `1..(N-K+j)`: every player who
+  #    was never late keeps its relative order in `1..(N-K)`, and every late
+  #    entrant is appended after them in `(entry_round, original rank)`
+  #    order. A player not yet due is then simply left out of the roster
+  #    handed to `build_trf/3` and to the engine under test - genuinely
+  #    absent from the file, exactly as an arbiter's software has nothing to
+  #    write for someone who has not walked in yet - and is revealed, with
+  #    its Z-filled history backfilled in one step to match the real file,
+  #    on the round it enters. Because the TPN assignment already fixes
+  #    every late entrant after everyone who is never late, the active
+  #    prefix never has a hole to begin with.
+  #
+  # Default is the zero-point case FIDE calls "usual" (2.4's own aside).
+  # `PAIRING_FUZZ_LATE_BYE_TYPE=H` switches every late entrant's missed
+  # rounds to a half-point bye instead - a second, opt-in mode, kept
+  # deliberately separate from and off by default relative to `Z`.
+  @doc false
+  def late_entrants(roster, forbidden, rounds) do
+    pct = env_int("PAIRING_FUZZ_LATE_PCT", 0)
+
+    if pct < 0 or pct > 100 do
+      raise ArgumentError,
+            "PAIRING_FUZZ_LATE_PCT must be an integer 0..100, got #{inspect(pct)}"
+    end
+
+    bye_type =
+      case System.get_env("PAIRING_FUZZ_LATE_BYE_TYPE", "Z") do
+        t when t in ["Z", "H"] ->
+          t
+
+        other ->
+          raise ArgumentError, "PAIRING_FUZZ_LATE_BYE_TYPE must be Z or H, got #{inspect(other)}"
+      end
+
+    Process.put(:fuzz_late_bye_type, bye_type)
+    player_count = length(roster)
+
+    if pct == 0 or rounds < 2 or player_count < 2 do
+      Process.put(:fuzz_late_entrants, %{})
+      {roster, forbidden}
+    else
+      # "up to about the middle of the event" - round 2 through
+      # ceil(rounds/2)+1, so a late entrant is always still active for at
+      # least the back half of a normal-length tournament.
+      max_entry = max(2, min(rounds, div(rounds, 2) + 1))
+
+      late_original_ranks =
+        for %{rank: r} <- roster, :rand.uniform(100) <= pct, into: %{} do
+          {r, Enum.random(2..max_entry)}
+        end
+
+      {not_late, late} =
+        Enum.split_with(roster, &(not Map.has_key?(late_original_ranks, &1.rank)))
+
+      late_sorted =
+        Enum.sort_by(late, &{Map.fetch!(late_original_ranks, &1.rank), &1.rank})
+
+      renumbered = not_late ++ late_sorted
+
+      mapping =
+        renumbered
+        |> Enum.with_index(1)
+        |> Map.new(fn {p, new_rank} -> {p.rank, new_rank} end)
+
+      new_roster =
+        renumbered
+        |> Enum.with_index(1)
+        |> Enum.map(fn {p, new_rank} -> %{p | rank: new_rank} end)
+
+      new_forbidden =
+        forbidden
+        |> Enum.filter(fn [a, b] -> Map.has_key?(mapping, a) and Map.has_key?(mapping, b) end)
+        |> Enum.map(fn [a, b] -> Enum.sort([Map.fetch!(mapping, a), Map.fetch!(mapping, b)]) end)
+
+      entrants =
+        Map.new(late_original_ranks, fn {old_rank, entry_round} ->
+          {Map.fetch!(mapping, old_rank), entry_round}
+        end)
+
+      Process.put(:fuzz_late_entrants, entrants)
+      {new_roster, new_forbidden}
+    end
+  end
+
+  @doc "This tournament's late-entry map: `%{rank => entry_round}`, in FINAL (post-relabel) TPNs."
+  def late_entrant_map, do: Process.get(:fuzz_late_entrants, %{})
+
+  @doc "Whether `rank` has entered the tournament by `round` (true for every non-late player)."
+  def entered_by?(rank, round) do
+    case Map.fetch(late_entrant_map(), rank) do
+      {:ok, entry_round} -> round >= entry_round
+      :error -> true
+    end
+  end
+
+  @doc """
+  Splits a roster into `{active, pending}` for `round`: `active` is every
+  player already entered - genuinely absent from the roster before that,
+  and backfilled with `Z`/`H` placeholders for the rounds it missed the
+  instant it first appears - `pending` is every late entrant not yet due.
+  Because TPNs are assigned by `late_entrants/3` so that every late entrant
+  sorts after every non-late one, `active` is always the gap-free prefix
+  bbpPairings requires.
+  """
+  def reveal_late_entrants(players, round) do
+    late = late_entrant_map()
+    bye_type = Process.get(:fuzz_late_bye_type, "Z")
+
+    {active, pending} =
+      Enum.split_with(players, fn p ->
+        case Map.fetch(late, p.rank) do
+          :error -> true
+          {:ok, entry_round} -> round >= entry_round
+        end
+      end)
+
+    active =
+      Enum.map(active, fn p ->
+        case Map.fetch(late, p.rank) do
+          {:ok, entry_round} when entry_round == round ->
+            backfill =
+              List.duplicate(
+                %{opponent_rank: nil, colour: nil, result: bye_type},
+                entry_round - 1
+              )
+
+            %{p | games: backfill, points: (entry_round - 1) * result_points(bye_type)}
+
+          _ ->
+            p
+        end
+      end)
+
+    {active, pending}
+  end
+
   @doc """
   Seeds the generator, resolves this tournament's per-tournament modes, and
   builds its opening roster.
@@ -84,6 +258,12 @@ defmodule Ainalrami.Test.FuzzTournament do
     # Last, and only drawing when the axis is switched on: everything above
     # has to keep consuming `:rand` in exactly the order it did before.
     Process.put(:fuzz_point_system, resolve_point_system())
+
+    # Reassigns TPNs when late entrants are drawn - see `late_entrants/3`'s
+    # moduledoc for why. `roster` and `forbidden` come back UNCHANGED when
+    # the axis is off (`player_count` does not, since it never referenced
+    # a TPN to begin with).
+    {roster, forbidden} = late_entrants(roster, forbidden, rounds)
 
     {rounds, player_count, forbidden, roster}
   end

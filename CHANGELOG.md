@@ -63,6 +63,41 @@ with the reference on every one of them.
 
 ## [Unreleased]
 
+### [Verified] Late entrants: the fuzz harness now generates them (C.04.2:2.3-2.5)
+
+`docs/validation.md`'s "Not covered" list named late entrants as the one
+construct of the three team/late/XXR-mismatch gaps that a normal club
+event actually produces, and the one no corpus had ever generated. It
+now does, behind a new knob, and it is clean against bbpPairings on every
+axis run so far - see `docs/validation.md`'s "Late entrants" section for
+the table.
+
+`PAIRING_FUZZ_LATE_PCT` (0-100, validated like every other knob - a bad
+value stops the run) draws that percentage of a tournament's field as
+late entrants, each entering at a random round from 2 up to about the
+middle of the event. Missed rounds are written `0000 - Z` (zero points,
+matching a real TRF's own late-entry rows, not a blank column bbpPairings
+would reject the whole file for); `PAIRING_FUZZ_LATE_BYE_TYPE=H` switches
+that to a half-point bye instead, off by default.
+
+TPNs are reassigned once, at generation time, so every late entrant sorts
+after every player who is never late - the "active" roster handed to both
+engines is then always the gap-free prefix bbpPairings requires. The first
+version of this knob kept each late entrant's original TPN and simply
+omitted its row before entry; bbpPairings refused the file outright ("A
+pairing number is missing") the moment the omitted rank was not the
+field's highest one, and a probe confirmed a not-yet-entered player is not
+otherwise invisible to bbpPairings' own pairing decision.
+
+1,800 tournaments, 16,250 rounds, 452,792 individual pairings across six
+axes (10%/25% late, initial colour W/B, an 11-round axis, and a combined
+axis with byes/forfeits/withdrawals on top) - **100.00% agreement, zero
+illegal rounds, zero process errors.** Smaller than this project's largest
+corpora by design: sized to a single session rather than the overnight
+runs behind the historical tables. See `docs/validation.md` for the table
+and `test/ainalrami/late_entrants_test.exs` for the unit coverage
+(generator shape, knob validation, TRF round-trip).
+
 ## [0.28.0] - 2026-09-13
 
 ### Team pairing (C.04.6)
