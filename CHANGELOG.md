@@ -63,6 +63,8 @@ with the reference on every one of them.
 
 ## [Unreleased]
 
+## [0.29.0] - 2026-09-17
+
 ### [Fix] Team Swiss finishes large fields, and quickly
 
 On events of 200-500 teams the team search could give up
