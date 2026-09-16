@@ -63,6 +63,17 @@ with the reference on every one of them.
 
 ## [Unreleased]
 
+### [Fix] Team Swiss finishes large fields, and quickly
+
+On events of 200-500 teams the team search could give up
+(`:budget_exhausted`, 11 of 350 generated events) and a round could take over
+a minute. Pairability is now answered by a maximum matching, per-round facts
+are computed once, and upfloater sets are generated in rank order. On 350
+events of 100-500 teams: 0 refusals, the slowest round 5.3 s (was 76.9 s),
+and every pairing identical byte for byte to the previous engine on the
+533,093 matches both produced. See `docs/conformance-c0406-teams.md`,
+"Large fields, 2026-09-16".
+
 ### [Verified] Late entrants: the fuzz harness now generates them (C.04.2:2.3-2.5)
 
 `docs/validation.md`'s "Not covered" list named late entrants as the one

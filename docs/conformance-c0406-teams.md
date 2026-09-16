@@ -404,6 +404,56 @@ C.04.2 3.5 also settles a point the host needs: "two paired participants,
 who did not play their game or match, may be paired together in a future
 round" - a match forfeited as a whole is not a meeting for [C1].
 
+## Large fields, 2026-09-16
+
+On 2026-09-14 the team engine was run on generated events of 100-500 teams
+and 9-15 rounds. It broke no rule, but it gave up with `:budget_exhausted` on
+6 of 150 events, all at 200-500 teams in rounds 11-14, and at 300-500 teams
+30% of rounds took more than 10 s (the slowest was 500 teams, round 1).
+
+The search was changed so it asks cheaper questions, not different ones:
+
+- whether a set of teams can be paired at all is answered by a maximum
+  bipartite matching (`TeamPairing.Matching`) instead of by enumerating
+  pairings;
+- facts about the field that do not change during a round (who has met whom,
+  colour state) are computed once per round (`TeamPairing.Field`) instead of
+  once per candidate;
+- upfloater sets are generated in the order the rules already rank them, so
+  the first acceptable set is found without ranking every set first.
+
+Which set, which pairs and which colours the rules pick is unchanged. The
+pre-change bracket walk is kept as test support (`TeamBracketReference`) and
+diffed against the new one on generated brackets, and the matching and
+feasibility checks are tested against brute force.
+
+**Same pairings, byte for byte.** 350 generated events (seeds 1-350, sizes
+100/200/300/500, 9-15 rounds) were recorded on the old engine and on the new
+one and compared with `:erlang.term_to_binary` round by round: **4,156 rounds
+and 533,093 matches, 0 differences.** The 11 events the old engine could not
+finish were compared up to its refusal; the new engine paired every one of
+those rounds and finished the event.
+
+| | old engine | new engine |
+|---|---|---|
+| budget refusals, 350 events | 11 | **0** |
+| round time, seeds 1-150: median | 2.7 s | **0.14 s** |
+| p95 | 29.1 s | **1.4 s** |
+| max | 76.9 s | **2.6 s** |
+| rounds over 10 s | 501 of 1,814 | **0** |
+| 500 teams: median / max | 21.6 s / 76.9 s | **1.0 s / 2.6 s** |
+| whole run, seeds 1-150 | 1,468 s | **69 s** |
+
+Both timed on the same 16-core desktop at `+S 10`. The old engine's run had
+profiling work alongside it, so its times are somewhat pessimistic; a clean
+re-timing was started and not finished. The shape does not depend on that:
+the new engine's slowest round in all 350 events is 5.3 s.
+
+**Not proven:** the 11 rounds the old engine refused have no reference answer,
+so for those only the absolute criteria are known to hold, not that the
+chosen pairing is the rules' first choice. Fields that large are beyond the
+brute-force reference.
+
 ## Open questions
 
 * ~~**4.3.1 and the TPN-parity dispute.** Blocked on the SPP reply. Build
