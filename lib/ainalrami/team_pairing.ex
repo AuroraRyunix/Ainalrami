@@ -20,11 +20,14 @@ defmodule Ainalrami.TeamPairing do
   | bracket | best candidate under a weight ladder | **first** candidate in a defined enumeration |
   | score | one | **two** - primary and secondary |
 
-  The second row is the important one. `Ainalrami.WeightedMatching` - the
-  whole machinery the individual engine is built on - is not used here at
-  all. 3.6 defines an order and a predicate, not an optimum. Matching still
-  earns its keep in one place, `Ainalrami.TeamPairing.Matching`, but only to
-  answer [C3]: *can what is left still be paired?*
+  The second row is the important one. The individual engine's weight
+  ladder is not used here at all: 3.6 defines an order and a predicate, not
+  an optimum. Matching still earns its keep, but only to answer yes/no and
+  how-many questions about the teams - [C3]'s *can what is left still be
+  paired?*, and [C4]/[C6]'s *how few upfloaters can make it so?* -
+  `Ainalrami.TeamPairing.Matching` and `Ainalrami.TeamPairing.Field`, the
+  latter falling back on `Ainalrami.WeightedMatching` for an exact answer
+  when a greedy pass cannot find a witness. Neither chooses a pairing.
 
   ## The procedure (3.3.2)
 
@@ -59,13 +62,14 @@ defmodule Ainalrami.TeamPairing do
   correlation, and `test/ainalrami/team_pairing_test.exs` does it.
   """
 
-  alias Ainalrami.TeamPairing.{Bracket, Colour, Explanation, Matching, Team}
+  alias Ainalrami.TeamPairing.{Bracket, Colour, Explanation, Field, Matching, Team}
 
-  import Bitwise
-
-  # How many candidate upfloater sets of one size 3.5 may enumerate. A set of
-  # one from sixty lower teams is sixty; a set of three is 34,220. Beyond this
-  # the round refuses rather than grinding - see `select_upfloaters/4`.
+  # How many candidate upfloater sets of one size 3.5 may EXAMINE - walk past
+  # in order, checking each - before the round refuses rather than grinds.
+  # Until 2026-09-16 it capped how many sets of the size EXISTED, so C(183, 3)
+  # = 1,004,731 refused a round whose first set in order was the answer; the
+  # sets are now generated in order and only the ones looked at count. Sizes
+  # that provably hold no legal set are not walked at all (`select/5`).
   @default_max_upfloater_sets 200_000
 
   @doc """
@@ -95,8 +99,10 @@ defmodule Ainalrami.TeamPairing do
       simply left out of both lists. A TPN in both `teams` and `:absent` is
       `{:error, {:invalid_option, :absent, tpns}}`.
     * `:max_upfloater_sets` - how many candidate upfloater sets 3.5 may
-      enumerate for one set size (default 200_000); beyond it the round is
-      `{:error, :budget_exhausted}`.
+      examine for one set size, and the [C6] look-ahead for one count
+      (default 200_000); beyond it the round is `{:error, :budget_exhausted}`.
+      Only sets actually examined count, so a round that fits under the old
+      reading (the number of sets of the size) fits under this one.
     * `:round` / `:expected_rounds` - both optional; together they decide
       "the last two rounds", which switch off [C7] and [C10], and "the last
       round", which switches off Type B mild preferences. Given neither, the
@@ -184,7 +190,11 @@ defmodule Ainalrami.TeamPairing do
     last_round? = not is_nil(round) and not is_nil(expected) and round >= expected
     last_two? = not is_nil(round) and not is_nil(expected) and round >= expected - 1
 
+    # Who may still meet whom, once for the round - see `Field`.
+    field = Field.new(teams)
+
     base = [
+      field: field,
       type: Keyword.get(opts, :type, :a),
       last_round?: last_round?,
       last_two_rounds?: last_two?,
@@ -200,7 +210,7 @@ defmodule Ainalrami.TeamPairing do
         :error -> base
       end
 
-    with {:ok, bye, rest, bye_account} <- choose_bye(teams, mode, explain),
+    with {:ok, bye, rest, bye_account} <- choose_bye(teams, mode, explain, field),
          {:ok, brackets, bracket_accounts} <- pair_brackets(rest, mode, base, explain) do
       # Article 4.3.1's numbering, built ONCE for the round over the whole
       # roster. Per pair it would be rebuilt for every board, which is the
@@ -212,10 +222,13 @@ defmodule Ainalrami.TeamPairing do
       # parity. Without `:absent` this is the list alone, as before.
       numbers = Colour.parity_numbers(teams, absent)
 
+      # One lookup table for every board, not one per board.
+      by_tpn = Map.new(teams, &{&1.tpn, &1})
+
       allocated =
         brackets
         |> Enum.flat_map(& &1.pairs)
-        |> Enum.map(&allocate_colours(&1, teams, numbers, mode, opts, last_round?))
+        |> Enum.map(&allocate_colours(&1, by_tpn, numbers, mode, opts, last_round?))
 
       pairs = Enum.map(allocated, &elem(&1, 0))
       result = %{pairs: pairs, bye: bye && bye.tpn, brackets: brackets}
@@ -262,14 +275,14 @@ defmodule Ainalrami.TeamPairing do
   def assign_bye(teams, mode \\ :match_points)
 
   def assign_bye(teams, mode) do
-    with {:ok, bye, rest, _account} <- choose_bye(teams, mode, nil) do
+    with {:ok, bye, rest, _account} <- choose_bye(teams, mode, nil, Field.new(teams)) do
       {:ok, bye, rest}
     end
   end
 
   # `assign_bye/2`, recording the reasons when `explain` is not nil. One walk
   # either way: the recording reads what the walk already decided.
-  defp choose_bye(teams, mode, explain) do
+  defp choose_bye(teams, mode, explain, field) do
     if rem(length(teams), 2) == 0 do
       {:ok, nil, teams, nil}
     else
@@ -286,7 +299,7 @@ defmodule Ainalrami.TeamPairing do
         ordered
         |> Enum.with_index()
         |> Enum.reduce_while({nil, Explanation.bounded()}, fn {team, index}, {nil, passed} ->
-          if leaves_legal_pairing?(team, teams) do
+          if leaves_legal_pairing?(team, teams, field) do
             {:halt, {{team, index}, passed}}
           else
             {:cont, {nil, record(passed, explain, fn -> bye_entry(team, mode) end)}}
@@ -347,10 +360,9 @@ defmodule Ainalrami.TeamPairing do
   # 3.4.1 - the rest must still be pairable without a rematch. This is the
   # completion oracle, not a full pairing: we only need to know that one
   # exists.
-  defp leaves_legal_pairing?(candidate, teams) do
+  defp leaves_legal_pairing?(candidate, teams, field) do
     rest = Enum.reject(teams, &(&1.tpn == candidate.tpn))
-    {mask, adj} = adjacency(rest)
-    Matching.feasible?(mask, adj)
+    Field.feasible?(rest, field)
   end
 
   # ---------------------------------------------------------------------
@@ -462,6 +474,22 @@ defmodule Ainalrami.TeamPairing do
     end
   end
 
+  # Test hooks for `team_pairing_scale_test.exs`: the selection with its
+  # account (`field: nil` in `base` forces the paths taken without a
+  # `Field`), and the candidate sets of one size in the order they are walked.
+  @doc false
+  def __select_for_test__(residents, lower, mode, base, explain_limit) do
+    select(residents, lower, mode, base, explain_limit && %{limit: explain_limit})
+  end
+
+  @doc false
+  def __sets_for_test__(lower, count, mode, skip \\ 0) do
+    lower
+    |> score_groups(mode)
+    |> reduce_sets(count, mode, skip, [], fn item, acc -> {:cont, [item | acc]} end)
+    |> Enum.reverse()
+  end
+
   # `select_upfloaters/4`, and with `explain` not nil the selection's account
   # (`Ainalrami.TeamPairing.Explanation`'s `selection`) as a third element.
   defp select(residents, lower, _mode, _base, _explain)
@@ -472,6 +500,11 @@ defmodule Ainalrami.TeamPairing do
     do: {:error, :no_upfloaters_available}
 
   defp select(residents, lower, mode, base, explain) do
+    # A caller of `select_upfloaters/4` hands no round; the teams it names
+    # are the field.
+    base = Keyword.put_new_lazy(base, :field, fn -> Field.new(residents ++ lower) end)
+    field = Keyword.fetch!(base, :field)
+
     # [C4]: the fewest upfloaters that work. The bracket must be even
     # (1.3.2), so the count starts at the residents' parity - 0 for an even
     # scoregroup, 1 for an odd one - and grows by two. An EVEN scoregroup can
@@ -479,22 +512,59 @@ defmodule Ainalrami.TeamPairing do
     # bracket on their own, and neither can a scoregroup whose pairing would
     # strand the teams below it ([C3]).
     start = rem(length(residents), 2)
+    groups = score_groups(lower, mode)
     rec = new_record(explain)
 
-    start..length(lower)//2
+    case best_set_of_size(residents, lower, groups, start, mode, base, rec) do
+      {:none, rec} when field != nil ->
+        # Nothing at the parity minimum. Every size between it and the least
+        # legal size would be walked set by set only to be rejected - C(183, 3)
+        # is a million sets - so the least legal size is computed instead
+        # (`Field.min_cross/3`: no size below it has a legal set, and it has
+        # one), and the sizes skipped are recorded as the walk would have
+        # recorded them.
+        rec = note_size_without_legal_set(rec, start)
+
+        case Field.min_cross(residents, lower, field) do
+          least when is_integer(least) ->
+            rec =
+              Enum.reduce((start + 2)..(least - 2)//2, rec, fn count, rec ->
+                note_skipped_size(rec, residents, lower, groups, count, mode, base)
+              end)
+
+            grow(least..length(lower)//2, residents, lower, groups, mode, base, rec)
+
+          # No size has a legal set: 3.3.3, as the walk would have concluded.
+          nil ->
+            {:error, :no_legal_pairing}
+
+          :error ->
+            grow((start + 2)..length(lower)//2, residents, lower, groups, mode, base, rec)
+        end
+
+      {:none, rec} ->
+        rec = note_size_without_legal_set(rec, start)
+        grow((start + 2)..length(lower)//2, residents, lower, groups, mode, base, rec)
+
+      {:ok, set, selection} ->
+        {:ok, set, selection}
+    end
+  catch
+    {__MODULE__, :budget_exhausted} -> {:error, :budget_exhausted}
+  end
+
+  defp grow(counts, residents, lower, groups, mode, base, rec) do
+    counts
     # Nothing at any size: no bracket for these residents can be paired with
     # the rest still pairable, which is 3.3.3's "impossible to complete a
     # round-pairing" - the same answer `Bracket.pair/2` gives.
     |> Enum.reduce_while({{:error, :no_legal_pairing}, rec}, fn count, {acc, rec} ->
-      case best_set_of_size(residents, lower, count, mode, base, rec) do
+      case best_set_of_size(residents, lower, groups, count, mode, base, rec) do
         {:ok, set, selection} -> {:halt, {{:ok, set, selection}, rec}}
         {:none, rec} -> {:cont, {acc, note_size_without_legal_set(rec, count)}}
-        {:error, _} = error -> {:halt, {error, rec}}
       end
     end)
     |> elem(0)
-  catch
-    {__MODULE__, :budget_exhausted} -> {:error, :budget_exhausted}
   end
 
   # One set size ([C4] has fixed it). Every set of that size is ranked by
@@ -513,6 +583,16 @@ defmodule Ainalrami.TeamPairing do
   # Judging [C5] among legal sets is the same answer whenever the literal
   # one exists, and the priority-respecting one when it does not.
   #
+  # ## The sets are generated in order, not sorted (2026-09-16)
+  #
+  # This used to build every set of the size, sort them all, and walk the
+  # sorted list - and refuse the round outright when there were more than
+  # `:max_upfloater_sets` of them, however early the walk would have
+  # stopped. `reduce_sets/6` produces the same sets in the same order one at
+  # a time, so the walk below sees exactly what it saw before and stops
+  # where it stopped before; the budget now counts the sets it actually
+  # examines.
+  #
   # ## What the explanation adds, and what it must not change
   #
   # The walk below decides exactly as it did before explanations existed:
@@ -520,32 +600,21 @@ defmodule Ainalrami.TeamPairing do
   # only watches. `stop` records where the walk ended, so `runner_up/9` can
   # look past that point for the set that came second without re-walking
   # anything the choice depended on.
-  defp best_set_of_size(residents, lower, count, mode, base, rec) do
+  defp best_set_of_size(residents, lower, groups, count, mode, base, rec) do
     limit = Keyword.get(base, :max_upfloater_sets, @default_max_upfloater_sets)
 
-    if binomial(length(lower), count) > limit do
-      {:error, :budget_exhausted}
-    else
-      sorted =
-        lower
-        |> combinations(count)
-        |> Enum.map(fn set ->
-          # 3.5.3 - within a set: descending score, then ascending TPN.
-          ordered = Enum.sort_by(set, fn t -> {0 - Team.score(t, mode), t.tpn} end)
-          {c5_profile_key(ordered, mode), Enum.map(ordered, & &1.tpn), ordered}
-        end)
-        # [C5] first, then 3.5.4 - between sets, lexicographic by their TPNs.
-        |> Enum.sort_by(fn {profile, tpns, _set} -> {profile, tpns} end)
+    {best, rec, stop, _index} =
+      reduce_sets(groups, count, mode, 0, {nil, rec, :end, 0}, fn {profile, _tpns, set},
+                                                                  {best, rec, :end, index} ->
+        cond do
+          best != nil and profile != best.profile ->
+            {:halt, {best, rec, {:profile, index}, index}}
 
-      {best, rec, stop} =
-        sorted
-        |> Enum.with_index()
-        |> Enum.reduce_while({nil, rec, :end}, fn {{profile, _tpns, set}, index},
-                                                  {best, rec, :end} ->
-          if best != nil and profile != best.profile do
-            {:halt, {best, rec, {:profile, index}}}
-          else
-            case legality(residents, lower, set) do
+          index >= limit ->
+            throw({__MODULE__, :budget_exhausted})
+
+          true ->
+            case legality(residents, lower, set, base) do
               :legal ->
                 key = {c6_excess(set, lower, mode, base), c7_previous_floaters(set, base)}
                 candidate = %{profile: profile, key: key, set: set, index: index}
@@ -555,29 +624,51 @@ defmodule Ainalrami.TeamPairing do
                   # Nothing can beat a set that fully complies with both; being
                   # the first such set in 3.5.4's order, it is the answer.
                   key == {0, 0} ->
-                    {:halt, {candidate, note_second(rec, best), {:zero, index}}}
+                    {:halt, {candidate, note_second(rec, best), {:zero, index}, index}}
 
                   best == nil or key < best.key ->
-                    {:cont, {candidate, note_second(rec, best), :end}}
+                    {:cont, {candidate, note_second(rec, best), :end, index + 1}}
 
                   true ->
-                    {:cont, {best, note_second(rec, candidate), :end}}
+                    {:cont, {best, note_second(rec, candidate), :end, index + 1}}
                 end
 
               failed ->
-                {:cont, {best, note_rejected(rec, set, failed, mode), :end}}
+                {:cont, {best, note_rejected(rec, set, failed, mode), :end, index + 1}}
             end
-          end
-        end)
+        end
+      end)
 
-      case best do
-        nil ->
-          {:none, rec}
+    case best do
+      nil ->
+        {:none, rec}
 
-        %{set: set} ->
-          {:ok, set, selection(rec, sorted, stop, best, residents, lower, mode, base)}
-      end
+      %{set: set} ->
+        {:ok, set, selection(rec, {groups, count}, stop, best, residents, lower, mode, base)}
     end
+  end
+
+  # A size below the least legal one (`select/5`), recorded as walking it
+  # would have recorded it: every set rejected, each for the reason
+  # `legality/4` gives. Only the first sets can be kept in the bounded list,
+  # so only those are generated and checked; the rest are counted.
+  defp note_skipped_size(nil, _residents, _lower, _groups, _count, _mode, _base), do: nil
+
+  defp note_skipped_size(rec, residents, lower, groups, count, mode, base) do
+    room = max(rec.limit - rec.rejected.total, 0)
+
+    {rec, seen} =
+      if room == 0 do
+        {rec, 0}
+      else
+        reduce_sets(groups, count, mode, 0, {rec, 0}, fn {_profile, _tpns, set}, {rec, seen} ->
+          rec = note_rejected(rec, set, legality(residents, lower, set, base), mode)
+          if seen + 1 == room, do: {:halt, {rec, seen + 1}}, else: {:cont, {rec, seen + 1}}
+        end)
+      end
+
+    rejected = %{rec.rejected | total: rec.rejected.total + binomial(length(lower), count) - seen}
+    note_size_without_legal_set(%{rec | rejected: rejected}, count)
   end
 
   # [C1] and [C3] for a candidate set, naming which failed: `:legal`, `"C1"`
@@ -587,11 +678,158 @@ defmodule Ainalrami.TeamPairing do
   # - a bracket's own pairing cannot strand anyone outside it, but the choice
   # of who floats into it can. Same checks, in the same order, as the boolean
   # it replaced.
-  defp legality(residents, lower, set) do
+  defp legality(residents, lower, set, base) do
+    field = Keyword.get(base, :field)
+
     cond do
-      not feasible?(residents ++ set) -> "C1"
-      not feasible?(without(lower, set)) -> "C3"
+      not Field.feasible?(residents ++ set, field) -> "C1"
+      not Field.feasible?(without(lower, set), field) -> "C3"
       true -> :legal
+    end
+  end
+
+  # ---------------------------------------------------------------------
+  # The sets of one size, in [C5] then 3.5.4 order, one at a time
+  # ---------------------------------------------------------------------
+
+  # `lower` as its scoregroups, highest score first, each in TPN order.
+  # Scores are grouped by `==`, the equality the [C5] profiles are compared
+  # with.
+  defp score_groups(lower, mode) do
+    lower
+    |> Enum.sort_by(fn t -> {0 - Team.score(t, mode), t.tpn} end)
+    |> Enum.chunk_while(
+      [],
+      fn
+        team, [] ->
+          {:cont, [team]}
+
+        team, [last | _] = acc ->
+          if Team.score(team, mode) == Team.score(last, mode),
+            do: {:cont, [team | acc]},
+            else: {:cont, Enum.reverse(acc), [team]}
+      end,
+      fn
+        [] -> {:cont, []}
+        acc -> {:cont, Enum.reverse(acc), []}
+      end
+    )
+    |> Enum.map(&{&1, length(&1)})
+    |> List.to_tuple()
+  end
+
+  # Reduces `fun` over every `count`-set of the teams in `groups`, in exactly
+  # the order the sets used to be sorted into - by `c5_profile_key/2`, then
+  # by the TPNs in 3.5.3's order - skipping the first `skip`. `fun` is given
+  # `{profile, tpns, set}` (the set in 3.5.3's order) and returns
+  # `{:cont, acc}` or `{:halt, acc}`; the result is the final acc.
+  #
+  # Why this order is the sorted order:
+  #
+  #   * A set's profile is its scores ascending, negated. Listing which
+  #     scoregroup each member comes from, lowest score first, gives a
+  #     sequence of group numbers (highest score = 0) that never increases,
+  #     and a SMALLER sequence is a larger score list - a better profile. So
+  #     the profiles in order are those sequences in ascending lexicographic
+  #     order, which `reduce_profiles/7` produces directly.
+  #   * Within one profile every set takes the same number of teams from each
+  #     group, and 3.5.3 lists them highest group first, by TPN within a
+  #     group. Comparing two such TPN lists is comparing the choice from the
+  #     highest group first, then the next: nested lexicographic
+  #     combinations, which `reduce_combinations/5` produces.
+  defp reduce_sets(groups, count, mode, skip, acc, fun) do
+    m = tuple_size(groups)
+
+    prefix =
+      groups
+      |> Tuple.to_list()
+      |> Enum.scan(0, fn {_teams, size}, sum -> sum + size end)
+      |> List.to_tuple()
+
+    total = if m == 0, do: 0, else: elem(prefix, m - 1)
+
+    if count > total do
+      acc
+    else
+      {_, {_skip, acc}} =
+        reduce_profiles(count, m - 1, %{}, prefix, groups, {skip, acc}, fn counts, {skip, acc} ->
+          parts =
+            counts
+            |> Enum.sort()
+            |> Enum.map(fn {g, c} -> {elem(groups, g), c} end)
+
+          block = Enum.reduce(parts, 1, fn {{_teams, size}, c}, n -> n * binomial(size, c) end)
+
+          if skip >= block do
+            {:cont, {skip - block, acc}}
+          else
+            reduce_parts(parts, [], mode, {skip, acc}, fun)
+          end
+        end)
+
+      acc
+    end
+  end
+
+  # The profiles of `remaining` more members, each from a group numbered at
+  # most `max_group`, smallest group-number sequence first.
+  defp reduce_profiles(0, _max_group, counts, _prefix, _groups, acc, fun), do: fun.(counts, acc)
+
+  defp reduce_profiles(remaining, max_group, counts, prefix, groups, acc, fun) do
+    Enum.reduce_while(0..max_group//1, {:cont, acc}, fn g, {:cont, acc} ->
+      used = Map.get(counts, g, 0)
+      {_teams, size} = elem(groups, g)
+
+      # Group g must have a member left, and groups 0..g together must still
+      # hold everything this and the later positions need - the later
+      # positions can only use groups numbered g or lower.
+      if used < size and elem(prefix, g) - used >= remaining do
+        case reduce_profiles(
+               remaining - 1,
+               g,
+               Map.put(counts, g, used + 1),
+               prefix,
+               groups,
+               acc,
+               fun
+             ) do
+          {:halt, acc} -> {:halt, {:halt, acc}}
+          {:cont, acc} -> {:cont, {:cont, acc}}
+        end
+      else
+        {:cont, {:cont, acc}}
+      end
+    end)
+  end
+
+  defp reduce_parts([], chosen, mode, {skip, acc}, fun) do
+    if skip > 0 do
+      {:cont, {skip - 1, acc}}
+    else
+      set = Enum.reverse(chosen)
+
+      case fun.({c5_profile_key(set, mode), Enum.map(set, & &1.tpn), set}, acc) do
+        {:cont, acc} -> {:cont, {0, acc}}
+        {:halt, acc} -> {:halt, {0, acc}}
+      end
+    end
+  end
+
+  defp reduce_parts([{{teams, size}, c} | parts], chosen, mode, acc, fun) do
+    reduce_combinations(teams, size, c, chosen, acc, fn chosen, acc ->
+      reduce_parts(parts, chosen, mode, acc, fun)
+    end)
+  end
+
+  # The `c`-combinations of `teams` (of length `size`) in lexicographic
+  # order, each pushed onto `chosen` in order.
+  defp reduce_combinations(_teams, _size, 0, chosen, acc, fun), do: fun.(chosen, acc)
+  defp reduce_combinations(_teams, size, c, _chosen, acc, _fun) when size < c, do: {:cont, acc}
+
+  defp reduce_combinations([team | teams], size, c, chosen, acc, fun) do
+    case reduce_combinations(teams, size - 1, c - 1, [team | chosen], acc, fun) do
+      {:halt, acc} -> {:halt, acc}
+      {:cont, acc} -> reduce_combinations(teams, size - 1, c, chosen, acc, fun)
     end
   end
 
@@ -658,10 +896,10 @@ defmodule Ainalrami.TeamPairing do
 
   defp scores(set, mode), do: set |> Enum.map(&Team.score(&1, mode)) |> Enum.sort()
 
-  defp selection(nil, _sorted, _stop, _best, _residents, _lower, _mode, _base), do: nil
+  defp selection(nil, _sets, _stop, _best, _residents, _lower, _mode, _base), do: nil
 
-  defp selection(rec, sorted, stop, best, residents, lower, mode, base) do
-    {rec, runner_up, complete?} = runner_up(rec, sorted, stop, best, residents, lower, mode, base)
+  defp selection(rec, sets, stop, best, residents, lower, mode, base) do
+    {rec, runner_up, complete?} = runner_up(rec, sets, stop, best, residents, lower, mode, base)
 
     chosen = set_entry(best, mode)
     runner_up = runner_up && set_entry(runner_up, mode)
@@ -695,43 +933,51 @@ defmodule Ainalrami.TeamPairing do
   # budget or oracle limit, returns `complete?: false` - the account then
   # names no deciding criterion rather than a guessed one, and the round is
   # never failed for it.
-  defp runner_up(rec, _sorted, :end, _best, _residents, _lower, _mode, _base),
+  defp runner_up(rec, _sets, :end, _best, _residents, _lower, _mode, _base),
     do: {rec, rec.second, true}
 
-  defp runner_up(%{second: second} = rec, _sorted, {:profile, _}, _best, _r, _l, _m, _b)
+  defp runner_up(%{second: second} = rec, _sets, {:profile, _}, _best, _r, _l, _m, _b)
        when second != nil,
        do: {rec, second, true}
 
-  defp runner_up(rec, sorted, {:profile, index}, best, residents, lower, mode, base),
-    do: look_on(rec, Enum.drop(sorted, index), index, best, residents, lower, mode, base)
+  defp runner_up(rec, sets, {:profile, index}, best, residents, lower, mode, base),
+    do: look_on(rec, sets, index, best, residents, lower, mode, base)
 
-  defp runner_up(rec, sorted, {:zero, index}, best, residents, lower, mode, base),
-    do: look_on(rec, Enum.drop(sorted, index + 1), index + 1, best, residents, lower, mode, base)
+  defp runner_up(rec, sets, {:zero, index}, best, residents, lower, mode, base),
+    do: look_on(rec, sets, index + 1, best, residents, lower, mode, base)
 
-  defp look_on(rec, rest, from, best, residents, lower, mode, base) do
-    rest
-    |> Enum.take(Explanation.look_past() + 1)
-    |> Enum.with_index(from)
-    |> Enum.reduce_while({rec, true, 0}, fn {{profile, _tpns, set}, index}, {rec, true, seen} ->
+  # The sets from index `from` on, at most `Explanation.look_past/0 + 1` of
+  # them: the set after the bound is only there to find the bound.
+  defp look_on(rec, {groups, count}, from, best, residents, lower, mode, base) do
+    look_past = Explanation.look_past()
+
+    groups
+    |> reduce_sets(count, mode, from, {rec, true, 0, 0}, fn {profile, _tpns, set},
+                                                            {rec, true, seen, taken} ->
+      index = from + taken
+
       cond do
-        profile != best.profile and rec.second != nil ->
-          {:halt, {rec, true, seen}}
+        taken == look_past + 1 ->
+          {:halt, {rec, true, seen, taken}}
 
-        seen == Explanation.look_past() ->
-          {:halt, {rec, false, seen}}
+        profile != best.profile and rec.second != nil ->
+          {:halt, {rec, true, seen, taken}}
+
+        seen == look_past ->
+          {:halt, {rec, false, seen, taken}}
 
         true ->
           case guarded(fn ->
                  look_at(rec, profile, set, index, best, residents, lower, mode, base)
                end) do
-            {:ok, {:cont, rec}} -> {:cont, {rec, true, seen + 1}}
-            {:ok, {:halt, rec}} -> {:halt, {rec, true, seen + 1}}
-            :aborted -> {:halt, {rec, false, seen}}
+            {:ok, {:cont, rec}} -> {:cont, {rec, true, seen + 1, taken + 1}}
+            {:ok, {:halt, rec}} -> {:halt, {rec, true, seen + 1, taken + 1}}
+            :aborted -> {:halt, {rec, false, seen, taken}}
           end
       end
     end)
     |> case do
-      {rec, complete?, _seen} -> {rec, rec.second, complete?}
+      {rec, complete?, _seen, _taken} -> {rec, rec.second, complete?}
     end
   end
 
@@ -740,7 +986,7 @@ defmodule Ainalrami.TeamPairing do
   # outright (the walk only gets here when no same-profile set was legal), its
   # [C6]/[C7] left unworked because [C5] already decided.
   defp look_at(rec, profile, set, index, best, residents, lower, mode, base) do
-    case legality(residents, lower, set) do
+    case legality(residents, lower, set, base) do
       :legal when profile == best.profile ->
         key = {c6_excess(set, lower, mode, base), c7_previous_floaters(set, base)}
         candidate = %{profile: profile, key: key, set: set, index: index}
@@ -837,18 +1083,56 @@ defmodule Ainalrami.TeamPairing do
       limit = Keyword.get(base, :max_upfloater_sets, @default_max_upfloater_sets)
 
       needed =
-        Enum.find(start..length(below)//2, fn count ->
-          if binomial(length(below), count) > limit, do: throw({__MODULE__, :budget_exhausted})
+        case Keyword.get(base, :field) do
+          nil -> fewest_upfloaters(following, below, start, limit)
+          field -> fewest_upfloaters(following, below, start, limit, field)
+        end
 
-          below
-          |> combinations(count)
-          |> Enum.any?(fn up -> feasible?(following ++ up) and feasible?(without(below, up)) end)
-        end)
-
-      # `legality/3` already proved everything below the residents can be
+      # `legality/4` already proved everything below the residents can be
       # paired, so some count works; the fallback is unreachable and ranks
       # worst rather than crashing if it ever is not.
       div((needed || length(lower) + 1) - start, 2)
+    end
+  end
+
+  # The look-ahead as it always was: every count from the parity minimum up,
+  # every set of that count. Taken when the round has no `Field` (see its
+  # moduledoc).
+  defp fewest_upfloaters(following, below, start, limit) do
+    Enum.find(start..length(below)//2, fn count ->
+      if binomial(length(below), count) > limit, do: throw({__MODULE__, :budget_exhausted})
+
+      below
+      |> combinations(count)
+      |> Enum.any?(fn up ->
+        Field.feasible?(following ++ up, nil) and Field.feasible?(without(below, up), nil)
+      end)
+    end)
+  end
+
+  # The same number, with a `Field`. The parity minimum is tried set by set,
+  # as before: it is nearly always the answer, and it is at most one set per
+  # team below. When it is not, the answer is `Field.min_cross/3` of the
+  # scoregroup and the teams below it - exactly the first count the walk
+  # above would reach (its doc has the argument), found without walking
+  # C(n, 3) sets to get there.
+  defp fewest_upfloaters(following, below, start, limit, field) do
+    found? =
+      below
+      |> combinations(start)
+      |> Enum.with_index()
+      |> Enum.any?(fn {up, index} ->
+        if index >= limit, do: throw({__MODULE__, :budget_exhausted})
+        Field.feasible?(following ++ up, field) and Field.feasible?(without(below, up), field)
+      end)
+
+    if found? do
+      start
+    else
+      case Field.min_cross(following, below, field) do
+        :error -> fewest_upfloaters(following, below, start, limit)
+        least -> least
+      end
     end
   end
 
@@ -885,11 +1169,6 @@ defmodule Ainalrami.TeamPairing do
     end
   end
 
-  defp feasible?(teams) do
-    {mask, adj} = adjacency(teams)
-    Matching.feasible?(mask, adj)
-  end
-
   defp without(teams, removed) do
     gone = MapSet.new(removed, & &1.tpn)
     Enum.reject(teams, &MapSet.member?(gone, &1.tpn))
@@ -907,8 +1186,7 @@ defmodule Ainalrami.TeamPairing do
   # Article 4 - colours
   # ---------------------------------------------------------------------
 
-  defp allocate_colours({a_tpn, b_tpn}, teams, numbers, mode, opts, last_round?) do
-    by_tpn = Map.new(teams, &{&1.tpn, &1})
+  defp allocate_colours({a_tpn, b_tpn}, by_tpn, numbers, mode, opts, last_round?) do
     a = Map.fetch!(by_tpn, a_tpn)
     b = Map.fetch!(by_tpn, b_tpn)
 
@@ -939,28 +1217,6 @@ defmodule Ainalrami.TeamPairing do
   end
 
   # ---------------------------------------------------------------------
-
-  # Bitmask adjacency for the completion oracle: index i and j are adjacent
-  # when they have not met ([C1]).
-  defp adjacency(teams) do
-    indexed = Enum.with_index(teams)
-
-    adj =
-      Map.new(indexed, fn {team, i} ->
-        partners =
-          Enum.reduce(indexed, 0, fn {other, j}, mask ->
-            if i != j and not Team.met?(team, other.tpn) do
-              mask ||| 1 <<< j
-            else
-              mask
-            end
-          end)
-
-        {i, partners}
-      end)
-
-    {(1 <<< length(teams)) - 1, adj}
-  end
 
   defp combinations(_list, 0), do: [[]]
   defp combinations([], _n), do: []

@@ -65,7 +65,7 @@ defmodule Ainalrami.TeamPairing.Bracket do
   @default_max_candidates 200_000
 
   # The candidate budget cannot bound the case that actually runs long.
-  # `state.candidates` is incremented only in `score_candidate/3`, which is
+  # `state.candidates` is incremented only in `score_candidate/4`, which is
   # reached only for a COMPLETE legal pairing - so on a bracket where no
   # legal pairing exists, nothing is ever counted and the only thing bounding
   # the walk is the pruning. The pruning is sound but not tight: a structured
@@ -75,7 +75,7 @@ defmodule Ainalrami.TeamPairing.Bracket do
   # this is not an exotic shape.
   #
   # `:max_steps` counts the walk itself - every complete top-set, every
-  # `walk_bottoms/5` call and every `completable?/3` feasibility query - and
+  # `walk_bottoms/8` call and every `completable?/5` feasibility query - and
   # is checked where the candidate budget is, through `done?/1`. Exceeding it
   # is `{:error, :budget_exhausted}` rather than a best-effort answer:
   # unlike the candidate budget, which gives up having already seen a great
@@ -146,27 +146,90 @@ defmodule Ainalrami.TeamPairing.Bracket do
     sorted = Enum.sort_by(teams, & &1.tpn)
     by_tpn = Map.new(sorted, &{&1.tpn, &1})
     tpns = Enum.map(sorted, & &1.tpn)
+    type = Keyword.get(opts, :type, :a)
+    last_round? = Keyword.get(opts, :last_round?, false)
+    upfloaters = MapSet.new(Keyword.get(opts, :upfloater_tpns, []))
+    last_two_rounds? = Keyword.get(opts, :last_two_rounds?, false)
 
     ctx = %{
       tpns: List.to_tuple(tpns),
       by_tpn: by_tpn,
       n: length(tpns),
-      type: Keyword.get(opts, :type, :a),
-      last_round?: Keyword.get(opts, :last_round?, false),
-      upfloaters: MapSet.new(Keyword.get(opts, :upfloater_tpns, [])),
-      last_two_rounds?: Keyword.get(opts, :last_two_rounds?, false),
+      type: type,
+      last_round?: last_round?,
+      upfloaters: upfloaters,
+      last_two_rounds?: last_two_rounds?,
       max_candidates: Keyword.get(opts, :max_candidates, @default_max_candidates),
       max_steps: Keyword.get(opts, :max_steps, @default_max_steps)
     }
 
-    search(ctx)
+    search(Map.merge(ctx, walk_tables(tpns, by_tpn, ctx)))
+  end
+
+  # Everything the walk asks about a team or a pair, worked out once per
+  # bracket instead of once per question (2026-09-16). The walk used to call
+  # `Team.met?/2` for every bottom it tried, rebuild an adjacency map for
+  # every feasibility query, and recompute every team's colour preference -
+  # `Team.preference/3` counts the whole colour history - for every pair of
+  # every complete candidate. On a 79-team bracket that runs to its 200,000
+  # candidate budget, the preference recounting alone was three quarters of
+  # the round.
+  #
+  # Nothing here changes an answer:
+  #
+  #   * `allowed` is `Team.met?/2` from the TOP member's side, exactly the
+  #     question the walk asked (`try_bottoms/4`) and exactly the adjacency
+  #     `completable?/5` used to build - from the lowest index, which is
+  #     always a top;
+  #   * `info` holds, per team, what `criteria/2` reads: the colour and
+  #     strength of `Team.preference/3` (a pure function of the team),
+  #     whether it is an upfloater here, and whether it floated last round.
+  defp walk_tables(tpns, by_tpn, ctx) do
+    positions =
+      tpns
+      |> Enum.with_index()
+      |> Enum.reduce(%{}, fn {tpn, i}, acc -> Map.update(acc, tpn, [i], &[i | &1]) end)
+
+    full = (1 <<< length(tpns)) - 1
+
+    allowed =
+      tpns
+      |> Enum.with_index()
+      |> Enum.map(fn {tpn, i} ->
+        met =
+          by_tpn
+          |> Map.fetch!(tpn)
+          |> Map.fetch!(:opponents)
+          |> Enum.reduce(0, fn opp, acc ->
+            positions |> Map.get(opp, []) |> Enum.reduce(acc, &(&2 ||| 1 <<< &1))
+          end)
+
+        full &&& bnot(met ||| 1 <<< i)
+      end)
+      |> List.to_tuple()
+
+    info =
+      tpns
+      |> Enum.map(fn tpn ->
+        team = Map.fetch!(by_tpn, tpn)
+        preference = Team.preference(team, ctx.type, ctx.last_round?)
+
+        {Team.preferred_colour(preference), Team.strong?(preference),
+         MapSet.member?(ctx.upfloaters, tpn), team.floated_last_round?}
+      end)
+      |> List.to_tuple()
+
+    %{
+      allowed: allowed,
+      info: info,
+      c10?: not (ctx.last_two_rounds? or MapSet.size(ctx.upfloaters) == 0)
+    }
   end
 
   # Walk top-sets in lexicographic order; for each, walk bottom assignments
   # in lexicographic order. Track the best {c8,c9,c10}; stop dead on {0,0,0}.
   defp search(ctx) do
     half = div(ctx.n, 2)
-    all_indices = Enum.to_list(0..(ctx.n - 1))
 
     state = %{
       best: nil,
@@ -177,7 +240,7 @@ defmodule Ainalrami.TeamPairing.Bracket do
       out_of_steps: false
     }
 
-    state = walk_top_sets(all_indices, half, [], 0, ctx, state)
+    state = walk_top_sets(half, [], 0, ctx, state)
 
     cond do
       state.out_of_steps ->
@@ -214,18 +277,20 @@ defmodule Ainalrami.TeamPairing.Bracket do
   end
 
   # Choose which indices are top members, in ascending (hence lexicographic)
-  # order. `chosen` accumulates reversed.
-  defp walk_top_sets(_avail, 0, chosen, _from, ctx, state) do
+  # order. `chosen` accumulates reversed. Every index already chosen is below
+  # `from`, so the indices still available from `from` on are exactly
+  # `from..n-1`.
+  defp walk_top_sets(0, chosen, _from, ctx, state) do
     state = step(state, ctx)
     tops = Enum.reverse(chosen)
-    bottoms = Enum.to_list(0..(ctx.n - 1)) -- tops
-    walk_bottoms(tops, bottoms, [], ctx, state)
+    top_mask = Enum.reduce(tops, 0, &(&2 ||| 1 <<< &1))
+    bottoms = for i <- 0..(ctx.n - 1)//1, (top_mask >>> i &&& 1) == 0, do: i
+    bottom_mask = (1 <<< ctx.n) - 1 &&& bnot(top_mask)
+    walk_bottoms(tops, length(tops), bottoms, bottom_mask, [], {0, 0, 0}, ctx, state)
   end
 
-  defp walk_top_sets(avail, need, chosen, from, ctx, state) do
-    candidates = Enum.filter(avail, &(&1 >= from))
-
-    Enum.reduce_while(candidates, state, fn idx, state ->
+  defp walk_top_sets(need, chosen, from, ctx, state) do
+    Enum.reduce_while(from..(ctx.n - 1)//1, state, fn idx, state ->
       if done?(state) do
         {:halt, state}
       else
@@ -234,8 +299,7 @@ defmodule Ainalrami.TeamPairing.Bracket do
         if idx == ctx.n - 1 do
           {:cont, state}
         else
-          state =
-            walk_top_sets(avail -- [idx], need - 1, [idx | chosen], idx + 1, ctx, state)
+          state = walk_top_sets(need - 1, [idx | chosen], idx + 1, ctx, state)
 
           {:cont, state}
         end
@@ -245,110 +309,148 @@ defmodule Ainalrami.TeamPairing.Bracket do
 
   # Assign each top (in ascending order) its bottom, trying bottoms in
   # ascending order so the bottom sequence comes out lexicographically.
-  defp walk_bottoms([], [], acc, ctx, state) do
+  #
+  # `k` is `length(tops)`, and `length(bottoms)` is always the same. `costs`
+  # is `{c8, c9, c10}` of the pairs in `acc`, summed as they are added, so a
+  # complete candidate's criteria cost nothing more to know.
+  defp walk_bottoms([], _k, [], _bottom_mask, acc, costs, ctx, state) do
     state = step(state, ctx)
-
-    pairs =
-      acc
-      |> Enum.reverse()
-      |> Enum.map(fn {t, b} -> {elem(ctx.tpns, t), elem(ctx.tpns, b)} end)
-
-    score_candidate(pairs, ctx, state)
+    score_candidate(acc, costs, ctx, state)
   end
 
-  defp walk_bottoms([t | tops], bottoms, acc, ctx, state) do
+  defp walk_bottoms([t | tops], k, bottoms, bottom_mask, acc, costs, ctx, state) do
     state = step(state, ctx)
-    top_tpn = elem(ctx.tpns, t)
-    top_team = Map.fetch!(ctx.by_tpn, top_tpn)
+    node = {t, tops, k, bottoms, bottom_mask, elem(ctx.allowed, t), acc, costs}
+    try_bottoms(bottoms, node, ctx, state)
+  end
 
-    Enum.reduce_while(bottoms, state, fn b, state ->
-      cond do
-        done?(state) ->
-          {:halt, state}
+  # The bottoms of one top, in order - a plain recursion rather than
+  # `Enum.reduce_while/3`, whose protocol dispatch was a sixth of the walk.
+  defp try_bottoms([], _node, _ctx, state), do: state
 
-        # The top member is by definition the smaller TPN of its pair.
-        b < t ->
-          {:cont, state}
+  defp try_bottoms([b | more], node, ctx, state) do
+    {t, tops, k, bottoms, bottom_mask, allowed, acc, costs} = node
 
-        # [C1] (2.1.1) - prefix prune. Everything below this choice is dead,
-        # and "everything below" is most of the tree.
-        Team.met?(top_team, elem(ctx.tpns, b)) ->
-          {:cont, state}
+    cond do
+      done?(state) ->
+        state
 
-        true ->
-          rest = bottoms -- [b]
+      # The top member is by definition the smaller TPN of its pair.
+      b < t ->
+        try_bottoms(more, node, ctx, state)
 
-          # Weighted: `completable?/3` builds an adjacency over the whole
-          # remainder and runs a matching, so it is not one unit of the same
-          # work `walk_bottoms/5` is. Charged by the size of the sub-problem
-          # it is asked about, which is what its cost is proportional to -
-          # otherwise the budget measures the cheap half of the walk and the
-          # expensive half runs free, which is how a 200_000-step budget
-          # still took five seconds on the infeasible bracket.
-          state = step(state, ctx, length(tops) + length(rest))
+      # [C1] (2.1.1) - prefix prune. Everything below this choice is dead,
+      # and "everything below" is most of the tree.
+      (allowed >>> b &&& 1) == 0 ->
+        try_bottoms(more, node, ctx, state)
 
-          if not state.out_of_steps and completable?(tops, rest, ctx) do
-            {:cont, walk_bottoms(tops, rest, [{t, b} | acc], ctx, state)}
+      true ->
+        rest = List.delete(bottoms, b)
+        rest_mask = bxor(bottom_mask, 1 <<< b)
+
+        # Weighted: `completable?/5` is a matching over the whole
+        # remainder, so it is not one unit of the same work `walk_bottoms/8`
+        # is. Charged by the size of the sub-problem it is asked about -
+        # `length(tops) + length(rest)`, the two being equal - which is what
+        # its cost was proportional to when the budget was set. The charge
+        # is unchanged by the 2026-09-16 speed-up, so a bracket runs out of
+        # steps at exactly the point it always did.
+        state = step(state, ctx, 2 * (k - 1))
+
+        state =
+          if not state.out_of_steps and completable?(tops, k - 1, rest, rest_mask, ctx) do
+            costs = add_costs(costs, t, b, ctx)
+            walk_bottoms(tops, k - 1, rest, rest_mask, [{t, b} | acc], costs, ctx, state)
           else
-            {:cont, state}
+            state
           end
-      end
-    end)
+
+        try_bottoms(more, node, ctx, state)
+    end
   end
 
   # [C3]-flavoured prune inside the bracket: can the remaining tops still be
   # given distinct legal bottoms at all? Answering it here turns a doomed
   # subtree into one feasibility query instead of a full descent.
   #
-  # Skipped for tiny remainders, where descending is cheaper than building
-  # the adjacency.
-  defp completable?(tops, bottoms, _ctx) when length(tops) <= 1,
-    do: length(tops) == length(bottoms)
+  # Skipped for tiny remainders, where descending is cheaper than asking. A
+  # single top and a single bottom answer "yes" without checking that the two
+  # have not met: the descent finds out, and the answer has always been
+  # given this way, so the walk's step count depends on it.
+  #
+  # The matching is `Matching.bipartite_perfect?/3` over the precomputed
+  # `allowed` masks. It used to build a fresh adjacency map over the whole
+  # remainder with a list-membership test per pair - cubic in the bracket
+  # size, and on a 500-team round one nearly all of the fifty seconds the
+  # round took. Both answer whether a perfect matching exists, so the walk
+  # prunes exactly the same subtrees. Up to three tops - most of the calls,
+  # the walk spending its time near the leaves - every assignment is simply
+  # tried.
+  defp completable?(_tops, k, _bottoms, _bottom_mask, _ctx) when k <= 1, do: true
 
-  defp completable?(tops, bottoms, ctx) do
-    indices = tops ++ bottoms
-    position = indices |> Enum.with_index() |> Map.new()
+  defp completable?(tops, k, bottoms, _bottom_mask, ctx) when k <= 3,
+    do: assignable?(tops, bottoms, ctx.allowed)
 
-    adj =
-      Map.new(indices, fn i ->
-        tpn = elem(ctx.tpns, i)
-        team = Map.fetch!(ctx.by_tpn, tpn)
+  defp completable?(tops, _k, _bottoms, bottom_mask, ctx),
+    do: Matching.bipartite_perfect?(tops, bottom_mask, ctx.allowed)
 
-        partners =
-          Enum.reduce(indices, 0, fn j, mask ->
-            cond do
-              j == i -> mask
-              # Only top-bottom pairs exist in this sub-problem.
-              i in tops == j in tops -> mask
-              Team.met?(team, elem(ctx.tpns, j)) -> mask
-              true -> mask ||| 1 <<< Map.fetch!(position, j)
-            end
-          end)
+  defp assignable?([], [], _allowed), do: true
 
-        {Map.fetch!(position, i), partners}
-      end)
+  defp assignable?([t | tops], bottoms, allowed) do
+    mask = elem(allowed, t)
 
-    full = (1 <<< length(indices)) - 1
-    Matching.feasible?(full, adj)
+    Enum.any?(bottoms, fn b ->
+      (mask >>> b &&& 1) == 1 and assignable?(tops, List.delete(bottoms, b), allowed)
+    end)
   end
 
-  # 3.6.4's three minimisation criteria, computed for a complete candidate.
-  defp score_candidate(pairs, ctx, state) do
+  # {c8, c9, c10} of one pair, added to the running sums. The same three
+  # counts `criteria/2` makes per pair, from the tables.
+  defp add_costs({c8, c9, c10} = costs, t, b, ctx) do
+    {colour_t, strong_t, up_t, floated_t} = elem(ctx.info, t)
+    {colour_b, strong_b, up_b, floated_b} = elem(ctx.info, b)
+
+    c10_add =
+      if ctx.c10? do
+        bool_to_int(up_t and floated_b) + bool_to_int(up_b and floated_t)
+      else
+        0
+      end
+
+    cond do
+      # `clash?/2`: both want a colour, and the same one.
+      colour_t != nil and colour_t == colour_b ->
+        c9_add = if ctx.type == :b and strong_t and strong_b, do: 1, else: 0
+        {c8 + 1, c9 + c9_add, c10 + c10_add}
+
+      c10_add == 0 ->
+        costs
+
+      true ->
+        {c8, c9, c10 + c10_add}
+    end
+  end
+
+  # 3.6.4's three minimisation criteria for a complete candidate - already
+  # summed along the walk (`add_costs/4`), so equal to `criteria/2` of its
+  # pairs. The pairs themselves are only built for a new best.
+  defp score_candidate(acc, scores, ctx, state) do
     state = %{state | candidates: state.candidates + 1}
 
-    if state.candidates > ctx.max_candidates do
-      %{state | exhausted: true}
-    else
-      scores = criteria(pairs, ctx)
+    cond do
+      state.candidates > ctx.max_candidates ->
+        %{state | exhausted: true}
 
-      state =
-        if is_nil(state.best_scores) or scores < state.best_scores do
-          %{state | best: pairs, best_scores: scores}
-        else
-          state
-        end
+      is_nil(state.best_scores) or scores < state.best_scores ->
+        pairs =
+          acc
+          |> Enum.reverse()
+          |> Enum.map(fn {t, b} -> {elem(ctx.tpns, t), elem(ctx.tpns, b)} end)
 
-      state
+        %{state | best: pairs, best_scores: scores}
+
+      true ->
+        state
     end
   end
 
