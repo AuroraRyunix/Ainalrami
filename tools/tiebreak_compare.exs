@@ -39,12 +39,24 @@ tbs_code = fn code -> String.replace(code, ~r"/L(\d)", "/L+\\1") end
 # `-n`: the rounds actually in the file. Without it TieBreakServer counts every
 # ANNOUNCED round, so a file saved after round 1 of 9 gets eight unplayed
 # rounds in every tie-break.
+#
+# Codes that compute Fore Buchholz go LAST: TieBreakServer leaks state from
+# an FB computation into every tie-break after it in the same run (finding A,
+# docs/finding-tiebreakserver-2026-09.md). The rows are mapped back to the
+# order asked for.
+fore? = fn code -> String.starts_with?(code, "FB") or code =~ ~r"^AOB.*/F" end
+
 tbs = fn file, codes, rr?, rounds ->
   flag = if rr?, do: "-p", else: "-s"
+  {plain, fore} = Enum.split_with(Enum.with_index(codes), fn {c, _} -> not fore?.(c) end)
+  sent = plain ++ fore
 
   args =
     [Path.join(tbs_dir, "tiebreakchecker.py"), "-i", file, "-o", "-", flag, "-n", "#{rounds}"] ++
-      ["-d", "T", "-t"] ++ Enum.map(codes, &(tbs_code.(&1) <> "/V2026"))
+      ["-d", "T", "-t"] ++ Enum.map(sent, fn {c, _} -> tbs_code.(c) <> "/V2026" end)
+
+  # position in the output -> position asked for
+  back = sent |> Enum.with_index() |> Map.new(fn {{_c, asked}, at} -> {asked, at} end)
 
   case System.cmd(python, args, stderr_to_stdout: true, env: [{"PYTHONIOENCODING", "utf-8"}]) do
     {out, 0} ->
@@ -54,7 +66,8 @@ tbs = fn file, codes, rr?, rounds ->
       {:ok,
        Map.new(rows, fn row ->
          [start, rank | values] = String.split(row, "\t")
-         {String.to_integer(start), [rank | values]}
+         reordered = for i <- 0..(length(codes) - 1)//1, do: Enum.at(values, back[i])
+         {String.to_integer(start), [rank | reordered]}
        end)}
 
     {out, _} ->
@@ -101,6 +114,44 @@ std_by_draw = fn event, id ->
     end
   end)
   |> Enum.sum()
+end
+
+# Finding B (docs/finding-tiebreakserver-2026-09.md): TieBreakServer's SB cut
+# picks the VUR with the lowest dummy SCORE, not the lowest contribution.
+# This reproduces its rule exactly; an SB/Cn mismatch it explains is that
+# finding, not an error of ours.
+sb_cut_tbs_style = fn event, id, n ->
+  ctx = Ainalrami.Tiebreaks.Individual.context(event)
+  p = event.participants[id]
+
+  elements =
+    for r <- 1..event.rounds//1 do
+      round = p.rounds[r]
+
+      score =
+        if round.kind == :played,
+          do: ctx.adjusted[round.opponent],
+          else:
+            Ainalrami.Tiebreaks.Unplayed.dummy_score(p.rounds, r, ctx.scores[id], ctx.adjusted, event)
+
+      %{score: score, value: score * round.points, vur: Ainalrami.Tiebreaks.Unplayed.vur?(round)}
+    end
+
+  elements =
+    Enum.reduce(1..n//1, elements, fn _, list ->
+      case list do
+        [] ->
+          []
+
+        _ ->
+          all = Enum.sort_by(list, &{&1.score, &1.value})
+          exp = Enum.sort_by(list, &{if(&1.vur, do: 0, else: 1), &1.score, &1.value})
+          victim = if hd(all).value > hd(exp).value, do: hd(all), else: hd(exp)
+          List.delete(list, victim)
+      end
+    end)
+
+  elements |> Enum.map(& &1.value) |> Enum.sum()
 end
 
 totals =
@@ -164,12 +215,26 @@ totals =
                   do: {id, mine, elem(their, 0)}
 
             {known, bad} =
-              if String.starts_with?(code, "STD"),
-                do: Enum.split_with(bad, fn {id, _m, t} -> is_number(t) and abs(std_by_draw.(event, id) - t) < 0.001 end),
-                else: {[], bad}
+              cond do
+                String.starts_with?(code, "STD") ->
+                  Enum.split_with(bad, fn {id, _m, t} ->
+                    is_number(t) and abs(std_by_draw.(event, id) - t) < 0.001
+                  end)
+
+                cut = Regex.run(~r"^SB/C(\d)$", code) ->
+                  n = cut |> List.last() |> String.to_integer()
+
+                  Enum.split_with(bad, fn {id, _m, t} ->
+                    is_number(t) and abs(sb_cut_tbs_style.(event, id, n) - t) < 0.001
+                  end)
+
+                true ->
+                  {[], bad}
+              end
 
             unless known == [] do
-              IO.puts("   #{code}: #{length(known)} known reading difference (reading 8, STD)")
+              why = if String.starts_with?(code, "STD"), do: "reading 8", else: "TieBreakServer finding B"
+              IO.puts("   #{code}: #{length(known)} known (#{why})")
             end
 
             unless bad == [] do
@@ -196,7 +261,7 @@ totals =
 
 IO.puts(
   "\nfiles #{totals.files}, skipped #{totals.skipped}, values compared #{totals.compared}, " <>
-    "mismatches #{totals.mismatches}, known reading differences #{totals.known}"
+    "mismatches #{totals.mismatches}, known differences #{totals.known}"
 )
 
 if totals.mismatches > 0, do: System.halt(1)
