@@ -289,11 +289,18 @@ defmodule Ainalrami.Tiebreaks.Individual do
     end)
   end
 
-  defp sonneborn_contributions(ctx) do
+  # `scored` is the event the points scored against each opponent come
+  # from - the same one as the opponents' scores, except for the teams'
+  # extended Sonneborn-Berger (C.07 13.2), where EMGSB takes the opponent's
+  # MATCH points and the GAME points scored against them. The two events
+  # hold the same rounds, so a round is the same round in both.
+  defp sonneborn_contributions(ctx, scored \\ nil) do
+    scored = scored || ctx.event
+
     each(ctx, fn p ->
       for r <- counted_rounds(p, ctx) do
         score = opponent_score(p, r, ctx)
-        round = p.rounds[r]
+        round = scored.participants[p.id].rounds[r]
 
         %{
           value: score * round.points,
@@ -302,6 +309,17 @@ defmodule Ainalrami.Tiebreaks.Individual do
         }
       end
     end)
+  end
+
+  @doc """
+  Sonneborn-Berger with the opponents' scores from `ctx`'s event and the
+  points scored against them from `scored` - C.07 13.2's extended
+  Sonneborn-Berger for teams (EMGSB: opponents' match points, game points
+  scored). With the same event for both it is plain SB. Cuts as for SB,
+  by the opponents' scores in `ctx`'s event (14.1's team paragraph).
+  """
+  def extended_sonneborn(%Code{} = code, ctx, %Event{} = scored) do
+    ctx |> sonneborn_contributions(scored) |> cut(code, :by_opponent_score, ctx)
   end
 
   # The rounds that are elements of a Buchholz or Sonneborn-Berger sum: all

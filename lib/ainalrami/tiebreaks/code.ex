@@ -149,6 +149,9 @@ defmodule Ainalrami.Tiebreaks.Code do
         [name] -> {name, nil}
         [name, "MP"] -> {name, :mp}
         [name, "GP"] -> {name, :gp}
+        # TieBreakServer spells the four extended Sonneborn-Bergers of 13.2
+        # as ESB with the two scores after the colon: ESB:MG is EMGSB.
+        ["ESB", pair] when pair in ~w(MM MG GM GG) -> {"E#{pair}SB", nil}
         [name, other] -> {name, {:bad, other}}
         _ -> {head, {:bad, head}}
       end
@@ -182,8 +185,13 @@ defmodule Ainalrami.Tiebreaks.Code do
   end
 
   defp modifier(code, "R") when code.name in ~w(TPN RTNG), do: {:ok, %{code | reverse?: true}}
-  defp modifier(code, "P") when code.name in ~w(DE EDE), do: {:ok, %{code | forfeits?: true}}
-  defp modifier(%{name: "AOB"} = code, "F"), do: {:ok, %{code | fore?: true}}
+
+  defp modifier(code, "P") when code.name in ~w(DE EDE EDEBT EDEBB EDET EDEB),
+    do: {:ok, %{code | forfeits?: true}}
+
+  # Fore Buchholz underneath: AOB (8.2), and SSSC when "the tie-break value
+  # must be known before playing" (13.4.2 a).
+  defp modifier(code, "F") when code.name in ~w(AOB SSSC), do: {:ok, %{code | fore?: true}}
 
   defp modifier(code, "U" <> n) when code.name in ~w(ARO TPR PTP APRO APPO RTNG) do
     case Integer.parse(n) do

@@ -38,7 +38,7 @@ defmodule Ainalrami.Tiebreaks do
   is DROPPED - skipped, as the article says, and reported in `:dropped`.
   """
 
-  alias Ainalrami.Tiebreaks.{Code, DirectEncounter, Event, Individual}
+  alias Ainalrami.Tiebreaks.{Code, DirectEncounter, Event, Individual, Team}
 
   @higher_is_better_except ~w(TPN)
 
@@ -47,6 +47,8 @@ defmodule Ainalrami.Tiebreaks do
   `{:ok, %{code_string => %{id => value} | :dropped}}`.
   Direct encounter has no per-participant value and is left out.
   """
+  def compute(%Team{} = team_event, codes), do: Team.compute(team_event, codes)
+
   def compute(%Event{} = event, codes) do
     with {:ok, parsed} <- parse(codes),
          :ok <- usable(parsed, event) do
@@ -68,7 +70,13 @@ defmodule Ainalrami.Tiebreaks do
   The result also carries, as the second element when asked for with
   `with_dropped: true`, the codes Article 10 dropped.
   """
-  def rank(%Event{} = event, codes, opts \\ []) do
+  def rank(event, codes, opts \\ [])
+
+  # Team events have their own ranking - the team tie-breaks, and two views
+  # of every match. See `Ainalrami.Tiebreaks.Team`.
+  def rank(%Team{} = team_event, codes, opts), do: Team.rank(team_event, codes, opts)
+
+  def rank(%Event{} = event, codes, opts) do
     with {:ok, parsed} <- parse(codes),
          :ok <- usable(parsed, event) do
       parsed = with_score_first(parsed)

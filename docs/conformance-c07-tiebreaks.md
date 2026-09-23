@@ -263,3 +263,54 @@ report which positions disagree with a file's own ranks and why.
    tournament files and on generated tournaments, both directions:
    Ainalrami's generator checked by TieBreakServer, and TieBreakServer's
    generator checked by Ainalrami.
+
+## Teams (Articles 11-13)
+
+`Ainalrami.Tiebreaks.Team`. A team event is two views of the same matches:
+one scored in match points, one in game points. Each is an ordinary
+`Ainalrami.Tiebreaks.Event` - teams as participants, a round's points the
+match points (or game points) the team took from it - so every individual
+tie-break applies to teams with `:MP` or `:GP` (`BH:MP`, `SB:GP`), and
+Article 16 does too: C.07 applies it to "Individual or Team Swiss
+tournaments", with "points" meaning match points and game points.
+
+**Reading T1 - a round's outcome is the match's.** A drawn match with
+2-2 is a draw in both views; an unplayed round's outcome is the one its
+awarded match points correspond to. In the game-point view a win's points
+are a win on every board, a draw's are half of that - "points awarded for a
+draw" in 16.4.2, for game points, is a drawn match's game points.
+
+**Reading T2 - the reference score.** A code without `:MP`/`:GP` uses the
+primary score (Article 13, "the primary score being the default").
+
+- **MPTS, GPTS (11.1), MPvGP (13.1):** the match points, the game points,
+  and the secondary score.
+- **ESB (13.2):** `EMMSB`, `EMGSB`, `EGMSB`, `EGGSB` - the opponent's final
+  total in the first score times the points scored against them in the
+  second. Unplayed rounds per Article 16 in both scores. Cut-1 (14.1, team
+  paragraph) removes the contribution of the opponent lowest in the FIRST
+  score, the lowest such contribution among several, with 16.5's VUR rule.
+  `ESB:MG` and friends are read as `EMGSB` (TieBreakServer's spelling).
+- **EDE (13.3):** Article 6 on the primary score; when that breaks no tie,
+  on the secondary; restarting from the primary for every new subset.
+
+**Reading T3 - the EDE variants.** The PDF text of 13.3.2 lost its layout:
+four names and four right-hand sides landed on the wrong lines. The mapping
+used, which TieBreakServer's `compute_ext_direct_encounter` also implies
+(it computes Board Count for EDEBT and EDEBB only): **EDEBT** = EDE, then
+BC, then TBR; **EDEBB** = EDE, then BC, then BBE; **EDET** = EDE, then TBR;
+**EDEB** = EDE, then BBE. The knockout tie-breaks apply only when exactly
+two teams are still tied in both scores.
+
+- **BC (12.1):** board number times game points on that board, over every
+  match, lower better; a pairing-allocated bye scores a win on every board,
+  individual forfeits count as games (Article 12). Only when all the tied
+  teams have the same game points - otherwise it leaves the group alone.
+- **TBR (12.2):** game points on board 1; for teams still level, board 2,
+  and so on.
+- **BBE (12.3):** game points on all boards but the bottom; for teams still
+  level, all but the bottom two, and so on.
+- **SSSC (13.4):** the secondary score plus the Buchholz of the primary
+  score (Fore Buchholz with `/F`) divided by the highest primary score
+  achievable in the event over the highest secondary score achievable in
+  one match, rounded towards zero.
