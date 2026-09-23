@@ -1405,10 +1405,16 @@ defmodule Ainalrami.Trf do
             "(d[:d] or Wd[:d]-Bd[:d], where d is [moves/]seconds[+increment])"
     end
 
+    # The syntax, not the name: `BH/C1`, `KS/L-1`, `SB:GP/C1` (see
+    # `Ainalrami.Tiebreaks.Code`). Until this allowed the `/`, every modified
+    # code was refused - a file listing FIDE's most common tie-break, BH/C1,
+    # could not be written. A name this library does not compute still
+    # passes: a file from another program keeps its own list.
     for list <- [t[:tie_breaks], t[:standings_order]],
         is_list(list),
         code <- list,
-        not (is_binary(code) and Regex.match?(~r/^[A-Z][A-Z0-9]*$/, code)) do
+        not (is_binary(code) and
+               Regex.match?(~r"^[A-Z][A-Z0-9]*(:[A-Z]{2})?(/[A-Z0-9][A-Z0-9+.-]*)*$", code)) do
       raise ValidationError, message: "202/212: #{inspect(code)} is not a tie-break code"
     end
 

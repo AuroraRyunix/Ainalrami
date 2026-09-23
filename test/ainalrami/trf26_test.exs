@@ -367,5 +367,30 @@ defmodule Ainalrami.Trf26Test do
       assert parsed.tournament[:standings_order] == ["PTS", "BHC1", "BH"]
       assert parsed.tournament[:tie_breaks] == ["BHC1", "BH"]
     end
+
+    # FIDE's checklist and TieBreakServer write modifiers after a slash;
+    # the validator used to allow letters and digits only, so the most
+    # common tie-break in Swiss events, BH/C1, could not be written at all.
+    test "202 carries modified codes and reads them back" do
+      codes = ["BH/C1", "BH/M2", "SB:GP/C1", "KS/L-1", "ARO/U1400", "DE/P"]
+
+      parsed =
+        tournament()
+        |> put_in([:tournament, :tie_breaks], codes)
+        |> Trf.serialize(dialect: :trf26)
+        |> Trf.parse()
+
+      assert parsed.tournament[:tie_breaks] == codes
+    end
+
+    test "202 still refuses what is not a code" do
+      for bad <- ["BH C1", "bh/c1", "BH//C1", "/C1"] do
+        assert_raise Trf.ValidationError, fn ->
+          tournament()
+          |> put_in([:tournament, :tie_breaks], [bad])
+          |> Trf.serialize(dialect: :trf26)
+        end
+      end
+    end
   end
 end
