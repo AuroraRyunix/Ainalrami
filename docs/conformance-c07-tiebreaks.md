@@ -107,6 +107,14 @@ to play, which is what a voluntary unplayed round is (16.1.2).
   wins count.
 - **WON (7.2):** games won over the board.
 - **BPG / BWG (7.3, 7.4):** games played / won over the board with black.
+
+**Reading 9 - "over the board" wins over 15.2.** 15.2 treats a round robin's
+forfeits as regular games except forfeit losses in Type B tie-breaks; read
+alone, that would make a forfeit win a game won for WON and BWG. But 7.2-7.4
+each define themselves as games "over the board", and the specific wording
+wins: a forfeit win is not a game won over the board in any event. (First
+written the other way; TieBreakServer counts only games played, and on a
+second reading the text agrees with it.)
 - **PS (7.5):** sum of the running score after each round. Cut-1 removes the
   score after round 1 (14.1.2 c); Cut-n removes the first n.
 - **REP (7.6):** rounds minus half-point byes, zero-point byes and forfeit
@@ -184,8 +192,19 @@ opponents", which the participant's own tie-break is not.)
 ## Koya (9.2)
 
 Points scored against opponents who finished with at least 50% of the
-maximum possible score; `Ln` moves the threshold by n half-points (14.5).
-A round-robin tie-break; under 15.2 forfeits count as games.
+maximum possible score; `Ln` moves the threshold by n half-points (14.5) -
+half a point each, as 14.5 says, whatever the scoring system.
+
+**Reading 10 - the maximum possible score, and which rounds count.** The
+maximum is a win's points for every round a participant could have been
+scheduled against somebody. In an odd round robin the free round cannot
+score, so 13 players over 13 rounds have a maximum of 12 and the 50% line
+is 6, not 6.5; in a Swiss event every round can score (a pairing-allocated
+bye does). Points count in every round with a scheduled opponent, forfeits
+included: a forfeit win against a qualifying player is points "achieved
+against" them. First written with 13 x 1 and games only, and caught on a
+13-player club round robin (`S_FIDE_469281`) by TieBreakServer, whose
+`compute_koya` does both.
 
 ## Direct encounter (Article 6)
 

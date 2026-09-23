@@ -60,12 +60,11 @@ defmodule Ainalrami.Tiebreaks.Individual do
     per_round(ctx, fn round -> if round.points >= win - 1.0e-9, do: 1, else: 0 end)
   end
 
-  # 7.2: games won over the board. Under 15.2 a forfeit win is a game.
+  # 7.2: games won over the board - also under 15.2 (reading 9).
   defp compute("WON", _code, ctx),
     do: per_round(ctx, &if(game?(&1, ctx) and &1.outcome == :win, do: 1, else: 0))
 
-  # 7.3, 7.4: with the black pieces. A forfeit loss "remains unplayed" in
-  # Type B even under 15.2, and `game?/2` says so.
+  # 7.3, 7.4: games played / won over the board with the black pieces.
   defp compute("BPG", _code, ctx),
     do: per_round(ctx, &if(game?(&1, ctx) and &1.colour == :black, do: 1, else: 0))
 
@@ -153,14 +152,22 @@ defmodule Ainalrami.Tiebreaks.Individual do
     do: ctx |> sonneborn_contributions() |> cut(code, :by_opponent_score, ctx)
 
   # 9.2: points against participants on at least half of the maximum
-  # score, the half moved by `Ln` half-points (14.5).
+  # possible score, the limit moved by half a point per step of `Ln` (14.5).
+  #
+  # "The maximum possible tournament score" is a win's points for every round
+  # a participant could have been scheduled against somebody: in an odd
+  # round robin nobody can score in their free round, so 13 players over 13
+  # rounds have a maximum of 12, not 13. In a Swiss event every round can
+  # score (a pairing-allocated bye does). Points count against a qualifying
+  # opponent in every round with a scheduled opponent, forfeits included -
+  # they are points "achieved against" that participant. (Reading 10, and
+  # TieBreakServer's `compute_koya`.)
   defp compute("KS", code, ctx) do
-    win = ctx.event.points.win
-    threshold = ctx.event.rounds * win / 2 + code.limit * win / 2
+    threshold = max_possible(ctx) / 2 + code.limit * 0.5
 
     each(ctx, fn p ->
       Enum.reduce(p.rounds, 0.0, fn {_r, round}, acc ->
-        if game?(round, ctx) and ctx.scores[round.opponent] >= threshold - 1.0e-9,
+        if round.opponent != nil and ctx.scores[round.opponent] >= threshold - 1.0e-9,
           do: acc + round.points,
           else: acc
       end)
@@ -231,12 +238,24 @@ defmodule Ainalrami.Tiebreaks.Individual do
     each(ctx, fn p -> p.rounds |> Map.values() |> Enum.map(fun) |> Enum.sum() end)
   end
 
-  # A game for Type B and Koya: played over the board, or - with pairings
-  # fixed in advance - a forfeit WIN (15.2 keeps forfeit losses unplayed in
-  # Type B tie-breaks).
+  # A game over the board. Reading 9: 7.2-7.4 each say "over the board", and
+  # that wins over 15.2's general "forfeits are treated as regular games" -
+  # a forfeit win in a round robin is not a game won over the board.
   defp game?(%{kind: :played}, _ctx), do: true
-  defp game?(%{kind: :forfeit_win}, %{event: %{predetermined?: true}}), do: true
   defp game?(_round, _ctx), do: false
+
+  defp max_possible(%{event: %{predetermined?: false} = event}),
+    do: event.rounds * event.points.win
+
+  defp max_possible(%{event: event}) do
+    scheduled =
+      event.participants
+      |> Map.values()
+      |> Enum.map(fn p -> Enum.count(p.rounds, fn {_r, round} -> round.opponent != nil end) end)
+      |> Enum.max(fn -> 0 end)
+
+    scheduled * event.points.win
+  end
 
   # Article 10's opening paragraph.
   defp dropped?(%Code{unrated: nil}, ctx),

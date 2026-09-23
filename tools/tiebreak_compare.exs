@@ -17,7 +17,9 @@ alias Ainalrami.Tiebreaks.Event
 alias Ainalrami.Trf
 
 {opts, files, _} =
-  OptionParser.parse(System.argv(), strict: [codes: :string, rr: :boolean, examples: :integer])
+  OptionParser.parse(System.argv(),
+    strict: [codes: :string, rr: :boolean, examples: :integer, rank: :string]
+  )
 
 codes =
   String.split(
@@ -30,6 +32,10 @@ tbs_dir = System.get_env("TBS_DIR", Path.expand("../TieBreakServer"))
 python = System.get_env("TBS_PYTHON", "python")
 examples = opts[:examples] || 3
 
+# Reading 1: the checklist's KS/L1 (limit + 1/2 point) is TieBreakServer's
+# KS/L+1 - a bare L1 there is a 1% limit.
+tbs_code = fn code -> String.replace(code, ~r"/L(\d)", "/L+\\1") end
+
 # `-n`: the rounds actually in the file. Without it TieBreakServer counts every
 # ANNOUNCED round, so a file saved after round 1 of 9 gets eight unplayed
 # rounds in every tie-break.
@@ -38,7 +44,7 @@ tbs = fn file, codes, rr?, rounds ->
 
   args =
     [Path.join(tbs_dir, "tiebreakchecker.py"), "-i", file, "-o", "-", flag, "-n", "#{rounds}"] ++
-      ["-d", "T", "-t"] ++ Enum.map(codes, &(&1 <> "/V2026"))
+      ["-d", "T", "-t"] ++ Enum.map(codes, &(tbs_code.(&1) <> "/V2026"))
 
   case System.cmd(python, args, stderr_to_stdout: true, env: [{"PYTHONIOENCODING", "utf-8"}]) do
     {out, 0} ->
@@ -47,8 +53,8 @@ tbs = fn file, codes, rr?, rounds ->
 
       {:ok,
        Map.new(rows, fn row ->
-         [start, _rank | values] = String.split(row, "\t")
-         {String.to_integer(start), values}
+         [start, rank | values] = String.split(row, "\t")
+         {String.to_integer(start), [rank | values]}
        end)}
 
     {out, _} ->
@@ -108,6 +114,38 @@ totals =
            {:ok, theirs} <- tbs.(file, codes, opts[:rr] || false, event.rounds) do
         IO.puts("== #{name}: #{map_size(event.participants)} players, #{event.rounds} rounds")
 
+        # With --rank LIST: the final ranks under that list, ours against
+        # theirs - the part of the checker's job (VCL4THP Q21) that values
+        # alone do not show, direct encounter included.
+        rank_bad =
+          case opts[:rank] do
+            nil ->
+              0
+
+            list ->
+              rank_codes = String.split(list)
+              {:ok, ours_ranked} = Tiebreaks.rank(event, rank_codes)
+              {:ok, their_ranked} = tbs.(file, rank_codes, opts[:rr] || false, event.rounds)
+              mine = Map.new(ours_ranked, &{&1.id, &1.rank})
+
+              bad =
+                for {id, [rank | _]} <- their_ranked,
+                    String.to_integer(rank) != mine[id],
+                    do: {id, mine[id], String.to_integer(rank)}
+
+              unless bad == [] do
+                sample =
+                  bad
+                  |> Enum.sort()
+                  |> Enum.take(examples)
+                  |> Enum.map_join(", ", fn {id, m, t} -> "#{id}: ours #{m} theirs #{t}" end)
+
+                IO.puts("   rank under #{list}: #{length(bad)} differ - #{sample}")
+              end
+
+              length(bad)
+          end
+
         results =
           for {code, i} <- Enum.with_index(codes) do
             ours_code = ours[code]
@@ -119,7 +157,7 @@ totals =
                   [{mine, their}] <- [
                     [
                       {if(ours_code == :dropped, do: nil, else: ours_code[id]),
-                       number.(Enum.at(row, i))}
+                       number.(Enum.at(row, i + 1))}
                     ]
                   ],
                   not same?.(mine, their),
@@ -145,7 +183,7 @@ totals =
         %{
           acc
           | files: acc.files + 1,
-            mismatches: acc.mismatches + Enum.sum(Enum.map(results, &elem(&1, 0))),
+            mismatches: acc.mismatches + rank_bad + Enum.sum(Enum.map(results, &elem(&1, 0))),
             compared: acc.compared + Enum.sum(Enum.map(results, &elem(&1, 1))),
             known: acc.known + Enum.sum(Enum.map(results, &elem(&1, 2)))
         }

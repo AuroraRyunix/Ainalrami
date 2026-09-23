@@ -260,6 +260,57 @@ defmodule Ainalrami.TiebreaksTest do
       assert sb[2] == 2.0
     end
 
+    test "Koya's maximum leaves out the free round of an odd round robin (reading 10)" do
+      # Three players, three rounds: each plays twice and sits out once, so
+      # the maximum is 2 and the line is 1 - not 1.5. 1 beat 2 and drew
+      # with 3; 2 beat 3: scores 1.5, 1, 0.5, so 1 and 2 qualify.
+      #   1: 1 (vs 2) + nothing vs 3 (below the line) = 1
+      #   2: 0 (vs 1) + nothing vs 3                   = 0
+      #   3: 0.5 (vs 1) + 0 (vs 2)                     = 0.5
+      event =
+        build(
+          %{
+            1 => {nil, [{:w, 2, "1"}, {:b, 3, "="}, :zero]},
+            2 => {nil, [{:b, 1, "0"}, :zero, {:w, 3, "1"}]},
+            3 => {nil, [:zero, {:w, 1, "="}, {:b, 2, "0"}]}
+          },
+          predetermined?: true
+        )
+
+      assert values(event, "KS") == %{1 => 1.0, 2 => 0.0, 3 => 0.5}
+    end
+
+    test "Koya counts a forfeit win against a qualifying opponent" do
+      # 1 wins by forfeit against 2, who beat 3: 2 has 1 of a maximum 2.
+      event =
+        build(
+          %{
+            1 => {nil, [{:w, 2, "+"}, :zero, {:b, 3, "="}]},
+            2 => {nil, [{:b, 1, "-"}, {:w, 3, "1"}, :zero]},
+            3 => {nil, [:zero, {:b, 2, "0"}, {:w, 1, "="}]}
+          },
+          predetermined?: true
+        )
+
+      assert values(event, "KS")[1] == 1.0
+    end
+
+    test "a forfeit win is not a game won over the board, even here (reading 9)" do
+      event =
+        build(
+          %{
+            1 => {nil, [{:b, 2, "+"}]},
+            2 => {nil, [{:w, 1, "-"}]}
+          },
+          predetermined?: true
+        )
+
+      assert values(event, "WON")[1] == 0
+      assert values(event, "BWG")[1] == 0
+      assert values(event, "BPG")[1] == 0
+      assert values(event, "WIN")[1] == 1
+    end
+
     test "DE separates 1 and 2: 1 won their game (6.2)" do
       {:ok, standings} = Tiebreaks.rank(round_robin(), ~w(DE))
       assert Enum.map(standings, &{&1.id, &1.rank}) == [{1, 1}, {2, 2}, {3, 3}, {4, 4}]
