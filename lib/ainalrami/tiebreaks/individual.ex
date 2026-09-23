@@ -396,8 +396,9 @@ defmodule Ainalrami.Tiebreaks.Individual do
   # been drawn. Byes in that round stay as awarded.
   # Only once the event's final round is among the rounds counted - before
   # that there is nothing to draw, and FB is BH (see Event.new/3).
-  defp fore(%Event{rounds: rounds, total_rounds: total} = event) when rounds < total or rounds == 0,
-    do: event
+  defp fore(%Event{rounds: rounds, total_rounds: total} = event)
+       when rounds < total or rounds == 0,
+       do: event
 
   defp fore(%Event{rounds: last, points: points} = event) do
     participants =

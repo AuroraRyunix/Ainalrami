@@ -18,8 +18,26 @@ alias Ainalrami.Trf
 
 {opts, files, _} =
   OptionParser.parse(System.argv(),
-    strict: [codes: :string, rr: :boolean, examples: :integer, rank: :string]
+    strict: [codes: :string, rr: :boolean, examples: :integer, rank: :string, dir: :string]
   )
+
+# --dir DIR: every .trf in it, in seed order - thousands of paths do not fit
+# on a Windows command line.
+files =
+  case opts[:dir] do
+    nil ->
+      files
+
+    dir ->
+      files ++
+        # Forward slashes: a backslash in a wildcard pattern is an escape,
+        # so a Windows path matched nothing.
+        (dir
+         |> String.replace("\\", "/")
+         |> Path.join("*.trf")
+         |> Path.wildcard()
+         |> Enum.sort_by(&(Regex.run(~r"(\d+)\.trf$", &1) |> List.last() |> String.to_integer())))
+  end
 
 codes =
   String.split(

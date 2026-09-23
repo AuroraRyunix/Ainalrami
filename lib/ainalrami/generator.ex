@@ -84,6 +84,14 @@ defmodule Ainalrami.Generator do
     forfeit_pct = Keyword.get(opts, :forfeit_pct, 0)
     bye_pct = Keyword.get(opts, :requested_bye_pct, 0)
 
+    # FIDE's checklist axes (VCL4THP v13 Q24-Q32), all opt-in - see
+    # "Checklist options" below. With none of them given, the tournament is
+    # byte-for-byte what this seed always produced.
+    results = results_config(opts)
+    byes = bye_config(opts)
+    ratings = Keyword.get(opts, :ratings)
+    tie_breaks = Keyword.get(opts, :tie_breaks)
+
     # Article 5.1's drawing of lots. It was always White here, implicitly:
     # nothing was passed to the engine, which defaulted, and nothing was
     # written to the file, which left a reader to infer it back. Now it is
@@ -103,19 +111,22 @@ defmodule Ainalrami.Generator do
     # tournament at the last round that actually completed rather than
     # letting one bad round crash the whole generation.
     final =
-      Enum.reduce_while(1..rounds//1, roster(players, accelerations, names), fn _round_no,
-                                                                                current ->
+      Enum.reduce_while(1..rounds//1, roster(players, accelerations, names, ratings), fn round_no,
+                                                                                         current ->
         try do
           next =
             current
             |> grant_requested_byes(bye_pct)
-            |> play_one_round(rounds, forfeit_pct, forbidden, initial_colour)
+            |> grant_byes(round_no, byes)
+            |> play_one_round(rounds, {forfeit_pct, results}, forbidden, initial_colour)
 
           {:cont, next}
         rescue
           Pairing.NoValidPairingError -> {:halt, current}
         end
       end)
+
+    {final, tie_breaks} = with_final_ranks(final, rounds, tie_breaks)
 
     text =
       Trf.serialize(%{
@@ -145,7 +156,8 @@ defmodule Ainalrami.Generator do
           # mislabelled file.
           number_of_rounds: rounds,
           initial_colour: initial_colour,
-          forbidden_pairs: forbidden
+          forbidden_pairs: forbidden,
+          tie_breaks: tie_breaks
         },
         players: final
       }) <> "XXR #{rounds}\r\n"
@@ -159,12 +171,12 @@ defmodule Ainalrami.Generator do
   # 1, 0, -1 ... -5 - written to a file, exit 0, nothing said. The counts
   # are validated on the way in as well, because a caller who asked for -5
   # players wants to hear about it rather than get an empty roster.
-  defp roster(count, accelerations, names) do
+  defp roster(count, accelerations, names, ratings) do
     for rank <- 1..count//1 do
       player = %{
         rank: rank,
         name: player_name(names, rank),
-        fide_rating: Enum.random(1400..2700),
+        fide_rating: rating(ratings, rank),
         points: 0.0,
         games: []
       }
@@ -316,7 +328,7 @@ defmodule Ainalrami.Generator do
     end)
   end
 
-  defp play_one_round(players, total_rounds, forfeit_pct, forbidden, initial_colour) do
+  defp play_one_round(players, total_rounds, outcomes, forbidden, initial_colour) do
     pairs =
       Pairing.pair_next_round(players,
         expected_rounds: total_rounds,
@@ -324,7 +336,8 @@ defmodule Ainalrami.Generator do
         initial_colour: initial_colour
       )
 
-    by_rank = Enum.reduce(pairs, %{}, &record_game(&1, &2, forfeit_pct))
+    ratings = Map.new(players, &{&1.rank, &1.fide_rating})
+    by_rank = Enum.reduce(pairs, %{}, &record_game(&1, &2, outcomes, ratings))
 
     Enum.map(players, fn player ->
       case Map.fetch(by_rank, player.rank) do
@@ -338,12 +351,16 @@ defmodule Ainalrami.Generator do
     end)
   end
 
-  defp record_game({white, nil}, acc, _forfeit_pct) do
+  defp record_game({white, nil}, acc, _outcomes, _ratings) do
     Map.put(acc, white, {%{opponent_rank: nil, colour: nil, result: "U"}, 1.0})
   end
 
-  defp record_game({white, black}, acc, forfeit_pct) do
-    {white_result, black_result, white_points, black_points} = outcome(forfeit_pct)
+  defp record_game({white, black}, acc, {forfeit_pct, results}, ratings) do
+    {white_result, black_result, white_points, black_points} =
+      case results do
+        nil -> outcome(forfeit_pct)
+        config -> checklist_outcome(forfeit_pct, config, ratings[white], ratings[black])
+      end
 
     acc
     |> Map.put(white, {%{opponent_rank: black, colour: "w", result: white_result}, white_points})
@@ -363,6 +380,170 @@ defmodule Ainalrami.Generator do
         {"0", "1", 0.0, 1.0},
         {"=", "=", 0.5, 0.5}
       ])
+    end
+  end
+
+  # ---------------------------------------------------------------------
+  # Checklist options (VCL4THP v13 Q24-Q32)
+  # ---------------------------------------------------------------------
+  #
+  # Every one of these is opt-in and none of them draws a random number
+  # unless given: the validated corpus is reproduced from seeds, so a seed
+  # that produced a file before these options existed has to produce the
+  # same bytes now. `generator_checklist_test.exs` holds default generation
+  # to a checked-in digest for that reason.
+
+  # Q27-Q29: ratings given, bounded, stepped, or - the default - random.
+  #   * a list: the rating of each TPN in order (Q27)
+  #   * `{:range, min, max}`: uniform in the range (Q28)
+  #   * `{:step, top, step}` / `{:step, top, step, sigma}`: TPN 1 rated
+  #     `top`, each next one `step` lower, plus normal noise of `sigma` if
+  #     given (Q28) - TieBreakServer's generator parametrises it the same way
+  defp rating(nil, _rank), do: Enum.random(1400..2700)
+
+  defp rating(ratings, rank) when is_list(ratings) do
+    case Enum.at(ratings, rank - 1) do
+      r when is_integer(r) and r >= 0 -> r
+      other -> raise ArgumentError, ":ratings has no rating for TPN #{rank} (#{inspect(other)})"
+    end
+  end
+
+  defp rating({:range, low, high}, _rank) when low <= high, do: Enum.random(low..high)
+  defp rating({:step, top, step}, rank), do: max(top - (rank - 1) * step, 0)
+
+  defp rating({:step, top, step, sigma}, rank),
+    do: max(round(top - (rank - 1) * step + :rand.normal() * sigma), 0)
+
+  defp rating(other, _rank), do: raise(ArgumentError, "unknown :ratings #{inspect(other)}")
+
+  # Q32 and Q24's result axes. nil - the old uniform draw, untouched - unless
+  # one of them is given.
+  @result_keys [:results, :draw_rate, :forfeit_win_pct, :double_forfeit_pct, :odd_results_pct]
+
+  defp results_config(opts) do
+    if Enum.any?(@result_keys, &Keyword.has_key?(opts, &1)) do
+      mode = Keyword.get(opts, :results, :uniform)
+
+      unless mode in [:uniform, :fide],
+        do: raise(ArgumentError, ":results must be :uniform or :fide, got #{inspect(mode)}")
+
+      %{
+        mode: mode,
+        draw_rate: Keyword.get(opts, :draw_rate, 0.3),
+        forfeit_win_pct: Keyword.get(opts, :forfeit_win_pct, 0),
+        double_forfeit_pct: Keyword.get(opts, :double_forfeit_pct, 0),
+        odd_results_pct: Keyword.get(opts, :odd_results_pct, 0)
+      }
+    end
+  end
+
+  defp checklist_outcome(forfeit_pct, config, white_rating, black_rating) do
+    cond do
+      forfeit_pct > 0 and :rand.uniform(100) <= forfeit_pct ->
+        outcome(100)
+
+      config.forfeit_win_pct > 0 and :rand.uniform(100) <= config.forfeit_win_pct ->
+        Enum.random([{"+", "-", 1.0, 0.0}, {"-", "+", 0.0, 1.0}])
+
+      config.double_forfeit_pct > 0 and :rand.uniform(100) <= config.double_forfeit_pct ->
+        {"-", "-", 0.0, 0.0}
+
+      # Q24's "unusual over-the-board results": a game played, scored
+      # 1/2-0, 0-1/2 or 0-0 by the arbiter.
+      config.odd_results_pct > 0 and :rand.uniform(100) <= config.odd_results_pct ->
+        Enum.random([{"=", "0", 0.5, 0.0}, {"0", "=", 0.0, 0.5}, {"0", "0", 0.0, 0.0}])
+
+      config.mode == :fide ->
+        fide_result(white_rating, black_rating, config.draw_rate)
+
+      true ->
+        outcome(0)
+    end
+  end
+
+  # Q32: results whose expectation is FIDE's expected score. With E the
+  # white player's expected score from the rating table and d the draw
+  # rate, White wins with probability E - d/2 and draws with d, so the
+  # expected score is exactly E - over many tournaments a player's rating
+  # change averages zero, which is what the checklist asks. d is capped at
+  # 2 min(E, 1 - E) so neither probability goes negative.
+  defp fide_result(white_rating, black_rating, draw_rate) do
+    e = Ainalrami.Tiebreaks.Rating.expected_hundredths(white_rating, black_rating) / 100
+    d = min(draw_rate, 2 * min(e, 1 - e))
+    u = :rand.uniform()
+
+    cond do
+      u < e - d / 2 -> {"1", "0", 1.0, 0.0}
+      u < e + d / 2 -> {"=", "=", 0.5, 0.5}
+      true -> {"0", "1", 0.0, 1.0}
+    end
+  end
+
+  # Q24's bye axes: each player, each round, may be given a full-point,
+  # half-point or zero-point bye, at separate percentages. Before the round
+  # is paired, like `grant_requested_byes/2`, and never a second one in the
+  # same round.
+  defp bye_config(opts) do
+    config = %{
+      full: Keyword.get(opts, :full_bye_pct, 0),
+      half: Keyword.get(opts, :half_bye_pct, 0),
+      zero: Keyword.get(opts, :zero_bye_pct, 0)
+    }
+
+    if Enum.all?(Map.values(config), &(&1 <= 0)), do: nil, else: config
+  end
+
+  defp grant_byes(players, _round_no, nil), do: players
+
+  defp grant_byes(players, round_no, config) do
+    Enum.map(players, fn player ->
+      if length(player.games) >= round_no do
+        player
+      else
+        bye =
+          cond do
+            config.full > 0 and :rand.uniform(100) <= config.full -> {"F", 1.0}
+            config.half > 0 and :rand.uniform(100) <= config.half -> {"H", 0.5}
+            config.zero > 0 and :rand.uniform(100) <= config.zero -> {"Z", 0.0}
+            true -> nil
+          end
+
+        case bye do
+          nil ->
+            player
+
+          {code, points} ->
+            %{
+              player
+              | points: player.points + points,
+                games: player.games ++ [%{opponent_rank: nil, colour: nil, result: code}]
+            }
+        end
+      end
+    end)
+  end
+
+  # Q31: with a tie-break list, the file carries it (`202`) and the final
+  # standings it gives (columns 86-89), computed by `Ainalrami.Tiebreaks`.
+  # Players still tied after the whole list are placed in TPN order - the
+  # order a drawing of lots would have to settle, and one the checker
+  # accepts.
+  defp with_final_ranks(players, _rounds, nil), do: {players, nil}
+
+  defp with_final_ranks(players, rounds, tie_breaks) do
+    event =
+      Ainalrami.Tiebreaks.Event.from_trf(%{
+        players: players,
+        tournament: %{number_of_rounds: rounds}
+      })
+
+    case Ainalrami.Tiebreaks.rank(event, ["PTS" | List.wrap(tie_breaks)]) do
+      {:ok, standings} ->
+        place = standings |> Enum.with_index(1) |> Map.new(fn {row, i} -> {row.id, i} end)
+        {Enum.map(players, &Map.put(&1, :final_rank, place[&1.rank])), tie_breaks}
+
+      {:error, reason} ->
+        raise ArgumentError, ":tie_breaks - #{reason}"
     end
   end
 end

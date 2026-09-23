@@ -1562,7 +1562,11 @@ defmodule Ainalrami.Trf do
     |> place(@player_cols.fide_number, blank_if_falsy(p[:fide_number]), align: :right)
     |> place(@player_cols.birth_date, slash_date(p[:birth_date]))
     |> place(@player_cols.points, format_points(p[:points]), align: :right)
-    |> place(@player_cols.rank, p[:rank], align: :right)
+    # Columns 86-89 are the player's place in the final standings. A caller
+    # that has standings passes `:final_rank`; without one the starting
+    # rank is written, as it always was - wrong for a rating report, but the
+    # fallback is kept so no existing output changes behind its caller's back.
+    |> place(@player_cols.rank, p[:final_rank] || p[:rank], align: :right)
     |> place_games(games)
     |> render()
     |> pad_to_last_round(games)
@@ -2837,6 +2841,7 @@ defmodule Ainalrami.Trf do
       fide_number: parse_int(read(line, @player_cols.fide_number)),
       birth_date: line |> read(@player_cols.birth_date) |> iso_date(),
       points: parse_float(read(line, @player_cols.points)) || 0.0,
+      final_rank: parse_int(read(line, @player_cols.rank)),
       games: parse_games(line)
     }
   end

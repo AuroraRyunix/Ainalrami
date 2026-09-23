@@ -104,7 +104,10 @@ defmodule Ainalrami.CLI do
   # nothing says so.
   @bare_flags ~w(-p -g -c -x --explain -q --quiet -d --debug -h --help --version)
   @valued_flags ~w(seed players rounds forfeit-pct bye-pct forbidden-pct
-                   acceleration initial-colour initial-color force absent)
+                   acceleration initial-colour initial-color force absent
+                   ratings rating-range rating-top rating-step rating-sigma
+                   results draw-rate full-bye-pct half-bye-pct zero-bye-pct
+                   forfeit-win-pct double-forfeit-pct odd-results-pct tie-breaks)
 
   defp split_flags(argv), do: Enum.split_with(argv, &String.starts_with?(&1, "-"))
 
@@ -213,6 +216,105 @@ defmodule Ainalrami.CLI do
     end
   end
 
+  # The value of `--key=...` as text, or nil.
+  defp text_option(flags, key) do
+    prefix = "--#{key}="
+
+    Enum.find_value(flags, fn flag ->
+      if String.starts_with?(flag, prefix), do: String.trim_leading(flag, prefix)
+    end)
+  end
+
+  # `--ratings=2400,2350,...` (Q27), `--rating-range=1400-2700` (Q28), or
+  # `--rating-top=2600 --rating-step=20 [--rating-sigma=50]` (Q28). At most
+  # one of the three shapes.
+  defp ratings_option(flags) do
+    list = text_option(flags, "ratings")
+    range = text_option(flags, "rating-range")
+    top = option(flags, "rating-top")
+    step = option(flags, "rating-step")
+    sigma = option(flags, "rating-sigma")
+
+    given = Enum.count([list, range, top], &(not is_nil(&1)))
+
+    cond do
+      given > 1 ->
+        refuse("--ratings, --rating-range and --rating-top are alternatives - give one")
+
+      list ->
+        list
+        |> String.split(",", trim: true)
+        |> Enum.map(fn r ->
+          case Integer.parse(String.trim(r)) do
+            {rating, ""} when rating >= 0 -> rating
+            _ -> refuse("--ratings takes whole numbers separated by commas, not \"#{r}\"")
+          end
+        end)
+
+      range ->
+        case String.split(range, "-") do
+          [low, high] ->
+            with {low, ""} <- Integer.parse(low),
+                 {high, ""} <- Integer.parse(high),
+                 true <- low <= high do
+              {:range, low, high}
+            else
+              _ -> refuse("--rating-range takes LOW-HIGH, not \"#{range}\"")
+            end
+
+          _ ->
+            refuse("--rating-range takes LOW-HIGH, not \"#{range}\"")
+        end
+
+      top ->
+        step = step || refuse("--rating-top needs --rating-step")
+        if sigma, do: {:step, top, step, sigma}, else: {:step, top, step}
+
+      step || sigma ->
+        refuse("--rating-step and --rating-sigma need --rating-top")
+
+      true ->
+        nil
+    end
+  end
+
+  defp results_option(flags) do
+    case text_option(flags, "results") do
+      nil -> nil
+      "fide" -> :fide
+      "uniform" -> :uniform
+      other -> refuse("unknown --results \"#{other}\" - fide or uniform")
+    end
+  end
+
+  defp fraction_option(flags, key) do
+    case text_option(flags, key) do
+      nil ->
+        nil
+
+      text ->
+        case Float.parse(text) do
+          {value, ""} when value >= 0 and value <= 1 -> value
+          _ -> refuse("--#{key} takes a number from 0 to 1, not \"#{text}\"")
+        end
+    end
+  end
+
+  # `--tie-breaks=BH/C1,BH,SB` (Q31): checked here, so a misspelt code is a
+  # usage error rather than a generated file with a list nobody can apply.
+  defp tie_breaks_option(flags) do
+    case text_option(flags, "tie-breaks") do
+      nil ->
+        nil
+
+      text ->
+        case Ainalrami.Tiebreaks.Code.parse_list(text) do
+          {:ok, codes} -> Enum.map(codes, &Ainalrami.Tiebreaks.Code.format/1)
+          {:error, reason} -> refuse("--tie-breaks: #{reason}")
+        end
+    end
+  end
+
   # `input.trf -p [output.trf]` - input file is always the first positional
   # argument, exactly like JaVaFo; the mode flag then decides what happens
   # to the rest.
@@ -248,7 +350,19 @@ defmodule Ainalrami.CLI do
         requested_bye_pct: option(flags, "bye-pct"),
         forbidden_pct: option(flags, "forbidden-pct"),
         acceleration: acceleration_option(flags),
-        initial_colour: initial_colour_option(flags)
+        initial_colour: initial_colour_option(flags),
+        # FIDE's checklist axes (VCL4THP v13 Q24-Q32) - see
+        # `Ainalrami.Generator`'s "Checklist options".
+        ratings: ratings_option(flags),
+        results: results_option(flags),
+        draw_rate: fraction_option(flags, "draw-rate"),
+        full_bye_pct: option(flags, "full-bye-pct"),
+        half_bye_pct: option(flags, "half-bye-pct"),
+        zero_bye_pct: option(flags, "zero-bye-pct"),
+        forfeit_win_pct: option(flags, "forfeit-win-pct"),
+        double_forfeit_pct: option(flags, "double-forfeit-pct"),
+        odd_results_pct: option(flags, "odd-results-pct"),
+        tie_breaks: tie_breaks_option(flags)
       ]
       |> Enum.reject(fn {_key, value} -> is_nil(value) end)
 
@@ -690,12 +804,104 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
             if(differing == 0, do: "", else: " - #{differing} differ")
         )
 
-        if differing == 0, do: 0, else: 1
+        standings = check_standings(parsed)
+
+        if differing == 0 and standings != :differs, do: 0, else: 1
       end
     else
       {:error, :halt} -> 1
     end
   end
+
+  # The second half of the checker's job (FIDE's VCL4THP Q21): do the final
+  # ranks in the file follow its own tie-break list? The standings are
+  # recomputed from the games with `Ainalrami.Tiebreaks` under the file's
+  # `212` (or the score followed by its `202`), and every player whose
+  # column 86-89 rank disagrees is reported. Players still level after the
+  # whole list may stand in any order among themselves - that order is
+  # drawing of lots (C.07 4.2), not something a program can check.
+  #
+  # Skipped, with a note, when the file carries no tie-break list or no
+  # final ranks - there is nothing to check against.
+  defp check_standings(parsed) do
+    list =
+      case parsed.tournament do
+        %{standings_order: [_ | _] = order} -> order
+        %{tie_breaks: [_ | _] = codes} -> ["PTS" | codes]
+        _ -> nil
+      end
+
+    ranks = Map.new(parsed.players, &{&1.rank, &1[:final_rank]})
+
+    cond do
+      is_nil(list) ->
+        Log.detail("standings: no tie-break list in the file (202/212) - not checked")
+        :skipped
+
+      Enum.all?(ranks, fn {_id, r} -> r in [nil, 0] end) ->
+        Log.detail("standings: no final ranks in the file (columns 86-89) - not checked")
+        :skipped
+
+      true ->
+        event = Ainalrami.Tiebreaks.Event.from_trf(parsed)
+
+        case Ainalrami.Tiebreaks.rank(event, list, with_dropped: true) do
+          {:ok, standings, dropped} ->
+            unless dropped == [] do
+              Log.detail(
+                "standings: #{Enum.join(dropped, ", ")} dropped - unrated players and " <>
+                  "no rating given for them (C.07 Article 10)"
+              )
+            end
+
+            compare_standings(standings, ranks, list)
+
+          {:error, reason} ->
+            Log.warn("standings: cannot be checked - #{reason}")
+            :differs
+        end
+    end
+  end
+
+  defp compare_standings(standings, ranks, list) do
+    # A shared rank r held by k players stands for the places r..r+k-1.
+    places =
+      standings
+      |> Enum.group_by(& &1.rank)
+      |> Enum.flat_map(fn {rank, rows} ->
+        Enum.map(rows, &{&1.id, {rank, rank + length(rows) - 1, &1.values}})
+      end)
+      |> Map.new()
+
+    # `{file_rank} <- [...]`, not `file_rank = ...`: as a filter the latter
+    # drops a nil, and a player with no rank in the file is one to report.
+    wrong =
+      for {id, {low, high, values}} <- Enum.sort(places),
+          {file_rank} <- [{ranks[id]}],
+          not (is_integer(file_rank) and file_rank >= low and file_rank <= high),
+          do: {id, file_rank, low, high, values}
+
+    if wrong == [] do
+      Log.step("standings: all #{map_size(places)} ranks follow #{Enum.join(list, " ")}")
+      :ok
+    else
+      Log.warn("standings: #{length(wrong)} rank(s) do not follow #{Enum.join(list, " ")}")
+
+      for {id, file_rank, low, high, values} <- wrong do
+        expected = if low == high, do: "#{low}", else: "#{low}-#{high}"
+        detail = Enum.map_join(list, " ", &"#{&1}=#{format_value(values[&1])}")
+
+        Log.warn(
+          "  player #{id}: file says #{inspect(file_rank)}, tie-breaks give #{expected} (#{detail})"
+        )
+      end
+
+      :differs
+    end
+  end
+
+  defp format_value(v) when is_float(v), do: :erlang.float_to_binary(v, [:compact, decimals: 4])
+  defp format_value(v), do: inspect(v)
 
   defp check_round(parsed, round) do
     before = state_before_round(parsed.players, round, parsed.tournament[:point_system])
@@ -946,9 +1152,12 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
       ainalrami <input.trf> -p [<output.trf>]   Pair the next round (writes to
                                                 stdout if <output.trf> is omitted)
       ainalrami -g [<output.trf>]                Random Tournament Generator
-      ainalrami <input.trf> -c                   Pairings Checker: replay a
-                                                 finished tournament and diff
-                                                 every round against this engine
+      ainalrami <input.trf> -c                   Pairings and Tie-Break Checker:
+                                                 replay a tournament, diff every
+                                                 round against this engine, and
+                                                 check the final ranks against
+                                                 the file's own tie-break list
+                                                 (202/212)
       ainalrami <input.trf> -x                   Explain: pair the next round and
                                                  report, per bracket, which
                                                  criteria decided it
@@ -962,6 +1171,23 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
                    legal fixes, each with who else moves and what it costs
       -h, --help     Show this help
           --version  Show the version number
+
+    Generator options (-g), all --name=value; unset ones are chosen at random:
+      --seed --players --rounds          the tournament (seed makes it repeatable)
+      --ratings=2400,2350,...            each TPN's rating, in order
+      --rating-range=1400-2700           ratings drawn from a range
+      --rating-top=2600 --rating-step=20 [--rating-sigma=50]
+                                         TPN 1 rated top, each next step lower
+      --results=fide [--draw-rate=0.3]   results by the FIDE rating table
+      --full-bye-pct --half-bye-pct --zero-bye-pct
+                                         byes of each kind, % per player-round
+      --forfeit-win-pct --double-forfeit-pct
+                                         forfeits, % of games
+      --odd-results-pct                  1/2-0, 0-1/2 and 0-0, % of games
+      --tie-breaks=BH/C1,BH,SB           write the list (202) and the final
+                                         ranks it gives
+      --forfeit-pct --bye-pct --forbidden-pct --acceleration=baku|random
+      --initial-colour=white|black
     """)
   end
 
