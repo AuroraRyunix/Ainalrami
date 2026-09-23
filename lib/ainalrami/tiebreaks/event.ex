@@ -64,6 +64,7 @@ defmodule Ainalrami.Tiebreaks.Event do
   @enforce_keys [:rounds, :participants]
   defstruct rounds: 0,
             total_rounds: 0,
+            cap_rounds: :played,
             predetermined?: false,
             points: %{win: 1.0, draw: 0.5, loss: 0.0},
             participants: %{}
@@ -71,6 +72,7 @@ defmodule Ainalrami.Tiebreaks.Event do
   @type t :: %__MODULE__{
           rounds: non_neg_integer(),
           total_rounds: non_neg_integer(),
+          cap_rounds: :played | :announced,
           predetermined?: boolean(),
           points: %{win: float(), draw: float(), loss: float()},
           participants: %{term() => Participant.t()}
@@ -88,9 +90,20 @@ defmodule Ainalrami.Tiebreaks.Event do
   and Fore Buchholz is plain Buchholz. (TieBreakServer reads it the same
   way.)
 
+  `:cap_rounds` is the one Article 16 rule that depends on which of the
+  two counts is meant. 16.4.2 caps a dummy at "the points awarded for a
+  draw multiplied by the number of rounds in the tournament": `:played`
+  (the default) counts the rounds the standings are for - after round 5 of
+  9 the cap is five draws, the score of a player who drew every game so far
+  - and `:announced` counts the event's announced rounds. The two agree on
+  final standings. 16.6 lets a competition's rules choose otherwise, and
+  OpenPairings' own standings used `:announced` (reading 11 in
+  docs/conformance-c07-tiebreaks.md).
+
   Options: `:predetermined?` (a round robin or other event with pairings
   fixed in advance - Article 15.2 instead of 16), `:points`
-  (`%{win:, draw:, loss:}`, default 1 / ½ / 0) and `:total_rounds`.
+  (`%{win:, draw:, loss:}`, default 1 / ½ / 0), `:total_rounds` and
+  `:cap_rounds`.
   """
   def new(participants, rounds, opts \\ []) do
     points = Map.merge(%{win: 1.0, draw: 0.5, loss: 0.0}, Map.new(opts[:points] || %{}))
@@ -108,6 +121,7 @@ defmodule Ainalrami.Tiebreaks.Event do
     %__MODULE__{
       rounds: rounds,
       total_rounds: max(Keyword.get(opts, :total_rounds) || rounds, rounds),
+      cap_rounds: Keyword.get(opts, :cap_rounds, :played),
       predetermined?: Keyword.get(opts, :predetermined?, false),
       points: points,
       participants: participants

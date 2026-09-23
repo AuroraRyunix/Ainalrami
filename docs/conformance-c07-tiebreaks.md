@@ -150,6 +150,16 @@ is the participant's own score, capped at the scheduled opponent's adjusted
 score for forfeits (16.4.1) and at a draw's points times the number of
 rounds for everything else (16.4.2).
 
+**Reading 11 - "the number of rounds in the tournament" in 16.4.2**, for
+standings part-way through an event: the rounds the standings are for. The
+cap is meant as the score of a player who drew every game; after round 5
+of 9 that is five draws, and nine would make the cap meaningless until the
+end. The two readings agree on final standings. TieBreakServer reads it
+this way (its cap uses the rounds it is asked to count); OpenPairings' own
+standings read it as the announced rounds, found by the comparison gate
+before OpenPairings switched to this code. 16.6 lets a competition's rules
+choose, so `Event.new/3` takes `cap_rounds: :announced` for that.
+
 **Reading 5 - "the participant's own score" in 16.4** is their actual final
 score, the same number the standings show. (The adjusted score of 16.3 is
 defined "for the sole purpose of calculating the tie-break of their

@@ -76,13 +76,19 @@ defmodule Ainalrami.Tiebreaks.Unplayed do
   one); `adjusted` maps every participant to their adjusted score, for the
   forfeit cap.
   """
-  def dummy_score(rounds, r, own_score, adjusted, %{rounds: last_round, points: points}) do
+  def dummy_score(rounds, r, own_score, adjusted, %{rounds: last_round, points: points} = event) do
     round = rounds[r]
+
+    cap_rounds =
+      case Map.get(event, :cap_rounds, :played) do
+        :announced -> Map.get(event, :total_rounds, last_round)
+        :played -> last_round
+      end
 
     cap =
       case category(rounds, r, last_round) do
         c when c in [2, 4] -> Map.fetch!(adjusted, round.opponent)
-        _ -> points.draw * last_round
+        _ -> points.draw * cap_rounds
       end
 
     min(own_score, cap)

@@ -139,6 +139,18 @@ defmodule Ainalrami.TiebreaksTest do
       assert values(withdrawal(), "BH")[2] == 6.0
     end
 
+    test "the 16.4.2 cap counts the rounds played, unless told the announced ones (reading 11)" do
+      # 3 has 2 points and a bye in round 2 of a three-round standings. Say
+      # the event was announced with five rounds: played, the cap is
+      # 0.5 x 3 = 1.5; announced, 0.5 x 5 = 2.5, so the dummy is 2 (own).
+      played = withdrawal()
+      announced = %{played | total_rounds: 5, cap_rounds: :announced}
+
+      assert values(played, "BH")[3] == 5.5
+      # R1 1.5 + R2 dummy 2.0 + R3 2.5
+      assert values(announced, "BH")[3] == 6.0
+    end
+
     test "the withdrawn player's own dummies score their own score (zero)" do
       # 4: R1 opponent 1 = 2.5; R2, R3 dummies = min(own 0, 1.5) = 0
       assert values(withdrawal(), "BH")[4] == 2.5
