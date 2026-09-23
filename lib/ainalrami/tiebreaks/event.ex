@@ -63,12 +63,14 @@ defmodule Ainalrami.Tiebreaks.Event do
 
   @enforce_keys [:rounds, :participants]
   defstruct rounds: 0,
+            total_rounds: 0,
             predetermined?: false,
             points: %{win: 1.0, draw: 0.5, loss: 0.0},
             participants: %{}
 
   @type t :: %__MODULE__{
           rounds: non_neg_integer(),
+          total_rounds: non_neg_integer(),
           predetermined?: boolean(),
           points: %{win: float(), draw: float(), loss: float()},
           participants: %{term() => Participant.t()}
@@ -78,9 +80,17 @@ defmodule Ainalrami.Tiebreaks.Event do
   Builds an event. `participants` is a list of `%Participant{}`; any round
   up to `rounds` a participant has no record for becomes a zero-point bye.
 
+  `rounds` is how many rounds the standings are for - every rule that
+  says "the rounds" counts these. `:total_rounds` is how many the event was
+  announced with, default `rounds`; only Fore Buchholz reads it, because
+  "the final round" (8.3) is the event's last round, not the last one
+  played so far - after round 1 of 9 there is no final round to draw yet,
+  and Fore Buchholz is plain Buchholz. (TieBreakServer reads it the same
+  way.)
+
   Options: `:predetermined?` (a round robin or other event with pairings
-  fixed in advance - Article 15.2 instead of 16) and `:points`
-  (`%{win:, draw:, loss:}`, default 1 / ½ / 0).
+  fixed in advance - Article 15.2 instead of 16), `:points`
+  (`%{win:, draw:, loss:}`, default 1 / ½ / 0) and `:total_rounds`.
   """
   def new(participants, rounds, opts \\ []) do
     points = Map.merge(%{win: 1.0, draw: 0.5, loss: 0.0}, Map.new(opts[:points] || %{}))
@@ -97,6 +107,7 @@ defmodule Ainalrami.Tiebreaks.Event do
 
     %__MODULE__{
       rounds: rounds,
+      total_rounds: max(Keyword.get(opts, :total_rounds) || rounds, rounds),
       predetermined?: Keyword.get(opts, :predetermined?, false),
       points: points,
       participants: participants
@@ -155,7 +166,11 @@ defmodule Ainalrami.Tiebreaks.Event do
     predetermined? =
       Keyword.get_lazy(opts, :predetermined?, fn -> round_robin?(tournament[:type_code]) end)
 
-    new(participants, rounds, points: points, predetermined?: predetermined?)
+    new(participants, rounds,
+      points: points,
+      predetermined?: predetermined?,
+      total_rounds: tournament[:number_of_rounds]
+    )
   end
 
   defp rating(player) do

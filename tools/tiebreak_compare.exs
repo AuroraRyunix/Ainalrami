@@ -1,0 +1,164 @@
+# Compares Ainalrami.Tiebreaks with FIDE's TieBreakServer, player by player.
+#
+#     mix run tools/tiebreak_compare.exs [--codes "BH BH/C1 SB"] [--rr] file.trf ...
+#
+# TieBreakServer (Otto Milvang, MIT, (c) FIDE) is the reference the checklist
+# expects us to be tested against; it is run, never linked. Located via
+# TBS_DIR (default ../TieBreakServer) and run with TBS_PYTHON (it needs 3.11+
+# for enum.EnumType). Every code is sent with /V2026 so it applies the 2026
+# rules even to a tournament that started before they did - TieBreakServer
+# otherwise picks the rules by start date.
+#
+# Prints, per file, each code's mismatches with the first few players, and a
+# total at the end. Exit status 1 when anything disagrees.
+
+alias Ainalrami.Tiebreaks
+alias Ainalrami.Tiebreaks.Event
+alias Ainalrami.Trf
+
+{opts, files, _} =
+  OptionParser.parse(System.argv(), strict: [codes: :string, rr: :boolean, examples: :integer])
+
+codes =
+  String.split(
+    opts[:codes] ||
+      "PTS BH BH/C1 BH/C2 BH/M1 BH/M2 FB FB/C1 SB SB/C1 PS PS/C1 WIN WON BPG BWG REP STD " <>
+        "AOB AOB/F ARO/U1000 ARO/C1/U1000 TPR/U1000 PTP/U1000 APRO/U1000 APPO/U1000"
+  )
+
+tbs_dir = System.get_env("TBS_DIR", Path.expand("../TieBreakServer"))
+python = System.get_env("TBS_PYTHON", "python")
+examples = opts[:examples] || 3
+
+# `-n`: the rounds actually in the file. Without it TieBreakServer counts every
+# ANNOUNCED round, so a file saved after round 1 of 9 gets eight unplayed
+# rounds in every tie-break.
+tbs = fn file, codes, rr?, rounds ->
+  flag = if rr?, do: "-p", else: "-s"
+
+  args =
+    [Path.join(tbs_dir, "tiebreakchecker.py"), "-i", file, "-o", "-", flag, "-n", "#{rounds}"] ++
+      ["-d", "T", "-t"] ++ Enum.map(codes, &(&1 <> "/V2026"))
+
+  case System.cmd(python, args, stderr_to_stdout: true, env: [{"PYTHONIOENCODING", "utf-8"}]) do
+    {out, 0} ->
+      [_header | rows] =
+        out |> String.split(~r/\r?\n/, trim: true) |> Enum.drop_while(&(not String.starts_with?(&1, "StartNo")))
+
+      {:ok,
+       Map.new(rows, fn row ->
+         [start, _rank | values] = String.split(row, "\t")
+         {String.to_integer(start), values}
+       end)}
+
+    {out, _} ->
+      {:error, out |> String.slice(0, 200)}
+  end
+end
+
+# {value, decimals printed}. TieBreakServer prints AOB to two decimals; the
+# comparison is made at the precision it printed, since that is all it says.
+number = fn
+  nil -> {nil, 0}
+  "" -> {nil, 0}
+  "None" -> {nil, 0}
+  text ->
+    decimals = case String.split(text, "."), do: ([_, d] -> String.length(d); _ -> 0)
+    case Float.parse(text), do: ({v, _} -> {v, decimals}; :error -> {text, 0})
+end
+
+# "No games to average over": we say nil, TieBreakServer prints 0. They rank
+# the same, so they are the same answer.
+same? = fn
+  mine, {their, decimals} ->
+    mine = if is_nil(mine), do: 0.0, else: mine * 1.0
+    their = if is_nil(their), do: 0.0, else: their
+
+    is_number(their) and
+      abs(Float.round(mine, min(decimals, 15)) - their) < 0.001
+end
+
+# Reading 8 (docs/conformance-c07-tiebreaks.md): TieBreakServer scores STD
+# against a draw's value, C.07 7.7 against the scheduled opponent. A STD
+# mismatch that TieBreakServer's rule explains exactly is that known reading
+# difference, counted apart from the errors.
+std_by_draw = fn event, id ->
+  draw = event.points.draw
+
+  event.participants[id].rounds
+  |> Map.values()
+  |> Enum.map(fn r ->
+    cond do
+      r.points > draw + 1.0e-9 -> 1.0
+      abs(r.points - draw) <= 1.0e-9 -> 0.5
+      true -> 0.0
+    end
+  end)
+  |> Enum.sum()
+end
+
+totals =
+  for file <- files, reduce: %{files: 0, skipped: 0, mismatches: 0, compared: 0, known: 0} do
+    acc ->
+      name = Path.basename(file)
+
+      with {:ok, parsed} <- (try do {:ok, Trf.parse(File.read!(file))} rescue e -> {:error, Exception.message(e)} end),
+           event = Event.from_trf(parsed, predetermined?: opts[:rr] || false),
+           {:ok, ours} <- Tiebreaks.compute(event, codes),
+           {:ok, theirs} <- tbs.(file, codes, opts[:rr] || false, event.rounds) do
+        IO.puts("== #{name}: #{map_size(event.participants)} players, #{event.rounds} rounds")
+
+        results =
+          for {code, i} <- Enum.with_index(codes) do
+            ours_code = ours[code]
+
+            # Bound through a one-element list, not `x = ...` filters: a
+            # filter drops nil, and a nil on one side is exactly a mismatch.
+            bad =
+              for {id, row} <- theirs,
+                  [{mine, their}] <- [
+                    [
+                      {if(ours_code == :dropped, do: nil, else: ours_code[id]),
+                       number.(Enum.at(row, i))}
+                    ]
+                  ],
+                  not same?.(mine, their),
+                  do: {id, mine, elem(their, 0)}
+
+            {known, bad} =
+              if String.starts_with?(code, "STD"),
+                do: Enum.split_with(bad, fn {id, _m, t} -> is_number(t) and abs(std_by_draw.(event, id) - t) < 0.001 end),
+                else: {[], bad}
+
+            unless known == [] do
+              IO.puts("   #{code}: #{length(known)} known reading difference (reading 8, STD)")
+            end
+
+            unless bad == [] do
+              sample = bad |> Enum.sort() |> Enum.take(examples) |> Enum.map_join(", ", fn {id, m, t} -> "#{id}: ours #{inspect(m)} theirs #{inspect(t)}" end)
+              IO.puts("   #{code}: #{length(bad)} differ - #{sample}")
+            end
+
+            {length(bad), map_size(theirs), length(known)}
+          end
+
+        %{
+          acc
+          | files: acc.files + 1,
+            mismatches: acc.mismatches + Enum.sum(Enum.map(results, &elem(&1, 0))),
+            compared: acc.compared + Enum.sum(Enum.map(results, &elem(&1, 1))),
+            known: acc.known + Enum.sum(Enum.map(results, &elem(&1, 2)))
+        }
+      else
+        {:error, reason} ->
+          IO.puts("-- #{name}: skipped (#{String.slice(to_string(reason), 0, 120)})")
+          %{acc | skipped: acc.skipped + 1}
+      end
+  end
+
+IO.puts(
+  "\nfiles #{totals.files}, skipped #{totals.skipped}, values compared #{totals.compared}, " <>
+    "mismatches #{totals.mismatches}, known reading differences #{totals.known}"
+)
+
+if totals.mismatches > 0, do: System.halt(1)

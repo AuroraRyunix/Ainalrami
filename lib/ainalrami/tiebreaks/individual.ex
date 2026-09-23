@@ -263,7 +263,7 @@ defmodule Ainalrami.Tiebreaks.Individual do
   # dummy) it came from, and whether the round was a VUR.
   defp buchholz_contributions(ctx) do
     each(ctx, fn p ->
-      for r <- 1..ctx.event.rounds//1 do
+      for r <- counted_rounds(p, ctx) do
         score = opponent_score(p, r, ctx)
         %{value: score, opponent_score: score, vur?: Unplayed.vur?(p.rounds[r])}
       end
@@ -272,7 +272,7 @@ defmodule Ainalrami.Tiebreaks.Individual do
 
   defp sonneborn_contributions(ctx) do
     each(ctx, fn p ->
-      for r <- 1..ctx.event.rounds//1 do
+      for r <- counted_rounds(p, ctx) do
         score = opponent_score(p, r, ctx)
         round = p.rounds[r]
 
@@ -284,6 +284,16 @@ defmodule Ainalrami.Tiebreaks.Individual do
       end
     end)
   end
+
+  # The rounds that are elements of a Buchholz or Sonneborn-Berger sum: all
+  # of them in a Swiss event, where an unplayed round is a game against a
+  # dummy (16.4); only those with an opponent when the pairings were fixed in
+  # advance, where there is no dummy - the free round of an odd round robin
+  # is not an element at all, and so is not what Cut-1 removes.
+  defp counted_rounds(p, %{event: %{predetermined?: true}} = ctx),
+    do: for(r <- 1..ctx.event.rounds//1, p.rounds[r].opponent != nil, do: r)
+
+  defp counted_rounds(_p, ctx), do: Enum.to_list(1..ctx.event.rounds//1)
 
   # What round `r` contributes as "the opponent's score": the opponent's
   # adjusted score for a game; the dummy's score for an unplayed round in a
@@ -365,7 +375,10 @@ defmodule Ainalrami.Tiebreaks.Individual do
 
   # The event as it would stand if every paired game of the final round had
   # been drawn. Byes in that round stay as awarded.
-  defp fore(%Event{rounds: 0} = event), do: event
+  # Only once the event's final round is among the rounds counted - before
+  # that there is nothing to draw, and FB is BH (see Event.new/3).
+  defp fore(%Event{rounds: rounds, total_rounds: total} = event) when rounds < total or rounds == 0,
+    do: event
 
   defp fore(%Event{rounds: last, points: points} = event) do
     participants =

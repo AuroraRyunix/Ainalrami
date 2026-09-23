@@ -117,6 +117,19 @@ to play, which is what a voluntary unplayed round is (16.1.2).
 - **TPN (7.8):** ascending; `R` descending.
 - **RTNG (10.6):** descending; `R` ascending.
 
+**Reading 8 - STD compares with the opponent, as written.** "The number of
+rounds in which a participant scores more points than their scheduled
+opponent ... plus half the number of rounds in which the participant scores
+the same number of points as their scheduled opponent." So a double
+forfeit, or a 0-0 where both lose, is half a point to each; ½-0 is a full
+point to the player with ½. **TieBreakServer differs**: it compares every
+round with a draw's value (`compute_std`, commented "std from 2026 rules"),
+which gives 0, 0 and ½ in those three cases. Found on a real file
+(`S_FIDE_469284`, Clubkampioenschap B-reeks: players 6 and 8 have a double
+forfeit in round 9). We follow the text; this is a reading difference to
+report to TEC (VCL4THP Q38-Q39), and the comparison tool counts it
+separately rather than as an error.
+
 ## Buchholz family (Articles 8, 16)
 
 **Adjusted score (16.3)**, used when a participant appears as somebody's
@@ -137,7 +150,14 @@ opponents", which the participant's own tie-break is not.)
 - **BH (8.1):** sum of opponents' adjusted scores and dummy scores.
 - **FB (8.3):** BH after replacing every result of the final round's paired
   games with a draw, for everyone - scores and adjusted scores are
-  recomputed from that assumption.
+  recomputed from that assumption. **"The final round" is the event's last
+  round**, not the last one played so far: standings after round 1 of 9
+  have no final round to draw yet, so FB is plain BH there. The event
+  carries its announced round count for this (`total_rounds`); nothing else
+  reads it. First written the other way, and caught by the comparison with
+  TieBreakServer on two files saved after round 1 - TieBreakServer's
+  `isfore` needs the participant's last pairing to be in the event's final
+  round.
 - **AOB (8.2):** average of the Buchholz (or, with `F`, Fore Buchholz) of
   the opponents played over the board; no dummies, since a dummy has no
   Buchholz.
@@ -153,6 +173,10 @@ opponents", which the participant's own tie-break is not.)
   16.5.2 cuts the higher of that and the lowest VUR contribution. Each
   further cut (C2, M2) reapplies the rule to what is left. Medians cut the
   least first, then the most (14.3).
+- **Round robins (15.2):** a round without an opponent - the free round of
+  an odd field - is not an element of the sum at all, so Cut-1 removes the
+  weakest real game, not the free round. There is no dummy outside Article
+  16.
 - **Round robins:** Article 8 says Buchholz-type tie-breaks must not be
   used in round robins. `from_trf/2` and `compute/3` refuse them for a
   predetermined event (the VCL's Q105 counts allowing them as a failure).
