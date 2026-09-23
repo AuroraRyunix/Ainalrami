@@ -62,15 +62,6 @@ defmodule Ainalrami.Tiebreaks do
   end
 
   @doc """
-  The standings. Returns `{:ok, [%{id:, rank:, values:}]}` in rank order,
-  where `values` maps each code (score included) to that participant's
-  value - DE's value is the position DE gave within the tied group, 1 the
-  best. `{:error, reason}` for an unusable list.
-
-  The result also carries, as the second element when asked for with
-  `with_dropped: true`, the codes Article 10 dropped.
-  """
-  @doc """
   How each value was reached, round by round, for the codes that have a
   per-round working: `{:ok, %{code => %{id => [part]}}}`. See
   `Ainalrami.Tiebreaks.Individual.working/3` for the parts. Codes without a
@@ -91,6 +82,16 @@ defmodule Ainalrami.Tiebreaks do
     end
   end
 
+  @doc """
+  The standings. Returns `{:ok, [%{id:, rank:, values:}]}` in rank order,
+  where `values` maps each code (score included) to that participant's
+  value - DE's value is the position DE gave within the tied group, 1 the
+  best. `{:error, reason}` for an unusable list.
+
+  The result also carries, as the second element when asked for with
+  `with_dropped: true`, the codes Article 10 dropped. `score:` starts the
+  standings from the caller's own score instead of the one the games give.
+  """
   def rank(event, codes, opts \\ [])
 
   # Team events have their own ranking - the team tie-breaks, and two views
