@@ -279,14 +279,30 @@ defmodule Ainalrami.Tiebreaks.Individual do
   # ---- contributions and cuts (Articles 14, 16.5) ------------------------
 
   # One entry per round: the value it adds, the score of the opponent (or
-  # dummy) it came from, and whether the round was a VUR.
+  # dummy) it came from, whether the round was a VUR - and, for
+  # `working/3`, which round, which opponent, and whether it counted as a
+  # game or as Article 16's dummy.
   defp buchholz_contributions(ctx) do
     each(ctx, fn p ->
       for r <- counted_rounds(p, ctx) do
         score = opponent_score(p, r, ctx)
-        %{value: score, opponent_score: score, vur?: Unplayed.vur?(p.rounds[r])}
+        element(p, r, ctx, score, score, p.rounds[r])
       end
     end)
+  end
+
+  defp element(p, r, ctx, value, opponent_score, scored_round) do
+    round = p.rounds[r]
+    game? = round.kind == :played or (ctx.event.predetermined? and round.opponent != nil)
+
+    %{
+      round: r,
+      opponent: round.opponent,
+      kind: if(game?, do: :played, else: :virtual),
+      value: value,
+      opponent_score: opponent_score,
+      vur?: Unplayed.vur?(scored_round)
+    }
   end
 
   # `scored` is the event the points scored against each opponent come
@@ -301,12 +317,7 @@ defmodule Ainalrami.Tiebreaks.Individual do
       for r <- counted_rounds(p, ctx) do
         score = opponent_score(p, r, ctx)
         round = scored.participants[p.id].rounds[r]
-
-        %{
-          value: score * round.points,
-          opponent_score: score,
-          vur?: Unplayed.vur?(round)
-        }
+        element(p, r, ctx, score * round.points, score, round)
       end
     end)
   end
@@ -359,13 +370,19 @@ defmodule Ainalrami.Tiebreaks.Individual do
   # contribution and removes the higher of the two (16.5.2) - which for
   # Buchholz is always the VUR one.
   defp cut(contributions, code, notion, ctx) do
-    swiss? = not ctx.event.predetermined?
-
     Map.new(contributions, fn {id, list} ->
-      list = Enum.reduce(1..code.cut_low//1, list, fn _, acc -> cut_low(acc, notion, swiss?) end)
-      list = Enum.reduce(1..code.cut_high//1, list, fn _, acc -> cut_high(acc, notion) end)
-      {id, list |> Enum.map(& &1.value) |> Enum.sum()}
+      {kept, _cut} = split_cuts(list, code, notion, ctx)
+      {id, kept |> Enum.map(& &1.value) |> Enum.sum()}
     end)
+  end
+
+  # {kept, cut} - which elements a cut modifier removes, not just what is
+  # left, so `working/3` can show the discarded rounds.
+  defp split_cuts(list, code, notion, ctx) do
+    swiss? = not ctx.event.predetermined?
+    kept = Enum.reduce(1..code.cut_low//1, list, fn _, acc -> cut_low(acc, notion, swiss?) end)
+    kept = Enum.reduce(1..code.cut_high//1, kept, fn _, acc -> cut_high(acc, notion) end)
+    {kept, list -- kept}
   end
 
   defp cut_low([], _notion, _swiss?), do: []
@@ -403,10 +420,128 @@ defmodule Ainalrami.Tiebreaks.Individual do
     list |> Enum.filter(&(&1.opponent_score == high)) |> Enum.max_by(& &1.value)
   end
 
-  # Removes exactly one element equal to `victim` - equal maps are
-  # interchangeable, so which of several identical ones goes does not
-  # matter.
+  # Removes `victim` - elements carry their round, so no two are equal.
   defp remove_one(list, victim), do: List.delete(list, victim)
+
+  # ---- the working (how each value was reached) -------------------------
+
+  @doc """
+  How each participant's value for `code` was reached, round by round:
+  `%{id => [part]}`, or nil for a code with no per-round working (direct
+  encounter, the Type B counts, TPR and the averages of averages) or an
+  Article 10 code that is dropped.
+
+  A part is `%{round:, opponent:, value:, kind:, vur?:}`, `kind` one of
+    * `:played` - a game (or, with pairings fixed in advance, a forfeit),
+      counted
+    * `:virtual` - counted, with no game behind it: Article 16's dummy, or a
+      round without an opponent in Progressive Score
+    * `:cut` - a contribution a cut modifier removed
+    * `:excluded` - counted as nothing by the tie-break's own rule (a Koya
+      opponent below the line, an odd round robin's free round)
+
+  The counted parts add up to the value `values/3` gives, because both come
+  from the same elements - ARO's parts are ratings and add up to its sum,
+  not its average.
+  """
+  def working(%Code{} = code, %Event{} = event, ctx \\ nil) do
+    ctx = ctx || context(event)
+    parts(code.name, code, ctx)
+  end
+
+  defp parts(name, code, ctx) when name in ~w(BH FB) do
+    source = if name == "FB", do: ctx.event |> fore() |> context(), else: ctx
+
+    source
+    |> buchholz_contributions()
+    |> with_cuts(code, :by_value, ctx)
+  end
+
+  defp parts("SB", code, ctx),
+    do: ctx |> sonneborn_contributions() |> with_cuts(code, :by_opponent_score, ctx)
+
+  defp parts("KS", code, ctx) do
+    threshold = max_possible(ctx) / 2 + code.limit * 0.5
+
+    each(ctx, fn p ->
+      for r <- 1..ctx.event.rounds//1 do
+        round = p.rounds[r]
+
+        counted? =
+          round.opponent != nil and ctx.scores[round.opponent] >= threshold - 1.0e-9
+
+        %{
+          round: r,
+          opponent: round.opponent,
+          value: round.points,
+          kind: if(counted?, do: :played, else: :excluded),
+          vur?: Unplayed.vur?(round)
+        }
+      end
+    end)
+  end
+
+  defp parts("PS", code, ctx) do
+    each(ctx, fn p ->
+      {parts, _} =
+        Enum.map_reduce(1..ctx.event.rounds//1, 0.0, fn r, acc ->
+          round = p.rounds[r]
+          running = acc + round.points
+          kind = if round.opponent != nil, do: :played, else: :virtual
+
+          {%{round: r, opponent: round.opponent, value: running, kind: kind, vur?: false},
+           running}
+        end)
+
+      # Cut-n drops the first n running scores (14.1.2 c).
+      {cut, kept} = Enum.split(parts, code.cut_low)
+      Enum.map(cut, &%{&1 | kind: :cut}) ++ kept
+    end)
+  end
+
+  defp parts("ARO", code, ctx) do
+    if dropped?(code, ctx) do
+      nil
+    else
+      each(ctx, fn p ->
+        games =
+          for {r, %{kind: :played} = round} <- Enum.sort(p.rounds) do
+            rating = ctx.event.participants[round.opponent].rating || code.unrated
+            %{round: r, opponent: round.opponent, value: rating * 1.0, kind: :played, vur?: false}
+          end
+
+        sorted = Enum.sort_by(games, &{&1.value, &1.round})
+        low = Enum.take(sorted, code.cut_low)
+        high = sorted |> Enum.drop(code.cut_low) |> Enum.reverse() |> Enum.take(code.cut_high)
+        cut = low ++ high
+
+        Enum.map(games, &if(&1 in cut, do: %{&1 | kind: :cut}, else: &1))
+      end)
+    end
+  end
+
+  defp parts(_name, _code, _ctx), do: nil
+
+  defp with_cuts(contributions, code, notion, ctx) do
+    Map.new(contributions, fn {id, list} ->
+      {_kept, cut} = split_cuts(list, code, notion, ctx)
+      counted = MapSet.new(list, & &1.round)
+
+      # The rounds that are not elements at all - an odd round robin's free
+      # round - shown as excluded, so every round has its line.
+      free =
+        for r <- 1..ctx.event.rounds//1, r not in counted do
+          %{round: r, opponent: nil, value: 0.0, kind: :excluded, vur?: false}
+        end
+
+      parts =
+        (Enum.map(list, &if(&1 in cut, do: %{&1 | kind: :cut}, else: &1)) ++ free)
+        |> Enum.sort_by(& &1.round)
+        |> Enum.map(&Map.take(&1, [:round, :opponent, :value, :kind, :vur?]))
+
+      {id, parts}
+    end)
+  end
 
   # ---- Fore Buchholz (8.3) -----------------------------------------------
 

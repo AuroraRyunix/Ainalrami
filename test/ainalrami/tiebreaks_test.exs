@@ -459,6 +459,63 @@ defmodule Ainalrami.TiebreaksTest do
     end
   end
 
+  describe "the working" do
+    # Whatever the event, the counted parts add up to the value - both come
+    # from the same elements. ARO's parts add up to the SUM of the counted
+    # ratings, which is the average times their number.
+    test "the counted parts add up to every value" do
+      events = [
+        {swiss(), false},
+        {withdrawal(), false},
+        {forfeit(), false},
+        {round_robin(), true}
+      ]
+
+      for {event, rr?} <- events,
+          code <-
+            if(rr?,
+              do: ~w(SB SB/C1 KS KS/L1 PS PS/C1 ARO ARO/C1),
+              else: ~w(BH BH/C1 BH/C2 BH/M1 FB FB/C1 SB SB/C1 PS PS/C1 ARO ARO/C1)
+            ) do
+        {:ok, values} = Tiebreaks.compute(event, [code])
+        {:ok, working} = Tiebreaks.working(event, [code])
+
+        for {id, parts} <- working[code] do
+          counted = Enum.filter(parts, &(&1.kind in [:played, :virtual]))
+          total = counted |> Enum.map(& &1.value) |> Enum.sum()
+
+          expected =
+            if String.starts_with?(code, "ARO"),
+              do: (values[code][id] || 0) * length(counted),
+              else: values[code][id]
+
+          # ARO's own value is rounded; compare its average instead.
+          if String.starts_with?(code, "ARO") and counted != [] do
+            assert Rating.round_half_up(total / length(counted)) == values[code][id],
+                   "#{code} #{id}"
+          else
+            assert_in_delta total, expected, 1.0e-9, "#{code} #{id}"
+          end
+        end
+      end
+    end
+
+    test "a forfeit is a dummy, a cut is marked, every round has a line" do
+      {:ok, working} = Tiebreaks.working(forfeit(), ["BH/C1"])
+      # Player 2: R1 forfeit loss (dummy 1, a VUR - cut), R2 played vs 4.
+      assert [
+               %{round: 1, kind: :cut, value: 1.0, vur?: true},
+               %{round: 2, kind: :played, opponent: 4}
+             ] =
+               working["BH/C1"][2]
+    end
+
+    test "codes without a per-round working are left out" do
+      {:ok, working} = Tiebreaks.working(swiss(), ~w(WIN TPR BH))
+      assert Map.keys(working) == ["BH"]
+    end
+  end
+
   describe "the rating tables" do
     test "dp is antisymmetric around 50%" do
       for p <- 0..100, do: assert(Rating.dp(p) == -Rating.dp(100 - p))

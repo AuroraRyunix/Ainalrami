@@ -70,6 +70,27 @@ defmodule Ainalrami.Tiebreaks do
   The result also carries, as the second element when asked for with
   `with_dropped: true`, the codes Article 10 dropped.
   """
+  @doc """
+  How each value was reached, round by round, for the codes that have a
+  per-round working: `{:ok, %{code => %{id => [part]}}}`. See
+  `Ainalrami.Tiebreaks.Individual.working/3` for the parts. Codes without a
+  working are left out.
+  """
+  def working(%Event{} = event, codes) do
+    with {:ok, parsed} <- parse(codes),
+         :ok <- usable(parsed, event) do
+      ctx = Individual.context(event)
+
+      {:ok,
+       for code <- parsed,
+           parts = Individual.working(code, event, ctx),
+           parts != nil,
+           into: %{} do
+         {Code.format(code), parts}
+       end}
+    end
+  end
+
   def rank(event, codes, opts \\ [])
 
   # Team events have their own ranking - the team tie-breaks, and two views
@@ -95,6 +116,15 @@ defmodule Ainalrami.Tiebreaks do
               end
           end
         end)
+
+      # `score:` replaces the score the standings start from - a program
+      # that ranks by score plus bonus points (OpenPairings' extra points)
+      # hands its own; the tie-breaks still work from the games.
+      values =
+        case Keyword.get(opts, :score) do
+          nil -> values
+          score -> Map.put(values, "PTS", score)
+        end
 
       active = Enum.reject(parsed, &(Code.format(&1) in dropped))
       ids = Map.keys(event.participants) |> Enum.sort()
