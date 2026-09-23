@@ -50,9 +50,20 @@ defmodule Ainalrami.TeamPairingValidationTest do
   # ==================================================================
 
   describe "whole rounds against the brute-force reference (4-10 teams)" do
+    # The same test is the long validation run. `tools/team_validation_run.py`
+    # starts many copies of it, each on its own seed range through
+    # TEAM_VALIDATION_SEEDS ("first..last"); without the variable it is the
+    # ordinary 90-seed test. In a run the per-round statistics are not kept -
+    # a mailbox of millions of them would cost gigabytes - and the coverage
+    # guards below, which were written for the 90 seeds, are skipped: the run
+    # reports its count instead.
+    @tag :whole_rounds
+    @tag timeout: :infinity
     test "every round of every generated event matches the reference" do
+      {seeds, run?} = validation_seeds()
+
       checked =
-        for seed <- 1..90, reduce: 0 do
+        for seed <- seeds, reduce: 0 do
           acc ->
             :rand.seed(:exsss, {seed, 2 * seed + 1, 7 * seed + 3})
             size = Enum.random(4..10)
@@ -68,15 +79,16 @@ defmodule Ainalrami.TeamPairingValidationTest do
 
                 case TeamPairing.pair_round(field, opts) do
                   {:ok, engine} ->
-                    send(
-                      self(),
-                      {:stat,
-                       %{
-                         upfloaters?: Enum.any?(engine.brackets, &(&1.upfloaters != [])),
-                         bye?: engine.bye != nil,
-                         absent?: absent != []
-                       }}
-                    )
+                    run? ||
+                      send(
+                        self(),
+                        {:stat,
+                         %{
+                           upfloaters?: Enum.any?(engine.brackets, &(&1.upfloaters != [])),
+                           bye?: engine.bye != nil,
+                           absent?: absent != []
+                         }}
+                      )
 
                     assert normalise(engine) == Map.take(reference, [:bye, :pairs]),
                            """
@@ -94,18 +106,19 @@ defmodule Ainalrami.TeamPairingValidationTest do
                     assert Map.delete(explained, :explanation) == engine,
                            "#{where}: explain changed the round"
 
-                    send(
-                      self(),
-                      {:reasons,
-                       Enum.map(reference.reasons.brackets, & &1.decided_by) ++
-                         Enum.map(reference.reasons.rules, &elem(&1, 3)) ++
-                         Enum.map(reference.reasons.rules, &elem(&1, 2)) ++
-                         List.wrap(reference.reasons.bye && reference.reasons.bye.decided_by) ++
-                         if(reference.reasons.bye && reference.reasons.bye.passed_over != [],
-                           do: ["3.4.1"],
-                           else: []
-                         )}
-                    )
+                    run? ||
+                      send(
+                        self(),
+                        {:reasons,
+                         Enum.map(reference.reasons.brackets, & &1.decided_by) ++
+                           Enum.map(reference.reasons.rules, &elem(&1, 3)) ++
+                           Enum.map(reference.reasons.rules, &elem(&1, 2)) ++
+                           List.wrap(reference.reasons.bye && reference.reasons.bye.decided_by) ++
+                           if(reference.reasons.bye && reference.reasons.bye.passed_over != [],
+                             do: ["3.4.1"],
+                             else: []
+                           )}
+                      )
 
                     assert reasons(explained.explanation) == reference.reasons,
                            """
@@ -130,30 +143,49 @@ defmodule Ainalrami.TeamPairingValidationTest do
               end)
         end
 
-      # A guard against the generator quietly producing nothing to check.
-      assert checked > 250
-
-      # And against it producing only the easy shapes. Measured when written
-      # (seeds 1..90): 371 rounds, 259 with an upfloater bracket, 192 with a
-      # bye, 105 with a team sitting out.
-      stats = collect_stats([])
-      assert Enum.count(stats, & &1.upfloaters?) > 150
-      assert Enum.count(stats, & &1.bye?) > 100
-      assert Enum.count(stats, & &1.absent?) > 50
-
-      # And the recorded reasons it compared cover more than the easy ones.
-      # Measured when written: C4 550, C5 95, C7 10, C6 2, 3.5.4 117; bye
-      # 3.4.1 12, 3.4.2 79, 3.4.3 8, 3.4.4 92; 4.2.1-4.2.3 498/202/400;
-      # 4.3.1 281, 4.3.2 195, 4.3.3 18, 4.3.5 346, 4.3.6 59, 4.3.8 199, 4.3.9
-      # 2. 4.3.4 is Type B, which the reference does not play; 4.3.7 and the
-      # rest are pinned by hand in `team_pairing_test.exs`.
-      seen = collect_reasons(%{})
-
-      for reason <-
-            ~w(C4 C5 C6 C7 3.5.4 3.4.1 3.4.2 3.4.3 3.4.4 4.2.1 4.2.2 4.2.3) ++
-              ~w(4.3.1 4.3.2 4.3.3 4.3.5 4.3.6 4.3.8) do
-        assert Map.get(seen, reason, 0) > 0, "no generated round was decided by #{reason}"
+      if run? do
+        IO.puts("TEAMRUN seeds=#{Enum.count(seeds)} rounds=#{checked}")
+      else
+        whole_round_coverage(checked)
       end
+    end
+  end
+
+  defp validation_seeds do
+    case System.get_env("TEAM_VALIDATION_SEEDS") do
+      nil ->
+        {1..90, false}
+
+      range ->
+        [first, last] = range |> String.split("..") |> Enum.map(&String.to_integer/1)
+        {first..last, true}
+    end
+  end
+
+  defp whole_round_coverage(checked) do
+    # A guard against the generator quietly producing nothing to check.
+    assert checked > 250
+
+    # And against it producing only the easy shapes. Measured when written
+    # (seeds 1..90): 371 rounds, 259 with an upfloater bracket, 192 with a
+    # bye, 105 with a team sitting out.
+    stats = collect_stats([])
+    assert Enum.count(stats, & &1.upfloaters?) > 150
+    assert Enum.count(stats, & &1.bye?) > 100
+    assert Enum.count(stats, & &1.absent?) > 50
+
+    # And the recorded reasons it compared cover more than the easy ones.
+    # Measured when written: C4 550, C5 95, C7 10, C6 2, 3.5.4 117; bye
+    # 3.4.1 12, 3.4.2 79, 3.4.3 8, 3.4.4 92; 4.2.1-4.2.3 498/202/400;
+    # 4.3.1 281, 4.3.2 195, 4.3.3 18, 4.3.5 346, 4.3.6 59, 4.3.8 199, 4.3.9
+    # 2. 4.3.4 is Type B, which the reference does not play; 4.3.7 and the
+    # rest are pinned by hand in `team_pairing_test.exs`.
+    seen = collect_reasons(%{})
+
+    for reason <-
+          ~w(C4 C5 C6 C7 3.5.4 3.4.1 3.4.2 3.4.3 3.4.4 4.2.1 4.2.2 4.2.3) ++
+            ~w(4.3.1 4.3.2 4.3.3 4.3.5 4.3.6 4.3.8) do
+      assert Map.get(seen, reason, 0) > 0, "no generated round was decided by #{reason}"
     end
   end
 
