@@ -292,7 +292,8 @@ defmodule Ainalrami.Tiebreaks.Team do
   `{:ok, %{code => %{id => value} | :dropped}}`.
   """
   def compute(%__MODULE__{} = t, codes) do
-    with {:ok, parsed} <- Code.parse_list(codes) do
+    with {:ok, parsed} <- Code.parse_list(codes),
+         :ok <- usable(parsed, t) do
       views = views(t)
 
       {:ok,
@@ -311,7 +312,8 @@ defmodule Ainalrami.Tiebreaks.Team do
   `Ainalrami.Tiebreaks.rank/3`, with the team tie-breaks.
   """
   def rank(%__MODULE__{} = t, codes, opts \\ []) do
-    with {:ok, parsed} <- Code.parse_list(codes) do
+    with {:ok, parsed} <- Code.parse_list(codes),
+         :ok <- usable(parsed, t) do
       parsed = with_score_first(parsed)
       views = views(t)
 
@@ -335,6 +337,57 @@ defmodule Ainalrami.Tiebreaks.Team do
       if Keyword.get(opts, :with_dropped, false),
         do: {:ok, standings, Enum.reverse(dropped)},
         else: {:ok, standings}
+    end
+  end
+
+  @doc """
+  How each value was reached, round by round: `{:ok, %{code => %{id =>
+  [part]}}}` in `Ainalrami.Tiebreaks.Individual.working/3`'s shape, for the
+  Buchholz and Sonneborn-Berger family (on either score), Koya, progressive
+  score and the extended Sonneborn-Berger codes. Other codes are left out.
+  """
+  def working(%__MODULE__{} = t, codes) do
+    with {:ok, parsed} <- Code.parse_list(codes),
+         :ok <- usable(parsed, t) do
+      views = views(t)
+
+      {:ok,
+       for code <- parsed,
+           parts = team_working(code, t, views),
+           parts != nil,
+           into: %{} do
+         {Code.format(code), parts}
+       end}
+    end
+  end
+
+  defp team_working(
+         %Code{name: "E" <> <<a::binary-size(1), b::binary-size(1)>> <> "SB"} = code,
+         _t,
+         views
+       )
+       when a in ["M", "G"] and b in ["M", "G"] do
+    first = if a == "M", do: :mp, else: :gp
+    second = if b == "M", do: :mp, else: :gp
+    Individual.extended_sonneborn_working(code, views.ctx[first], views[second])
+  end
+
+  defp team_working(%Code{name: name} = code, t, views) when name in ~w(BH FB SB KS PS) do
+    score = code.score || t.primary
+    Individual.working(code, views[score], views.ctx[score])
+  end
+
+  defp team_working(_code, _t, _views), do: nil
+
+  # Article 8: no Buchholz-type tie-break when the pairings were fixed in
+  # advance, as for individual events.
+  defp usable(codes, t) do
+    case Enum.find(codes, &(&1.name in ~w(BH FB AOB))) do
+      %Code{} = code when t.predetermined? ->
+        {:error, "#{Code.format(code)} must not be used in round robins (C.07 Article 8)"}
+
+      _ ->
+        :ok
     end
   end
 

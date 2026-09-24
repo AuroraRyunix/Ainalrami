@@ -67,6 +67,8 @@ defmodule Ainalrami.Tiebreaks do
   `Ainalrami.Tiebreaks.Individual.working/3` for the parts. Codes without a
   working are left out.
   """
+  def working(%Team{} = team_event, codes), do: Team.working(team_event, codes)
+
   def working(%Event{} = event, codes) do
     with {:ok, parsed} <- parse(codes),
          :ok <- usable(parsed, event) do

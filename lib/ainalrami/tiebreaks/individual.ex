@@ -333,6 +333,11 @@ defmodule Ainalrami.Tiebreaks.Individual do
     ctx |> sonneborn_contributions(scored) |> cut(code, :by_opponent_score, ctx)
   end
 
+  @doc "`extended_sonneborn/3`'s per-round parts, in `working/3`'s shape."
+  def extended_sonneborn_working(%Code{} = code, ctx, %Event{} = scored) do
+    ctx |> sonneborn_contributions(scored) |> with_cuts(code, :by_opponent_score, ctx)
+  end
+
   # The rounds that are elements of a Buchholz or Sonneborn-Berger sum: all
   # of them in a Swiss event, where an unplayed round is a game against a
   # dummy (16.4); only those with an opponent when the pairings were fixed in

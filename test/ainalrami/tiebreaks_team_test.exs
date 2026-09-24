@@ -304,6 +304,32 @@ defmodule Ainalrami.TiebreaksTeamTest do
       assert three.boards == %{1 => 1.0, 2 => 1.0}
     end
 
+    test "the working's counted parts add up to every value" do
+      event = team_trf()
+      codes = ~w(BH:MP BH:GP SB:MP SB:GP EMMSB EMGSB EGMSB EGGSB BH:MP/C1 PS:MP)
+      {:ok, values} = Tiebreaks.compute(event, codes)
+      {:ok, working} = Tiebreaks.working(event, codes)
+
+      for code <- codes, {id, value} <- values[code] do
+        total =
+          working[code][id]
+          |> Enum.filter(&(&1.kind in [:played, :virtual]))
+          |> Enum.map(& &1.value)
+          |> Enum.sum()
+
+        assert_in_delta total, value, 1.0e-9, "#{code} team #{id}"
+      end
+    end
+
+    test "Buchholz is refused when the pairings were fixed in advance (Article 8)" do
+      event = %{team_trf() | predetermined?: true}
+
+      assert {:error, _} = Tiebreaks.compute(event, ~w(BH:MP))
+      assert {:error, _} = Tiebreaks.rank(event, ~w(MPTS BH:MP))
+      assert {:error, _} = Tiebreaks.working(event, ~w(BH:MP))
+      assert {:ok, _} = Tiebreaks.compute(event, ~w(SB:MP))
+    end
+
     test "the standings rank from it" do
       {:ok, rows} = Tiebreaks.rank(team_trf(), ~w(MPTS GPTS))
 
