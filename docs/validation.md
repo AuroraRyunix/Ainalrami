@@ -1095,3 +1095,37 @@ second including start-up. A 200-player open is about a second, a
 seven - against the C++ reference's fifty. Inside a long-lived process
 (the sibling OpenPairings app, or any server) the 0.63 s BEAM start-up is
 paid once rather than per round, which is most of the small-field cost.
+
+## Tie-breaks (C.07, effective 1 March 2026), against TieBreakServer
+
+VCL4THP v13 Q33 asks for at least 50,000 tournaments cross-checked each way
+against another public program, tie-breaks included. The other program is
+FIDE's TieBreakServer (Otto Milvang, MIT), run with every code at `/V2026`.
+Each comparison covers every value of every player, and the final ranks
+under a tie-break list (`BH/C1 BH SB DE` for Swiss, `DE SB KS` for round
+robins).
+
+| direction | generator | tournaments | values | unexplained | known |
+|---|---|---|---|---|---|
+| 1 | Ainalrami (`tools/tiebreak_corpus.exs`, `tools/tiebreak_direction1.py`) | 50,060 | ~29 million | 0 | 147,873 in the last 38,000 |
+| 2 | TieBreakServer's `tournamentgenerator.py` (`tools/tiebreak_direction2.py`) | 50,000 | 49,987,100 | 0 | 2,039 |
+| teams | board-level team events (`tools/team_tiebreak_compare.exs`) | 2,200 | ~405,000 | 0 | 11 |
+
+Run 2026-09-23/24 on the development PC. Direction 2 used six setups in
+rotation: Swiss 16x7, 40x9, 64x9 with raised unplayed-round rates, 100x11,
+and round robins of 9 and 10. TieBreakServer's own generator fails with
+`-a` (acceleration), so no accelerated setup is included.
+
+"Known" differences are the ones explained in
+`docs/finding-tiebreakserver-2026-09.md` and
+`docs/conformance-c07-tiebreaks.md`, and the tools classify each one:
+reading 8 (STD), finding B (SB/C1's VUR choice), and for teams finding C
+(direct encounter after a rematch). Findings A and D and reading T4 were
+found with targeted runs and are kept out of the default lists. Direction
+1's known count is mostly STD, which the corpus lists for every player.
+
+Direction 1 found one fault on our side, in the generator rather than the
+tie-breaks. When every player held a bye before a round was paired, the
+generator wrote two rounds in one step, so the file had one round more than
+its `142` said, and Fore Buchholz's "last round" differed (seed 1002432).
+It is fixed, with a test; the batch was rerun on the fixed generator.
