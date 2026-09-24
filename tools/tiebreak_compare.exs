@@ -192,7 +192,14 @@ totals =
               0
 
             list ->
-              rank_codes = String.split(list)
+              # The score first, for both: Ainalrami puts it there itself,
+              # TieBreakServer ranks by whatever it is sent first.
+              rank_codes =
+                case String.split(list) do
+                  ["PTS" | _] = codes -> codes
+                  codes -> ["PTS" | codes]
+                end
+
               {:ok, ours_ranked} = Tiebreaks.rank(event, rank_codes)
               {:ok, their_ranked} = tbs.(file, rank_codes, opts[:rr] || false, event.rounds)
               mine = Map.new(ours_ranked, &{&1.id, &1.rank})

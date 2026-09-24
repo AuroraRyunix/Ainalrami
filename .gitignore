@@ -38,3 +38,5 @@ agents.md
 .claude/
 .mcp.json
 graphify-out/
+direction2_state.json*
+direction2_run.log
