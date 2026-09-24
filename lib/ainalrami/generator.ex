@@ -118,7 +118,7 @@ defmodule Ainalrami.Generator do
             current
             |> grant_requested_byes(bye_pct)
             |> grant_byes(round_no, byes)
-            |> play_one_round(rounds, {forfeit_pct, results}, forbidden, initial_colour)
+            |> play_one_round(round_no, rounds, {forfeit_pct, results}, forbidden, initial_colour)
 
           {:cont, next}
         rescue
@@ -328,7 +328,17 @@ defmodule Ainalrami.Generator do
     end)
   end
 
-  defp play_one_round(players, total_rounds, outcomes, forbidden, initial_colour) do
+  # Everybody already sat this round out on a bye granted before the
+  # pairing. Nobody then looks absent to the engine, which would pair the
+  # NEXT round - two rounds written for one, and a file with one round more
+  # than its `142` says (found by the tie-break comparison, seed 1002432).
+  defp play_one_round(players, round_no, total_rounds, outcomes, forbidden, initial_colour) do
+    if Enum.all?(players, &(length(&1.games) >= round_no)),
+      do: players,
+      else: pair_and_play(players, total_rounds, outcomes, forbidden, initial_colour)
+  end
+
+  defp pair_and_play(players, total_rounds, outcomes, forbidden, initial_colour) do
     pairs =
       Pairing.pair_next_round(players,
         expected_rounds: total_rounds,

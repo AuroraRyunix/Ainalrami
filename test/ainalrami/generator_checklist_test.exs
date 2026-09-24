@@ -247,4 +247,27 @@ defmodule Ainalrami.GeneratorChecklistTest do
       assert CLI.run([bad, "-c", "-q"]) == expected
     end
   end
+
+  describe "a round everybody sat out" do
+    # Every player holds a bye before round 1 is paired. The engine then saw
+    # nobody absent and paired round 2 inside round 1's step: the file had
+    # one round more than its 142 declared.
+    test "does not write a round the file does not declare" do
+      for seed <- 1..300 do
+        {text, _} =
+          Generator.generate(
+            seed: seed,
+            players: 5,
+            rounds: 4,
+            full_bye_pct: 40,
+            half_bye_pct: 30,
+            zero_bye_pct: 30
+          )
+
+        trf = Trf.parse(text)
+        played = trf.players |> Enum.map(&length(&1.games)) |> Enum.max()
+        assert played <= trf.tournament.number_of_rounds, "seed #{seed}"
+      end
+    end
+  end
 end
