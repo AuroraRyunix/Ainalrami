@@ -312,6 +312,15 @@ BC, then TBR; **EDEBB** = EDE, then BC, then BBE; **EDET** = EDE, then TBR;
 **EDEB** = EDE, then BBE. The knockout tie-breaks apply only when exactly
 two teams are still tied in both scores.
 
+**Reading T4 - Article 12 after EDE counts the whole tournament.** Article
+12 is written for knockouts, where the two tied teams have just played each
+other. Inside EDEBT, EDEBB, EDET and EDEB it is applied as written: BC
+counts "all games played by the team in the tournament", and TBR and BBE
+count every match, so two tied teams that never met are still separated.
+TieBreakServer counts only the games between the two teams, and leaves
+teams that never met tied (its handling of the BC step also has a defect:
+finding D in `finding-tiebreakserver-2026-09.md`).
+
 - **BC (12.1):** board number times game points on that board, over every
   match, lower better; a pairing-allocated bye scores a win on every board,
   individual forfeits count as games (Article 12). Only when all the tied

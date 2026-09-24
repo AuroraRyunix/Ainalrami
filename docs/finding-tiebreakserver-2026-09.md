@@ -68,6 +68,73 @@ score among the VURs, 4.5), compares 2.25 with 1.50, and cuts 2.25:
 The same pattern accounts for every SB/C1 difference in the first 60
 generated files (g30, g32, g33, g35, g43).
 
+## C. Direct encounter loses count when two participants met more than once
+
+`compute_basic_direct_encounter` (tiebreak.py) implements 6.1.2 - "if two
+participants have met more than once, the addend ... is the average score of
+these games" - with a running average. The branch for a repeated opponent
+ends with
+
+    de["denum"] = 1
+    ...
+    de["delist"][opponent]["cnt"] = 1
+
+where `denum` counts the DISTINCT tied opponents met and should be left
+alone, and `cnt` should become `num`, the games played against this
+opponent so far. Two consequences:
+
+1. **A group of three or more stops resolving.** After a rematch `denum` is
+   1, below `len(subro) - 1`, so the group is taken as "not all met" and the
+   6.3 maximum-possible rule decides instead of 6.2. It usually decides
+   nothing, and every team in the group shares one rank.
+2. **A third meeting is weighted wrongly.** With `cnt` stuck at 1, each new
+   game is averaged with the running value, halving the weight of every game
+   before it.
+
+Found on board-level team events (`tools/team_tiebreak_compare.exs`, where
+a greedy pairing sometimes rematches), where EDE runs through this code.
+The individual DE shares the code path, so a double round robin or any Swiss
+rematch is affected too.
+
+**Reproduction** - seeds of `tools/team_tiebreak_compare.exs`, written to a
+file with `--keep DIR --first SEED --count 1 --rank "MPTS EDE"`:
+
+- **1073:** teams 3, 8 and 7 are tied on 7 MP. 3 drew with 7 and beat 8,
+  and 8 beat 7 twice. The encounter points (6.1.2) are 3, 2 and 1, so the
+  ranks are 7, 8 and 9. TieBreakServer ranks all three 7 (consequence 1).
+- **1004:** teams 10, 17 and 14 are tied on 6 MP. 10 and 14 met twice (a
+  loss and a draw for 10, average ½). The points are 2½, 2 and 1½.
+  TieBreakServer ranks all three 17.
+- **1066:** teams 20 and 19 are tied on 3 MP and met three times (1-1, 2-0,
+  0-2 in MP; averages 1 and 1). Game points decide: 20 averages 2.5 and 19
+  1.5, so 20 comes first. TieBreakServer's running values are 0.75 for 20
+  and 1.25 for 19, so it puts 19 first (consequence 2).
+
+## D. EDEBT/EDEBB's Board Count step ranks the higher sum first
+
+13.3.2 follows EDE with the knockout tie-breaks of Article 12 when exactly
+two teams are still tied. `compute_singlerun_ext_direct_encounter` does
+this by weighting each board, `weights = 1..teamsize` for Board Count, and
+passing the weighted points (`tpoints`) to `compute_basic_direct_encounter`.
+That routine sorts the higher value first (`-deval`). 12.1 says "the lower
+the sum of these products, the higher the ranking of the team", and
+TieBreakServer's own stand-alone `BC` is marked `"rev": False` and ranks
+the lower sum first, as it should. Only the BC step inside EDEBT and
+EDEBB is reversed.
+
+**Reproduction** - `tools/team_tiebreak_compare.exs` seed **1006**, `--rank
+"MPTS GPTS EDEBT"`: teams 16 and 14 are level on MP and GP and drew their
+round-5 match 2-2. Team 16 scored 1, ½, 0, ½ on boards 1-4 and team 14
+scored 0, ½, 1, ½. Board Count over the tournament (12.1) is 24 for 16 and
+27 for 14. Over the match alone it is 4 for 16 and 6 for 14. Either way 16
+ranks first. TieBreakServer ranks 14 first.
+
+It is a separate matter that TieBreakServer counts only the games the two
+teams played against each other, where 12.1 counts "all games played by the
+team in the tournament". That is recorded as reading T4 in
+`conformance-c07-tiebreaks.md`: with the match-only reading, two tied teams
+that never met are not separated at all (seed **1002**, teams 3 and 5).
+
 ## A reading difference, not a defect
 
 C.07 7.7 scores STD against the scheduled opponent; TieBreakServer against

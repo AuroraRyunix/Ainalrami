@@ -838,6 +838,12 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
         Log.detail("standings: no tie-break list in the file (202/212) - not checked")
         :skipped
 
+      # A team file's ranks are the teams' (TRF26 `310`, not read); the
+      # tie-breaks themselves are `Ainalrami.Tiebreaks.Team.from_trf/2`'s.
+      Map.get(parsed, :teams, []) != [] ->
+        Log.detail("standings: a team event - its team ranks are not in the file - not checked")
+        :skipped
+
       Enum.all?(ranks, fn {_id, r} -> r in [nil, 0] end) ->
         Log.detail("standings: no final ranks in the file (columns 86-89) - not checked")
         :skipped

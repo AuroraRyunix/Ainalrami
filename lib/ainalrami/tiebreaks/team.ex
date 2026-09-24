@@ -105,6 +105,148 @@ defmodule Ainalrami.Tiebreaks.Team do
     }
   end
 
+  @doc """
+  A team event from a parsed TRF with `013` team records
+  (`Ainalrami.Trf.parse/1`). Teams are numbered in the order of their `013`
+  lines, as FIDE's TieBreakServer numbers them.
+
+  A team's round is read from its players' games: the opposing team is
+  the team of the players they met, and the boards are those players in
+  the order the `013` line lists them (a team fielding a reserve moves
+  the players below up a board). A round where none of a team's players
+  met an opponent is a pairing-allocated bye when they were given one
+  (`U`, or `+` with no opponent), and a zero-point bye otherwise.
+
+  The TRF says nothing about match points (TRF26's `362` record is not
+  read), so they come from `:match_points` (default 2/1/0). Options:
+  `:boards` (default: the most games any match had), `:primary`,
+  `:match_points`, `:rounds`, `:predetermined?`.
+  """
+  def from_trf(%{players: players, teams: trf_teams, tournament: tournament} = trf, opts \\ []) do
+    individual = Event.from_trf(trf, Keyword.take(opts, [:rounds, :predetermined?]))
+    system = Map.get(tournament, :point_system) || Ainalrami.Trf.default_point_system()
+    game_points = %{win: system.win, draw: system.draw, loss: system.loss}
+
+    match_points =
+      Map.merge(%{win: 2.0, draw: 1.0, loss: 0.0}, Map.new(opts[:match_points] || %{}))
+
+    rosters =
+      trf_teams
+      |> Enum.with_index(1)
+      |> Map.new(fn {team, id} -> {id, team.player_ranks} end)
+
+    team_of = for {id, ranks} <- rosters, rank <- ranks, into: %{}, do: {rank, id}
+    known = MapSet.new(players, & &1.rank)
+
+    # {team, round} => [{roster position, rank, %Round{}}] for the players
+    # who met somebody, in roster order.
+    games =
+      for {team, ranks} <- rosters,
+          {rank, position} <- Enum.with_index(ranks),
+          rank in known,
+          {r, round} <- individual.participants[rank].rounds,
+          reduce: %{} do
+        acc ->
+          Map.update(acc, {team, r}, [{position, rank, round}], &[{position, rank, round} | &1])
+      end
+      |> Map.new(fn {key, list} -> {key, Enum.sort(list)} end)
+
+    boards =
+      Keyword.get_lazy(opts, :boards, fn ->
+        games
+        |> Map.values()
+        |> Enum.map(fn list -> Enum.count(list, fn {_, _, g} -> g.opponent end) end)
+        |> Enum.max(fn -> 1 end)
+        |> max(1)
+      end)
+
+    entries =
+      for {team, _ranks} <- rosters do
+        rounds =
+          Map.new(1..individual.rounds//1, fn r ->
+            {r,
+             trf_match(Map.get(games, {team, r}, []), team_of, boards, game_points, match_points)}
+          end)
+
+        %Entry{id: team, tpn: team, rounds: rounds}
+      end
+
+    # Each match's points, now both sides are read.
+    entries = with_match_points(entries, match_points)
+
+    new(entries, individual.rounds,
+      boards: boards,
+      primary: Keyword.get(opts, :primary, :mp),
+      match_points: match_points,
+      game_points: game_points,
+      predetermined?: individual.predetermined?,
+      total_rounds: individual.total_rounds
+    )
+  end
+
+  defp trf_match(games, team_of, boards, game_points, match_points) do
+    met = Enum.filter(games, fn {_, _, g} -> g.opponent end)
+
+    case met do
+      [] ->
+        if Enum.any?(games, fn {_, _, g} -> g.kind == :pab end) do
+          %Match{
+            kind: :pab,
+            mp: match_points.win,
+            gp: game_points.win * boards,
+            boards: Map.new(1..boards, &{&1, game_points.win})
+          }
+        else
+          %Match{kind: :zero_bye, mp: match_points.loss}
+        end
+
+      _ ->
+        opponent =
+          met
+          |> Enum.frequencies_by(fn {_, _, g} -> team_of[g.opponent] end)
+          |> Enum.max_by(fn {_, n} -> n end)
+          |> elem(0)
+
+        board_points =
+          met
+          |> Enum.with_index(1)
+          |> Map.new(fn {{_, _, g}, board} -> {board, g.points} end)
+
+        %Match{
+          kind: :played,
+          opponent: opponent,
+          gp: board_points |> Map.values() |> Enum.sum(),
+          boards: board_points
+        }
+    end
+  end
+
+  defp with_match_points(entries, match_points) do
+    by_id = Map.new(entries, &{&1.id, &1})
+
+    for entry <- entries do
+      rounds =
+        Map.new(entry.rounds, fn
+          {r, %Match{kind: :played, opponent: opp} = m} ->
+            theirs = by_id[opp].rounds[r].gp
+
+            mp =
+              cond do
+                m.gp > theirs -> match_points.win
+                m.gp < theirs -> match_points.loss
+                true -> match_points.draw
+              end
+
+            {r, %{m | mp: mp}}
+
+          other ->
+            other
+        end)
+
+      %{entry | rounds: rounds}
+    end
+  end
+
   @doc "The event scored in match points (`:mp`) or game points (`:gp`)."
   def view(%__MODULE__{} = t, score) do
     {points, pick} =

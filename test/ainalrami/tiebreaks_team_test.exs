@@ -240,4 +240,75 @@ defmodule Ainalrami.TiebreaksTeamTest do
       assert Enum.find(rows, &(&1.id == 1)).rank == Enum.find(rows, &(&1.id == 3)).rank
     end
   end
+
+  describe "from_trf/2" do
+    # Three teams, two boards, one round. Team 1 (players 1, 2 and reserve
+    # 3) meets team 2 (4, 5); team 3 (6, 7) has the pairing-allocated bye.
+    # Team 1 rests player 1 and fields 2 and 3 - so 2 plays board 1.
+    defp team_trf do
+      g = fn opp, colour, result -> %{opponent_rank: opp, colour: colour, result: result} end
+      none = %{opponent_rank: nil, colour: "-", result: ""}
+      bye = %{opponent_rank: nil, colour: "-", result: "U"}
+
+      players = [
+        {1, [none]},
+        {2, [g.(4, "w", "1")]},
+        {3, [g.(5, "b", "=")]},
+        {4, [g.(2, "b", "0")]},
+        {5, [g.(3, "w", "=")]},
+        {6, [bye]},
+        {7, [bye]}
+      ]
+
+      text =
+        Ainalrami.Trf.serialize(%{
+          tournament: %{name: "from_trf", type: "swiss", number_of_rounds: 1},
+          players:
+            for {rank, games} <- players do
+              %{rank: rank, name: "P#{rank}", points: 0.0, games: games}
+            end,
+          teams: [
+            %{name: "One", player_ranks: [1, 2, 3]},
+            %{name: "Two", player_ranks: [4, 5]},
+            %{name: "Three", player_ranks: [6, 7]}
+          ]
+        })
+
+      trf = Ainalrami.Trf.parse(text)
+      Team.from_trf(trf)
+    end
+
+    test "reads the match, its boards in roster order, and the match points" do
+      event = team_trf()
+
+      assert event.boards == 2
+      one = event.teams[1].rounds[1]
+
+      # Board 1 is player 2 (the first of the roster who played): a win;
+      # board 2 player 3: a draw. 1.5 - 0.5, a match win.
+      assert one.kind == :played
+      assert one.opponent == 2
+      assert one.boards == %{1 => 1.0, 2 => 0.5}
+      assert one.gp == 1.5
+      assert one.mp == 2.0
+      assert event.teams[2].rounds[1].mp == 0.0
+    end
+
+    test "a team whose players all had the pairing-allocated bye has the team's" do
+      three = team_trf().teams[3].rounds[1]
+
+      # Article 12: a bye's boards count as wins.
+      assert three.kind == :pab
+      assert three.mp == 2.0
+      assert three.gp == 2.0
+      assert three.boards == %{1 => 1.0, 2 => 1.0}
+    end
+
+    test "the standings rank from it" do
+      {:ok, rows} = Tiebreaks.rank(team_trf(), ~w(MPTS GPTS))
+
+      # One and Three on 2 MP; Three has more game points (2.0 to 1.5).
+      assert Enum.map(rows, & &1.id) == [3, 1, 2]
+    end
+  end
 end
