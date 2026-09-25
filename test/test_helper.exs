@@ -65,4 +65,10 @@ exclude_tags = [:three_way | exclude_tags]
 # still catches the regression it was written for.
 exclude_tags = [:interop | exclude_tags]
 
+# The tie-break reference's scale mode (docs/tiebreak-reference.md): the
+# default run covers 300 events; this one takes the seeds from
+# TIEBREAK_REF_SEEDS and is run on demand with
+# `mix test --only tiebreak_reference_scale`.
+exclude_tags = [:tiebreak_reference_scale | exclude_tags]
+
 ExUnit.start(exclude: exclude_tags)
