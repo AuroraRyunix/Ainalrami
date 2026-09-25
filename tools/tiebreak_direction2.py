@@ -11,6 +11,13 @@
 # a rerun of a batch is the same batch. Resumable: finished batches are in the
 # state file. A batch that agrees is deleted; one that does not is kept.
 #
+# --random-lists SEED: each tournament is ranked under its own random
+# tie-break list (tools/tiebreak_random_list.exs; no Buchholz family in the
+# round robins) and the values of the codes in it are compared, instead of
+# the setups' fixed lists. --first-batch moves the generator seeds: the
+# fixed-list run of 2026-09-23 used batches 0-499 (seeds 0-49,999), the
+# random-list run of 2026-09-25 batches 2000 on (seeds 200,000 on).
+#
 # Env: TBS_DIR (default ../TieBreakServer), TBS_PYTHON, and elixir on PATH.
 
 import argparse, json, os, re, shutil, subprocess, sys, threading, time
@@ -38,10 +45,11 @@ SETUPS = [
 ]
 
 SUMMARY = re.compile(r"files (\d+), skipped (\d+), values compared (\d+), mismatches (\d+), known differences (\d+)")
+RANKS = re.compile(r"rankings compared (\d+), rank known (\d+)")
 lock = threading.Lock()
 
 
-def run_batch(b, size, work):
+def run_batch(b, size, work, random_lists=None):
     name, gen_args, cmp_args = SETUPS[b % len(SETUPS)]
     d = os.path.join(work, f"b{b:05d}-{name}")
     shutil.rmtree(d, ignore_errors=True)
@@ -53,6 +61,8 @@ def run_batch(b, size, work):
         return {"batch": b, "setup": name, "error": "generator: " + (g.stdout + g.stderr)[-300:]}
 
     env = dict(os.environ, ELIXIR_ERL_OPTIONS="+S 1:1", TBS_PYTHON=PY)
+    if random_lists is not None:
+        cmp_args = (["--rr"] if "--rr" in cmp_args else []) + ["--random-lists", str(random_lists)]
     cmd = ["mix", "run", "tools/tiebreak_compare.exs"] + cmp_args + ["--dir", d]
     c = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, env=env, shell=(os.name == "nt"),
                        encoding="utf-8", errors="replace")
@@ -63,6 +73,9 @@ def run_batch(b, size, work):
     files, skipped, values, bad, known = map(int, m.groups())
     result = {"batch": b, "setup": name, "files": files, "skipped": skipped, "values": values,
               "mismatches": bad, "known": known}
+    r = RANKS.search(c.stdout)
+    if r:
+        result["rankings"], result["rank_known"] = map(int, r.groups())
     if bad == 0 and skipped == 0:
         shutil.rmtree(d, ignore_errors=True)
     else:
@@ -78,12 +91,15 @@ def main():
     ap.add_argument("--workers", type=int, default=2)
     ap.add_argument("--work", required=True)
     ap.add_argument("--state", required=True)
+    ap.add_argument("--first-batch", type=int, default=0)
+    ap.add_argument("--random-lists", type=int, default=None, metavar="SEED",
+                    help="a random tie-break list per tournament, drawn from SEED")
     a = ap.parse_args()
 
     state = {"done": {}}
     if os.path.exists(a.state):
         state = json.load(open(a.state))
-    todo = [b for b in range(a.batches) if str(b) not in state["done"]]
+    todo = [b for b in range(a.first_batch, a.first_batch + a.batches) if str(b) not in state["done"]]
     os.makedirs(a.work, exist_ok=True)
     start = time.time()
 
@@ -93,10 +109,11 @@ def main():
         tot = lambda k: sum(r[k] for r in ok)
         print(f"{time.strftime('%H:%M:%S')}  batches {len(done)}/{a.batches}  tournaments {tot('files'):,}  "
               f"values {tot('values'):,}  mismatches {tot('mismatches')}  known {tot('known')}  "
+              f"rankings {sum(r.get('rankings', 0) for r in ok):,} (known {sum(r.get('rank_known', 0) for r in ok)})  "
               f"skipped {tot('skipped')}  errors {len(done) - len(ok)}", flush=True)
 
     with ThreadPoolExecutor(a.workers) as pool:
-        for r in pool.map(lambda b: run_batch(b, a.size, a.work), todo):
+        for r in pool.map(lambda b: run_batch(b, a.size, a.work, a.random_lists), todo):
             with lock:
                 state["done"][str(r["batch"])] = r
                 with open(a.state + ".tmp", "w") as f:

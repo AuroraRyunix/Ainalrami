@@ -1147,3 +1147,66 @@ values, zero disagreements; five deliberate mutations of the reference were
 each caught. It confirms the engine computes the recorded readings, not
 that they are FIDE's, and it raised four reading questions the conformance
 notes did not record. Details: `docs/tiebreak-reference.md`.
+### Random tie-break lists (2026-09-25)
+
+The run above ranked every tournament under one fixed list, so most codes
+and modifiers were compared as values but never inside a full ranking, and
+order-dependent behaviour (finding A) could not show. The comparison tools
+now take `--random-lists SEED` (`tools/tiebreak_random_list.exs`): per
+tournament, a list of one to six entries drawn from every code and modifier
+the engine supports - DE and DE/P; BH, FB with C1/C2/M1/M2; AOB and AOB/F;
+SB and PS with C1/C2; KS with L1/L2/L-1/L-2; WIN WON BPG BWG REP STD; TPN
+and RTNG with and without R; ARO (all cuts), TPR, PTP, APRO, APPO with U1000,
+U1400 or no floor - reproducible from (SEED, tournament number). No entry
+twice, at most one direct-encounter code, no Buchholz family in round
+robins (Article 8). Team lists start with MPTS (or GPTS one time in four)
+and draw from EDE and its four variants, DE, MPVGP, BC, TBR, BBE, SSSC and
+SSSC/F, the four ESBs with and without C1, and BH/FB/AOB/SB/PS/KS/WIN/WON
+on either score. The values of every code in the list and the final ranks
+under it are compared.
+
+| run | tournaments | values | rank comparisons | rank differences known | unexplained |
+|---|---|---|---|---|---|
+| direction 1, seeds 2,000,000-2,009,999 | 10,000 | 750,765 | 10,000 | 3,620 players | 0 |
+| direction 2, batches 2000-2099 (seeds 200,000-209,999) | 10,000 | 1,325,550 | 10,000 | 78 players | 0 |
+| teams, seeds 30,000-31,999 | 2,000 | 98,140 | 2,000 | see below | 0 |
+
+List seed 2026 throughout. Known value differences: 10,049 (direction 1,
+nearly all STD) and 167 (direction 2).
+
+**How a rank difference is judged.** It counts as known only when a
+documented cause accounts for all of it. The tool ranks the field again
+from TieBreakServer's own printed values, with our direct encounter (and,
+for teams, our group codes, with TieBreakServer's BC and knockout rules
+modelled). If that replay does not give TieBreakServer's ranks, the
+difference is unexplained unless it is finding C. If it does, every value
+the ranking used must be ours or a known difference - reading 8, finding B,
+finding A (the ranking run's value differs from TieBreakServer's own value
+with the Fore codes sent last, and that one is ours or itself known),
+reading 12, or on teams reading T6 - and at least one named cause must be
+present; otherwise it is unexplained.
+
+**What the random lists found.**
+
+- **Our fault: the primary score of a team list** (reading T5). A list
+  starting with GPTS ranked by game points but ran MPVGP, SSSC, EDE and
+  codes without a score on match points. Fixed, with tests.
+- **Finding E** (`finding-tiebreakserver-2026-09.md`): TieBreakServer
+  applies Board Count to teams whose game points differ, which 12.1
+  forbids.
+- **Readings T6 and T7** (`conformance-c07-tiebreaks.md`): Type B codes on
+  game points counted per board game; EDE's knockout steps applied to two
+  teams level on one score only.
+- **Reading 12:** TieBreakServer ranks AOB rounded to two decimals.
+- **Findings A and B together** in one ranking (direction 2, t205511 under
+  `FB/M2 SB/C2 FB/C1`), now classified as such.
+
+A first pass of both directions ran with a classifier that could call a
+rank difference "known" without naming a cause (it was reading 12); both
+directions were rerun from scratch with the final classifier and gave the
+same totals. In a 1,000-tournament sample of direction 1 the known rank
+differences were reading 8 (36 tournaments) and reading 12 (3). The team
+run's known rank differences by cause, per event: finding E 76, finding D
+with readings T4/T7 15, both 17, reading T6 23 (plus 1 with D), finding C
+2; 104 events had values known as reading T6.
+

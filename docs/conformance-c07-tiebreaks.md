@@ -179,6 +179,17 @@ opponents", which the participant's own tie-break is not.)
 - **AOB (8.2):** average of the Buchholz (or, with `F`, Fore Buchholz) of
   the opponents played over the board; no dummies, since a dummy has no
   Buchholz.
+**Reading 12 - AOB is not rounded.** 8.2 defines AOB as an average and,
+unlike ARO, APRO and APPO (10.1, 10.4, 10.5), names no rounding, so we
+rank by the exact average. TieBreakServer rounds it to two decimals
+(`compute_average`, `"0.01"`) and ranks by the rounded value: two players
+whose averages differ by less than 0.005 are level there and go on to the
+next tie-break. Found by the random-list run (2026-09-25), seed 2000542 of
+`tools/tiebreak_corpus.exs` under `AOB BH/C2 ...`: players 7 and 8 both
+print 47.94 (8 has 47.9375); we rank 7 ahead on AOB, TieBreakServer ranks 8
+ahead on BH/C2. The comparison tool classifies a rank difference as this
+reading only when TieBreakServer's own printed values, replayed, give its
+ranks.
 - **SB (9.1):** sum over rounds of the opponent's (or dummy's) score times
   the points scored against them. A draw scores a draw's points, so under
   1/½/0 the familiar "½ × opponent".
@@ -320,6 +331,38 @@ count every match, so two tied teams that never met are still separated.
 TieBreakServer counts only the games between the two teams, and leaves
 teams that never met tied (its handling of the BC step also has a defect:
 finding D in `finding-tiebreakserver-2026-09.md`).
+
+**Reading T5 - a list led by a score names the primary.** Article 13
+says a code without `:MP`/`:GP` is on "the primary score", but not how the
+primary is chosen; the event's regulations decide, and a tie-break list
+that starts with `GPTS` is exactly that decision. So `rank/3` and
+`compute/2` take the primary from the list when its first code is `MPTS`
+or `GPTS`, and otherwise from the event (`:primary`, match points by
+default). Before this, `GPTS EDE MPVGP SSSC` on a match-point event ranked
+by game points but ran EDE, MPVGP and SSSC on match points as primary.
+TieBreakServer reads the list the same way. Found by the random-list run
+(2026-09-25).
+
+**Reading T6 - Type B tie-breaks on game points count rounds.** Applied to
+teams on game points (a list led by `GPTS`, or `WIN:GP`), 7.1 counts
+"rounds where a participant obtains ... as many points as awarded for a
+win" and a round's outcome is the match's (reading T1): a win is a round
+with a win on every board. TieBreakServer counts board games instead - WIN
+and WON become the number of individual games won, a pairing-allocated bye
+four wins on four boards. 7.1 says rounds and 7.2 says games, but
+Article 13 applies them to the team as the participant; we keep rounds.
+The comparison tool reproduces TieBreakServer's count and classifies a
+value it explains exactly as this reading.
+
+**Reading T7 - "exactly two teams still tied in both MP and GP".** 13.3.2's
+knockout steps apply to two teams level in both totals. TieBreakServer
+applies them to any two teams EDE left tied, including two level on the
+primary score only whose secondary scores differ (their own match drawn in
+both). We read "tied in both MP and GP" as the totals. Seed **20245** of
+`tools/team_tiebreak_compare.exs`, `--rank "MPTS EDEB"`: teams 4 and 6
+have 8 MP, 13½ and 14 GP, and drew 2-2 when they met; TieBreakServer goes
+on to Bottom Board Elimination over that match and ranks 4 ahead, we leave
+them level.
 
 - **BC (12.1):** board number times game points on that board, over every
   match, lower better; a pairing-allocated bye scores a win on every board,

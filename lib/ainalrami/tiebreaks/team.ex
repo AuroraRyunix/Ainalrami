@@ -294,6 +294,7 @@ defmodule Ainalrami.Tiebreaks.Team do
   def compute(%__MODULE__{} = t, codes) do
     with {:ok, parsed} <- Code.parse_list(codes),
          :ok <- usable(parsed, t) do
+      t = primary_from_list(t, parsed)
       views = views(t)
 
       {:ok,
@@ -314,6 +315,7 @@ defmodule Ainalrami.Tiebreaks.Team do
   def rank(%__MODULE__{} = t, codes, opts \\ []) do
     with {:ok, parsed} <- Code.parse_list(codes),
          :ok <- usable(parsed, t) do
+      t = primary_from_list(t, parsed)
       parsed = with_score_first(parsed)
       views = views(t)
 
@@ -338,6 +340,19 @@ defmodule Ainalrami.Tiebreaks.Team do
         do: {:ok, standings, Enum.reverse(dropped)},
         else: {:ok, standings}
     end
+  end
+
+  @doc """
+  Orders one tied `group` of team ids by one code that orders groups rather
+  than giving values (`DE`, the `EDE` family, `BC`, `TBR`, `BBE`), as
+  `rank/3` does inside a ranking: `[[id]]`, subgroups in rank order, each
+  still tied. The event's `:primary` is the primary score. For tools that
+  rebuild a ranking step by step (`tools/team_tiebreak_compare.exs`).
+  """
+  def order_group(%__MODULE__{} = t, group, code) do
+    %Code{name: name} = parsed = Code.parse!(code)
+    true = name in @contextual
+    split(Enum.sort(group), parsed, %{}, t, views(t))
   end
 
   @doc """
@@ -390,6 +405,14 @@ defmodule Ainalrami.Tiebreaks.Team do
         :ok
     end
   end
+
+  # Reading T5: a list that starts with a score names the primary score -
+  # `GPTS EDE MPVGP` ranks by game points, so EDE starts from game points,
+  # MPVGP is the match points, and a code without `:MP`/`:GP` is on game
+  # points. Otherwise the event's `:primary` stands.
+  defp primary_from_list(t, [%Code{name: "MPTS"} | _]), do: %{t | primary: :mp}
+  defp primary_from_list(t, [%Code{name: "GPTS"} | _]), do: %{t | primary: :gp}
+  defp primary_from_list(t, _codes), do: t
 
   defp with_score_first([%Code{name: name} | _] = codes) when name in ~w(PTS MPTS GPTS), do: codes
   defp with_score_first(codes), do: [%Code{name: "PTS"} | codes]
