@@ -22,37 +22,96 @@ defmodule Ainalrami.TeamPairingScaleTest do
   alias Ainalrami.TeamPairing.{Bracket, Field, Matching, Team}
   alias Ainalrami.Test.TeamBracketReference
 
-  describe "Bracket.pair/2 is the pre-change walk" do
-    test "same pairs, criteria, candidate count and step count on generated brackets, budgets included" do
+  # Since 2026-09-25 3.6 is exact (a fast path through the walk's first
+  # candidate, then two minimum-cost matchings), so the pre-change walk is the
+  # reference only where it was EXHAUSTIVE - which, at up to fourteen teams
+  # and the old default budgets, is nearly always.
+  describe "Bracket.pair/2 is the pre-change walk wherever that walk was exhaustive" do
+    test "same pairs and criteria on generated brackets; the budgets are ignored" do
       :rand.seed(:exsss, {2026, 9, 16})
 
-      for _ <- 1..600 do
-        size = Enum.random([2, 4, 6, 8, 10, 12, 14])
-        teams = random_bracket(size)
-        tpns = Enum.map(teams, & &1.tpn)
+      compared =
+        for _ <- 1..600, reduce: 0 do
+          compared ->
+            size = Enum.random([2, 4, 6, 8, 10, 12, 14])
+            teams = random_bracket(size)
+            tpns = Enum.map(teams, & &1.tpn)
 
-        opts = [
-          type: Enum.random([:a, :b]),
-          last_round?: Enum.random([true, false]),
-          last_two_rounds?: Enum.random([true, false, false]),
-          upfloater_tpns: Enum.take_random(tpns, Enum.random(0..3)),
-          max_candidates: Enum.random([1, 2, 7, 60, 200_000]),
-          max_steps: Enum.random([5, 40, 300, 5_000, 10_000_000])
-        ]
+            opts = [
+              type: Enum.random([:a, :b]),
+              last_round?: Enum.random([true, false]),
+              last_two_rounds?: Enum.random([true, false, false]),
+              upfloater_tpns: Enum.take_random(tpns, Enum.random(0..3))
+            ]
 
-        assert Bracket.pair(teams, opts) == TeamBracketReference.pair(teams, opts),
-               "#{inspect(opts)}\n#{inspect(teams)}"
-      end
+            budgets = [
+              max_candidates: Enum.random([1, 2, 7, 60, 200_000]),
+              max_steps: Enum.random([5, 40, 300, 5_000, 10_000_000])
+            ]
+
+            ours = Bracket.pair(teams, opts)
+            where = "#{inspect(opts)}\n#{inspect(teams)}"
+
+            assert Bracket.pair(teams, opts ++ budgets) == ours, where
+            assert_matching_path(teams, opts, ours, where)
+
+            case TeamBracketReference.pair(teams, opts) do
+              {:ok, %{exhaustive?: true} = ref} ->
+                assert {:ok, %{exhaustive?: true} = mine} = ours, where
+                assert {mine.pairs, mine.scores} == {ref.pairs, ref.scores}, where
+                compared + 1
+
+              {:error, :no_legal_pairing} ->
+                assert ours == {:error, :no_legal_pairing}, where
+                compared + 1
+
+              _cut ->
+                compared
+            end
+        end
+
+      assert compared >= 590
     end
 
-    test "the same on larger brackets that run into the candidate budget" do
+    test "on larger brackets: never worse than the budgeted walk, equal when it finished" do
       :rand.seed(:exsss, {2026, 9, 17})
 
       for _ <- 1..12 do
         teams = random_bracket(Enum.random([20, 24, 30]))
-        opts = [upfloater_tpns: [], max_candidates: Enum.random([50, 2_000]), max_steps: 400_000]
-        assert Bracket.pair(teams, opts) == TeamBracketReference.pair(teams, opts)
+        opts = [upfloater_tpns: []]
+        budget = [max_candidates: Enum.random([50, 2_000]), max_steps: 400_000]
+        ours = Bracket.pair(teams, opts)
+        assert_matching_path(teams, opts, ours, inspect(teams))
+
+        case TeamBracketReference.pair(teams, opts ++ budget) do
+          {:ok, %{exhaustive?: true} = ref} ->
+            assert {:ok, mine} = ours
+            assert {mine.pairs, mine.scores} == {ref.pairs, ref.scores}
+
+          {:ok, ref} ->
+            assert {:ok, mine} = ours
+            assert mine.scores <= ref.scores
+
+          {:error, :no_legal_pairing} ->
+            assert ours == {:error, :no_legal_pairing}
+
+          {:error, :budget_exhausted} ->
+            :ok
+        end
       end
+    end
+  end
+
+  # The matching path on its own gives the same answer as the fast path
+  # wherever the fast path answered: the fast path is a shortcut, not a
+  # second definition.
+  defp assert_matching_path(teams, opts, ours, where) do
+    case {ours, Bracket.__exact_for_test__(teams, opts)} do
+      {{:ok, mine}, {:ok, exact}} ->
+        assert {mine.pairs, mine.scores} == {exact.pairs, exact.scores}, where
+
+      {theirs, exact} ->
+        assert theirs == exact, where
     end
   end
 

@@ -347,6 +347,20 @@ that the walk cannot always stop at the first legal candidate - though it
 stops immediately on `{0,0,0}`, which cannot be beaten and which round one
 and most ordinary brackets hit on the first try.
 
+**Since 2026-09-25 the rest is exact, not budgeted.** The walk is kept only
+as a fast path to its first candidate (the first legal pairing in
+identifier order); when that scores `{0,0,0}` it is the answer. Otherwise
+two minimum-cost perfect matchings decide it - one for the least
+`{c8, c9, c10}` and the lexicographically first top set, one confined to
+that top set for the first bottom sequence - with the criteria and the
+identifier packed into one integer cost (method:
+`docs/team-proof-large-fields.md` section 3). The matcher is the engine's
+own `Ainalrami.WeightedMatching` (bbpPairings' Galil/Micali/Gabow lineage).
+Before this the walk continued under a candidate budget (200,000) and a
+step budget, keeping the best found, and on large early-round brackets that
+was a legal round 3.6 does not choose. `:max_candidates` and `:max_steps`
+are still accepted and now ignored.
+
 ### [C7] is a minimisation applied to a choice between sets
 
 2.3.4 minimises upfloaters that were floaters in the previous round, and

@@ -5,9 +5,7 @@ defmodule Ainalrami.TeamPairing.Bracket do
   This is the module where team pairing stops resembling the individual
   system. C.04.3 defines a lexicographic weight ladder and asks for the best
   candidate under it; 3.6 defines an ORDER over pairings and asks for the
-  first one satisfying a predicate. There is no objective function to
-  maximise and no matching to solve, so `Ainalrami.WeightedMatching` is not
-  involved at all.
+  first one satisfying a predicate.
 
   ## The order (3.6.1-3.6.3)
 
@@ -19,9 +17,7 @@ defmodule Ainalrami.TeamPairing.Bracket do
 
   Since the top-half of every identifier has the same length, comparing
   identifiers is: compare the sorted top-member sets, and only on a tie
-  compare the bottom sequence. So the enumeration is two nested walks -
-  candidate top-sets in lexicographic order, and within each, assignments of
-  bottoms in lexicographic order.
+  compare the bottom sequence.
 
   ## The predicate (3.6.4), and why it is not simply a filter
 
@@ -33,89 +29,58 @@ defmodule Ainalrami.TeamPairing.Bracket do
   attainable over the bracket's legal pairings.
 
   So the answer is the pairing that minimises `{c8, c9, c10}`
-  lexicographically, tie-broken by identifier order. That is exactly "the
-  first compliant pairing in identifier order", restated so it can be
-  computed - and it is why this walks candidates rather than stopping at the
-  first legal one.
+  lexicographically, tie-broken by identifier order.
 
-  **It stops early when it can prove it is done.** `{0, 0, 0}` cannot be
-  beaten, so the first candidate scoring it is the answer and the walk ends
-  there. In a round-one bracket, or any bracket where preferences happen to
-  be satisfiable, that is the very first candidate - which is the case the
-  regulation is shaped for.
+  ## How it is computed (since 2026-09-25): exact, no budget
 
-  ## Cost, honestly
+  1. **The walk, as a fast path.** Top-sets in lexicographic order, and
+     within each the bottom assignments in lexicographic order, pruned by
+     [C1] and a completion check - so its first complete candidate is the
+     first legal pairing in identifier order. If that candidate scores
+     `{0, 0, 0}` it is the answer (nothing scores lower, nothing legal comes
+     earlier), and that is what this module has always returned there; a
+     round-one bracket, or any bracket whose preferences can all be met by
+     the first legal pairing, ends here. A walk that finishes without any
+     candidate is a proof that no legal pairing exists. The walk is capped at
+     20,000 steps; beyond that, or when the first candidate costs
+     anything, it hands over to step 2.
+  2. **Two minimum-cost perfect matchings** (`exact/1`, method in
+     `docs/team-proof-large-fields.md` section 3): the criteria and the
+     identifier packed into one integer cost per pair, one matching for the
+     least criteria and the first top set, one confined to that top set for
+     the first bottom sequence. The matcher is the engine's own
+     `Ainalrami.WeightedMatching` (a port of bbpPairings' Galil/Micali/Gabow
+     code), not the proof's test-only reference.
 
-  A bracket of 2n teams has (2n-1)!! pairings: 945 at ten teams, 6.5x10^8 at
-  twenty. Round one is a single bracket containing the whole field, so the
-  bad case is not exotic - it is every event's first round.
-
-  What keeps it tractable is that the walk is lazy, prunes on prefixes ([C1]
-  kills a subtree the moment a pair repeats), and stops at `{0, 0, 0}`. Where
-  it cannot stop early, `:max_candidates` bounds the search and the result
-  says so rather than hanging: `exhaustive?: false` means "best found within
-  the budget", not "proven optimal". A caller that must have the proof can
-  raise the budget; a caller pairing a real round gets an answer.
+  Until 2026-09-25 step 2 was the walk continued under a candidate budget
+  (`:max_candidates`, default 200,000) and a step budget (`:max_steps`,
+  default 10,000,000), keeping the best pairing found when either ran out.
+  On large early-round brackets that returned a legal pairing 3.6 does not
+  choose (seed 126 of the large-field proof at the default budget, seed 480
+  even at 10,000,000 candidates). Both options are still ACCEPTED, and
+  ignored: the result is exact whatever they say, `exhaustive?` is always
+  true, and `{:error, :budget_exhausted}` is no longer returned from here.
   """
 
   alias Ainalrami.TeamPairing.{Matching, Team}
+  alias Ainalrami.WeightedMatching
 
   import Bitwise
 
-  @default_max_candidates 200_000
-
-  # The candidate budget cannot bound the case that actually runs long.
-  # `state.candidates` is incremented only in `score_candidate/4`, which is
-  # reached only for a COMPLETE legal pairing - so on a bracket where no
-  # legal pairing exists, nothing is ever counted and the only thing bounding
-  # the walk is the pruning. The pruning is sound but not tight: a structured
-  # infeasible bracket measured 300 ms at sixteen teams and 10.4 s at twenty,
-  # a 25% larger bracket for 35x the time, with the candidate budget never
-  # engaging once. Round one is one bracket containing the whole field, so
-  # this is not an exotic shape.
-  #
-  # `:max_steps` counts the walk itself - every complete top-set, every
-  # `walk_bottoms/8` call and every `completable?/5` feasibility query - and
-  # is checked where the candidate budget is, through `done?/1`. Exceeding it
-  # is `{:error, :budget_exhausted}` rather than a best-effort answer:
-  # unlike the candidate budget, which gives up having already seen a great
-  # many complete pairings, this one can give up before seeing a single one,
-  # and "no legal pairing exists" and "I stopped looking" are different
-  # answers a caller has to be able to tell apart.
-  #
-  # ## Where the default comes from, and what it does not do
-  #
-  # Measured on this machine, all with the same construction the sweep used
-  # (a clique of teams that have all met each other, larger than the rest of
-  # the bracket, so no legal pairing exists):
-  #
-  #   * a legal forty-team round-one bracket: 402 steps, under a
-  #     millisecond. Its first candidate scores {0, 0, 0} and the walk stops.
-  #   * the worst LEGAL forty-team bracket found - every team with a played
-  #     match, colour preferences that collide across the identifier-first
-  #     ordering, and a rematch to route around: 1.63M steps in 1.37 s, and
-  #     already stopped by the CANDIDATE budget rather than by exhaustion.
-  #   * the infeasible twenty-team bracket: 12.5 s, and more than 10M steps.
-  #
-  # So 10M is about six times the worst legal bracket measured and twenty-five
-  # thousand times the ordinary one. Not the hundredfold headroom that would
-  # be natural for a budget, and deliberately not: at roughly 600k steps a
-  # second here, a hundredfold budget is a four-minute wall clock, which
-  # bounds nothing anybody would sit through. The worst legal bracket costs
-  # seconds, so no single number can both spare it and answer quickly - this
-  # bounds a HANG, and a caller that needs a latency bound passes its own
-  # `:max_steps`. 200_000 turns the twenty-team bracket above from 12.5 s
-  # into 370 ms; `Ainalrami.TeamPairing.pair_round/2` forwards the option for
-  # exactly that.
-  @default_max_steps 10_000_000
+  # The fast path's walk budget. The walk's first candidate is found in a few
+  # hundred steps on an ordinary bracket (402 for a forty-team round one);
+  # only a tangled one runs longer, and then the matching answers instead.
+  @fast_path_steps 20_000
 
   @doc """
   Pairs `teams` (a bracket - an even-sized list) and returns
 
       {:ok, %{pairs: [{top_tpn, bottom_tpn}], scores: {c8, c9, c10},
-              candidates: n, exhaustive?: bool}}
+              candidates: n, steps: n, exhaustive?: true}}
 
-  or `{:error, :no_legal_pairing}` when [C1] admits none.
+  or `{:error, :no_legal_pairing}` when [C1] admits none. `pairs` are in the
+  identifier's order (tops ascending). `candidates` and `steps` are the fast
+  path's walk when it answered, and 0 when the matching did.
 
   Options:
 
@@ -125,9 +90,8 @@ defmodule Ainalrami.TeamPairing.Bracket do
       previous round). Empty for a bracket of residents only.
     * `:last_two_rounds?` - [C7] and [C10] "with the exception of the last
       two rounds". When true, [C10] contributes nothing.
-    * `:max_candidates` - candidate budget, default #{@default_max_candidates}.
-    * `:max_steps` - walk budget, default #{@default_max_steps}; exceeding it
-      returns `{:error, :budget_exhausted}`.
+    * `:max_candidates`, `:max_steps` - accepted for compatibility and
+      ignored (see the module doc).
   """
   def pair(teams, opts \\ [])
 
@@ -143,6 +107,35 @@ defmodule Ainalrami.TeamPairing.Bracket do
             "a bracket must have an even number of teams (Article 1.3.2), got #{length(teams)}"
     end
 
+    ctx = context(teams, opts)
+
+    case search(ctx) do
+      # The first legal pairing in identifier order, and nothing can score
+      # below {0, 0, 0}: it is 3.6's answer, and the walk's answer always was.
+      {:ok, %{scores: {0, 0, 0}}} = found ->
+        found
+
+      # The walk completed without finding a single legal pairing (it cannot
+      # have stopped at the candidate budget, which needs a candidate): that
+      # is a proof, the same one the matching would give.
+      {:error, :no_legal_pairing} = none ->
+        none
+
+      # A better-scoring pairing may lie further on, or the walk ran out of
+      # steps before its first candidate: decide exactly.
+      _ ->
+        exact(ctx)
+    end
+  end
+
+  @doc false
+  # The matching path alone, skipping the fast path, so tests can hold it to
+  # the pre-change walk on every shape rather than only where the first
+  # candidate costs something.
+  def __exact_for_test__([], _opts), do: {:ok, %{pairs: [], scores: {0, 0, 0}}}
+  def __exact_for_test__(teams, opts), do: exact(context(teams, opts))
+
+  defp context(teams, opts) do
     sorted = Enum.sort_by(teams, & &1.tpn)
     by_tpn = Map.new(sorted, &{&1.tpn, &1})
     tpns = Enum.map(sorted, & &1.tpn)
@@ -159,11 +152,125 @@ defmodule Ainalrami.TeamPairing.Bracket do
       last_round?: last_round?,
       upfloaters: upfloaters,
       last_two_rounds?: last_two_rounds?,
-      max_candidates: Keyword.get(opts, :max_candidates, @default_max_candidates),
-      max_steps: Keyword.get(opts, :max_steps, @default_max_steps)
+      # The fast path's walk: it only has to reach the first legal pairing.
+      max_candidates: 1,
+      max_steps: @fast_path_steps
     }
 
-    search(Map.merge(ctx, walk_tables(tpns, by_tpn, ctx)))
+    Map.merge(ctx, walk_tables(tpns, by_tpn, ctx))
+  end
+
+  # ---------------------------------------------------------------------
+  # Article 3.6 by minimum-cost perfect matching (2026-09-25)
+  #
+  # The answer is the pairing with the least {c8, c9, c10}, and among those
+  # the smallest identifier (3.6.2). Every count is a sum over the pairs, and
+  # so, as `docs/team-proof-large-fields.md` section 3 sets out, is the
+  # identifier order once it is split in two:
+  #
+  #   1. Tops. Every pairing has n/2 tops, and of two equal-sized sets the
+  #      lexicographically first sorted list is the one containing the
+  #      smallest index of their symmetric difference - the larger sum of
+  #      2^(n-1-i). One matching over the bracket with the digits c8, c9,
+  #      c10, then 2^n - 2^(n-1-i) for the edge's top (smaller index) i,
+  #      returns the least criteria and, among those, the first top set.
+  #   2. Bottoms. Confined to edges from that top set T to the rest (smaller
+  #      index in T), every perfect matching has exactly T as its tops. With
+  #      the digits c8, c9, c10, then rank(bottom) * h^(h-1-rank(top)), the
+  #      bottoms read in the tops' order form a base-h number, so the cheapest
+  #      matching is the first bottom sequence. It must reach the criteria of
+  #      step 1 (the step-1 optimum with tops T is one of its matchings).
+  #
+  # Each digit's base exceeds the largest total it can reach in a perfect
+  # matching, so the packed integer's order is the lexicographic order and
+  # nothing carries. `Ainalrami.WeightedMatching` maximises weight, so the
+  # cost goes in as W - cost with W above any matching's total cost: a
+  # larger matching then always outweighs a smaller one, the maximum-weight
+  # matching is perfect whenever a perfect one exists, and among perfect
+  # matchings it is the cheapest.
+  # ---------------------------------------------------------------------
+
+  defp exact(ctx) do
+    n = ctx.n
+    h = div(n, 2)
+
+    criteria =
+      for i <- 0..(n - 2)//1,
+          j <- (i + 1)..(n - 1)//1,
+          (elem(ctx.allowed, i) >>> j &&& 1) == 1,
+          do: {i, j, add_costs({0, 0, 0}, i, j, ctx)}
+
+    # c8 and c9 count at most one per pair, c10 at most two.
+    pack_criteria = fn {c8, c9, c10} -> (c8 * (h + 1) + c9) * (2 * h + 1) + c10 end
+
+    top_base = h * (1 <<< n) + 1
+
+    tops_edges =
+      for {i, j, costs} <- criteria,
+          do: {i, j, pack_criteria.(costs) * top_base + (1 <<< n) - (1 <<< (n - 1 - i))}
+
+    with {:ok, first} <- min_cost_perfect(n, tops_edges) do
+      tops = first |> Enum.map(&elem(&1, 0)) |> Enum.sort()
+      top_rank = tops |> Enum.with_index() |> Map.new()
+      in_tops = MapSet.new(tops)
+
+      bottom_rank =
+        0..(n - 1)
+        |> Enum.reject(&MapSet.member?(in_tops, &1))
+        |> Enum.with_index()
+        |> Map.new()
+
+      bottom_base = Integer.pow(h, h)
+
+      bottoms_edges =
+        for {i, j, costs} <- criteria,
+            Map.has_key?(top_rank, i),
+            Map.has_key?(bottom_rank, j),
+            do:
+              {i, j,
+               pack_criteria.(costs) * bottom_base +
+                 Map.fetch!(bottom_rank, j) * Integer.pow(h, h - 1 - Map.fetch!(top_rank, i))}
+
+      {:ok, second} = min_cost_perfect(n, bottoms_edges)
+
+      costs_of = fn pairs ->
+        Enum.reduce(pairs, {0, 0, 0}, fn {t, b}, acc -> add_costs(acc, t, b, ctx) end)
+      end
+
+      scores = costs_of.(second)
+
+      if scores != costs_of.(first) or Enum.map(second, &elem(&1, 0)) != tops do
+        raise "3.6 matching: the bottom step did not keep the top step's optimum " <>
+                "(#{inspect(costs_of.(first))} -> #{inspect(scores)})"
+      end
+
+      pairs = Enum.map(second, fn {t, b} -> {elem(ctx.tpns, t), elem(ctx.tpns, b)} end)
+
+      {:ok, %{pairs: pairs, scores: scores, candidates: 0, steps: 0, exhaustive?: true}}
+    end
+  end
+
+  # The cheapest perfect matching over `edges` ({i, j, cost}, i < j), as
+  # `{:ok, [{i, j}]}` sorted by i, or `{:error, :no_legal_pairing}` when
+  # there is no perfect matching at all.
+  defp min_cost_perfect(n, edges) do
+    max_cost = edges |> Enum.map(&elem(&1, 2)) |> Enum.max(fn -> 0 end)
+    ceiling = div(n, 2) * max_cost + 1
+
+    mate = WeightedMatching.solve(n, Enum.map(edges, fn {i, j, c} -> {i, j, ceiling - c} end))
+    pairs = for {i, j} <- mate, i < j, do: {i, j}
+
+    if length(pairs) * 2 == n do
+      allowed = MapSet.new(edges, fn {i, j, _} -> {i, j} end)
+
+      unless Enum.all?(pairs, &MapSet.member?(allowed, &1)) do
+        raise "3.6 matching returned a pair that is not an edge of the bracket"
+      end
+
+      {:ok, Enum.sort(pairs)}
+    else
+      {:error, :no_legal_pairing}
+    end
   end
 
   # Everything the walk asks about a team or a pair, worked out once per

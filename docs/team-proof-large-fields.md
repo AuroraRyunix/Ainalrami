@@ -180,7 +180,27 @@ Every disagreement found is the one below. None was a different reading
 or a wrong criterion: with the search exhaustive, the engine's round was
 the exact reference's.
 
-## The disagreement: 3.6's candidate budget
+After the engine's 3.6 was made exact (2026-09-25, branch
+`team-exact-3-6`, below):
+
+| engine | seeds | rounds | result |
+|---|---|---|---|
+| default settings | 1-2000 | 11,980 | every round agrees, reasons included; seeds 126 and 480 included |
+| naive vs exact reference (`TEAM_PROOF_NAIVE_SEEDS="1..2000"`) | 1-2000 | 8,273 | no disagreement |
+
+## The disagreement: 3.6's candidate budget (FIXED 2026-09-25)
+
+**Resolved.** The engine's 3.6 now takes the first legal pairing in
+identifier order when it scores `{0,0,0}` (the walk's first candidate, as
+before), and otherwise the method of section 3: two minimum-cost perfect
+matchings with the criteria and the identifier packed into one integer
+cost. The engine's matcher is its own `Ainalrami.WeightedMatching` - the
+port of bbpPairings' Galil/Micali/Gabow code - so the proof's
+`Ainalrami.TeamProof.Blossom` (van Rantwijk lineage) stays test-only and
+independent of it. `:max_candidates` / `:max_steps` are accepted and
+ignored; `exhaustive?` is always true. Timing, 80-team events (10 seeds,
+50 rounds, `explain: true`): before mean 4 ms / max 99 ms, after mean 1 ms
+/ max 11 ms. The history below is kept as found.
 
 The engine's 3.6 search (choosing among a bracket's pairings by [C8],
 [C10] and the identifier) stops after a candidate budget and keeps the best
@@ -200,8 +220,8 @@ itself says it did not finish.
 
 What would remove it is a 3.6 search that is exact by construction, as the
 reference's is (two minimum-cost matchings per bracket, section 3 above),
-instead of an enumeration with a budget. That is an engine change, not
-made here.
+instead of an enumeration with a budget. That engine change was made on
+2026-09-25 (above).
 
 ## Running it
 

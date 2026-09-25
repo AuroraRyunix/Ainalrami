@@ -25,8 +25,9 @@ defmodule Ainalrami.TeamProofLargeTest do
   A failure message starts with the seed (`seed N,`), as the whole-round
   runner expects. `TEAM_PROOF_SIZES="20,40"` restricts the field sizes drawn
   and `TEAM_PROOF_TIMINGS=1` prints rounds and reference time per ten-team
-  band (outside scale mode); `TEAM_PROOF_ENGINE_MAX_CANDIDATES` raises the
-  engine's 3.6 candidate budget. Step 1's seeds are `TEAM_PROOF_NAIVE_SEEDS`
+  band (outside scale mode); `TEAM_PROOF_ENGINE_MAX_CANDIDATES` passes the
+  engine a 3.6 candidate budget, which it has ignored since its 3.6 became
+  exact (2026-09-25). Step 1's seeds are `TEAM_PROOF_NAIVE_SEEDS`
   (default 1..300) and its sizes `TEAM_PROOF_NAIVE_SIZES` (default 4..10).
   """
   use ExUnit.Case, async: true
@@ -92,8 +93,9 @@ defmodule Ainalrami.TeamProofLargeTest do
           _ -> {range_env("TEAM_PROOF_SEEDS", nil), true}
         end
 
-      # TEAM_PROOF_ENGINE_MAX_CANDIDATES raises the engine's 3.6 candidate
-      # budget, to look past the known budget disagreement for others.
+      # TEAM_PROOF_ENGINE_MAX_CANDIDATES passes the engine a 3.6 candidate
+      # budget. It looked past the old budget disagreement; since 2026-09-25
+      # the engine's 3.6 is exact and ignores it.
       engine_opts =
         case System.get_env("TEAM_PROOF_ENGINE_MAX_CANDIDATES") do
           nil -> []
@@ -126,15 +128,20 @@ defmodule Ainalrami.TeamProofLargeTest do
 
                 run? || send(self(), {:timing, length(field), micros})
 
-                case TeamPairing.pair_round(field, [explain: true] ++ opts ++ engine_opts) do
+                {engine_micros, engine_result} =
+                  :timer.tc(fn ->
+                    TeamPairing.pair_round(field, [explain: true] ++ opts ++ engine_opts)
+                  end)
+
+                run? || send(self(), {:engine_timing, length(field), engine_micros})
+
+                case engine_result do
                   {:ok, explained} ->
                     engine = Map.delete(explained, :explanation)
 
-                    # The engine says so when a bracket's 3.6 walk stopped at
-                    # its candidate budget ("best found", not "first
-                    # compliant"). That is still a disagreement - it is what
-                    # a caller gets - but it is a KNOWN one (see the doc), so
-                    # the message names it.
+                    # The engine says so when a bracket's 3.6 search was cut
+                    # short. Since 2026-09-25 it never is (3.6 is exact); the
+                    # check stays so a regression names itself.
                     where =
                       case Enum.reject(engine.brackets, & &1.exhaustive?) do
                         [] ->
@@ -194,9 +201,11 @@ defmodule Ainalrami.TeamProofLargeTest do
     end
   end
 
-  # Outside scale mode: rounds and mean reference time per ten-team band.
+  # Outside scale mode: rounds and mean reference and engine time per
+  # ten-team band (the engine timed with `explain: true`).
   defp report_timings do
-    timings = collect([])
+    {timings, engine} = collect({[], []})
+    engine = Enum.group_by(engine, fn {size, _} -> div(size, 10) * 10 end, fn {_, us} -> us end)
 
     timings
     |> Enum.group_by(fn {size, _} -> div(size, 10) * 10 end, fn {_, us} -> us end)
@@ -204,16 +213,24 @@ defmodule Ainalrami.TeamProofLargeTest do
     |> Enum.each(fn {band, us} ->
       IO.puts(
         "TEAMPROOF band #{band}-#{band + 9}: #{length(us)} rounds, " <>
-          "reference mean #{div(Enum.sum(us), length(us) * 1000)} ms, max #{div(Enum.max(us), 1000)} ms"
+          "reference mean #{div(Enum.sum(us), length(us) * 1000)} ms, max #{div(Enum.max(us), 1000)} ms; " <>
+          engine_line(Map.get(engine, band, []))
       )
     end)
   end
 
-  defp collect(acc) do
+  defp engine_line([]), do: "engine -"
+
+  defp engine_line(us),
+    do:
+      "engine mean #{div(Enum.sum(us), length(us) * 1000)} ms, max #{div(Enum.max(us), 1000)} ms"
+
+  defp collect({ref, engine}) do
     receive do
-      {:timing, size, us} -> collect([{size, us} | acc])
+      {:timing, size, us} -> collect({[{size, us} | ref], engine})
+      {:engine_timing, size, us} -> collect({ref, [{size, us} | engine]})
     after
-      0 -> acc
+      0 -> {ref, engine}
     end
   end
 end

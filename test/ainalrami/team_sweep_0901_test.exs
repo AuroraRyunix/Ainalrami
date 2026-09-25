@@ -31,20 +31,18 @@ defmodule Ainalrami.TeamSweep0901Test do
   end
 
   describe "H6 - the walk budget" do
-    test "an infeasible twenty-team bracket gives up quickly instead of grinding" do
+    test "an infeasible twenty-team bracket is proved impossible quickly instead of grinding" do
+      # Since 2026-09-25 the walk is only a fast path capped at 20,000 steps;
+      # past it a maximum matching answers, so this is now a proof rather
+      # than a spent budget, whatever `:max_steps` says.
       teams = infeasible_bracket(20, 11)
 
       {microseconds, result} =
         :timer.tc(fn -> Bracket.pair(teams, max_steps: 200_000) end)
 
-      assert result == {:error, :budget_exhausted}
+      assert result == {:error, :no_legal_pairing}
 
-      # The budget is what this test actually proves, and the line above
-      # proves it: 200_000 steps, refused. The clock is a canary for the
-      # budget having stopped working at all - the pre-fix walk took 12.5 s
-      # here - so it is set to catch THAT, not to measure the runner. It was
-      # 1_000_000 and failed CI twice in four days at 1112 ms and 1218 ms on
-      # a shared runner, which told us nothing about this code.
+      # A canary for the pre-fix grind (12.5 s here), not a runner benchmark.
       assert microseconds < 5_000_000, "took #{div(microseconds, 1000)} ms"
     end
 
@@ -82,14 +80,14 @@ defmodule Ainalrami.TeamSweep0901Test do
       assert length(result.pairs) == 2
     end
 
-    test "pair_round/2 forwards the budget and reports its exhaustion" do
-      # A legal twenty-team round one, walked with a budget too small to
-      # finish even the first candidate. This used to use the infeasible
-      # bracket below, but since [C3] is judged on the whole field before a
-      # bracket is walked, that one never reaches the walk (next test).
+    test "pair_round/2 still accepts the walk budget, and no longer runs out of it" do
+      # A legal twenty-team round one with a budget too small to finish even
+      # the first candidate. This was `{:error, :budget_exhausted}` until
+      # 2026-09-25; 3.6 no longer uses `:max_steps`, so it pairs.
       teams = for tpn <- 1..20, do: team(tpn)
 
-      assert TeamPairing.pair_round(teams, max_steps: 5) == {:error, :budget_exhausted}
+      assert {:ok, round} = TeamPairing.pair_round(teams, max_steps: 5)
+      assert round == elem(TeamPairing.pair_round(teams), 1)
     end
 
     test "pair_round/2 proves the infeasible twenty-team field impossible instead of walking it" do
