@@ -1129,3 +1129,21 @@ tie-breaks. When every player held a bye before a round was paired, the
 generator wrote two rounds in one step, so the file had one round more than
 its `142` said, and Fore Buchholz's "last round" differed (seed 1002432).
 It is fixed, with a test; the batch was rerun on the fixed generator.
+
+### An independent reference (2026-09-25)
+
+The "known" differences above are points where TieBreakServer could not
+confirm our answer, so on them the engine was backed by its own reading
+only. `Ainalrami.TiebreakReference` is a second, deliberately naive
+implementation of C.07 written from the text, sharing no code with
+`lib/ainalrami/tiebreaks*`, and `test/ainalrami/tiebreak_reference_test.exs`
+compares the two on every value and on the final ranks: generated Swiss
+events with every checklist option, round robins, board-level and
+match-by-match team events, and hand-built events aimed at each disputed
+point (STD, finding B's SB/C1, finding A's order, finding C's repeated
+meetings, finding D and reading T4's Board Count, the Koya maximum, the
+16.4.2 cap, reading 9, Article 16's categories). 15,000 events, 8.3 million
+values, zero disagreements; five deliberate mutations of the reference were
+each caught. It confirms the engine computes the recorded readings, not
+that they are FIDE's, and it raised four reading questions the conformance
+notes did not record. Details: `docs/tiebreak-reference.md`.
