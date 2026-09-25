@@ -150,6 +150,30 @@ defmodule Ainalrami.TiebreaksTeamTest do
       {:ok, rows} = Tiebreaks.rank(gp_event, ~w(BH))
       assert Enum.map(rows, & &1.id) == [1, 3, 2, 4]
     end
+
+    # Reading T5: a list that starts with GPTS makes game points the
+    # primary, as TieBreakServer reads it - found by the random-list run
+    # (seed 20016, `GPTS SSSC`), where our SSSC was still on match points.
+    test "a list led by GPTS makes game points the primary" do
+      assert {:ok, %{"MPVGP" => mpvgp, "SSSC" => sssc, "BH" => bh}} =
+               Tiebreaks.compute(swiss(), ~w(GPTS MPVGP SSSC BH))
+
+      # MPvGP is now the match points; BH is on game points; SSSC is the
+      # match points + BH:GP / (3 x 4 / 2 = 6).
+      assert mpvgp == values(swiss(), "MPTS")
+      assert bh == values(swiss(), "BH:GP")
+      # 1: 5 + 15 / 6 = 7.5
+      assert sssc[1] == 7.5
+
+      {:ok, rows} = Tiebreaks.rank(swiss(), ~w(GPTS MPVGP))
+      assert Enum.map(rows, & &1.values["MPVGP"]) == [5.0, 4.0, 2.0, 1.0]
+    end
+
+    test "a list led by MPTS keeps match points, whatever the event says" do
+      gp_event = %{swiss() | primary: :gp}
+      {:ok, %{"MPVGP" => mpvgp}} = Tiebreaks.compute(gp_event, ~w(MPTS MPVGP))
+      assert mpvgp == values(swiss(), "GPTS")
+    end
   end
 
   # ------------------------------------------------------------------
