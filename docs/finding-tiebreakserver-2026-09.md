@@ -1,6 +1,6 @@
 # Findings in FIDE's TieBreakServer (September 2026)
 
-Two places where TieBreakServer (Otto Milvang, MIT, © FIDE; checked at
+Places where TieBreakServer (Otto Milvang, MIT, © FIDE; checked at
 commit `14a34a2`, "Add EDExx Tiebreaks, bug fixes") gives a different value
 from C.07 (effective 1 March 2026), found while validating
 `Ainalrami.Tiebreaks` against it (`tools/tiebreak_compare.exs`). Written up
@@ -134,6 +134,38 @@ teams played against each other, where 12.1 counts "all games played by the
 team in the tournament". That is recorded as reading T4 in
 `conformance-c07-tiebreaks.md`: with the match-only reading, two tied teams
 that never met are not separated at all (seed **1002**, teams 3 and 5).
+
+## E. Board Count ranks teams whose game points differ
+
+12.1 ends: "It can only be used when all tied teams have (scored) the same
+number of game points." TieBreakServer's `compute_boardcount` gives every
+team its sum and the ranking sorts on it (`BC`, `"rev": False`), whatever
+the game points of the teams it is sorting. In a list where BC follows the
+match points - `MPTS BC ...`, the natural place for it in a match-point
+event - teams level on match points but not on game points are ranked by
+Board Count, where 12.1 does not allow it to be used at all. Ainalrami
+leaves such a group to the next tie-break.
+
+Found by the random-list run of 2026-09-25
+(`tools/team_tiebreak_compare.exs --random-lists`), where it accounts for
+most rank differences in the team events with BC in the list.
+
+**Reproduction** - `tools/team_tiebreak_compare.exs` seed **20229**,
+written with `--keep DIR --first 20229 --count 1 --rank "MPTS BC"`:
+
+    python tiebreakchecker.py -i team20229.trf -o - -s -n 7 -d T -t MPTS/V2026 BC/V2026 GPTS/V2026
+
+- Teams 5 and 7 are level on 9 MP with 16 and 15½ GP. Their Board Counts
+  are 37½ and 35. TieBreakServer ranks 7 third and 5 fourth; under 12.1
+  BC cannot be applied and the two stay level after `MPTS BC`.
+- Teams 2, 3 and 10 are level on 8 MP with 18, 15½ and 14 GP; Board
+  Counts 47, 37 and 36. TieBreakServer ranks them 10, 3, 2 - the team
+  with the most game points last, because more game points on the same
+  boards is a higher sum.
+
+The same rule inside EDEBT and EDEB is not affected in the same way: there
+TieBreakServer reaches Board Count only for two teams still tied after EDE
+(but see reading T7 in `conformance-c07-tiebreaks.md`).
 
 ## A reading difference, not a defect
 

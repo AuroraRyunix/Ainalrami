@@ -63,6 +63,24 @@ with the reference on every one of them.
 
 ## [Unreleased]
 
+- [Fix] **A team tie-break list led by GPTS makes game points the primary
+  score.** `Team.rank/3` and `compute/2` kept the event's primary (match
+  points by default), so `GPTS MPVGP SSSC EDE` ranked by game points but
+  computed MPVGP, SSSC, EDE and every code without `:MP`/`:GP` on match
+  points. Reading T5 in `docs/conformance-c07-tiebreaks.md`; found by the
+  random-list run below; tested.
+- [Verified] **Tie-breaks ranked under random lists against
+  TieBreakServer.** The comparison tools take `--random-lists SEED`: a
+  reproducible list of one to six codes per tournament, drawn from every
+  code and modifier supported. 10,000 tournaments each way (1,325,550 and
+  750,765 values) and 2,000 team events, final ranks and values: no
+  unexplained difference. A rank difference counts as known only when a
+  replay from TieBreakServer's own values reproduces it and every value
+  used is a documented cause. New: TieBreakServer finding E (Board Count
+  applied to teams with different game points, against 12.1), readings 12
+  (AOB rounding), T6 (Type B on game points) and T7 (EDE knockout pairs).
+  See `docs/validation.md`.
+
 ## [0.30.0] - 2026-09-25
 
 - [Feature] **FIDE tie-breaks (C.07, effective 1 March 2026).**
