@@ -108,11 +108,13 @@ defmodule Ainalrami.TeamPairing do
       round", which switches off Type B mild preferences. Given neither, the
       engine assumes it is NOT near the end - the conservative choice, since
       it keeps criteria switched on.
-    * `:max_candidates` - per-bracket candidate budget, and `:max_steps` its
-      walk budget (see `Ainalrami.TeamPairing.Bracket`). Exceeding the walk
-      budget comes back as `{:error, :budget_exhausted}`, which is NOT
-      `{:error, :no_legal_pairing}` - it means the search stopped, not that
-      it finished.
+    * `:max_candidates` / `:max_steps` - accepted and IGNORED since
+      2026-09-25. They budgeted the 3.6 search, which is now exact by
+      construction (two minimum-cost matchings per bracket when the first
+      legal pairing is not already perfect - see
+      `Ainalrami.TeamPairing.Bracket`), so a bracket is never cut short and
+      `{:error, :budget_exhausted}` now comes only from
+      `:max_upfloater_sets`.
     * `:explain` - when true, the result also carries `:explanation`: why
       the bye went where it did, which upfloater sets each bracket considered
       and what decided between them, and which rule of Article 4 gave each
@@ -126,8 +128,9 @@ defmodule Ainalrami.TeamPairing do
   ## Why it returns brackets too
 
   `brackets` reports what the procedure actually did - which teams formed
-  each bracket, who upfloated into it, how many candidates 3.6 examined and
-  whether that search was exhaustive. An arbiter asked to justify a pairing
+  each bracket, who upfloated into it, how many candidates 3.6's fast-path
+  walk examined (0 when the matching answered) and `exhaustive?`, always
+  true since 3.6 became exact. An arbiter asked to justify a pairing
   needs the bracket structure, not just the boards, and reconstructing it
   from the finished pairs is guesswork. This is the same reason the
   individual engine grew `explain_round/3`.

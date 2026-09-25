@@ -137,6 +137,19 @@ with the reference on every one of them.
   remain are TieBreakServer's, written up in
   `docs/finding-tiebreakserver-2026-09.md` (findings A-D), or a reading
   recorded in the conformance notes. See `docs/validation.md`.
+- [Fix] **Team Swiss 3.6 is exact on large brackets, not budgeted.**
+  Choosing among a bracket's pairings (least [C8], [C9], [C10], then the
+  smallest identifier) used to walk candidates under a 200,000-candidate
+  budget and keep the best found. On large early-round brackets that gave a
+  legal round C.04.6 does not choose (large-field proof seed 126 at the
+  default, seed 480 even at 10,000,000 candidates). The walk now only
+  supplies its first candidate when that scores `{0,0,0}`; otherwise two
+  minimum-cost perfect matchings (the engine's own `WeightedMatching`)
+  decide it exactly. Identical wherever the old walk was exhaustive; the
+  large-field proof now agrees on 2,000 seeds / 11,980 rounds.
+  `:max_candidates` and `:max_steps` are accepted and ignored, so they no
+  longer produce `:budget_exhausted`. 80-team rounds: mean 4 ms / max 99 ms
+  before, 1 ms / 11 ms after. See `docs/team-proof-large-fields.md`.
 
 ## [0.29.0] - 2026-09-17
 
