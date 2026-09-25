@@ -63,6 +63,22 @@ with the reference on every one of them.
 
 ## [Unreleased]
 
+- [Verified] **Tie-breaks against an independent reference.**
+  `Ainalrami.TiebreakReference` (`test/support/tiebreak_reference/`) is a
+  naive second implementation of C.07, written from the regulation text and
+  sharing no code with `Ainalrami.Tiebreaks`: every individual code and
+  modifier, all of Article 6, Article 16, the rating tie-breaks and their
+  tables, and the team tie-breaks of Articles 11-13.
+  `test/ainalrami/tiebreak_reference_test.exs` compares every value and the
+  final ranks on 300 generated events by default (Swiss with every
+  checklist option, round robins, team events) and on the points
+  TieBreakServer could not confirm, with hand-built events; its scale mode
+  (`TIEBREAK_REF_SEEDS`, `--only tiebreak_reference_scale`) ran 15,000
+  events and 8.3 million values with no disagreement. Five deliberate
+  mutations of the reference were each caught. No engine change; four
+  reading questions (SSSC's divisor rounding to zero, 16.2.5's "last round"
+  part-way, a forfeited team match in Article 12, 6.3's outcomes) are
+  written up in `docs/tiebreak-reference.md`.
 ## [0.30.0] - 2026-09-25
 
 - [Feature] **FIDE tie-breaks (C.07, effective 1 March 2026).**
