@@ -1210,3 +1210,58 @@ run's known rank differences by cause, per event: finding E 76, finding D
 with readings T4/T7 15, both 17, reading T6 23 (plus 1 with D), finding C
 2; 104 events had values known as reading T6.
 
+### Team events, extended (2026-09-26)
+
+The team runs above covered one shape: Swiss, 4 boards, 2/1/0, match
+points primary in the fixed list. `Ainalrami.TeamTrfGenerator`
+(`test/support/team_trf_generator.ex`) now drives
+`tools/team_tiebreak_compare.exs`: by `rem(seed, 10)` a Swiss (6 in 10), a
+team round robin single or double with free rounds (2), a Scheveningen (1)
+or a Schiller-type event (1) - the last three predetermined, compared with
+TieBreakServer's `-p` and without the Buchholz family (Article 8); 3-10
+boards; 2/1/0 or 3/1/0 in a TRF26 `362` record, which `Team.from_trf/2`
+now reads; reserves; individual forfeits; whole matches forfeited and
+double-forfeited, half the time with `330` records; pairing-allocated byes.
+The random lists start with GPTS one time in four.
+
+| run | events | values | rank differences known | unexplained |
+|---|---|---|---|---|
+| fixed list, seeds 50,000-59,999 | 10,000 | 1,290,920 | 263 | 0 |
+| random lists (seed 2026), seeds 40,000-49,999 | 10,000 | 352,388 | 8,638 values and ranks | 0 |
+
+Forfeited matches: 9,208 and 9,146. Three rank differences in the random
+run (seeds 42821, 44015, 44460) were first reported as unexplained: the
+tool's model of TieBreakServer's EDE knockout counted the boards of
+forfeited matches, which TieBreakServer's direct encounter leaves out.
+With the model corrected (played matches only) all three are finding D /
+readings T4 and T7; the tool was corrected and the three rerun, not the
+whole batch. Known causes, by event: finding E 400, reading T6 698,
+finding G 192, finding D with readings T4/T7 105, finding C 16 + 56,
+reading T9 21, finding H 1 + 3 (events set aside whole), and SSSC left
+out of 18 + 120 events (finding F).
+
+**What it found.**
+
+- **Our fault: a match forfeited on every board** was read by
+  `Team.from_trf/2` as a played match (a double forfeit as a drawn match).
+  Now a forfeited match (reading T8), tested; found while building the
+  forfeited-match axis. `Team.from_trf/2` also ignored `362`: match points
+  came only from the option.
+- **TieBreakServer findings F, G, H** (`finding-tiebreakserver-2026-09.md`):
+  SSSC divides by zero when the normalising factor rounds to zero; Koya's
+  odd-round-robin test misfires in Scheveningen and Schiller events; a
+  board is dropped when every team-round had an individual forfeit.
+- **Reading T9** (`conformance-c07-tiebreaks.md`): board numbers when boards
+  meet crosswise (Scheveningen, Schiller).
+
+The independent reference now reads board-level team TRFs itself
+(`docs/tiebreak-reference.md`): 10,000 team events (every format), 3,975,739
+values, and 5,000 mixed events after the change, zero disagreements;
+three mutations of `Team.from_trf/2` were each caught.
+
+**Real team files:** none available. Neither repository's fixtures hold a
+team TRF, and OpenPairings' three SWAR fixtures (gitignored) are
+individual events; its SWAR import does not read team tournaments.
+Team rating tie-breaks are not compared: C.07 defines none and the engine
+has no team rating.
+
