@@ -263,6 +263,41 @@ defmodule Ainalrami.TiebreaksTeamTest do
       # 1 and 3 are level on MP (2); TBR board 1: both 1 - still level.
       assert Enum.find(rows, &(&1.id == 1)).rank == Enum.find(rows, &(&1.id == 3)).rank
     end
+
+    # Reading Q3: the text names only the pairing-allocated bye; other
+    # unplayed matches score their result on every board, as FIDE's
+    # TieBreakServer counts them.
+    test "a half-point bye is a draw on every board, a full-point bye a win" do
+      # One round, two boards: 2 and 3 draw (2 wins board 1), 1 has a
+      # half-point bye. MP 1 each. TBR board 1: 2 = 1, 1 = 0.5, 3 = 0.
+      e =
+        event(
+          %{
+            1 => [%Match{kind: :half_bye, mp: 1.0, gp: 1.0}],
+            2 => [match(3, [1, 0])],
+            3 => [match(2, [0, 1])]
+          },
+          boards: 2
+        )
+
+      {:ok, rows} = Tiebreaks.rank(e, ~w(TBR))
+      assert Enum.map(rows, & &1.id) == [2, 1, 3]
+
+      # A full-point bye beside a won match 2-0 on boards 1-2: BC 1+2 = 3
+      # for both, level.
+      f =
+        event(
+          %{
+            1 => [%Match{kind: :full_bye, mp: 2.0, gp: 2.0}],
+            2 => [match(3, [1, 1])],
+            3 => [match(2, [0, 0])]
+          },
+          boards: 2
+        )
+
+      {:ok, rows} = Tiebreaks.rank(f, ~w(BC))
+      assert Enum.find(rows, &(&1.id == 1)).rank == Enum.find(rows, &(&1.id == 2)).rank
+    end
   end
 
   describe "from_trf/2" do

@@ -448,12 +448,18 @@ totals =
               end
 
             # Finding E is only BC's precondition: the sums themselves must
-            # be 12.1's, board number times game points (a bye or a match
-            # won by forfeit a win on every board).
+            # be 12.1's, board number times game points (an unplayed match
+            # its result on every board - reading Q3).
+            per_board = %{pab: 1.0, forfeit_win: 1.0, full_bye: 1.0, half_bye: 0.5}
+
             bc_sum = fn id ->
               Enum.sum(
                 for {_r, m} <- event.teams[id].rounds,
-                    boards = if(m.kind in [:pab, :forfeit_win] and m.boards == %{}, do: Map.new(1..event.boards, &{&1, 1.0}), else: m.boards),
+                    boards =
+                      if(m.boards == %{} and Map.has_key?(per_board, m.kind),
+                        do: Map.new(1..event.boards, &{&1, per_board[m.kind]}),
+                        else: m.boards
+                      ),
                     {board, gp} <- boards,
                     do: board * gp
               )

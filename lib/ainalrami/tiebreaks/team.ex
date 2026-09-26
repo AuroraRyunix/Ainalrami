@@ -39,10 +39,13 @@ defmodule Ainalrami.Tiebreaks.Team do
   A round's `boards` maps board number to the game points the team took on
   it. Article 12 counts individual forfeits as ordinary wins and losses,
   which is what those game points already are. A pairing-allocated bye or a
-  forfeited match has no boards played: a bye (and a match won by forfeit)
-  scores a win on every board, a match lost by forfeit nothing - "if the
-  team received a pairing-allocated bye, the game points considered for
-  each board are the same as those assigned to a standard win" (Article 12).
+  forfeited match has no boards played: a pairing-allocated bye scores a
+  win on every board - "if the team received a pairing-allocated bye, the
+  game points considered for each board are the same as those assigned to
+  a standard win" (Article 12) - and, as FIDE's TieBreakServer counts the
+  cases the text leaves open, so do a match won by forfeit and a
+  full-point bye; a half-point bye scores a draw on every board, a match
+  lost by forfeit and a zero-point bye nothing.
   """
 
   alias Ainalrami.Tiebreaks.{Code, DirectEncounter, Event, Individual}
@@ -616,20 +619,29 @@ defmodule Ainalrami.Tiebreaks.Team do
     |> Enum.flat_map(fn {_v, members} -> bottom_boards(Enum.sort(members), k - 1, t) end)
   end
 
-  # Game points per board over every round, as Article 12 counts them: a
-  # pairing-allocated bye, and a match won by forfeit, is a win on every
-  # board; a match lost by forfeit, and a bye of any other kind, nothing
-  # beyond the boards the caller recorded.
+  # Game points per board over every round, as Article 12 counts them. An
+  # unplayed match with no boards recorded scores its result on every
+  # board: a pairing-allocated bye a win (Article 12); a match won by
+  # forfeit and a full-point bye a win, a half-point bye a draw, a match
+  # lost by forfeit and a zero-point bye nothing - the text names only the
+  # pairing-allocated bye, and this is how FIDE's TieBreakServer counts
+  # the rest (reading Q3 in docs/conformance-c07-tiebreaks.md).
   defp board_sum(t, id, fun) do
     Enum.reduce(t.teams[id].rounds, 0.0, fn {_r, m}, acc ->
       boards =
-        if m.kind in [:pab, :forfeit_win] and m.boards == %{},
-          do: Map.new(1..t.boards//1, &{&1, t.game_points.win}),
+        if m.boards == %{},
+          do: unplayed_boards(m.kind, t.boards, t.game_points),
           else: m.boards
 
       Enum.reduce(boards, acc, fn {board, gp}, acc -> acc + fun.(board, gp) end)
     end)
   end
+
+  defp unplayed_boards(kind, boards, gp) when kind in [:pab, :forfeit_win, :full_bye],
+    do: Map.new(1..boards//1, &{&1, gp.win})
+
+  defp unplayed_boards(:half_bye, boards, gp), do: Map.new(1..boards//1, &{&1, gp.draw})
+  defp unplayed_boards(_kind, _boards, _gp), do: %{}
 
   defp same?(a, b), do: abs(a - b) < 1.0e-9
 

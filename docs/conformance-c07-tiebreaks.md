@@ -23,6 +23,45 @@ switches over, the two must agree on every test and on a generated corpus.
 FIDE's own TieBreakServer (Otto Milvang, MIT, © FIDE) is the third opinion,
 used for validation only - never called by the app.
 
+## How the readings are decided
+
+The maintainer's decision (2026-09-26): **follow the FIDE docs.** Where the
+text of C.07 (`c07-regulation-text.md`) decides a question, the engine
+follows the text exactly. Where the text is silent or genuinely ambiguous,
+it follows FIDE's own reference program, TieBreakServer, unless that
+contradicts the text. Findings A-E (`finding-tiebreakserver-2026-09.md`)
+are TieBreakServer defects against the text and stay on the text.
+
+| Reading | Question | Decided by | Engine |
+|---|---|---|---|
+| 1 | `KS/Ln` spelling | VCL4THP Q104 (FIDE's checklist); not a behaviour question | unchanged |
+| 2 | TRF26 `202` syntax | the checklist's spelling | unchanged |
+| 3 | TRF `W`/`D`/`L` games | text: 7.2-7.4 "over the board" - they were started over the board; TieBreakServer agrees | unchanged |
+| 4 | a late entrant's rounds before arrival | text: 16.1.2, a round "the participant was not available to play" is a VUR | unchanged |
+| 5 | "own score" in 16.4 | text: 16.3 adjusts the score "for the sole purpose of ... their opponents" | unchanged |
+| 6 | 6.3 "whatever the outcome" | text is silent on how to enumerate; TieBreakServer (`demax`: every missing game won; worst case every one lost) - the same test | unchanged |
+| 7 | "tournament score" in 10.3 | ambiguous; TieBreakServer (games over the board vs rated opponents) | unchanged |
+| 8 | STD against the opponent or a draw | **text: 7.7**, "scores more points than their scheduled opponent" - TieBreakServer's draw-value rule contradicts it | unchanged, still a known difference |
+| 9 | forfeit wins in WON/BWG under 15.2 | text: 7.2-7.4 "over the board" | unchanged |
+| 10 | Koya's maximum and which rounds count | 9.2 is silent; TieBreakServer (`compute_koya`) | unchanged |
+| 11 | "rounds in the tournament" in 16.4.2 part-way | ambiguous; TieBreakServer (the rounds counted) | unchanged |
+| FB | "the final round" part-way (8.3) | ambiguous; TieBreakServer (`isfore`: the event's last round) | unchanged |
+| 12 | AOB rounded to two decimals | **text: 8.2** defines "the average"; C.07 names rounding where it wants it (10.1, 10.4, 10.5) and not here, so TieBreakServer's `0.01` contradicts it | unchanged, still a known difference |
+| T1 | a team round's outcome | text: 16.3.1 / 16.4 note, "for teams, match points and game points" | unchanged |
+| T2 | code without `:MP`/`:GP` | text: Article 13, "the primary score being the default" | unchanged |
+| T3 | EDE variants (13.3.2 layout) | the PDF layout is broken; TieBreakServer's `functype` mapping | unchanged |
+| T4 | Article 12 after EDE: whole tournament or the mutual matches | **text: 12.1-12.3**, "in all games played by the team in the tournament" | unchanged, still a known difference |
+| T5 | a list led by `MPTS`/`GPTS` names the primary | Article 13 is silent on how the primary is chosen; TieBreakServer takes it from the list, as we do | unchanged |
+| T6 | WIN/WON on game points: rounds or board games | **text: 7.1** counts "rounds"; for WON, 15.1 makes a team's unit "a match in a team tournament" where an individual's is "a game" - TieBreakServer's per-board count contradicts both | unchanged, still a known difference |
+| T7 | "tied in both MP and GP" (13.3.2) | **text: 13.3.2** with Article 12's preamble, "the same number of match points and game points" - the totals | unchanged, still a known difference |
+| Q1 | SSSC divisor rounding to 0 (13.4.2 b) | the text gives 0 and no rule for it; TieBreakServer divides by it and raises (`decimal.DivisionByZero`), so gives no answer to follow. 13.4.2 b allows "a different value if stated by the rules of the competition"; we keep 1 | unchanged |
+| Q2 | 16.2.5's "last round" part-way | ambiguous; TieBreakServer (`lna`: the last round counted) | unchanged |
+| Q3 | unplayed team matches in Article 12 | the text names only the pairing-allocated bye; TieBreakServer gives every unplayed match its result on every board (`gamescore[res]` per board) | **changed**: a full-point bye now scores a win on every board and a half-point bye a draw (a forfeit win already did) |
+| Q4 | which outcomes 6.3 enumerates | as reading 6; TieBreakServer counts a missing game as a win at best, a loss at worst | unchanged |
+
+The sections below record each reading as first written; where a reading
+says "TieBreakServer differs", the table above is the decision.
+
 ## Scope
 
 - **Individual tie-breaks (Articles 6-10):** DE, WIN, WON, BPG, BWG, PS, REP,

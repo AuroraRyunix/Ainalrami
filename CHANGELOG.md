@@ -63,6 +63,31 @@ with the reference on every one of them.
 
 ## [Unreleased]
 
+- [Change] **Article 12 gives a team's full-point or half-point bye its
+  result on every board.** Board Count, Top Board Results and Bottom Board
+  Elimination counted a pairing-allocated bye and a match won by forfeit
+  as a win on every board, but gave a full-point bye and a half-point bye
+  nothing. The text names only the pairing-allocated bye; FIDE's
+  TieBreakServer scores every unplayed match's result on every board, so a
+  full-point bye is now a win on every board and a half-point bye a draw.
+  Reached only by events built directly (`Team.from_trf/2` produces no
+  team byes of those kinds). The independent reference takes the same
+  reading. Reading Q3 in `docs/tiebreak-reference.md`.
+- [Verified] **Every tie-break reading decided under "follow the FIDE
+  docs".** The maintainer's rule: follow C.07's text where it decides;
+  where it is silent or ambiguous, follow TieBreakServer unless that
+  contradicts the text. Readings 1-12, T1-T7 and Q1-Q4 are each recorded
+  with the article or TieBreakServer routine that decided them, in a table
+  in `docs/conformance-c07-tiebreaks.md`. Only Q3 changed the engine. Four
+  known differences stay, each decided by the text against TieBreakServer:
+  STD against the scheduled opponent (7.7, reading 8), AOB unrounded (8.2,
+  reading 12), WIN/WON on game points by rounds and matches (7.1, 15.1,
+  reading T6), and the knockout steps of EDE only for teams level on both
+  totals (13.3.2 and Article 12's preamble, reading T7), with Article 12
+  over the whole tournament (12.1, reading T4). SSSC's divisor rounding to
+  zero stays 1: neither the text nor TieBreakServer (which raises) gives a
+  value.
+
 ## [0.31.0] - 2026-09-26
 
 - [Verified] **Tie-breaks against an independent reference.**
