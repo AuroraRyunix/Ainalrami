@@ -49,6 +49,9 @@ defmodule TiebreakRandomList do
     ] ++ buchholz(":MP") ++ buchholz(":GP")
   end
 
+  # Team round robins, Scheveningen and Schiller: no Buchholz family.
+  def families(:team_rr), do: families(:team) -- (buchholz(":MP") ++ buchholz(":GP"))
+
   defp common do
     [
       {:de, ~w(DE DE/P)},
@@ -115,7 +118,7 @@ defmodule TiebreakRandomList do
       end)
 
     case kind do
-      :team ->
+      k when k in [:team, :team_rr] ->
         primary = if :rand.uniform(4) == 1, do: "GPTS", else: "MPTS"
         [primary | list]
 

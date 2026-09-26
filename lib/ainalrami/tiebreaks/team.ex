@@ -121,9 +121,16 @@ defmodule Ainalrami.Tiebreaks.Team do
   met an opponent is a pairing-allocated bye when they were given one
   (`U`, or `+` with no opponent), and a zero-point bye otherwise.
 
-  Match points are the file's TRF26 `362` record (`W`/`D`/`L`, and `P` or
-  the `320` record for a pairing-allocated bye) when it has one, 2/1/0
-  otherwise; `:match_points` overrides either. Options:
+  A match where no board was played over the board - every game a forfeit
+  - is a forfeited match: won by the side with more game points, lost by
+  the other, and a double forfeit when neither scored. A TRF26 `330`
+  record forfeits a match neither team has board records for (see
+  `declared_forfeit/5`); a match with board records is read from them.
+
+  Match points are the file's TRF26 `362` record (`W`/`D`/`L`; `A` for a
+  match lost by forfeit) when it has one, 2/1/0 otherwise; `:match_points`
+  overrides either. A pairing-allocated bye is worth the `320` record's
+  match points, else `362`'s `P`, else a win. Options:
   `:boards` (default: the most games any match had), `:primary`,
   `:match_points`, `:rounds`, `:predetermined?`.
   """
@@ -138,6 +145,9 @@ defmodule Ainalrami.Tiebreaks.Team do
       %{win: 2.0, draw: 1.0, loss: 0.0}
       |> Map.merge(Map.take(from_file, [:win, :draw, :loss]))
       |> Map.merge(Map.new(opts[:match_points] || %{}))
+
+    # A match lost by forfeit: `362`'s `A`, else a loss's.
+    forfeit_mp = Map.get(from_file, :absent, match_points.loss)
 
     # A pairing-allocated bye's match points: the `320` record's, else
     # `362`'s `P`, else a win's.
@@ -176,25 +186,38 @@ defmodule Ainalrami.Tiebreaks.Team do
         |> max(1)
       end)
 
+    points = %{
+      match: match_points,
+      game: game_points,
+      pab: pab_mp,
+      forfeit: forfeit_mp,
+      boards: boards
+    }
+
+    forfeited =
+      for f <- Map.get(tournament, :forfeited_matches) || [],
+          winner <- [forfeit_winner(f[:type])],
+          winner != nil,
+          into: %{},
+          do: {{f.round, f.white, f.black}, winner}
+
     entries =
       for {team, _ranks} <- rosters do
         rounds =
           Map.new(1..individual.rounds//1, fn r ->
-            {r,
-             trf_match(
-               Map.get(games, {team, r}, []),
-               team_of,
-               boards,
-               game_points,
-               {pab_mp, match_points.loss}
-             )}
+            match =
+              Map.get(games, {team, r}, [])
+              |> trf_match(team_of, points)
+              |> declared_forfeit(team, r, forfeited, points)
+
+            {r, match}
           end)
 
         %Entry{id: team, tpn: team, rounds: rounds}
       end
 
     # Each match's points, now both sides are read.
-    entries = with_match_points(entries, match_points)
+    entries = with_match_points(entries, points)
 
     new(entries, individual.rounds,
       boards: boards,
@@ -206,7 +229,7 @@ defmodule Ainalrami.Tiebreaks.Team do
     )
   end
 
-  defp trf_match(games, team_of, boards, game_points, {pab_mp, zero_mp}) do
+  defp trf_match(games, team_of, points) do
     met = Enum.filter(games, fn {_, _, g} -> g.opponent end)
 
     case met do
@@ -214,12 +237,12 @@ defmodule Ainalrami.Tiebreaks.Team do
         if Enum.any?(games, fn {_, _, g} -> g.kind == :pab end) do
           %Match{
             kind: :pab,
-            mp: pab_mp,
-            gp: game_points.win * boards,
-            boards: Map.new(1..boards, &{&1, game_points.win})
+            mp: points.pab,
+            gp: points.game.win * points.boards,
+            boards: Map.new(1..points.boards, &{&1, points.game.win})
           }
         else
-          %Match{kind: :zero_bye, mp: zero_mp}
+          %Match{kind: :zero_bye, mp: points.match.loss}
         end
 
       _ ->
@@ -234,8 +257,13 @@ defmodule Ainalrami.Tiebreaks.Team do
           |> Enum.with_index(1)
           |> Map.new(fn {{_, _, g}, board} -> {board, g.points} end)
 
+        # A match where no board was played over the board - every game a
+        # forfeit - is a forfeited match (`:unplayed` until both sides are
+        # read, `with_match_points/2`).
+        played? = Enum.any?(met, fn {_, _, g} -> g.kind == :played end)
+
         %Match{
-          kind: :played,
+          kind: if(played?, do: :played, else: :unplayed),
           opponent: opponent,
           gp: board_points |> Map.values() |> Enum.sum(),
           boards: board_points
@@ -243,8 +271,57 @@ defmodule Ainalrami.Tiebreaks.Team do
     end
   end
 
-  defp with_match_points(entries, match_points) do
+  # A `330` record for a match neither team has board records for: the
+  # match was forfeited as a whole. The winner takes a win's match points
+  # and a win on every board in game points (no boards recorded - Article
+  # 12 then reads it as a win on every board, reference question Q3); the
+  # loser, or both sides of a double forfeit, the forfeit's match points
+  # and nothing. A match with board records is read from its boards.
+  defp declared_forfeit(%Match{kind: kind} = m, team, r, forfeited, points)
+       when kind in [:zero_bye] do
+    found =
+      Enum.find_value(forfeited, fn
+        {{^r, ^team, other}, winner} -> {other, winner == :white}
+        {{^r, other, ^team}, winner} -> {other, winner == :black}
+        _ -> nil
+      end)
+
+    case found do
+      nil ->
+        m
+
+      {other, true} ->
+        %Match{
+          kind: :forfeit_win,
+          opponent: other,
+          mp: points.match.win,
+          gp: points.game.win * points.boards
+        }
+
+      {other, false} ->
+        %Match{kind: :forfeit_loss, opponent: other, mp: points.forfeit, gp: 0.0}
+    end
+  end
+
+  defp declared_forfeit(m, _team, _r, _forfeited, _points), do: m
+
+  # A `330` record's result: `+-`, `-+`, `--`, or TieBreakServer's
+  # spellings `10 WL WZ`, `01 LW ZW`, `00 LL ZZ`. Anything else is not a
+  # forfeit this reader knows, and the record is skipped.
+  defp forfeit_winner(type) do
+    type = (type || "") |> String.trim() |> String.upcase()
+
+    cond do
+      type in ~w(+- 10 WL WZ) -> :white
+      type in ~w(-+ 01 LW ZW) -> :black
+      type in ~w(-- 00 LL ZZ) -> :none
+      true -> nil
+    end
+  end
+
+  defp with_match_points(entries, points) do
     by_id = Map.new(entries, &{&1.id, &1})
+    match_points = points.match
 
     for entry <- entries do
       rounds =
@@ -260,6 +337,23 @@ defmodule Ainalrami.Tiebreaks.Team do
               end
 
             {r, %{m | mp: mp}}
+
+          # Every board forfeited: the side with more game points won the
+          # match by forfeit; both on nothing is a double forfeit. Level on
+          # something (some boards forfeited each way, none played) is left
+          # a drawn match, as TieBreakServer scores it (reading T8).
+          {r, %Match{kind: :unplayed, opponent: opp} = m} ->
+            theirs = by_id[opp].rounds[r].gp
+
+            m =
+              cond do
+                m.gp > theirs -> %{m | kind: :forfeit_win, mp: match_points.win}
+                m.gp < theirs -> %{m | kind: :forfeit_loss, mp: points.forfeit}
+                m.gp == 0 -> %{m | kind: :forfeit_loss, mp: points.forfeit}
+                true -> %{m | kind: :played, mp: match_points.draw}
+              end
+
+            {r, m}
 
           other ->
             other

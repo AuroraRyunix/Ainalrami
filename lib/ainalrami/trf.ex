@@ -3147,6 +3147,10 @@ defmodule Ainalrami.Trf do
     |> Enum.reduce(%{}, fn col, acc ->
       symbol = line |> read({col, col}) |> String.upcase()
 
+      # `Z` is read as `A` (a match lost by forfeit), which is how some
+      # writers spell it; `serialize/2` always writes `A`.
+      symbol = if symbol == "Z", do: "A", else: symbol
+
       case List.keyfind(@team_symbols, symbol, 0) do
         {_, key} ->
           case parse_float(read(line, {col + 1, col + 4})) do

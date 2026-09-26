@@ -76,8 +76,10 @@ with the reference on every one of them.
   system), `320` (the team pairing-allocated bye) and `330` (forfeited
   matches), in the columns TieBreakServer's `trf2json.py` reads.
   `Tiebreaks.Team.from_trf/2` numbers teams by their `310` number and takes
-  match points from `362` (a bye's from `320`, else `362`'s `P`), with
-  `:match_points` still overriding. `ainalrami -c` on a team file with a
+  match points from `362` (a bye's from `320`, else `362`'s `P`; a
+  forfeited match's from `A`), with `:match_points` still overriding, and
+  forfeits a match from a `330` record when neither team has board
+  records for it. `ainalrami -c` on a team file with a
   tie-break list and `310` ranks now ranks the teams with `Team.rank/3` and
   reports every team whose rank the list does not give, as it does players;
   an `013`-only file is still skipped, with a note.
@@ -109,6 +111,30 @@ with the reference on every one of them.
   over the whole tournament (12.1, reading T4). SSSC's divisor rounding to
   zero stays 1: neither the text nor TieBreakServer (which raises) gives a
   value.
+- [Fix] **A team match forfeited on every board is a forfeited match.**
+  `Team.from_trf/2` read a match whose boards were all `+`/`-` as a played
+  match, so its winner's opponent counted as a game for Buchholz and
+  Sonneborn-Berger (Article 16 treats it as an unplayed round), and a
+  match both teams forfeited was a drawn match worth a draw's match points
+  to each. It is now a forfeit win and a forfeit loss, or a double forfeit
+  with no match points (reading T8 in `docs/conformance-c07-tiebreaks.md`).
+  Found by the extended team comparison below; tested.
+- [Verified] **Team tie-breaks, much wider.** A new board-level generator
+  (`test/support/team_trf_generator.ex`) behind
+  `tools/team_tiebreak_compare.exs` and the reference: Swiss, team round
+  robins, Scheveningen and Schiller-type events (predetermined, no
+  Buchholz family), 3-10 boards, 2/1/0 and 3/1/0 match points in a `362`
+  record and teams as `310` records, reserves, individual forfeits, whole matches forfeited and
+  double-forfeited (with and without `330` records), pairing-allocated byes
+  and free rounds, and GPTS-led lists. The independent reference now reads
+  board-level TRFs itself (`from_team_trf/2`), so `Team.from_trf/2` is
+  checked too. Results, three new TieBreakServer findings (F: SSSC divides
+  by zero; G: Koya's odd-round-robin test misfires in Scheveningen and
+  Schiller events; H: a board dropped when every team-round had a forfeit)
+  and reading T9 (board numbers when boards meet crosswise): see
+  `docs/validation.md`, `docs/finding-tiebreakserver-2026-09.md` and
+  `docs/tiebreak-reference.md`. No real team tournament file was available
+  to compare.
 
 ## [0.31.0] - 2026-09-26
 
