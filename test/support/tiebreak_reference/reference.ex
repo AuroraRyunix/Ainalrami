@@ -227,10 +227,23 @@ defmodule Ainalrami.TiebreakReference do
 
               m ->
                 # Article 12: a pairing-allocated bye scores a standard win on
-                # every board; a match won by forfeit is read the same way.
-                if m.kind in [:pab, :forfeit_win] and m.boards == %{},
-                  do: Map.new(1..team.boards, &{&1, team.game_points.win * 1.0}),
-                  else: m.boards
+                # every board. The text is silent on other unplayed matches;
+                # the maintainer's decision (follow TieBreakServer there, Q3)
+                # gives each its result on every board: a forfeit win or a
+                # full-point bye a win, a half-point bye a draw, else nothing.
+                cond do
+                  m.boards != %{} ->
+                    m.boards
+
+                  m.kind in [:pab, :forfeit_win, :full_bye] ->
+                    Map.new(1..team.boards, &{&1, team.game_points.win * 1.0})
+
+                  m.kind == :half_bye ->
+                    Map.new(1..team.boards, &{&1, team.game_points.draw * 1.0})
+
+                  true ->
+                    %{}
+                end
             end
           end
 

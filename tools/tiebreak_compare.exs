@@ -270,11 +270,15 @@ de_groups = fn event, rank_codes, ours_values ->
   end
 end
 
-rematch_in? = fn event, group ->
+# An encounter is a game played, or with DE/P (6.1.1) or in a round robin
+# (15.2) a forfeit too: those count in the separate standings.
+rematch_in? = fn event, group, forfeits? ->
+  kinds = if forfeits? or event.predetermined?, do: [:played, :forfeit_win, :forfeit_loss], else: [:played]
+
   Enum.any?(group, fn a ->
     event.participants[a].rounds
     |> Map.values()
-    |> Enum.filter(&(&1.kind == :played and &1.opponent in group))
+    |> Enum.filter(&(&1.kind in kinds and &1.opponent in group))
     |> Enum.frequencies_by(& &1.opponent)
     |> Enum.any?(fn {_, n} -> n > 1 end)
   end)
@@ -452,7 +456,7 @@ totals =
                     c? =
                       Enum.all?(ids, fn id ->
                         g = Enum.find(groups, [], &(id in &1))
-                        rematch_in?.(event, g)
+                        rematch_in?.(event, g, Enum.any?(rank_codes, &(de_code?.(&1) and Ainalrami.Tiebreaks.Code.parse!(&1).forfeits?)))
                       end)
 
                     {groups != [] and c?, if(c?, do: ["finding C"], else: ["direct encounter"])}

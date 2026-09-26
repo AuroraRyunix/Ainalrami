@@ -46,11 +46,14 @@ implementation written from the text, compared value for value.
 ## Readings
 
 The reference takes every reading in `docs/conformance-c07-tiebreaks.md`
-(1-11, T1-T4) and cites them where they apply. Agreement proves that the
+(1-12, T1-T7) and cites them where they apply. Agreement proves that the
 engine computes those readings; it says nothing about whether they are
 FIDE's. Writing the reference from the text turned up four points the
-conformance document does not record, where both implementations made the
-same choice and the text leaves room:
+conformance document did not record, where both implementations made the
+same choice and the text leaves room. All four are now decided under the
+maintainer's rule of 2026-09-26 - follow the text; where it is silent or
+ambiguous, follow TieBreakServer unless that contradicts the text (the
+table in `conformance-c07-tiebreaks.md`):
 
 **Q1 - SSSC's normalising factor can round to zero (13.4.2 b).** "The
 highest achievable primary score in the tournament divided by the highest
@@ -60,6 +63,9 @@ that is 4 / 6, which rounds to 0 and leaves the division undefined. The
 engine uses 1 (`max(..., 1)` in `Team`); the reference does the same. Only
 events with more boards than twice the rounds reach it. 16.6-style
 competition rules could set "a different value", which the text allows.
+**Decided: unchanged.** The text gives no answer, and TieBreakServer none
+either - it divides by the zero and raises - so 1 stays, as the "different
+value" 13.4.2 b allows.
 
 **Q2 - "in the last round of a tournament" (16.2.5) in part-way
 standings.** After round 5 of 9, a requested bye in round 5 is taken as
@@ -67,7 +73,9 @@ category 16.2.5 (evaluated as a draw for the opponents), because it is the
 last round counted. That is reading 11's choice for 16.4.2 applied to 16.2.5
 as well; the alternative reads "the last round of a tournament" as round 9,
 under which the round-5 bye is not yet in any category. Final standings are
-the same either way.
+the same either way. **Decided by TieBreakServer: unchanged.** Its adjusted
+score evaluates as a draw every unplayed round after the last non-VUR round
+among the rounds counted (`lna`), which is the reading above.
 
 **Q3 - a team match won by forfeit in Article 12.** Article 12 gives a
 pairing-allocated bye "the game points ... assigned to a standard win" on
@@ -76,14 +84,20 @@ given the same (a win on every board); a full-point bye, half-point bye or
 zero-point bye gives no board points. The text names only the
 pairing-allocated bye; `Team.from_trf/2` never produces a forfeited match
 (forfeits in a TRF are per board), so this matters only for events built
-directly.
+directly. **Decided by TieBreakServer: changed.** It gives every unplayed
+match its result on every board (`gamescore[res]` per board): the forfeit
+win as before, and also a full-point bye (a win on every board) and a
+half-point bye (a draw on every board), where both implementations gave
+those nothing. The engine and this reference now both take that reading.
 
 **Q4 - 6.3's outcomes are win, draw or loss.** "Whatever the outcome of the
 missing games" is enumerated over the three standard results. An unplayed
 game cannot end in a double forfeit or 0-0 in the future the rule imagines;
 with those allowed, a candidate's worst case would be unchanged and a
 rival's best case too, so the answer is the same - noted only because the
-enumeration is where it was decided.
+enumeration is where it was decided. **Decided by TieBreakServer:
+unchanged.** Its `demax` counts each missing game as a win at best and a
+loss at worst, the same test.
 
 ## What is compared
 
