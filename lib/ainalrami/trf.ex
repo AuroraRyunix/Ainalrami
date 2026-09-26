@@ -207,6 +207,16 @@ defmodule Ainalrami.Trf do
 
   @team_cols %{code: {1, 3}, name: {5, 36}}
 
+  # TRF26 `362`'s symbols, in the order they are written.
+  @team_symbols [
+    {"W", :win},
+    {"D", :draw},
+    {"L", :loss},
+    {"P", :pab},
+    {"A", :absent},
+    {"X", :unknown}
+  ]
+
   @header_codes %{
     name: "012",
     city: "022",
@@ -775,6 +785,7 @@ defmodule Ainalrami.Trf do
     |> Kernel.++(legend_lines(opts[:column_legend], max_round))
     |> Kernel.++(Enum.map(written, &player_line/1))
     |> Kernel.++(Enum.map(teams, &team_line/1))
+    |> Kernel.++(team_record_lines(t))
     |> Kernel.++(xxr_line(t[:number_of_rounds], xxr?))
     |> Kernel.++(xxc_line(t[:initial_colour], xxc?))
     |> Kernel.++(extension_lines(t, players, max_round, numeric?, dialect))
@@ -1615,6 +1626,83 @@ defmodule Ainalrami.Trf do
     end)
   end
 
+  # TRF26 `362`, `320` and `330`, when the tournament carries them.
+  defp team_record_lines(t) do
+    points =
+      case t[:team_point_system] do
+        system when is_map(system) and map_size(system) > 0 ->
+          entries =
+            for {symbol, key} <- @team_symbols, is_number(system[key]) do
+              symbol <> String.pad_leading(format_points(system[key]), 4)
+            end
+
+          ["362  " <> Enum.join(entries, "    ")]
+
+        _ ->
+          []
+      end
+
+    pab =
+      case t[:team_pab] do
+        %{} = pab ->
+          (pab[:teams] || [])
+          |> Enum.with_index()
+          |> Enum.reduce(
+            []
+            |> place({1, 3}, "320")
+            |> place({5, 8}, format_points(pab[:match_points]), align: :right)
+            |> place({10, 13}, format_points(pab[:game_points]), align: :right),
+            fn {team, i}, acc ->
+              place(acc, {15 + 4 * i, 17 + 4 * i}, if(team in [nil, 0], do: "", else: team),
+                align: :right
+              )
+            end
+          )
+          |> render()
+          |> String.trim_trailing()
+          |> List.wrap()
+
+        _ ->
+          []
+      end
+
+    forfeits =
+      for f <- t[:forfeited_matches] || [] do
+        []
+        |> place({1, 3}, "330")
+        |> place({5, 6}, f[:type])
+        |> place({8, 10}, f[:round], align: :right)
+        |> place({12, 14}, f[:white], align: :right)
+        |> place({16, 18}, f[:black], align: :right)
+        |> render()
+      end
+
+    points ++ pab ++ forfeits
+  end
+
+  # A team with a number is a TRF26 `310` record (layout in parse/1's doc);
+  # one without is the TRF16 `013` it always was.
+  defp team_line(%{number: number} = t) when is_integer(number) do
+    fields =
+      []
+      |> place({1, 3}, "310")
+      |> place({5, 7}, number, align: :right)
+      |> place({9, 40}, t[:name])
+      |> place({42, 46}, t[:nickname])
+      |> place({48, 53}, t[:strength], align: :right)
+      |> place({55, 60}, t[:match_points] && format_points(t[:match_points]), align: :right)
+      |> place({62, 67}, t[:game_points] && format_points(t[:game_points]), align: :right)
+      |> place({69, 71}, t[:final_rank], align: :right)
+
+    (t[:player_ranks] || [])
+    |> Enum.with_index(1)
+    |> Enum.reduce(fields, fn {rank, slot}, acc ->
+      place(acc, team_310_player_cols(slot), rank, align: :right)
+    end)
+    |> render()
+    |> String.trim_trailing()
+  end
+
   defp team_line(t) do
     (t[:player_ranks] || [])
     |> Enum.with_index(1)
@@ -1916,9 +2004,24 @@ defmodule Ainalrami.Trf do
   `tournament[:point_system]`, `250` and `260` as above, `240` into the
   players' games (and all of them into `tournament[:byes]`), and the
   `192`/`202`/`212`/`222` headers into `tournament[:type_code]`,
-  `[:tie_breaks]`, `[:standings_order]` and `[:time_control_code]`. Team
-  records (`300` onwards, `310`, `801`, `802`) and national-rating records
-  are not read.
+  `[:tie_breaks]`, `[:standings_order]` and `[:time_control_code]`.
+
+  TRF26 team records: each `310` becomes a team (`:number`, `:name`,
+  `:nickname`, `:strength`, `:match_points`, `:game_points`, `:final_rank`,
+  `:player_ranks`), and when a file has any `310` its `013` lines are
+  ignored; `362` goes to `tournament[:team_point_system]` (`%{win:, draw:,
+  loss:}` plus `:pab`, `:absent`, `:unknown` when given), `320` to
+  `[:team_pab]` and `330` lines to `[:forfeited_matches]`. `300`
+  (out-of-order boards), `801`, `802` and national-rating records are not
+  read. Columns (1-based) as FIDE's TRF-2026 description lays them out and
+  TieBreakServer's `trf2json.py` reads them: `310` team number 5-7, name
+  9-40, nickname 42-46, strength 48-53, match points 55-60, game points
+  62-67, rank 69-71, players' starting ranks in 4-column fields from 74
+  every 5; `362` a symbol (`W` `D` `L` `P` `A` `X`) in column 6 and its
+  points in 7-10, repeating every 9 columns; `320` match points 5-8, game
+  points 10-13, then the team given the bye in each round, 3 columns from
+  15 every 4; `330` type 5-6, round 8-10, white team 12-14, black team
+  16-18. `serialize/2` writes all four back.
   """
   def parse(text) do
     lines =
@@ -1974,26 +2077,74 @@ defmodule Ainalrami.Trf do
           # (`PairingsEngine.TrfImport.check_bounds/1`) BECAUSE this was
           # quadratic. Linear here means the refusal is a policy rather
           # than a load-bearing guard.
-          "001" -> update_in(acc.players, &[parse_player_line(line) | &1])
-          "013" -> update_in(acc.teams, &[parse_team_line(line) | &1])
-          "132" -> put_in(acc.tournament[:round_dates], parse_round_dates(line))
-          "XXR" -> parse_xxr(acc, line)
-          "XXP" -> parse_xxp(acc, line)
-          "XXA" -> parse_xxa(acc, line)
-          "XXC" -> parse_xxc(acc, line)
-          "250" -> parse_250(acc, line)
-          "260" -> parse_260(acc, line)
-          "162" -> parse_point_system(acc, line)
-          "240" -> parse_240(acc, line)
-          "299" -> parse_299(acc, line)
-          code when code in @bb_codes -> parse_bb_points(acc, code, line)
-          code -> parse_header_line(acc, code, line)
+          "001" ->
+            update_in(acc.players, &[parse_player_line(line) | &1])
+
+          "013" ->
+            update_in(acc.teams, &[parse_team_line(line) | &1])
+
+          "310" ->
+            Map.update(acc, :teams_310, [parse_310(line)], &[parse_310(line) | &1])
+
+          "320" ->
+            put_in(acc.tournament[:team_pab], parse_320(line))
+
+          "330" ->
+            update_in(acc.tournament[:forfeited_matches], &((&1 || []) ++ [parse_330(line)]))
+
+          "362" ->
+            put_in(acc.tournament[:team_point_system], parse_362(line))
+
+          "132" ->
+            put_in(acc.tournament[:round_dates], parse_round_dates(line))
+
+          "XXR" ->
+            parse_xxr(acc, line)
+
+          "XXP" ->
+            parse_xxp(acc, line)
+
+          "XXA" ->
+            parse_xxa(acc, line)
+
+          "XXC" ->
+            parse_xxc(acc, line)
+
+          "250" ->
+            parse_250(acc, line)
+
+          "260" ->
+            parse_260(acc, line)
+
+          "162" ->
+            parse_point_system(acc, line)
+
+          "240" ->
+            parse_240(acc, line)
+
+          "299" ->
+            parse_299(acc, line)
+
+          code when code in @bb_codes ->
+            parse_bb_points(acc, code, line)
+
+          code ->
+            parse_header_line(acc, code, line)
         end
       end)
 
     # The two hot record types are accumulated in reverse (see the reduce
     # above); every other key keeps file order as it always did.
     result = %{result | players: Enum.reverse(result.players), teams: Enum.reverse(result.teams)}
+
+    # A file with TRF26 `310` team records is read from them, and its `013`
+    # lines (if any, written for older readers) are then ignored - the same
+    # precedence TieBreakServer gives them (`trf2json.py`, `read_all_lines`).
+    result =
+      case Map.pop(result, :teams_310) do
+        {nil, result} -> result
+        {teams, result} -> %{result | teams: Enum.reverse(teams)}
+      end
 
     validate_games!(result.players,
       allow_dangling_playing_code: true,
@@ -2960,6 +3111,78 @@ defmodule Ainalrami.Trf do
       true ->
         parse_team_line(line, slot + 1, [parse_int(read(line, cols)) | ranks])
     end
+  end
+
+  # ---- TRF26 team records (layouts in parse/1's doc) ----------------------
+
+  defp team_310_player_cols(slot) do
+    base = 74 + (slot - 1) * 5
+    {base, base + 3}
+  end
+
+  defp parse_310(line) do
+    ranks =
+      Stream.iterate(1, &(&1 + 1))
+      |> Stream.map(&team_310_player_cols/1)
+      |> Enum.take_while(fn {start, _} = cols ->
+        byte_size(line) >= start and read(line, cols) != ""
+      end)
+      |> Enum.map(&parse_int(read(line, &1)))
+
+    %{
+      number: parse_int(read(line, {5, 7})),
+      name: read(line, {9, 40}),
+      nickname: read(line, {42, 46}),
+      strength: parse_int(read(line, {48, 53})),
+      match_points: parse_float(read(line, {55, 60})),
+      game_points: parse_float(read(line, {62, 67})),
+      final_rank: parse_int(read(line, {69, 71})),
+      player_ranks: ranks
+    }
+  end
+
+  defp parse_362(line) do
+    Stream.iterate(6, &(&1 + 9))
+    |> Enum.take_while(&(byte_size(line) >= &1))
+    |> Enum.reduce(%{}, fn col, acc ->
+      symbol = line |> read({col, col}) |> String.upcase()
+
+      case List.keyfind(@team_symbols, symbol, 0) do
+        {_, key} ->
+          case parse_float(read(line, {col + 1, col + 4})) do
+            nil -> acc
+            points -> Map.put(acc, key, points)
+          end
+
+        nil ->
+          acc
+      end
+    end)
+  end
+
+  defp parse_320(line) do
+    teams =
+      Stream.iterate(15, &(&1 + 4))
+      |> Enum.take_while(&(byte_size(line) >= &1))
+      |> Enum.map(&(parse_int(read(line, {&1, &1 + 2})) || 0))
+      |> Enum.reverse()
+      |> Enum.drop_while(&(&1 == 0))
+      |> Enum.reverse()
+
+    %{
+      match_points: parse_float(read(line, {5, 8})),
+      game_points: parse_float(read(line, {10, 13})),
+      teams: teams
+    }
+  end
+
+  defp parse_330(line) do
+    %{
+      type: read(line, {5, 6}),
+      round: parse_int(read(line, {8, 10})),
+      white: parse_int(read(line, {12, 14})),
+      black: parse_int(read(line, {16, 18}))
+    }
   end
 
   defp parse_round_dates(line, round \\ 1, acc \\ []) do

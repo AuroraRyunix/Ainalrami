@@ -838,11 +838,10 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
         Log.detail("standings: no tie-break list in the file (202/212) - not checked")
         :skipped
 
-      # A team file's ranks are the teams' (TRF26 `310`, not read); the
-      # tie-breaks themselves are `Ainalrami.Tiebreaks.Team.from_trf/2`'s.
+      # A team file's ranks are the teams', in TRF26 `310` records (an
+      # `013`-only file has none), ranked with the team tie-breaks.
       Map.get(parsed, :teams, []) != [] ->
-        Log.detail("standings: a team event - its team ranks are not in the file - not checked")
-        :skipped
+        check_team_standings(parsed, list)
 
       Enum.all?(ranks, fn {_id, r} -> r in [nil, 0] end) ->
         Log.detail("standings: no final ranks in the file (columns 86-89) - not checked")
@@ -860,7 +859,7 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
               )
             end
 
-            compare_standings(standings, ranks, list)
+            compare_standings(standings, ranks, list, "player")
 
           {:error, reason} ->
             Log.warn("standings: cannot be checked - #{reason}")
@@ -869,7 +868,43 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
     end
   end
 
-  defp compare_standings(standings, ranks, list) do
+  # A team event: the teams' `310` ranks against
+  # `Ainalrami.Tiebreaks.Team.rank/3` on `Team.from_trf/2`'s event (match
+  # points from the file's `362`, teams by their `310` numbers).
+  defp check_team_standings(parsed, list) do
+    ranks =
+      parsed.teams
+      |> Enum.with_index(1)
+      |> Map.new(fn {team, index} -> {Map.get(team, :number) || index, team[:final_rank]} end)
+
+    if Enum.all?(ranks, fn {_id, r} -> r in [nil, 0] end) do
+      Log.detail(
+        "standings: a team event with no team ranks in the file (TRF26 310, columns 69-71)" <>
+          " - not checked"
+      )
+
+      :skipped
+    else
+      event = Ainalrami.Tiebreaks.Team.from_trf(parsed)
+
+      case Ainalrami.Tiebreaks.Team.rank(event, list, with_dropped: true) do
+        {:ok, standings, dropped} ->
+          unless dropped == [] do
+            Log.detail(
+              "standings: #{Enum.join(dropped, ", ")} dropped - no value for these teams"
+            )
+          end
+
+          compare_standings(standings, ranks, list, "team")
+
+        {:error, reason} ->
+          Log.warn("standings: cannot be checked - #{reason}")
+          :differs
+      end
+    end
+  end
+
+  defp compare_standings(standings, ranks, list, who) do
     # A shared rank r held by k players stands for the places r..r+k-1.
     places =
       standings
@@ -898,7 +933,7 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
         detail = Enum.map_join(list, " ", &"#{&1}=#{format_value(values[&1])}")
 
         Log.warn(
-          "  player #{id}: file says #{inspect(file_rank)}, tie-breaks give #{expected} (#{detail})"
+          "  #{who} #{id}: file says #{inspect(file_rank)}, tie-breaks give #{expected} (#{detail})"
         )
       end
 
@@ -1163,7 +1198,8 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
                                                  round against this engine, and
                                                  check the final ranks against
                                                  the file's own tie-break list
-                                                 (202/212)
+                                                 (202/212); for a team file,
+                                                 the teams' ranks (TRF26 310)
       ainalrami <input.trf> -x                   Explain: pair the next round and
                                                  report, per bracket, which
                                                  criteria decided it
