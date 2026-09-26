@@ -2,7 +2,10 @@
 # team tournaments generated here game by game.
 #
 #     mix run tools/team_tiebreak_compare.exs [--count 100] [--first 1] \
-#         [--codes "..."] [--rank "..."] [--keep DIR] [--random-lists SEED]
+#         [--codes "..."] [--rank "..."] [--keep DIR] [--work DIR] [--random-lists SEED]
+#
+# `--keep DIR` keeps every file there; `--work DIR` (or TEAM_TB_WORK) writes
+# them there but keeps only the ones that disagree - what CI uploads.
 #
 # `--random-lists SEED` ranks each event under its own random team list
 # (tools/tiebreak_random_list.exs: the primary score, then one to six team
@@ -31,7 +34,7 @@ Code.require_file("tiebreak_random_list.exs", __DIR__)
 
 {opts, _, _} =
   OptionParser.parse(System.argv(),
-    strict: [count: :integer, first: :integer, codes: :string, rank: :string, keep: :string, random_lists: :integer]
+    strict: [count: :integer, first: :integer, codes: :string, rank: :string, keep: :string, work: :string, random_lists: :integer]
   )
 
 count = opts[:count] || 100
@@ -48,7 +51,7 @@ rank_codes = String.split(opts[:rank] || "MPTS GPTS EDE BH:MP EMGSB")
 
 tbs_dir = System.get_env("TBS_DIR", Path.expand("../TieBreakServer"))
 python = System.get_env("TBS_PYTHON", "python")
-work = opts[:keep] || Path.join(System.tmp_dir!(), "ain_team_tb")
+work = opts[:keep] || opts[:work] || System.get_env("TEAM_TB_WORK") || Path.join(System.tmp_dir!(), "ain_team_tb")
 File.mkdir_p!(work)
 
 boards = 4

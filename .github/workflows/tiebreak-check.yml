@@ -1,0 +1,145 @@
+# C.07 tie-breaks against FIDE's TieBreakServer and against the independent
+# reference (test/support/tiebreak_reference/), as a bounded smoke run.
+#
+# Every run draws fresh seeds from a base (the run number unless one is
+# given by hand), so coverage grows night after night; a failure prints the
+# base and the command that reproduces it. docs/validation.md, "The nightly
+# tie-break check", has the details.
+#
+# TieBreakServer (Otto Milvang, (c) FIDE, MIT) is fetched at a pinned commit
+# and run, never vendored. Bump TBS_COMMIT deliberately: a new version is a
+# new reference and may need its known differences re-read.
+
+name: Tie-break check
+
+on:
+  push:
+    branches: [ "tiebreak-ci" ]
+  schedule:
+    - cron: "17 2 * * *"
+  workflow_dispatch:
+    inputs:
+      seed_base:
+        description: "Seed base (default: the run number)"
+        required: false
+        default: ""
+  pull_request:
+    paths:
+      - "lib/ainalrami/tiebreaks*"
+      - "lib/ainalrami/tiebreaks/**"
+      - "lib/ainalrami/trf.ex"
+      - "tools/tiebreak_*"
+      - "tools/team_tiebreak_compare.exs"
+      - "test/ainalrami/tiebreak_reference_test.exs"
+      - "test/support/tiebreak_reference/**"
+      - ".github/workflows/tiebreak-check.yml"
+
+permissions:
+  contents: read
+
+env:
+  TBS_REPO: https://github.com/OttoMilvang/TieBreakServer.git
+  TBS_COMMIT: 14a34a2c2f36509b110e4f25d6247f31fc4bf2f5
+
+jobs:
+  tiebreaks:
+    name: Tie-breaks vs TieBreakServer and the reference
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    steps:
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+    - name: Set up Elixir
+      uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1.24.1
+      with:
+        elixir-version: '1.20'
+        otp-version: '29.0'
+
+    - name: Set up Python
+      uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+      with:
+        python-version: '3.13'
+
+    - name: Restore build cache
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      with:
+        path: |
+          deps
+          _build
+        key: ${{ runner.os }}-tbcheck-mix-${{ hashFiles('mix.exs') }}
+        restore-keys: ${{ runner.os }}-tbcheck-mix-
+
+    - name: Fetch TieBreakServer at the pinned commit
+      run: |
+        git init -q "$RUNNER_TEMP/TieBreakServer"
+        cd "$RUNNER_TEMP/TieBreakServer"
+        git fetch -q --depth 1 "$TBS_REPO" "$TBS_COMMIT"
+        git checkout -q FETCH_HEAD
+        python -m pip install -q -r requirements.txt
+        echo "TBS_DIR=$RUNNER_TEMP/TieBreakServer" >> "$GITHUB_ENV"
+        echo "TBS_PYTHON=$(which python)" >> "$GITHUB_ENV"
+
+    - name: Seeds
+      env:
+        INPUT_BASE: ${{ github.event.inputs.seed_base }}
+      run: |
+        N="${INPUT_BASE:-${{ github.run_number }}}"
+        echo "SEED_BASE=$N" >> "$GITHUB_ENV"
+        echo "D1_FIRST=$((10000000 + N * 100))" >> "$GITHUB_ENV"
+        echo "D2_BATCH=$((100000 + N * 6))" >> "$GITHUB_ENV"
+        echo "TEAM_FIRST=$((1000000 + N * 100))" >> "$GITHUB_ENV"
+        echo "REF_FIRST=$((1000000 + N * 500))" >> "$GITHUB_ENV"
+        echo "FAIL_DIR=$RUNNER_TEMP/failing" >> "$GITHUB_ENV"
+        echo "Seed base $N"
+
+    - name: Compile
+      run: |
+        mix deps.get
+        mix compile
+
+    - name: Reference proof (500 seeds)
+      if: always()
+      run: |
+        SEEDS="$REF_FIRST..$((REF_FIRST + 499))"
+        if ! TIEBREAK_REF_SEEDS="$SEEDS" mix test test/ainalrami/tiebreak_reference_test.exs --only tiebreak_reference_scale; then
+          echo "::error title=Reference disagreement::seed base $SEED_BASE. Reproduce: TIEBREAK_REF_SEEDS=\"$SEEDS\" mix test test/ainalrami/tiebreak_reference_test.exs --only tiebreak_reference_scale (each failure line starts with its seed)"
+          exit 1
+        fi
+
+    - name: Direction 1 (Ainalrami's generator, 100 tournaments, random lists)
+      if: always()
+      run: |
+        if ! python tools/tiebreak_direction1.py --batches 1 --size 100 --workers 2 \
+             --first-seed "$D1_FIRST" --random-lists "$SEED_BASE" --strict \
+             --work "$FAIL_DIR/direction1" --state "$RUNNER_TEMP/d1.json"; then
+          echo "::error title=Direction 1 differs::seed base $SEED_BASE. Reproduce: python tools/tiebreak_direction1.py --batches 1 --size 100 --first-seed $D1_FIRST --random-lists $SEED_BASE --strict --work DIR --state s.json (files in the artifact)"
+          exit 1
+        fi
+
+    - name: Direction 2 (TieBreakServer's generator, 102 tournaments, random lists)
+      if: always()
+      run: |
+        if ! python tools/tiebreak_direction2.py --batches 6 --size 17 --workers 2 \
+             --first-batch "$D2_BATCH" --random-lists "$SEED_BASE" --strict \
+             --work "$FAIL_DIR/direction2" --state "$RUNNER_TEMP/d2.json"; then
+          echo "::error title=Direction 2 differs::seed base $SEED_BASE. Reproduce: python tools/tiebreak_direction2.py --batches 6 --size 17 --first-batch $D2_BATCH --random-lists $SEED_BASE --strict --work DIR --state s.json (files in the artifact)"
+          exit 1
+        fi
+
+    - name: Team events (100, random lists)
+      if: always()
+      run: |
+        if ! mix run tools/team_tiebreak_compare.exs --count 100 --first "$TEAM_FIRST" \
+             --random-lists "$SEED_BASE" --work "$FAIL_DIR/team"; then
+          echo "::error title=Team tie-breaks differ::seed base $SEED_BASE. Reproduce: mix run tools/team_tiebreak_compare.exs --count 100 --first $TEAM_FIRST --random-lists $SEED_BASE (the '== seed N' lines name each event)"
+          exit 1
+        fi
+
+    - name: Upload failing files
+      if: failure()
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      with:
+        name: tiebreak-failing-${{ env.SEED_BASE }}
+        path: ${{ env.FAIL_DIR }}
+        if-no-files-found: ignore

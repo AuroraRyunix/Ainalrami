@@ -73,6 +73,8 @@ def main():
     ap.add_argument("--state", required=True)
     ap.add_argument("--random-lists", type=int, default=None, metavar="SEED",
                     help="a random tie-break list per tournament, drawn from SEED")
+    ap.add_argument("--strict", action="store_true",
+                    help="exit 1 if any batch errored or disagreed (CI; see .github/workflows/tiebreak-check.yml)")
     a = ap.parse_args()
 
     state = {"done": {}}
@@ -102,6 +104,12 @@ def main():
                     print("  ", json.dumps(r), flush=True)
                 report()
     print(f"finished in {(time.time() - start) / 3600:.1f} h", flush=True)
+    if a.strict:
+        failed = [r for r in state["done"].values() if "error" in r or r.get("mismatches")]
+        for r in failed:
+            print("FAILED batch", json.dumps(r), flush=True)
+        if failed:
+            sys.exit(1)
 
 
 if __name__ == "__main__":
