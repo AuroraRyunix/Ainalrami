@@ -364,6 +364,38 @@ have 8 MP, 13½ and 14 GP, and drew 2-2 when they met; TieBreakServer goes
 on to Bottom Board Elimination over that match and ranks 4 ahead, we leave
 them level.
 
+**Reading T8 - a forfeited match in a board-level TRF.** A TRF records
+forfeits per board (`+`/`-` against the opponent); a match "forfeited" as a
+whole is not a separate thing in the file, except as TRF26's `330` record.
+`Team.from_trf/2` reads a match where no board was played over the board as
+a forfeited match (Article 16's unplayed round, not a game): the side with
+more game points won it by forfeit, the other lost it, and if neither
+scored it is a double forfeit - no match points to either. A match with at
+least one board played is an ordinary match, however many boards were
+forfeited (as C.04.6's "won a match by forfeit" is read, see
+`Ainalrami.TeamPairing.Team`). A `330` record forfeits a match neither team
+has board records for: the winner takes a win on every board, as Article 12
+treats a pairing-allocated bye. The one case C.07 does not settle - boards
+forfeited both ways, none played, level on game points - is a drawn match,
+as TieBreakServer scores it. Before 2026-09-26 every such match was read
+as played, so a double forfeit was a drawn match worth a draw's match
+points to both.
+
+**Reading T9 - boards that meet crosswise.** Article 12 numbers boards as a
+team match does, board k against board k. In a Scheveningen or a
+Schiller-type event a team's players meet different boards of the other
+team round by round, and a TRF carries no board number for a game (a `300`
+record can reorder a team, not pair boards across). We number a team's
+boards by its own `013` order of the players it fielded - a team's board 1
+is its first player, whoever that player met - the same rule as in every
+other team event. TieBreakServer numbers every game of a match by the
+lower-numbered team's order, for both teams, so the higher-numbered team's
+board 1 is whichever of its players met the other team's first. C.07 is
+silent; we keep a team's own order, which does not depend on which team
+has the lower number. The comparison tool rebuilds the event with
+TieBreakServer's numbering and classifies a difference that disappears
+with it as this reading.
+
 - **BC (12.1):** board number times game points on that board, over every
   match, lower better; a pairing-allocated bye scores a win on every board,
   individual forfeits count as games (Article 12). Only when all the tied

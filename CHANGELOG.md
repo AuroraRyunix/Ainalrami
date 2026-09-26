@@ -63,6 +63,38 @@ with the reference on every one of them.
 
 ## [Unreleased]
 
+- [Fix] **A team match forfeited on every board is a forfeited match.**
+  `Team.from_trf/2` read a match whose boards were all `+`/`-` as a played
+  match, so its winner's opponent counted as a game for Buchholz and
+  Sonneborn-Berger (Article 16 treats it as an unplayed round), and a
+  match both teams forfeited was a drawn match worth a draw's match points
+  to each. It is now a forfeit win and a forfeit loss, or a double forfeit
+  with no match points (reading T8 in `docs/conformance-c07-tiebreaks.md`).
+  Found by the extended team comparison below; tested.
+- [Feature] **TRF26 team records.** `Ainalrami.Trf.parse/1` reads `362`
+  (the team match-point system) into `tournament[:match_point_system]` and
+  `330` (forfeited matches) into `tournament[:forfeited_matches]`;
+  `Team.from_trf/2` takes its match points from the `362` record (the
+  pairing-allocated bye's from its `P`, a forfeited match's from `A`) and
+  forfeits a match from a `330` record when neither team has board records
+  for it. The `:match_points` option still overrides the file.
+- [Verified] **Team tie-breaks, much wider.** A new board-level generator
+  (`test/support/team_trf_generator.ex`) behind
+  `tools/team_tiebreak_compare.exs` and the reference: Swiss, team round
+  robins, Scheveningen and Schiller-type events (predetermined, no
+  Buchholz family), 3-10 boards, 2/1/0 and 3/1/0 match points in a `362`
+  record, reserves, individual forfeits, whole matches forfeited and
+  double-forfeited (with and without `330` records), pairing-allocated byes
+  and free rounds, and GPTS-led lists. The independent reference now reads
+  board-level TRFs itself (`from_team_trf/2`), so `Team.from_trf/2` is
+  checked too. Results, three new TieBreakServer findings (F: SSSC divides
+  by zero; G: Koya's odd-round-robin test misfires in Scheveningen and
+  Schiller events; H: a board dropped when every team-round had a forfeit)
+  and reading T9 (board numbers when boards meet crosswise): see
+  `docs/validation.md`, `docs/finding-tiebreakserver-2026-09.md` and
+  `docs/tiebreak-reference.md`. No real team tournament file was available
+  to compare.
+
 ## [0.31.0] - 2026-09-26
 
 - [Verified] **Tie-breaks against an independent reference.**

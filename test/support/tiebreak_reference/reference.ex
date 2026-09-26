@@ -249,6 +249,200 @@ defmodule Ainalrami.TiebreakReference do
     }
   end
 
+  @doc """
+  The model of a team event read from a board-level TRF - `Ainalrami.Trf.parse/1`'s
+  map, with `013` team records - by the reference's own reading, not
+  `Ainalrami.Tiebreaks.Team.from_trf/2`'s:
+
+    * teams are numbered in the order of their `013` records; a player's
+      team is the record that lists them;
+    * a team's round is the games its players had against somebody (a
+      game, a forfeit win or a forfeit loss, classified as for individual
+      events); the opponent is the team most of those opponents belong to;
+      the boards are those games in the order the `013` record lists the
+      players;
+    * no game against anybody: a pairing-allocated bye if any of the
+      players has one (a win on every board, the `362` record's `P` in match
+      points, else a win's), otherwise a zero-point bye;
+    * a match where some board was played over the board is won by the
+      side with more game points and drawn when level; a match where none
+      was (every board forfeited) is a forfeited match - lost by the side
+      with fewer game points, both sides lost when neither scored, drawn
+      when level on something (reading T8);
+    * a `330` record forfeits a match neither team has games for, the
+      winner taking a win on every board in game points;
+    * match points from the `362` record (win, draw, loss, `A`/`Z` for a
+      forfeited match), else 2/1/0; game points from the `162` record;
+    * the number of boards is the most games any team had in one round;
+    * the pairings were fixed in advance when the `192` code names a round
+      robin, Scheveningen or Schiller event.
+
+  Options: `:primary` (`:mp` default, or `:gp`), `:rounds`.
+  """
+  def from_team_trf(trf, opts \\ []) do
+    t = trf.tournament
+    sys = Map.get(t, :point_system) || @trf_default
+    declared = Map.get(t, :match_point_system) || %{}
+
+    mp = %{
+      win: Map.get(declared, :win, 2.0) * 1.0,
+      draw: Map.get(declared, :draw, 1.0) * 1.0,
+      loss: Map.get(declared, :loss, 0.0) * 1.0
+    }
+
+    pab_mp = Map.get(declared, :pairing_allocated_bye, mp.win) * 1.0
+    forfeit_mp = Map.get(declared, :forfeit_loss, mp.loss) * 1.0
+    base = %{win: sys.win * 1.0, draw: sys.draw * 1.0, loss: sys.loss * 1.0}
+
+    n =
+      opts[:rounds] ||
+        trf.players |> Enum.map(&length(&1.games)) |> Enum.max(fn -> 0 end)
+
+    rosters =
+      trf.teams |> Enum.with_index(1) |> Enum.map(fn {tm, id} -> {id, tm.player_ranks} end)
+
+    team_of = for {id, ranks} <- rosters, rank <- ranks, into: %{}, do: {rank, id}
+    player = Map.new(trf.players, &{&1.rank, &1})
+
+    # {team, round} => [round record] of its players, roster order
+    seen = fn id, r ->
+      {_, ranks} = List.keyfind(rosters, id, 0)
+
+      for rank <- ranks, Map.has_key?(player, rank) do
+        case Enum.at(player[rank].games, r - 1) do
+          nil -> %{t: :zbye, opp: nil, pts: 0.0}
+          g -> trf_round(g, sys, base)
+        end
+      end
+    end
+
+    boards =
+      Enum.max(
+        for {id, _} <- rosters, r <- 1..n//1 do
+          Enum.count(seen.(id, r), & &1.opp)
+        end,
+        fn -> 1 end
+      )
+      |> max(1)
+
+    # First pass: each side on its own.
+    raw =
+      for {id, _} <- rosters, r <- 1..n//1, into: %{} do
+        rds = seen.(id, r)
+        met = Enum.filter(rds, & &1.opp)
+
+        match =
+          cond do
+            met != [] ->
+              opp =
+                met
+                |> Enum.map(&team_of[&1.opp])
+                |> Enum.frequencies()
+                |> Enum.sort_by(fn {team, k} -> {-k, team} end)
+                |> hd()
+                |> elem(0)
+
+              board_map = met |> Enum.with_index(1) |> Map.new(fn {x, k} -> {k, x.pts} end)
+
+              %{
+                kind: if(Enum.any?(met, &(&1.t == :game)), do: :played, else: :unplayed),
+                opponent: opp,
+                gp: Enum.reduce(met, 0.0, &(&1.pts + &2)),
+                boards: board_map
+              }
+
+            Enum.any?(rds, &(&1.t == :pab)) ->
+              %{
+                kind: :pab,
+                opponent: nil,
+                mp: pab_mp,
+                gp: base.win * boards,
+                boards: Map.new(1..boards, &{&1, base.win})
+              }
+
+            true ->
+              declared_forfeit(t, id, r) ||
+                %{kind: :zero_bye, opponent: nil, mp: 0.0, gp: 0.0, boards: %{}}
+          end
+
+        {{id, r}, match}
+      end
+
+    # Second pass: match points from both sides.
+    settle = fn id, r ->
+      m = raw[{id, r}]
+
+      case m do
+        %{kind: :forfeit, winner?: true} ->
+          %{
+            kind: :forfeit_win,
+            opponent: m.opponent,
+            mp: mp.win,
+            gp: base.win * boards,
+            boards: %{}
+          }
+
+        %{kind: :forfeit, winner?: false} ->
+          %{kind: :forfeit_loss, opponent: m.opponent, mp: forfeit_mp, gp: 0.0, boards: %{}}
+
+        %{kind: kind} when kind in [:played, :unplayed] ->
+          theirs = raw[{m.opponent, r}].gp
+
+          {kind, pts} =
+            cond do
+              kind == :played and m.gp > theirs -> {:played, mp.win}
+              kind == :played and m.gp < theirs -> {:played, mp.loss}
+              kind == :played -> {:played, mp.draw}
+              m.gp > theirs -> {:forfeit_win, mp.win}
+              m.gp < theirs -> {:forfeit_loss, forfeit_mp}
+              m.gp == 0.0 -> {:forfeit_loss, forfeit_mp}
+              true -> {:played, mp.draw}
+            end
+
+          %{m | kind: kind} |> Map.put(:mp, pts)
+
+        other ->
+          other
+      end
+    end
+
+    code = Map.get(t, :type_code)
+
+    rr? =
+      is_binary(code) and
+        Enum.any?(~w(ROUNDROBIN SCHILLER SCHEVENINGEN), &String.contains?(code, &1))
+
+    from_team(%{
+      rounds: n,
+      total_rounds: max(Map.get(t, :number_of_rounds) || n, n),
+      predetermined?: rr?,
+      boards: boards,
+      primary: Keyword.get(opts, :primary, :mp),
+      match_points: mp,
+      game_points: base,
+      teams:
+        Map.new(rosters, fn {id, _} ->
+          {id, %{tpn: id, rounds: Map.new(1..n//1, fn r -> {r, settle.(id, r)} end)}}
+        end)
+    })
+  end
+
+  # A 330 record for this team and round: %{kind: :forfeit, winner?:, opponent:}.
+  defp declared_forfeit(t, id, r) do
+    Enum.find_value(Map.get(t, :forfeited_matches) || [], fn f ->
+      cond do
+        f.round == r and f.white == id ->
+          %{kind: :forfeit, opponent: f.black, winner?: f.winner == :white, gp: 0.0}
+
+        f.round == r and f.black == id ->
+          %{kind: :forfeit, opponent: f.white, winner?: f.winner == :black, gp: 0.0}
+
+        true ->
+          nil
+      end
+    end)
+  end
+
   # ======================================================================
   # Codes
   # ======================================================================

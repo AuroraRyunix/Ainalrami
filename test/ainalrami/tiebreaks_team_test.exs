@@ -361,4 +361,124 @@ defmodule Ainalrami.TiebreaksTeamTest do
       assert Enum.map(rows, & &1.id) == [3, 1, 2]
     end
   end
+
+  describe "from_trf/2: TRF26 team records and forfeited matches" do
+    # Four teams of two boards, two rounds. Round 1: team 1 beats 2 over the
+    # board (1.5-0.5); team 3 wins against 4 by forfeit on both boards.
+    # Round 2: 1 and 3 play a 1-1 draw; 2 and 4 both forfeit both boards (a
+    # double forfeit). `extra` is appended to the file (362/330 records).
+    defp forfeit_trf(extra, round2 \\ :double) do
+      g = fn opp, colour, result -> %{opponent_rank: opp, colour: colour, result: result} end
+      none = %{opponent_rank: nil, colour: "-", result: ""}
+
+      r2 = fn
+        :double, opp, colour -> g.(opp, colour, "-")
+        :absent, _opp, _colour -> none
+      end
+
+      players = [
+        {1, [g.(3, "w", "1"), g.(5, "w", "1")]},
+        {2, [g.(4, "b", "="), g.(6, "b", "0")]},
+        {3, [g.(1, "b", "0"), r2.(round2, 7, "w")]},
+        {4, [g.(2, "w", "="), r2.(round2, 8, "b")]},
+        {5, [g.(7, "w", "+"), g.(1, "b", "0")]},
+        {6, [g.(8, "b", "+"), g.(2, "w", "1")]},
+        {7, [g.(5, "b", "-"), r2.(round2, 3, "b")]},
+        {8, [g.(6, "w", "-"), r2.(round2, 4, "w")]}
+      ]
+
+      text =
+        Ainalrami.Trf.serialize(%{
+          tournament: %{name: "forfeits", type: "swiss", number_of_rounds: 2},
+          players:
+            for {rank, games} <- players do
+              %{rank: rank, name: "P#{rank}", points: 0.0, games: games}
+            end,
+          teams: [
+            %{name: "One", player_ranks: [1, 2]},
+            %{name: "Two", player_ranks: [3, 4]},
+            %{name: "Three", player_ranks: [5, 6]},
+            %{name: "Four", player_ranks: [7, 8]}
+          ]
+        }) <> extra
+
+      Ainalrami.Trf.parse(text)
+    end
+
+    test "Trf.parse reads the 362 match points and the 330 forfeited matches" do
+      trf = forfeit_trf("362  W 3.0    D 1.0    L 0.0    P 3.0    A 0.0\r\n330 -- 2   2   4\r\n")
+
+      assert trf.tournament.match_point_system ==
+               %{win: 3.0, draw: 1.0, loss: 0.0, pairing_allocated_bye: 3.0, forfeit_loss: 0.0}
+
+      assert trf.tournament.forfeited_matches == [%{round: 2, white: 2, black: 4, winner: :none}]
+    end
+
+    test "the 362 record sets the match points" do
+      event = Team.from_trf(forfeit_trf("362  W 3.0    D 1.0    L 0.0\r\n"))
+
+      assert event.match_points == %{win: 3.0, draw: 1.0, loss: 0.0}
+      assert event.teams[1].rounds[1].mp == 3.0
+      assert event.teams[1].rounds[2].mp == 1.0
+      # An option still overrides the file.
+      assert Team.from_trf(forfeit_trf("362  W 3.0    D 1.0    L 0.0\r\n"),
+               match_points: %{win: 2.0}
+             ).teams[1].rounds[1].mp == 2.0
+    end
+
+    test "a match forfeited on every board is a forfeited match, not a game" do
+      event = Team.from_trf(forfeit_trf(""))
+
+      three = event.teams[3].rounds[1]
+      four = event.teams[4].rounds[1]
+      assert {three.kind, three.opponent, three.mp, three.gp} == {:forfeit_win, 4, 2.0, 2.0}
+      assert {four.kind, four.opponent, four.mp, four.gp} == {:forfeit_loss, 3, 0.0, 0.0}
+
+      # Round 2: both sides forfeited everything - a double forfeit, no
+      # match points to either (it used to be read as a drawn match).
+      assert event.teams[2].rounds[2].kind == :forfeit_loss
+      assert event.teams[4].rounds[2].kind == :forfeit_loss
+      assert event.teams[2].rounds[2].mp == 0.0
+      assert event.teams[4].rounds[2].mp == 0.0
+
+      # Article 16: the forfeit win is not a game for Buchholz - team 3's
+      # opponent in round 1 counts as a virtual opponent.
+      {:ok, working} = Tiebreaks.working(event, ~w(BH:MP))
+      assert Enum.any?(working["BH:MP"][3], &(&1.round == 1 and &1.kind != :played))
+    end
+
+    test "a 330 record forfeits a match neither team has games for" do
+      event = Team.from_trf(forfeit_trf("330 +- 2   2   4\r\n", :absent))
+
+      two = event.teams[2].rounds[2]
+      four = event.teams[4].rounds[2]
+      assert {two.kind, two.opponent, two.mp, two.gp} == {:forfeit_win, 4, 2.0, 2.0}
+      assert {four.kind, four.opponent, four.mp} == {:forfeit_loss, 2, 0.0}
+
+      # Without the record the two teams simply had no match.
+      plain = Team.from_trf(forfeit_trf("", :absent))
+      assert plain.teams[2].rounds[2].kind == :zero_bye
+    end
+
+    test "the reference reads the same files the same way" do
+      for {extra, round2} <- [
+            {"", :double},
+            {"362  W 3.0    D 1.0    L 0.0\r\n", :double},
+            {"330 -+ 2   2   4\r\n", :absent},
+            {"330 -- 2   2   4\r\n", :absent}
+          ] do
+        trf = forfeit_trf(extra, round2)
+
+        result =
+          Ainalrami.TiebreakReference.Proof.compare_team_trf(
+            trf,
+            ~w(MPTS GPTS BH:MP BH:GP SB:MP EMGSB WIN:MP KS:MP SSSC),
+            [~w(MPTS BC), ~w(MPTS GPTS EDEBT)],
+            "hand #{inspect(extra)}"
+          )
+
+        assert result.bad == [], Enum.join(result.bad, "\n")
+      end
+    end
+  end
 end

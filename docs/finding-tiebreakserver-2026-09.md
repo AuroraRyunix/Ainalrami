@@ -167,6 +167,84 @@ The same rule inside EDEBT and EDEB is not affected in the same way: there
 TieBreakServer reaches Board Count only for two teams still tied after EDE
 (but see reading T7 in `conformance-c07-tiebreaks.md`).
 
+## F. SSSC stops with a division by zero when the normalising factor rounds to zero
+
+13.4.2 b divides the Buchholz by "the highest achievable primary score in
+the tournament divided by the highest secondary score achievable in a
+single match, rounded to the nearest integer towards zero". With match
+points primary that is zero whenever a team can take more game points in
+one match than match points in the whole event - at 2/1/0, more boards
+than twice the rounds. `compute_score_strength_combination` divides by it
+anyway, and the program ends with `Error 510 Program error`
+(`decimal.DivisionByZero`) for every code in the request, not only SSSC.
+Ainalrami uses 1 (question Q1 in `docs/tiebreak-reference.md`).
+
+Found by the team comparison of 2026-09-26, where the new generator's
+short team round robins with many boards reach it; the tool leaves SSSC out
+of such an event's lists and counts it.
+
+**Reproduction** - `tools/team_tiebreak_compare.exs --first 66 --count 1
+--keep DIR` (a team round robin of three teams, three rounds, seven boards):
+
+    python tiebreakchecker.py -i team66.trf -o - -p -n 3 -d T -t SSSC/V2026
+
+prints `### Error 510`. The highest primary score is 3 x 2 = 6 MP, the
+highest secondary in one match 7 GP; 6 / 7 rounds to 0.
+
+## G. Koya takes a free round in every Scheveningen and Schiller event
+
+9.2's threshold is half the maximum possible score. For round robins,
+`compute_koya` removes one game per cycle when `rounds % competitors == 0`
+- the test for an odd round robin, where each player sits out once per
+cycle (5 players, 5 rounds). But a Scheveningen or Schiller event, where
+every pair of teams meets several times, can have a round count that is a
+multiple of the field with nobody sitting out: four teams meeting each
+other four times play 12 rounds, and 12 % 4 == 0, so TieBreakServer's
+maximum is 9 matches, not 12, and its 50% line 13.5 MP (at 3/1/0), not 18.
+Teams that did not reach half the maximum are counted as if they had. A
+two-team Scheveningen of an even number of rounds is hit the same way.
+Ainalrami's maximum counts the rounds a team could have been paired
+(reading 10).
+
+**Reproduction** - `tools/team_tiebreak_compare.exs --first 109 --count 1
+--random-lists 2026 --keep DIR` (a Schiller-type event, four teams of four
+boards, 12 rounds, 3/1/0):
+
+    python tiebreakchecker.py -i team109.trf -o - -p -n 12 -d T -t MPTS/V2026 KS:MP/V2026
+
+Match points 19, 16, 13 and 18. The maximum is 12 x 3 = 36, half of it 18,
+so only teams 1 and 4 qualify: KS:MP 7, 7, 10, 4. TieBreakServer's line is
+13.5, so team 2 (16) qualifies too: 12, 7, 13, 12. The tool reproduces
+TieBreakServer's rule and classifies a value it explains exactly as this
+finding.
+
+## H. A board is dropped when every team-round had an individual forfeit
+
+`post_parse_line` sets the team size, for a file with `013` records, from
+the games PLAYED over the board (`game["played"]`): the most any team had in
+one round. A forfeited game is not played, so when every team had at least
+one individual forfeit in every round the count is one short, and
+`games2matches.merge_tmatches` then keeps only that many games per team and
+match (`[:teamsize]`) - each match loses a board, and with it game points,
+possibly the match result and everything computed from them. The TRF
+itself says how many boards there were: the forfeits are listed against
+their opponents like any game.
+
+Only small events are exposed (every team-round must contain a forfeit).
+The tool sets such an event aside as a whole, counted, since the dropped
+board changes every value.
+
+**Reproduction** - `tools/team_tiebreak_compare.exs --first 41227 --count 1
+--random-lists 2026 --keep DIR` (a team round robin of three teams, three
+rounds, seven boards, 3/1/0):
+
+    python tiebreakchecker.py -i team41227.trf -o - -p -n 3 -d T -t GPTS/V2026 MPTS/V2026
+
+Every match has a `+`/`-` game, so TieBreakServer counts six boards. Its
+game points are 7.5, 6.5 and 4.0 and its match points 3, 4 and 1; from all
+seven boards of each match they are 9, 7.5 and 4.5, and 4, 4 and 0 (team 1
+drew 3½-3½ with team 2 and beat team 3 5½-1½).
+
 ## A reading difference, not a defect
 
 C.07 7.7 scores STD against the scheduled opponent; TieBreakServer against

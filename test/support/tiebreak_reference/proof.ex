@@ -11,8 +11,9 @@ defmodule Ainalrami.TiebreakReference.Proof do
       sometimes also compared on the standings after an earlier round;
     * round robins (single or double, odd or even, with withdrawals whose
       remaining games are forfeited);
-    * board-level team events read through `Ainalrami.Tiebreaks.Team.from_trf/2`
-      (the generator of `tools/team_tiebreak_compare.exs`);
+    * board-level team events from `Ainalrami.TeamTrfGenerator`, read by the
+      engine through `Ainalrami.Tiebreaks.Team.from_trf/2` and by the reference
+      through its own `from_team_trf/2`;
     * team events built match by match, with the unplayed rounds the TRF
       path cannot express (half- and zero-point byes, forfeited matches) and
       deliberate rematches.
@@ -52,8 +53,15 @@ defmodule Ainalrami.TiebreakReference.Proof do
     ~w(PTS DE SB:MP/C1 EDEBT)
   ]
 
-  @doc "One event from `seed`; see the moduledoc."
-  def run(seed) do
+  @doc """
+  One event from `seed`; see the moduledoc. `kind: :team_trf` makes every
+  seed a board-level team event (the team scale mode).
+  """
+  def run(seed, kind \\ :all)
+
+  def run(seed, :team_trf), do: team_trf(seed, rem(seed, 10))
+
+  def run(seed, :all) do
     case rem(seed, 10) do
       r when r in 0..4 -> swiss(seed)
       r when r in 5..6 -> round_robin(seed)
@@ -78,6 +86,15 @@ defmodule Ainalrami.TiebreakReference.Proof do
 
   def compare_team(team, codes, lists, label) do
     compare(team, Ref.from_team(team), codes, lists, label)
+  end
+
+  @doc """
+  Compares engine and reference on a board-level team TRF (a parsed map),
+  each reading it its own way: `Team.from_trf/2` against
+  `Ref.from_team_trf/2`. Options: `:primary`.
+  """
+  def compare_team_trf(trf, codes, lists, label, opts \\ []) do
+    compare(Team.from_trf(trf, opts), Ref.from_team_trf(trf, opts), codes, lists, label)
   end
 
   defp compare(event, model, codes, lists, label) do
@@ -323,174 +340,36 @@ defmodule Ainalrami.TiebreakReference.Proof do
   # Board-level team events, as tools/team_tiebreak_compare.exs builds them
   # ======================================================================
 
-  @doc false
-  def team_trf(seed) do
-    {text, _rounds} = board_level_text(seed)
-    primary = if rem(div(seed, 10), 3) == 2, do: :gp, else: :mp
-    team = text |> Trf.parse() |> Team.from_trf(primary: primary)
-    compare_team(team, @team, team_lists(seed), "seed #{seed} team-trf")
+  @doc """
+  A board-level team event from `Ainalrami.TeamTrfGenerator` (Swiss, team
+  round robin, Scheveningen or Schiller; 3-10 boards; 2/1/0 or 3/1/0;
+  reserves, individual and whole-match forfeits, `330` records), read by
+  the engine through `Team.from_trf/2` and by the reference through its
+  own `from_team_trf/2`: every value and rank compared, so the engine's
+  reading of the TRF is checked too. `selector` picks the format (0-9, see
+  the generator); by default it comes from the seed.
+  """
+  def team_trf(seed, selector \\ nil) do
+    selector = selector || rem(div(seed, 10), 10)
+    gen = Ainalrami.TeamTrfGenerator.generate(seed, selector: selector)
+    primary = if rem(div(seed, 100), 3) == 2, do: :gp, else: :mp
+    trf = Trf.parse(gen.text)
+
+    {codes, lists} =
+      if gen.predetermined?,
+        do:
+          {Enum.reject(@team, &buchholz?/1),
+           Enum.map(team_lists(seed), &Enum.reject(&1, fn c -> buchholz?(c) end))},
+        else: {@team, team_lists(seed)}
+
+    compare_team_trf(trf, codes, lists, "seed #{seed} team-trf #{gen.format}", primary: primary)
   end
+
+  defp buchholz?(code), do: code |> String.split(["/", ":"]) |> hd() |> Kernel.in(~w(BH FB AOB))
 
   defp team_lists(seed) do
     :rand.seed(:exsss, {seed, seed + 17, 3 * seed + 2})
     Enum.take_random(@team_lists, 5)
-  end
-
-  @doc false
-  def board_level_text(seed) do
-    :rand.seed(:exsss, {seed, seed * 7 + 1, seed * 13 + 5})
-    boards = 4
-    wins = %{"1" => 1.0, "=" => 0.5, "0" => 0.0, "+" => 1.0, "-" => 0.0}
-    teams = 4 + :rand.uniform(9)
-    rounds = Enum.min([teams - 1, 3 + :rand.uniform(4)])
-    roster_size = fn t -> if rem(t + seed, 3) == 0, do: boards + 1, else: boards end
-
-    {rosters, _} =
-      Enum.map_reduce(1..teams, 1, fn t, next ->
-        size = roster_size.(t)
-        {{t, Enum.to_list(next..(next + size - 1))}, next + size}
-      end)
-
-    rosters = Map.new(rosters)
-    players = rosters |> Map.values() |> List.flatten() |> Enum.sort()
-    rating = Map.new(players, &{&1, 2400 - &1 * 7 + :rand.uniform(60)})
-
-    play_round = fn r, state ->
-      order = Enum.sort_by(1..teams, &{-state.mp[&1], -state.gp[&1], &1})
-
-      {bye, order} =
-        if rem(teams, 2) == 1 do
-          b = order |> Enum.reverse() |> Enum.find(&(&1 not in state.byes))
-          {b, List.delete(order, b)}
-        else
-          {nil, order}
-        end
-
-      pairs = greedy_pairs(order, state.met, [])
-
-      lineup = fn t ->
-        roster = rosters[t]
-
-        if length(roster) > boards and :rand.uniform() < 0.5,
-          do: List.delete_at(roster, :rand.uniform(boards) - 1),
-          else: Enum.take(roster, boards)
-      end
-
-      result = fn a, b ->
-        x = :rand.uniform()
-        e = 1 / (1 + :math.pow(10, (rating[b] - rating[a]) / 400))
-
-        cond do
-          x < 0.02 -> {"+", "-"}
-          x < 0.04 -> {"-", "+"}
-          x < 0.36 -> {"=", "="}
-          x < 0.36 + 0.64 * e -> {"1", "0"}
-          true -> {"0", "1"}
-        end
-      end
-
-      state =
-        Enum.reduce(pairs, state, fn {a, b}, st ->
-          la = lineup.(a)
-          lb = lineup.(b)
-
-          {games, pa, pb} =
-            Enum.zip(la, lb)
-            |> Enum.with_index(1)
-            |> Enum.reduce({st.games, 0.0, 0.0}, fn {{x, y}, board}, {games, pa, pb} ->
-              {rx, ry} = result.(x, y)
-              white_first? = rem(board, 2) == 1
-
-              games =
-                games
-                |> put_in([x, r], {y, if(white_first?, do: "w", else: "b"), rx})
-                |> put_in([y, r], {x, if(white_first?, do: "b", else: "w"), ry})
-
-              {games, pa + wins[rx], pb + wins[ry]}
-            end)
-
-          {ma, mb} =
-            cond do
-              pa > pb -> {2.0, 0.0}
-              pa < pb -> {0.0, 2.0}
-              true -> {1.0, 1.0}
-            end
-
-          %{
-            st
-            | games: games,
-              mp: %{st.mp | a => st.mp[a] + ma, b => st.mp[b] + mb},
-              gp: %{st.gp | a => st.gp[a] + pa, b => st.gp[b] + pb},
-              met: st.met |> MapSet.put({a, b}) |> MapSet.put({b, a})
-          }
-        end)
-
-      case bye do
-        nil ->
-          state
-
-        t ->
-          games =
-            Enum.reduce(
-              Enum.take(rosters[t], boards),
-              state.games,
-              &put_in(&2, [&1, r], {nil, "-", "U"})
-            )
-
-          %{
-            state
-            | games: games,
-              mp: %{state.mp | t => state.mp[t] + 2.0},
-              gp: %{state.gp | t => state.gp[t] + boards * 1.0},
-              byes: [t | state.byes]
-          }
-      end
-    end
-
-    zero = Map.new(1..teams, &{&1, 0.0})
-
-    start = %{
-      mp: zero,
-      gp: zero,
-      met: MapSet.new(),
-      byes: [],
-      games: Map.new(players, &{&1, %{}})
-    }
-
-    final = Enum.reduce(1..rounds, start, play_round)
-
-    trf_players =
-      for rank <- players do
-        games =
-          for r <- 1..rounds do
-            case final.games[rank][r] do
-              nil -> %{opponent_rank: nil, colour: "-", result: ""}
-              {opp, colour, res} -> %{opponent_rank: opp, colour: colour, result: res}
-            end
-          end
-
-        points =
-          games
-          |> Enum.map(fn g -> if g.result == "U", do: 1.0, else: Map.get(wins, g.result, 0.0) end)
-          |> Enum.sum()
-
-        %{
-          rank: rank,
-          name: "Player #{rank}",
-          fide_rating: rating[rank],
-          points: points,
-          games: games
-        }
-      end
-
-    text =
-      Trf.serialize(%{
-        tournament: %{name: "team #{seed}", type: "swiss", number_of_rounds: rounds},
-        players: trf_players,
-        teams: Enum.map(1..teams, &%{name: "Team #{&1}", player_ranks: rosters[&1]})
-      })
-
-    {text, rounds}
   end
 
   # The top team meets the highest team it has not met; a rematch only when

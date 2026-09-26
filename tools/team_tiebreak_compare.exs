@@ -11,16 +11,21 @@
 #
 # Neither generator writes board-level team files: Ainalrami pairs teams as
 # units, and TieBreakServer's tournamentgenerator.py writes no 013 records.
-# So this one does, simply - a Swiss by match points (the pairing is not
-# under test; the tie-breaks computed from it are): 6-20 teams of 4 boards,
-# sometimes a reserve who plays instead of a regular, individual forfeits,
-# and a pairing-allocated bye for an odd field.
+# So `Ainalrami.TeamTrfGenerator` (test/support/team_trf_generator.ex) does:
+# by `rem(seed, 10)` a Swiss, a team round robin, a Scheveningen or a
+# Schiller-type event; 3-10 boards; match points 2/1/0 or 3/1/0 in a TRF26
+# `362` record; reserves; individual forfeits; whole matches forfeited
+# (and double-forfeited), sometimes with a `330` record; pairing-allocated
+# byes and free rounds. The pairing is not under test; the tie-breaks
+# computed from it are. Predetermined events are compared with `-p` and
+# without the Buchholz family (Article 8).
 #
 # Each file is read back through `Ainalrami.Trf.parse/1` and
-# `Ainalrami.Tiebreaks.Team.from_trf/2` - the path the checker takes - and
-# the values and final ranks are compared with TieBreakServer's. Match
-# points are 2/1/0 on both sides (the TRF26 `362` record is written for
-# TieBreakServer).
+# `Ainalrami.Tiebreaks.Team.from_trf/2` - the path the checker takes, match
+# points from the file's `362` - and the values and final ranks are
+# compared with TieBreakServer's. Known differences are classified by
+# cause: findings C-H (docs/finding-tiebreakserver-2026-09.md) and readings
+# T4, T6, T7 and T9 (docs/conformance-c07-tiebreaks.md).
 #
 # Env: TBS_DIR (default ../TieBreakServer), TBS_PYTHON.
 
@@ -51,160 +56,16 @@ python = System.get_env("TBS_PYTHON", "python")
 work = opts[:keep] || Path.join(System.tmp_dir!(), "ain_team_tb")
 File.mkdir_p!(work)
 
-boards = 4
-wins = %{"1" => 1.0, "=" => 0.5, "0" => 0.0, "+" => 1.0, "-" => 0.0}
-
 # ---- generation ---------------------------------------------------------
 
-generate = fn seed ->
-  :rand.seed(:exsss, {seed, seed * 7 + 1, seed * 13 + 5})
-  teams = 6 + :rand.uniform(15) - 1
-  rounds = Enum.min([teams - 1, 5 + :rand.uniform(5) - 1])
-  roster_size = fn t -> if rem(t + seed, 3) == 0, do: boards + 1, else: boards end
-
-  {rosters, _next} =
-    Enum.map_reduce(1..teams, 1, fn t, next ->
-      size = roster_size.(t)
-      {{t, Enum.to_list(next..(next + size - 1))}, next + size}
-    end)
-
-  rosters = Map.new(rosters)
-  players = rosters |> Map.values() |> List.flatten() |> Enum.sort()
-  rating = Map.new(players, &{&1, 2400 - &1 * 7 + :rand.uniform(60)})
-
-  # games[rank][round] = {opponent_rank | nil, colour, result}
-  play_round = fn r, state ->
-    %{mp: mp, gp: gp, met: met, byes: byes, games: games, cd: cd} = state
-
-    order = Enum.sort_by(1..teams, &{-mp[&1], -gp[&1], &1})
-
-    {bye, order} =
-      if rem(teams, 2) == 1 do
-        b = order |> Enum.reverse() |> Enum.find(&(&1 not in byes))
-        {b, List.delete(order, b)}
-      else
-        {nil, order}
-      end
-
-    # Greedy: the top team meets the highest team it has not met; a rematch
-    # only when nothing else is left.
-    pair = fn _pair, [], acc -> Enum.reverse(acc)
-      pair, [a | rest], acc ->
-        b = Enum.find(rest, &(not MapSet.member?(met, {a, &1}))) || hd(rest)
-        pair.(pair, List.delete(rest, b), [{a, b} | acc])
-    end
-
-    pairs = pair.(pair, order, [])
-
-    lineup = fn t ->
-      roster = rosters[t]
-
-      if length(roster) > boards and :rand.uniform() < 0.5 do
-        List.delete_at(roster, :rand.uniform(boards) - 1)
-      else
-        Enum.take(roster, boards)
-      end
-    end
-
-    result = fn a, b ->
-      x = :rand.uniform()
-      e = 1 / (1 + :math.pow(10, (rating[b] - rating[a]) / 400))
-
-      cond do
-        x < 0.015 -> {"+", "-"}
-        x < 0.03 -> {"-", "+"}
-        x < 0.03 + 0.3 -> {"=", "="}
-        x < 0.33 + 0.67 * e -> {"1", "0"}
-        true -> {"0", "1"}
-      end
-    end
-
-    # The team with fewer whites on board 1 so far gets white there, so no
-    # team's colour difference runs away (TieBreakServer's colour bookkeeping
-    # indexes a table that stops at +-4).
-    {games, mp, gp, cd} =
-      Enum.reduce(pairs, {games, mp, gp, cd}, fn {a, b}, {games, mp, gp, cd} ->
-        {a, b} = if cd[a] <= cd[b], do: {a, b}, else: {b, a}
-        cd = %{cd | a => cd[a] + 1, b => cd[b] - 1}
-        la = lineup.(a)
-        lb = lineup.(b)
-
-        {games, pa, pb} =
-          Enum.zip(la, lb)
-          |> Enum.with_index(1)
-          |> Enum.reduce({games, 0.0, 0.0}, fn {{x, y}, board}, {games, pa, pb} ->
-            {rx, ry} = result.(x, y)
-            white_first? = rem(board, 2) == 1
-
-            games =
-              games
-              |> put_in([x, r], {y, if(white_first?, do: "w", else: "b"), rx})
-              |> put_in([y, r], {x, if(white_first?, do: "b", else: "w"), ry})
-
-            {games, pa + wins[rx], pb + wins[ry]}
-          end)
-
-        {ma, mb} =
-          cond do
-            pa > pb -> {2.0, 0.0}
-            pa < pb -> {0.0, 2.0}
-            true -> {1.0, 1.0}
-          end
-
-        {games, %{mp | a => mp[a] + ma, b => mp[b] + mb}, %{gp | a => gp[a] + pa, b => gp[b] + pb}, cd}
-      end)
-
-    {games, mp, gp} =
-      case bye do
-        nil ->
-          {games, mp, gp}
-
-        t ->
-          games = Enum.reduce(Enum.take(rosters[t], boards), games, &put_in(&2, [&1, r], {nil, "-", "U"}))
-          {games, %{mp | t => mp[t] + 2.0}, %{gp | t => gp[t] + boards * 1.0}}
-      end
-
-    met = Enum.reduce(pairs, met, fn {a, b}, met -> met |> MapSet.put({a, b}) |> MapSet.put({b, a}) end)
-    %{state | mp: mp, gp: gp, cd: cd, met: met, games: games, byes: if(bye, do: [bye | byes], else: byes)}
-  end
-
-  zero = Map.new(1..teams, &{&1, 0.0})
-  start = %{mp: zero, gp: zero, cd: Map.new(1..teams, &{&1, 0}), met: MapSet.new(), byes: [], games: Map.new(players, &{&1, %{}})}
-  final = Enum.reduce(1..rounds, start, play_round)
-
-  trf_players =
-    for rank <- players do
-      games =
-        for r <- 1..rounds do
-          case final.games[rank][r] do
-            nil -> %{opponent_rank: nil, colour: "-", result: ""}
-            {opp, colour, res} -> %{opponent_rank: opp, colour: colour, result: res}
-          end
-        end
-
-      points =
-        games
-        |> Enum.map(fn g -> if g.result == "U", do: 1.0, else: Map.get(wins, g.result, 0.0) end)
-        |> Enum.sum()
-
-      %{rank: rank, name: "Player #{rank}", fide_rating: rating[rank], points: points, games: games}
-    end
-
-  text =
-    Trf.serialize(%{
-      tournament: %{name: "Ainalrami team tie-breaks seed=#{seed}", type: "swiss", number_of_rounds: rounds},
-      players: trf_players,
-      teams: Enum.map(1..teams, &%{name: "Team #{&1}", player_ranks: rosters[&1]})
-    }) <> "362  W 2.0    D 1.0    L 0.0    P 2.0\r\n"
-
-  {text, rounds}
-end
+Code.require_file("../test/support/team_trf_generator.ex", __DIR__)
 
 # ---- TieBreakServer ----------------------------------------------------
 
-tbs = fn file, codes, rounds ->
+tbs = fn file, codes, rounds, predetermined? ->
   args =
-    [Path.join(tbs_dir, "tiebreakchecker.py"), "-i", file, "-o", "-", "-s", "-n", "#{rounds}", "-d", "T", "-t"] ++
+    [Path.join(tbs_dir, "tiebreakchecker.py"), "-i", file, "-o", "-", if(predetermined?, do: "-p", else: "-s"),
+     "-n", "#{rounds}", "-d", "T", "-t"] ++
       Enum.map(codes, &(&1 <> "/V2026"))
 
   case System.cmd(python, args, stderr_to_stdout: true, env: [{"PYTHONIOENCODING", "utf-8"}]) do
@@ -231,7 +92,9 @@ close? = fn
     case Float.parse(t) do
       {v, _} ->
         decimals = case String.split(t, "."), do: ([_, d] -> String.length(d); _ -> 0)
-        abs(Float.round(mine * 1.0, decimals) - v) < 1.0e-9
+        # TieBreakServer rounds its exact decimal half up; ours is a float
+        # (15.825 is 15.8249999...), so nudge it before rounding.
+        abs(Float.round(mine * 1.0 + 1.0e-9, decimals) - v) < 1.0e-9
 
       :error -> false
     end
@@ -245,32 +108,108 @@ fixed_value_codes = Enum.reject(codes, &(&1 in group_codes))
 fixed_rank_codes = rank_codes
 
 totals =
-  Enum.reduce(first..(first + count - 1), %{files: 0, values: 0, bad: 0, rank_bad: 0, known: 0, errors: 0}, fn seed, acc ->
-    {text, rounds} = generate.(seed)
+  Enum.reduce(first..(first + count - 1), %{files: 0, values: 0, bad: 0, rank_bad: 0, known: 0, errors: 0, sssc_zero: 0, formats: %{}, forfeited: 0, finding_h: 0}, fn seed, acc ->
+    %{text: text, rounds: rounds, boards: boards, predetermined?: rr?} =
+      generated = Ainalrami.TeamTrfGenerator.generate(seed)
+
+    # Article 8: no Buchholz family when the pairings were fixed in advance.
+    buchholz? = fn code -> code |> String.split(["/", ":"]) |> hd() |> Kernel.in(~w(BH FB AOB)) end
+    allowed = fn list -> if rr?, do: Enum.reject(list, buchholz?), else: list end
 
     {value_codes, rank_codes} =
       case opts[:random_lists] do
         nil ->
-          {fixed_value_codes, fixed_rank_codes}
+          {allowed.(fixed_value_codes), allowed.(fixed_rank_codes)}
 
         list_seed ->
-          list = TiebreakRandomList.draw(:team, list_seed, seed)
+          list = TiebreakRandomList.draw(if(rr?, do: :team_rr, else: :team), list_seed, seed)
           {Enum.reject(list, &(hd(String.split(&1, "/")) in group_codes)), list}
       end
+
+    # Finding F: when the highest achievable primary score is less than the
+    # most secondary points one match can give (match points primary, more
+    # boards than twice the rounds at 2/1/0), 13.4.2's normalising factor
+    # rounds to zero and TieBreakServer stops with a division by zero. We
+    # use 1 (reference question Q1). SSSC is left out of such an event's
+    # lists and counted as known.
+    gp_primary? = match?(["GPTS" | _], rank_codes)
+    sssc_zero? =
+      not gp_primary? and trunc(rounds * generated.match_points.win / boards) == 0 and
+        Enum.any?(rank_codes ++ value_codes, &String.starts_with?(&1, "SSSC"))
+
+    {value_codes, rank_codes} =
+      if sssc_zero?,
+        do: {Enum.reject(value_codes, &String.starts_with?(&1, "SSSC")), Enum.reject(rank_codes, &String.starts_with?(&1, "SSSC"))},
+        else: {value_codes, rank_codes}
+
+    rank_codes = if rank_codes == [], do: ["MPTS"], else: rank_codes
+    acc = %{acc | formats: Map.update(acc.formats, generated.format, 1, &(&1 + 1)), forfeited: acc.forfeited + length(generated.forfeited_matches)}
+    acc = if sssc_zero?, do: %{acc | known: acc.known + 1, sssc_zero: acc.sssc_zero + 1}, else: acc
 
     file = Path.join(work, "team#{seed}.trf")
     File.write!(file, text)
 
     trf = text |> Trf.parse() |> then(fn {:ok, trf} -> trf; trf -> trf end)
-    event = Team.from_trf(trf, match_points: %{win: 2.0, draw: 1.0, loss: 0.0})
+    # Match points from the file's 362 record, which is what is under test.
+    event = Team.from_trf(trf)
+
+    if event.match_points != generated.match_points or event.predetermined? != rr?,
+      do: raise("seed #{seed}: from_trf read #{inspect(event.match_points)}, predetermined #{event.predetermined?}")
+    # Reading T9: where boards meet crosswise (Scheveningen, Schiller), a
+    # team's board k is its k-th fielded player (ours); TieBreakServer
+    # numbers every game of a match by the lower-numbered team's order, for
+    # both teams. `board_event` is the event with TieBreakServer's
+    # numbering, for replaying its board codes (BC, TBR, BBE, EDE's steps).
+    crosswise? = generated.format in [:scheveningen, :schiller]
+    game_pts = %{"1" => 1.0, "=" => 0.5, "+" => 1.0, "W" => 1.0, "D" => 0.5}
+    by_rank = Map.new(trf.players, &{&1.rank, &1})
+    team_of = for {t, i} <- Enum.with_index(trf.teams, 1), p <- t.player_ranks, into: %{}, do: {p, i}
+
+    board_event =
+      if crosswise? do
+        teams =
+          Map.new(event.teams, fn {id, entry} ->
+            rounds =
+              Map.new(entry.rounds, fn {r, m} ->
+                if m.opponent != nil and m.boards != %{} do
+                  low = min(id, m.opponent)
+
+                  games =
+                    for p <- Enum.at(trf.teams, low - 1).player_ranks,
+                        g = Enum.at(by_rank[p].games, r - 1),
+                        g && g.opponent_rank && team_of[g.opponent_rank] != low,
+                        do: {p, g}
+
+                  boards =
+                    games
+                    |> Enum.with_index(1)
+                    |> Map.new(fn {{p, g}, k} ->
+                      mine = if id == low, do: p, else: g.opponent_rank
+                      {k, Map.get(game_pts, Enum.at(by_rank[mine].games, r - 1).result, 0.0)}
+                    end)
+
+                  {r, %{m | boards: boards}}
+                else
+                  {r, m}
+                end
+              end)
+
+            {id, %{entry | rounds: rounds}}
+          end)
+
+        %{event | teams: teams}
+      else
+        event
+      end
+
     # The list's first score is the primary (reading T5), for the steps
     # replayed through Team.order_group/3.
-    listed = case rank_codes, do: (["GPTS" | _] -> %{event | primary: :gp}; _ -> event)
+    listed = case rank_codes, do: (["GPTS" | _] -> %{board_event | primary: :gp}; _ -> board_event)
 
     with {:ok, ours} <- Ainalrami.Tiebreaks.compute(event, value_codes),
-         {:ok, theirs} <- tbs.(file, value_codes, rounds),
+         {:ok, theirs} <- tbs.(file, value_codes, rounds, rr?),
          {:ok, ranked} <- Ainalrami.Tiebreaks.rank(event, rank_codes),
-         {:ok, their_ranks} <- tbs.(file, rank_codes, rounds) do
+         {:ok, their_ranks} <- tbs.(file, rank_codes, rounds, rr?) do
       # Reading T6 (docs/conformance-c07-tiebreaks.md): on game points,
       # TieBreakServer counts WIN and WON per board game, where we count the
       # team's rounds. A value its rule gives exactly is that reading.
@@ -301,6 +240,37 @@ totals =
           abs(tbs_board_count.(String.slice(name, 0, 3), id) - elem(Float.parse(t), 0)) < 1.0e-9
       end
 
+      # Finding G: in a predetermined event whose round count is a multiple
+      # of the field, TieBreakServer's Koya takes one round per cycle as a
+      # free round (its test for an odd round robin), though in a
+      # Scheveningen or Schiller event every team plays every round. A
+      # value its rule gives exactly is that finding.
+      team_count = map_size(event.teams)
+
+      tbs_koya = fn code, id ->
+        [name | _] = String.split(code, "/")
+        score = case name, do: ("KS:MP" -> :mp; "KS:GP" -> :gp; _ -> listed.primary)
+        view = Team.view(listed, score)
+        totals = Map.new(view.participants, fn {pid, p} -> {pid, Enum.sum(for {_, rd} <- p.rounds, do: rd.points)} end)
+        maxgames = if rr? and rem(rounds, team_count) == 0, do: rounds - div(rounds, team_count), else: rounds
+        lim = 0.5 * view.points.win * maxgames
+
+        Enum.sum(for {_r, rd} <- view.participants[id].rounds, rd.opponent != nil, totals[rd.opponent] >= lim - 1.0e-9, do: rd.points)
+      end
+
+      g? = fn code, id, t ->
+        String.starts_with?(code, "KS") and not String.contains?(code, "/") and rr? and
+          rem(rounds, team_count) == 0 and close?.(tbs_koya.(code, id), t)
+      end
+
+      value_reason = fn code, id, t ->
+        cond do
+          t6?.(code, id, t) -> "reading T6"
+          g?.(code, id, t) -> "finding G"
+          true -> nil
+        end
+      end
+
       {value_known, bad} =
         for {code, i} <- Enum.with_index(value_codes),
             {id, {_rank, values}} <- theirs,
@@ -308,7 +278,9 @@ totals =
             not close?.(mine, Enum.at(values, i)) do
           {code, id, mine, Enum.at(values, i)}
         end
-        |> Enum.split_with(fn {code, id, _, t} -> t6?.(code, id, t) end)
+        |> Enum.split_with(fn {code, id, _, t} -> value_reason.(code, id, t) != nil end)
+
+      value_why = value_known |> Enum.map(fn {code, id, _, t} -> value_reason.(code, id, t) end) |> Enum.uniq()
 
       rank_bad = for row <- ranked, elem(their_ranks[row.id], 0) != row.rank, do: {row.id, row.rank, elem(their_ranks[row.id], 0)}
 
@@ -330,7 +302,7 @@ totals =
       # own matches count and two teams that never met stay tied (T4); and
       # Board Count ranks the HIGHER sum first (D).
       mutual = fn a, b ->
-        for {_r, m} <- event.teams[a].rounds, m.opponent == b, {board, gp} <- m.boards, reduce: %{} do
+        for {_r, m} <- board_event.teams[a].rounds, m.opponent == b, m.kind == :played, {board, gp} <- m.boards, reduce: %{} do
           acc -> Map.update(acc, board, gp, &(&1 + gp))
         end
       end
@@ -442,7 +414,7 @@ totals =
 
                 cond do
                   close?.(mine, t) -> {true, nil}
-                  t6?.(code, id, t) -> {true, "reading T6"}
+                  reason = value_reason.(code, id, t) -> {true, reason}
                   true -> {false, nil}
                 end
               end
@@ -452,7 +424,7 @@ totals =
             # won by forfeit a win on every board).
             bc_sum = fn id ->
               Enum.sum(
-                for {_r, m} <- event.teams[id].rounds,
+                for {_r, m} <- board_event.teams[id].rounds,
                     boards = if(m.kind in [:pab, :forfeit_win] and m.boards == %{}, do: Map.new(1..event.boards, &{&1, 1.0}), else: m.boards),
                     {board, gp} <- boards,
                     do: board * gp
@@ -467,10 +439,19 @@ totals =
             checks = checks ++ bc_checks
             e? = "BC" in rank_codes and replay.(:tbs) != replay.(:ours)
             ko? = Enum.any?(rank_codes, &(&1 in ~w(EDEBT EDEBB EDET EDEB))) and replay.(:tbs) != replay.(:ours)
+
+            # Reading T9: our own ranking with TieBreakServer's board
+            # numbering differs from our ranking.
+            t9? =
+              crosswise? and
+                match?({:ok, _}, Ainalrami.Tiebreaks.rank(board_event, rank_codes)) and
+                elem(Ainalrami.Tiebreaks.rank(board_event, rank_codes), 1) != ranked
+
             reasons =
               Enum.uniq(
                 for({_, r} <- checks, r, do: r) ++
-                  if(e?, do: ["finding E"], else: []) ++ if(ko?, do: ["finding D, readings T4/T7"], else: [])
+                  if(e?, do: ["finding E"], else: []) ++ if(ko?, do: ["finding D, readings T4/T7"], else: []) ++
+                  if(t9?, do: ["reading T9"], else: [])
               )
 
             if Enum.all?(checks, &elem(&1, 0)) and reasons != [],
@@ -485,10 +466,31 @@ totals =
             {[], rank_bad, []}
         end
 
+      # Finding H: TieBreakServer takes the number of boards from games
+      # PLAYED over the board, so when every team-round had an individual
+      # forfeit it counts one board too few and drops each match's last
+      # board. Everything in such an event is set aside as that finding.
+      tbs_boards =
+        Enum.max(
+          for t <- trf.teams, r <- 0..(rounds - 1) do
+            Enum.count(t.player_ranks, fn p ->
+              g = Enum.at(by_rank[p].games, r)
+              g && g.opponent_rank && g.result in ~w(1 = 0 W D L)
+            end)
+          end
+        )
+
+      h? = tbs_boards < boards and (bad != [] or rank_bad != [])
+
+      {bad, rank_bad, known, value_known, why, value_why} =
+        if h?,
+          do: {[], [], known ++ rank_bad, value_known ++ bad, Enum.uniq(why ++ ["finding H"]), Enum.uniq(value_why ++ ["finding H"])},
+          else: {bad, rank_bad, known, value_known, why, value_why}
+
       if bad != [] or rank_bad != [] or known != [] or value_known != [] do
         IO.puts("== seed #{seed}: #{length(bad)} values, #{length(rank_bad)} ranks differ, list #{Enum.join(rank_codes, " ")}")
         bad |> Enum.group_by(&elem(&1, 0)) |> Enum.each(fn {code, list} -> IO.puts("   #{code}: #{inspect(Enum.take(list, 4))}") end)
-        if value_known != [], do: IO.puts("   #{length(value_known)} values known (reading T6)")
+        if value_known != [], do: IO.puts("   #{length(value_known)} values known (#{Enum.join(value_why, ", ")})")
         if known != [], do: IO.puts("   #{length(known)} ranks known (#{Enum.join(why, ", ")})")
         if rank_bad != [], do: IO.puts("   ranks (team, ours, theirs): #{inspect(Enum.take(rank_bad, 6))}")
       end
@@ -501,7 +503,7 @@ totals =
 
       %{acc | files: acc.files + 1, values: acc.values + map_size(theirs) * length(value_codes),
               bad: acc.bad + length(bad), rank_bad: acc.rank_bad + length(rank_bad),
-              known: acc.known + length(known) + length(value_known)}
+              known: acc.known + length(known) + length(value_known), finding_h: acc.finding_h + if(h?, do: 1, else: 0)}
     else
       {:error, reason} ->
         IO.puts("== seed #{seed}: error #{inspect(reason)}")
@@ -511,5 +513,6 @@ totals =
 
 IO.puts("\nfiles #{totals.files}, values compared #{totals.values}, value mismatches #{totals.bad}, " <>
   "rank mismatches #{totals.rank_bad}, known #{totals.known}, errors #{totals.errors}")
+IO.puts("formats #{inspect(totals.formats)}, forfeited matches #{totals.forfeited}, SSSC left out (finding F) #{totals.sssc_zero}, events set aside (finding H) #{totals.finding_h}")
 
 if totals.bad + totals.rank_bad + totals.errors > 0, do: System.halt(1)

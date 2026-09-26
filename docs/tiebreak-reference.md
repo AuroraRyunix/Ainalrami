@@ -33,9 +33,13 @@ implementation written from the text, compared value for value.
   `Ainalrami.Tiebreaks.Event.from_trf/2`: the classification of every round
   (game, forfeit, which bye) and its points are the reference's own, so a
   mistake in the engine's TRF reading would show too.
-- Team events are read from the fields of the `%Ainalrami.Tiebreaks.Team{}`
-  the engine is given (its teams, matches, match and game points, boards).
-  `Team.from_trf/2`'s reading of board-level TRFs is therefore NOT checked.
+- Board-level team TRFs (`013` records) are read by the reference's own
+  `from_team_trf/2` from `Ainalrami.Trf.parse/1`'s map - teams, the
+  opposing team, boards in roster order, byes, forfeited matches, `362`/`330`
+  records, the `192` format - and compared with what the engine computes
+  from `Team.from_trf/2`, so the engine's TRF reading is checked too (since
+  2026-09-26). Team events built match by match are read from the fields of
+  the `%Ainalrami.Tiebreaks.Team{}` the engine is given.
 - Clarity over speed: every score is recomputed where it is used, a
   participant's rounds are rescanned for every category, PTP is a linear
   search from 800 below the lowest opponent, and Article 6.3's "whatever the
@@ -74,9 +78,10 @@ pairing-allocated bye "the game points ... assigned to a standard win" on
 every board. A whole match won by forfeit, with no boards recorded, is
 given the same (a win on every board); a full-point bye, half-point bye or
 zero-point bye gives no board points. The text names only the
-pairing-allocated bye; `Team.from_trf/2` never produces a forfeited match
-(forfeits in a TRF are per board), so this matters only for events built
-directly.
+pairing-allocated bye. Since 2026-09-26 `Team.from_trf/2` produces
+forfeited matches (reading T8 in `docs/conformance-c07-tiebreaks.md`):
+one forfeited board by board keeps its boards (1 each for the winner), and
+one from a `330` record with no board records gets this reading.
 
 **Q4 - 6.3's outcomes are win, draw or loss.** "Whatever the outcome of the
 missing games" is enumerated over the three standard results. An unplayed
@@ -95,7 +100,7 @@ after the list share a rank).
 |---|---|---|
 | Swiss, `Ainalrami.Generator` | PTS WIN WON BPG BWG PS (C1, C2) REP STD TPN, BH and FB (C1, C2, M1, M2), AOB (and /F), SB (C1, C2), KS (L1, L-1, L2, L-2), ARO (C1, C2, M1, M2), TPR PTP APRO APPO RTNG (and /R), and `/U1400` versions when a player is unrated | `BH/C1 BH SB DE`, `DE BH/C1 SB`, `DE/P WIN STD`, one random list with DE or DE/P |
 | round robins | the same without the Buchholz family (Article 8), plus the `/U1400` codes | `DE SB KS`, `DE/P SB WIN`, `SB DE KS/L1`, one random |
-| team events, board-level TRF | MPTS GPTS MPVGP, BH FB AOB SB PS KS WIN WON STD on MP and GP with cuts, limits and /F, EMMSB EMGSB EGMSB EGGSB (and /C1), REP TPN SSSC (and /F) | five of: `MPTS GPTS EDE BH:MP EMGSB`, `MPTS EDEBT`, `MPTS GPTS EDEBB`, `MPTS EDET`, `GPTS EDEB`, `MPTS BC TBR BBE`, `MPTS TBR`, `MPTS BBE BC`, `MPTS DE:GP SSSC`, `MPTS EDE/P TPN`, `EDE MPVGP`, `PTS DE SB:MP/C1 EDEBT` |
+| team events, board-level TRF (engine: `Team.from_trf/2`; reference: its own `from_team_trf/2`); predetermined formats without the Buchholz family | MPTS GPTS MPVGP, BH FB AOB SB PS KS WIN WON STD on MP and GP with cuts, limits and /F, EMMSB EMGSB EGMSB EGGSB (and /C1), REP TPN SSSC (and /F) | five of: `MPTS GPTS EDE BH:MP EMGSB`, `MPTS EDEBT`, `MPTS GPTS EDEBB`, `MPTS EDET`, `GPTS EDEB`, `MPTS BC TBR BBE`, `MPTS TBR`, `MPTS BBE BC`, `MPTS DE:GP SSSC`, `MPTS EDE/P TPN`, `EDE MPVGP`, `PTS DE SB:MP/C1 EDEBT` |
 | team events, match by match | as above | as above |
 
 The events, by `rem(seed, 10)`:
@@ -114,11 +119,21 @@ The events, by `rem(seed, 10)`:
   free round, 4% forfeits and 3% double forfeits, and in three events of
   ten a withdrawal whose remaining games are forfeited; one in five cut off
   part-way.
-- **7, board-level team events:** the generator of
-  `tools/team_tiebreak_compare.exs` (4 boards, reserves who move the boards
-  below up, individual forfeits, a pairing-allocated bye in an odd field,
-  greedy pairing with rematches only when forced), read through
-  `Team.from_trf/2`; primary score GP in a third of them.
+- **7, board-level team events:** `Ainalrami.TeamTrfGenerator`
+  (`test/support/team_trf_generator.ex`, also behind
+  `tools/team_tiebreak_compare.exs`), the format from the seed's tens digit:
+  Swiss (six in ten; greedy pairing, rematches only when forced, a
+  pairing-allocated bye in an odd field), team round robin, single or
+  double, with a free round in an odd field (two in ten), Scheveningen (two
+  teams, every player against every player of the other, once or twice) and
+  a Schiller-type event (3-4 teams, each pair meeting once per board,
+  crosswise); 3-10 boards; 2/1/0 or 3/1/0 in a `362` record; reserves who
+  move the boards below up; individual forfeits; whole matches forfeited and
+  double-forfeited, half the time with `330` records. Read by the engine
+  through `Team.from_trf/2` and by the reference through `from_team_trf/2`;
+  primary score GP in a third of them.
+- **Team scale mode** (`TIEBREAK_REF_KIND=team_trf`): every seed is a
+  board-level team event, the format from `rem(seed, 10)`.
 - **8-9, team events built match by match:** 3-10 teams, 2-7 rounds, 2-6
   boards, 2/1/0 or 3/1/0 match points, MP or GP primary; teams absent on a
   half- or zero-point bye, pairing-allocated and full-point byes, whole
@@ -144,6 +159,7 @@ and that they agree on every other code:
 | two teams level on MP and GP that never met | finding D and reading T4: EDEBT, EDEBB and BC rank the lower Board Count first, over the whole tournament |
 | two teams level after a 2-2 match | 13.3.2: EDET and EDEB separate them by the boards, plain EDE does not |
 | the first five match-by-match team events with both a rematch and a forfeited match | 6.1.2 and Article 16 in team events |
+| a board-level TRF with a match forfeited on both boards, a double forfeit, `362` at 3/1/0, and `330` records for matches with no board records (`tiebreaks_team_test.exs`) | reading T8: forfeited matches read from the file, by both `Team.from_trf/2` and `from_team_trf/2` |
 
 ## Results
 
@@ -152,6 +168,8 @@ and that they agree on every other code:
 | default (`mix test`) | 1..300 | 300 | ~165,000 | 0 |
 | scale | 1..5000 | 5,000 | 2,754,192 | 0 |
 | scale | 100001..110000 | 10,000 | 5,516,127 | 0 |
+| scale, after the team-TRF extension (2026-09-26) | 1..5000 | 5,000 | 2,760,888 | 0 |
+| team scale (`TIEBREAK_REF_KIND=team_trf`): 6,000 Swiss, 2,000 round robins, 1,000 Scheveningen, 1,000 Schiller | 1..10000 | 10,000 | 3,975,739 | 0 |
 
 "Values" counts every per-participant value and every per-participant final
 rank. No engine bug was found, and no reference bug survived to the scale
@@ -179,14 +197,26 @@ once, with DE deciding a group, can show it, and a double round robin
 cannot (every pair met twice, so summing scales every total alike). Seeds
 122 and 228 are in the default run.
 
+For the TRF reading (2026-09-26), three mutations were made one at a time
+in the ENGINE's `Team.from_trf/2` and the team scale mode run on seeds
+1..1000; each was caught:
+
+| mutation of `Team.from_trf/2` | disagreements | first seeds caught |
+|---|---|---|
+| a match forfeited on every board read as played (the behaviour before reading T8) | 6,514 | seed 2 (MPTS, BH:MP) |
+| the `362` record ignored (2/1/0 always) | 9,462 | seed 1 (MPTS, BH:MP) |
+| boards in reverse roster order | 956 | seeds 1, 2 (ranks under `MPTS BC TBR BBE`) |
+
 ## Limits
 
 Not covered by the reference:
 
-- `Team.from_trf/2`'s reading of board-level TRFs (teams, boards, reserves);
-  the reference starts from the team data the engine is given.
-- Team events with pairings fixed in advance, and the rating tie-breaks for
-  teams.
+- The rating tie-breaks for teams: C.07 defines none, and the engine has no
+  team rating - a team's ARO, TPR or RTNG is dropped as unrated, or computed
+  from the `U` floor when one is given. Not compared.
+- A `330` record for a match that has board records (the boards decide,
+  in both implementations), `300` out-of-order records, and `310` team
+  records (neither reads them).
 - `?` results with a declared `X` value, and TRF26 `299` values that make a
   forfeit win or a bye worth something other than a win or a draw.
 - `cap_rounds: :announced` (16.6's alternative for 16.4.2, used by
@@ -200,6 +230,7 @@ Not covered by the reference:
 
     mix test test/ainalrami/tiebreak_reference_test.exs          # default, 300 events
     TIEBREAK_REF_SEEDS="1..5000" mix test test/ainalrami/tiebreak_reference_test.exs --only tiebreak_reference_scale
+    TIEBREAK_REF_KIND=team_trf TIEBREAK_REF_SEEDS="1..10000" mix test test/ainalrami/tiebreak_reference_test.exs --only tiebreak_reference_scale
 
 The scale mode prints `TBREF seeds=N events=N values=N disagreements=N`; a
 failure lists the first twenty differences, each starting with its seed.

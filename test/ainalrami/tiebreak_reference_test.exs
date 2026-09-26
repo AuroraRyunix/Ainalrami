@@ -12,7 +12,9 @@ defmodule Ainalrami.TiebreakReferenceTest do
 
       TIEBREAK_REF_SEEDS="1..5000" mix test test/ainalrami/tiebreak_reference_test.exs --only tiebreak_reference_scale
 
-  prints `TBREF seeds=N events=N values=N disagreements=N`. A failure
+  prints `TBREF seeds=N events=N values=N disagreements=N`. With
+  `TIEBREAK_REF_KIND=team_trf` every seed is a board-level team event (the
+  format by `rem(seed, 10)`, see `Ainalrami.TeamTrfGenerator`). A failure
   message starts with the seed (`seed N ...`).
   """
   use ExUnit.Case, async: true
@@ -26,8 +28,8 @@ defmodule Ainalrami.TiebreakReferenceTest do
   @swiss_codes ~w(PTS WIN WON BPG BWG PS PS/C1 REP STD TPN BH BH/C1 BH/C2 BH/M1 FB FB/C1
                   AOB AOB/F SB SB/C1 SB/C2 KS KS/L1 KS/L-1 ARO ARO/C1 TPR PTP APRO APPO RTNG)
 
-  defp run(seeds) do
-    Enum.reduce(seeds, Proof.zero(), fn seed, acc -> Proof.add(acc, Proof.run(seed)) end)
+  defp run(seeds, kind \\ :all) do
+    Enum.reduce(seeds, Proof.zero(), fn seed, acc -> Proof.add(acc, Proof.run(seed, kind)) end)
   end
 
   defp seeds_from_env(default) do
@@ -57,7 +59,8 @@ defmodule Ainalrami.TiebreakReferenceTest do
     @tag timeout: :infinity
     test "scale mode" do
       seeds = seeds_from_env(1..5000)
-      result = run(seeds)
+      kind = if System.get_env("TIEBREAK_REF_KIND") == "team_trf", do: :team_trf, else: :all
+      result = run(seeds, kind)
 
       IO.puts(
         "TBREF seeds=#{Enum.count(seeds)} events=#{result.events} values=#{result.values} " <>

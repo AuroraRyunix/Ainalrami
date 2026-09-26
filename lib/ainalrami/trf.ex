@@ -1916,9 +1916,11 @@ defmodule Ainalrami.Trf do
   `tournament[:point_system]`, `250` and `260` as above, `240` into the
   players' games (and all of them into `tournament[:byes]`), and the
   `192`/`202`/`212`/`222` headers into `tournament[:type_code]`,
-  `[:tie_breaks]`, `[:standings_order]` and `[:time_control_code]`. Team
-  records (`300` onwards, `310`, `801`, `802`) and national-rating records
-  are not read.
+  `[:tie_breaks]`, `[:standings_order]` and `[:time_control_code]`. Of the
+  team records, `362` (match points) lands in
+  `tournament[:match_point_system]` and `330` (forfeited matches) in
+  `tournament[:forfeited_matches]`; the others (`300`, `310`, `320`, `801`,
+  `802`) and national-rating records are not read.
   """
   def parse(text) do
     lines =
@@ -1984,6 +1986,8 @@ defmodule Ainalrami.Trf do
           "250" -> parse_250(acc, line)
           "260" -> parse_260(acc, line)
           "162" -> parse_point_system(acc, line)
+          "362" -> parse_362(acc, line)
+          "330" -> parse_330(acc, line)
           "240" -> parse_240(acc, line)
           "299" -> parse_299(acc, line)
           code when code in @bb_codes -> parse_bb_points(acc, code, line)
@@ -2089,6 +2093,67 @@ defmodule Ainalrami.Trf do
             message: "162 line has unknown result symbol #{inspect(other)}: #{line}"
       end
     end)
+  end
+
+  # TRF26 `362`: the team match-point system, in `162`'s columns (`W`, `D`,
+  # `L`, `P` for the pairing-allocated bye, `A`/`Z` for a match lost by
+  # forfeit). Stored in `tournament[:match_point_system]`, only the symbols
+  # the line gives; `Ainalrami.Tiebreaks.Team.from_trf/2` reads it.
+  defp parse_362(acc, line) do
+    fields = %{
+      "W" => :win,
+      "D" => :draw,
+      "L" => :loss,
+      "P" => :pairing_allocated_bye,
+      "A" => :forfeit_loss,
+      "Z" => :forfeit_loss
+    }
+
+    system =
+      line
+      |> String.slice(5..-1//1)
+      |> to_string()
+      |> chunk_point_entries()
+      |> Enum.reduce(acc.tournament[:match_point_system] || %{}, fn {char, text}, system ->
+        case Map.fetch(fields, String.upcase(char)) do
+          {:ok, field} ->
+            Map.put(system, field, read_points!(text, line))
+
+          :error ->
+            raise ValidationError,
+              message: "362 line has unknown result symbol #{inspect(char)}: #{line}"
+        end
+      end)
+
+    put_in(acc.tournament[:match_point_system], system)
+  end
+
+  # TRF26 `330`: a forfeited team match, `330 TT RRR WWW BBB` - the result
+  # (`+-`, `-+`, `--`, or TieBreakServer's spellings `10 WL WZ`, `01 LW ZW`,
+  # `00 LL ZZ`), the round, and the two teams by the order of their team
+  # records. Collected in `tournament[:forfeited_matches]` as
+  # `%{round:, white:, black:, winner: :white | :black | :none}`.
+  defp parse_330(acc, line) do
+    padded = String.pad_trailing(line, 18)
+    type = padded |> String.slice(4, 2) |> String.upcase()
+
+    winner =
+      cond do
+        type in ~w(+- 10 WL WZ) -> :white
+        type in ~w(-+ 01 LW ZW) -> :black
+        type in ~w(-- 00 LL ZZ) -> :none
+        true -> raise ValidationError, message: "330 line has an unknown result: #{line}"
+      end
+
+    number = fn from, len ->
+      case padded |> String.slice(from, len) |> String.trim() |> Integer.parse() do
+        {n, ""} when n > 0 -> n
+        _ -> raise ValidationError, message: "330 line is unreadable: #{line}"
+      end
+    end
+
+    entry = %{round: number.(7, 3), white: number.(11, 3), black: number.(15, 3), winner: winner}
+    update_in(acc.tournament[:forfeited_matches], &((&1 || []) ++ [entry]))
   end
 
   defp chunk_point_entries(rest) do
