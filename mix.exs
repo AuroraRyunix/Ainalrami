@@ -1,7 +1,7 @@
 defmodule Ainalrami.MixProject do
   use Mix.Project
 
-  @version "0.30.0"
+  @version "0.31.0"
   @source_url "https://github.com/AuroraRyunix/Ainalrami"
 
   def project do

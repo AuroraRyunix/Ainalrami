@@ -63,6 +63,8 @@ with the reference on every one of them.
 
 ## [Unreleased]
 
+## [0.31.0] - 2026-09-26
+
 - [Verified] **Tie-breaks against an independent reference.**
   `Ainalrami.TiebreakReference` (`test/support/tiebreak_reference/`) is a
   naive second implementation of C.07, written from the regulation text and
