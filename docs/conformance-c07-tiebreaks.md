@@ -11,7 +11,9 @@ FIDE's checklist for tournament programs (VCL4THP v13) asks for a free
 checker that reports, from a TRF26 file, both the pairings that break the
 rules and **the standings positions that do not follow the tie-breaks**
 (Q21), and a generator whose tournaments are ranked by the tie-break list
-they carry (Q31). Ainalrami's `-c` and `-g` are that checker and generator,
+they carry (Q31). Ainalrami's `-c` and `-g` are that checker and generator
+(for team events `-c` checks the team ranks of TRF26's `310` records, ranked
+with `Ainalrami.Tiebreaks.Team` on the file's `362` match points),
 so the tie-breaks have to be here. OpenPairings then calls this code for its
 standings instead of keeping its own, so the code FIDE checks is the code
 arbiters run.

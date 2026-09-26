@@ -106,9 +106,10 @@ defmodule Ainalrami.Tiebreaks.Team do
   end
 
   @doc """
-  A team event from a parsed TRF with `013` team records
-  (`Ainalrami.Trf.parse/1`). Teams are numbered in the order of their `013`
-  lines, as FIDE's TieBreakServer numbers them.
+  A team event from a parsed TRF with `013` or TRF26 `310` team records
+  (`Ainalrami.Trf.parse/1`). A `310` team keeps its own number; `013`
+  teams are numbered in the order of their lines, as FIDE's
+  TieBreakServer numbers them.
 
   A team's round is read from its players' games: the opposing team is
   the team of the players they met, and the boards are those players in
@@ -117,8 +118,9 @@ defmodule Ainalrami.Tiebreaks.Team do
   met an opponent is a pairing-allocated bye when they were given one
   (`U`, or `+` with no opponent), and a zero-point bye otherwise.
 
-  The TRF says nothing about match points (TRF26's `362` record is not
-  read), so they come from `:match_points` (default 2/1/0). Options:
+  Match points are the file's TRF26 `362` record (`W`/`D`/`L`, and `P` or
+  the `320` record for a pairing-allocated bye) when it has one, 2/1/0
+  otherwise; `:match_points` overrides either. Options:
   `:boards` (default: the most games any match had), `:primary`,
   `:match_points`, `:rounds`, `:predetermined?`.
   """
@@ -127,13 +129,24 @@ defmodule Ainalrami.Tiebreaks.Team do
     system = Map.get(tournament, :point_system) || Ainalrami.Trf.default_point_system()
     game_points = %{win: system.win, draw: system.draw, loss: system.loss}
 
-    match_points =
-      Map.merge(%{win: 2.0, draw: 1.0, loss: 0.0}, Map.new(opts[:match_points] || %{}))
+    from_file = Map.get(tournament, :team_point_system) || %{}
 
+    match_points =
+      %{win: 2.0, draw: 1.0, loss: 0.0}
+      |> Map.merge(Map.take(from_file, [:win, :draw, :loss]))
+      |> Map.merge(Map.new(opts[:match_points] || %{}))
+
+    # A pairing-allocated bye's match points: the `320` record's, else
+    # `362`'s `P`, else a win's.
+    pab_mp =
+      get_in(tournament, [:team_pab, :match_points]) || from_file[:pab] || match_points.win
+
+    # TRF26 `310` numbers its teams; `013` does not, and its teams are
+    # numbered in file order.
     rosters =
       trf_teams
       |> Enum.with_index(1)
-      |> Map.new(fn {team, id} -> {id, team.player_ranks} end)
+      |> Map.new(fn {team, index} -> {Map.get(team, :number) || index, team.player_ranks} end)
 
     team_of = for {id, ranks} <- rosters, rank <- ranks, into: %{}, do: {rank, id}
     known = MapSet.new(players, & &1.rank)
@@ -165,7 +178,13 @@ defmodule Ainalrami.Tiebreaks.Team do
         rounds =
           Map.new(1..individual.rounds//1, fn r ->
             {r,
-             trf_match(Map.get(games, {team, r}, []), team_of, boards, game_points, match_points)}
+             trf_match(
+               Map.get(games, {team, r}, []),
+               team_of,
+               boards,
+               game_points,
+               {pab_mp, match_points.loss}
+             )}
           end)
 
         %Entry{id: team, tpn: team, rounds: rounds}
@@ -184,7 +203,7 @@ defmodule Ainalrami.Tiebreaks.Team do
     )
   end
 
-  defp trf_match(games, team_of, boards, game_points, match_points) do
+  defp trf_match(games, team_of, boards, game_points, {pab_mp, zero_mp}) do
     met = Enum.filter(games, fn {_, _, g} -> g.opponent end)
 
     case met do
@@ -192,12 +211,12 @@ defmodule Ainalrami.Tiebreaks.Team do
         if Enum.any?(games, fn {_, _, g} -> g.kind == :pab end) do
           %Match{
             kind: :pab,
-            mp: match_points.win,
+            mp: pab_mp,
             gp: game_points.win * boards,
             boards: Map.new(1..boards, &{&1, game_points.win})
           }
         else
-          %Match{kind: :zero_bye, mp: match_points.loss}
+          %Match{kind: :zero_bye, mp: zero_mp}
         end
 
       _ ->

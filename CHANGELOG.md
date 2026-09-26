@@ -63,6 +63,23 @@ with the reference on every one of them.
 
 ## [Unreleased]
 
+- [Feature] **The checker verifies team standings.** `Ainalrami.Trf` reads
+  and writes TRF26's team records: `310` (team number, name, nickname,
+  strength, match points, game points, final rank and players - it takes
+  precedence over `013`, which still works), `362` (the match-point
+  system), `320` (the team pairing-allocated bye) and `330` (forfeited
+  matches), in the columns TieBreakServer's `trf2json.py` reads.
+  `Tiebreaks.Team.from_trf/2` numbers teams by their `310` number and takes
+  match points from `362` (a bye's from `320`, else `362`'s `P`), with
+  `:match_points` still overriding. `ainalrami -c` on a team file with a
+  tie-break list and `310` ranks now ranks the teams with `Team.rank/3` and
+  reports every team whose rank the list does not give, as it does players;
+  an `013`-only file is still skipped, with a note.
+  `tools/team_tiebreak_compare.exs` writes `310` with the final ranks and
+  the list as `212`; TieBreakServer read all 300 generated files and ranked
+  them the same (fixed list: 54,530 values, 0 mismatches; random lists:
+  300 files, 0 unexplained differences).
+
 ## [0.31.0] - 2026-09-26
 
 - [Verified] **Tie-breaks against an independent reference.**

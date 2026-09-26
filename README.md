@@ -222,6 +222,22 @@ Exits 0 when every round matches, 1 otherwise. Colour differences are
 reported but never counted as errors: Article 5.1 leaves the first colour
 to a drawing of lots, so this engine's convention is its own.
 
+When the file carries a tie-break list (`212`, or `202` after the score)
+and final ranks, `-c` also ranks the field with `Ainalrami.Tiebreaks` and
+reports every participant whose rank the list does not give (FIDE's
+VCL4THP Q21); participants still level after the whole list may stand in
+any order. For a team file the ranks are the teams' - TRF26 `310`, columns
+69-71 - ranked with the team tie-breaks, match points from the file's `362`:
+
+```
+==> standings: 2 rank(s) do not follow MPTS GPTS
+warning:   team 1: file says 2, tie-breaks give 1 (MPTS=3.0 GPTS=2.0)
+warning:   team 2: file says 1, tie-breaks give 2 (MPTS=3.0 GPTS=1.5)
+```
+
+A team file with only `013` records has no team ranks, and the check is
+skipped with a note saying so.
+
 > **A checker is not an independent verifier of the rules.** It re-runs the
 > same engine and calls that the correct answer - exactly as bbpPairings'
 > own `-c` does. A reported difference means "this engine would have paired
@@ -308,8 +324,11 @@ grammar (`encoded_time_control?/1`) before either line is written.
 Reading does not depend on which dialect wrote the file: `parse/1` reads
 all of the above unconditionally, to the same shape `XXR`/`BB*`/`XXA`/`XXP`
 parse to, so a round paired from either spelling of one tournament is the
-same round. Team records (`300` onward, `310`, `801`, `802`) and
-national-rating records are not read.
+same round. Of TRF26's team records, `310` (teams with their numbers,
+scores and final ranks; it takes precedence over `013`), `362` (match
+points), `320` (the team pairing-allocated bye) and `330` (forfeited
+matches) are read and written; `300` (boards out of order), `801`, `802`
+and national-rating records are not read.
 
 ## What is not settled
 

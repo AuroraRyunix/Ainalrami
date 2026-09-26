@@ -18,9 +18,10 @@
 #
 # Each file is read back through `Ainalrami.Trf.parse/1` and
 # `Ainalrami.Tiebreaks.Team.from_trf/2` - the path the checker takes - and
-# the values and final ranks are compared with TieBreakServer's. Match
-# points are 2/1/0 on both sides (the TRF26 `362` record is written for
-# TieBreakServer).
+# the values and final ranks are compared with TieBreakServer's. Each file
+# is TRF26 for teams: `310` records carrying the ranks `Team.rank/3` gives
+# under the event's list (also written as its `212`), read back unchanged,
+# and a `362` giving 2/1/0 match points that both sides read.
 #
 # Env: TBS_DIR (default ../TieBreakServer), TBS_PYTHON.
 
@@ -190,14 +191,48 @@ generate = fn seed ->
       %{rank: rank, name: "Player #{rank}", fide_rating: rating[rank], points: points, games: games}
     end
 
-  text =
-    Trf.serialize(%{
-      tournament: %{name: "Ainalrami team tie-breaks seed=#{seed}", type: "swiss", number_of_rounds: rounds},
-      players: trf_players,
-      teams: Enum.map(1..teams, &%{name: "Team #{&1}", player_ranks: rosters[&1]})
-    }) <> "362  W 2.0    D 1.0    L 0.0    P 2.0\r\n"
+  data = %{
+    tournament: %{
+      name: "Ainalrami team tie-breaks seed=#{seed}",
+      type: "swiss",
+      number_of_rounds: rounds,
+      team_point_system: %{win: 2.0, draw: 1.0, loss: 0.0, pab: 2.0}
+    },
+    players: trf_players,
+    teams:
+      Enum.map(1..teams, fn t ->
+        %{number: t, name: "Team #{t}", match_points: final.mp[t], game_points: final.gp[t], player_ranks: rosters[t]}
+      end)
+  }
 
-  {text, rounds}
+  {data, rounds}
+end
+
+# The TRF26 file: `310` team records carrying the final ranks `Team.rank/3`
+# gives under `list`, and the list itself as the `212` standings order - the
+# file the checker (`ainalrami -c`) reads. Returns the text and the ranks.
+with_ranks = fn data, list ->
+  trf = data |> Trf.serialize() |> Trf.parse()
+  {:ok, ranked} = Team.rank(Team.from_trf(trf), list)
+  rank_of = Map.new(ranked, &{&1.id, &1.rank})
+
+  ranked_data =
+    data
+    |> put_in([:tournament, :standings_order], list)
+    |> Map.update!(:teams, fn teams -> Enum.map(teams, &Map.put(&1, :final_rank, rank_of[&1.number])) end)
+
+  text = Trf.serialize(ranked_data)
+  back = Trf.parse(text)
+
+  # The round trip: every 310 field and the 362 read back as written.
+  fields = [:number, :name, :match_points, :game_points, :final_rank, :player_ranks]
+
+  unless Enum.map(back.teams, &Map.take(&1, fields)) == Enum.map(ranked_data.teams, &Map.take(&1, fields)) and
+           back.tournament[:team_point_system] == data.tournament.team_point_system do
+    raise "310/362 round trip lost data for #{data.tournament.name}"
+  end
+
+  {text, rank_of}
 end
 
 # ---- TieBreakServer ----------------------------------------------------
@@ -246,7 +281,7 @@ fixed_rank_codes = rank_codes
 
 totals =
   Enum.reduce(first..(first + count - 1), %{files: 0, values: 0, bad: 0, rank_bad: 0, known: 0, errors: 0}, fn seed, acc ->
-    {text, rounds} = generate.(seed)
+    {data, rounds} = generate.(seed)
 
     {value_codes, rank_codes} =
       case opts[:random_lists] do
@@ -258,11 +293,13 @@ totals =
           {Enum.reject(list, &(hd(String.split(&1, "/")) in group_codes)), list}
       end
 
+    {text, file_ranks} = with_ranks.(data, rank_codes)
     file = Path.join(work, "team#{seed}.trf")
     File.write!(file, text)
 
     trf = text |> Trf.parse() |> then(fn {:ok, trf} -> trf; trf -> trf end)
-    event = Team.from_trf(trf, match_points: %{win: 2.0, draw: 1.0, loss: 0.0})
+    # Match points from the file's 362.
+    event = Team.from_trf(trf)
     # The list's first score is the primary (reading T5), for the steps
     # replayed through Team.order_group/3.
     listed = case rank_codes, do: (["GPTS" | _] -> %{event | primary: :gp}; _ -> event)
@@ -309,6 +346,9 @@ totals =
           {code, id, mine, Enum.at(values, i)}
         end
         |> Enum.split_with(fn {code, id, _, t} -> t6?.(code, id, t) end)
+
+      # The ranks written to the 310 records are the ones computed here.
+      unless Enum.all?(ranked, &(file_ranks[&1.id] == &1.rank)), do: raise("seed #{seed}: 310 ranks not Team.rank's")
 
       rank_bad = for row <- ranked, elem(their_ranks[row.id], 0) != row.rank, do: {row.id, row.rank, elem(their_ranks[row.id], 0)}
 
