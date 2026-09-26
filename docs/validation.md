@@ -1210,3 +1210,31 @@ run's known rank differences by cause, per event: finding E 76, finding D
 with readings T4/T7 15, both 17, reading T6 23 (plus 1 with D), finding C
 2; 104 events had values known as reading T6.
 
+### The nightly tie-break check
+
+`.github/workflows/tiebreak-check.yml` runs a bounded version of all of the
+above every night (02:17 UTC), on demand (`gh workflow run tiebreak-check.yml`,
+optionally `-f seed_base=N`), and on pull requests touching the tie-break
+code, `trf.ex`, the tools or the reference. TieBreakServer is fetched from
+github.com/OttoMilvang/TieBreakServer at the commit pinned in `TBS_COMMIT`
+(`14a34a2`, the version the runs above used) and never vendored.
+
+Each run takes a seed base N (the run number unless given) and checks:
+
+| step | size | seeds |
+|---|---|---|
+| reference proof (`tiebreak_reference_test.exs`, scale mode) | 500 events | 1,000,000 + 500N .. +499 |
+| direction 1, random lists `N` | 100 tournaments | 10,000,000 + 100N .. +99 |
+| direction 2, random lists `N` | 6 batches of 17 (every setup) | batches 100,000 + 6N .. +5 |
+| team events, random lists `N` | 100 events | 1,000,000 + 100N .. +99 |
+
+so every night covers new ground. The whole job takes about a minute and a
+half on a GitHub runner. Any unexplained difference, reference disagreement
+or tool error fails the job; the failing step's annotation gives the seed
+base and the exact command that reproduces it locally, and the files that
+disagreed are uploaded as the `tiebreak-failing-N` artifact. Known
+differences are counted and pass, as in the manual runs. To reproduce, run
+the command from the annotation in this checkout with `TBS_DIR` and
+`TBS_PYTHON` set (as above), or rerun the workflow with `-f seed_base=N`.
+The tools' `--strict` (direction scripts) and `--work DIR` (team compare)
+exist for this job; without them they behave as before.

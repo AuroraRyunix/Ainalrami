@@ -13,8 +13,6 @@
 name: Tie-break check
 
 on:
-  push:
-    branches: [ "tiebreak-ci" ]
   schedule:
     - cron: "17 2 * * *"
   workflow_dispatch:

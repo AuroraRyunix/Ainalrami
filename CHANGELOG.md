@@ -63,6 +63,13 @@ with the reference on every one of them.
 
 ## [Unreleased]
 
+- [Verified] **A nightly tie-break check.** `.github/workflows/tiebreak-check.yml`
+  compares tie-breaks with FIDE's TieBreakServer (pinned commit) in both
+  directions, on team events, and against the independent reference, on
+  fresh seeds each night; a failure names the seed and uploads the files.
+  `tools/tiebreak_direction1.py`/`direction2.py` gain `--strict`,
+  `tools/team_tiebreak_compare.exs` gains `--work DIR` (docs/validation.md).
+
 ## [0.31.0] - 2026-09-26
 
 - [Verified] **Tie-breaks against an independent reference.**
