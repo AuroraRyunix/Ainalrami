@@ -828,6 +828,7 @@ defmodule Ainalrami.TiebreakReference do
   starts with one; Article 10 codes that are dropped are skipped.
   """
   def rank(model, texts) do
+    model = for_list(model, texts)
     codes = Enum.map(texts, &code/1)
 
     codes =
@@ -844,6 +845,22 @@ defmodule Ainalrami.TiebreakReference do
 
     ranks
   end
+
+  @doc """
+  The model as a tie-break list `texts` reads it (reading T5): a team list
+  whose first code is `MPTS` or `GPTS` names the primary score - the event's
+  regulations choosing it - and every code without `:MP`/`:GP` follows.
+  Anything else leaves the model as it is.
+  """
+  def for_list(%{team?: true} = tm, [first | _]) do
+    case code(first).name do
+      "MPTS" -> %{tm | primary: :mp}
+      "GPTS" -> %{tm | primary: :gp}
+      _ -> tm
+    end
+  end
+
+  def for_list(model, _texts), do: model
 
   defp values_or_group(_model, %{name: name}) when name in @group_codes, do: :group
   defp values_or_group(%{team?: true} = tm, c), do: team_values(tm, c)

@@ -83,9 +83,13 @@ defmodule Ainalrami.TiebreakReference.Proof do
   defp compare(event, model, codes, lists, label) do
     {:ok, engine} = Tiebreaks.compute(event, codes)
 
+    # `Tiebreaks.compute/2` reads the whole list (reading T5); so does the
+    # reference, through `for_list/2`.
+    listed = Ref.for_list(model, codes)
+
     value_bad =
       for c <- codes,
-          bad = value_diff(c, Map.fetch!(engine, c), Ref.values(model, c)),
+          bad = value_diff(c, Map.fetch!(engine, c), Ref.values(listed, c)),
           bad != [] do
         "#{label} #{c}: #{inspect(Enum.take(bad, 4))}"
       end
