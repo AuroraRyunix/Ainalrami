@@ -63,6 +63,88 @@ with the reference on every one of them.
 
 ## [Unreleased]
 
+- [Feature] **The checker replays team Swiss rounds.** `ainalrami -c` on a
+  team file used to re-pair the players as an individual Dutch Swiss, find
+  every round different and exit 1. A team Swiss is now replayed team
+  against team with the C.04.6 engine (`Ainalrami.TeamReplay`): each round
+  re-paired from the history the file records before it (points as the
+  team standings read them, opponents and board-1 colours of played
+  matches, the bye, forfeit wins, last round's floaters, teams sitting a
+  round out as `:absent`) and compared in who meets whom, who has the bye
+  and which team has White on board 1 - colours count here, since Article
+  4 decides them all from the initial colour (the file's `152`, else the
+  one round 1 shows). Settings from the `192` code (`FIDE_TEAM`,
+  `FIDE_TEAM_TYPEB_GP_MP`, ...; reading R1 in
+  docs/conformance-c0406-teams.md - **SUPERSEDED** in part by the entry
+  below on FIDE's code table: a code without `TYPEA`/`TYPEB` means no
+  colour preferences, not Type A); with no `192` the games decide
+  whether team records mean a team event, so an individual open listing
+  club teams keeps the individual replay. Output in the individual
+  replay's shape, pairs as `{White team, Black team}`.
+- [Feature] **`-c` exits 2 for a team system it cannot replay** - a round
+  robin, Scheveningen or Schiller (`192` or `092`), a knockout, a custom
+  team Swiss or an accelerated one (`*_BAKU`) - with a message saying which
+  and why, instead of comparing against a Swiss pairing. The standings are
+  still checked, and a standings difference still exits 1.
+- [Verified] 400 generated team Swiss events paired by the engine
+  (`TeamTrfGenerator` `pairing: :engine`, Types A and B, match or game
+  points primary, either initial colour; 2,678 rounds) replay with no
+  difference, as `310` files with `192` and `152` and again as `013` files
+  with neither. An exchange of opponents between two matches, and one
+  match's colours reversed, are both found in the round they were made.
+- [Fix] **A team Swiss code without `TYPEA`/`TYPEB` was replayed as Type
+  A; FIDE's code table says it has no colour preferences.** The TEC's
+  Tournament Type Code Table for `192` (published with TRF-2026) describes
+  `FIDE_TEAM_MP_GP`, `_GP_MP`, `_MP`, `_GP` and `FIDE_TEAM_MP[_GP]_BAKU` as
+  "with no colour preferences" - C.04.6 Article 1.7's third option - and
+  only the bare `FIDE_TEAM` (and `FIDE_TEAM_BAKU`) as shorthand for Type A
+  with match points primary and game points for colours. Measured on
+  generated events paired without preferences, 20 of 46 had at least one
+  round that the old Type A reading reported as different. Such files now
+  replay with the new mode below and check clean.
+- [Feature] **`Ainalrami.TeamPairing` pairs with no colour preferences:
+  `type: :none`.** Article 1.7 lets a competition's rules say colour
+  preferences "are not to be used at all". Nobody then has a preference
+  (`Team.preference/3` returns `:none` for every team), so [C8] and [C9]
+  count nothing and 3.6.3's first legal identifier is the bracket's
+  pairing; colours come from the Article 4.3 rules that do not mention a
+  preference - 4.3.1, 4.3.5, 4.3.6, 4.3.8, 4.3.9. An unknown `:type` is now
+  `{:error, {:invalid_option, :type, value}}`; it used to pair as Type A.
+- [Verified] The brute-force whole-round reference
+  (`Ainalrami.TeamProof.NaiveReference`, now taking the type) agrees with
+  the engine on every round of 30,000 generated no-preference events of
+  4-10 teams (seeds 1-30,000; 123,593 rounds), recorded reasons
+  included; the ordinary suite runs 120 seeds and checks that no 4.3.2,
+  4.3.3, 4.3.4 or 4.3.7 ever decides a colour.
+- [Feature] **`Ainalrami.TypeCode` reads a `192` code as FIDE's table
+  defines it**: system, Dutch edition (`FIDE_DUTCH` by the event's `042`
+  date: 2017 before 1 July 2025), Baku, games per pairing for `_Gn`, teams
+  and players for `FIDE_SCHILLER_TxP`, the colour-preference type and
+  scores of a team Swiss, and what each shorthand defaults to
+  (`FIDE_DOUBLEROUNDROBIN` is its own construction - the first cycle's last
+  two rounds reversed - not `_G2`).
+- [Fix] **`FIDE_DUTCH_2025` and `FIDE_DUTCH_2025_BAKU` were refused as
+  type codes.** The code list had `FIDE_DUTCH_2026` from a draft; the
+  published table has `_2025` ("after June 30th, 2025"). `_2025` is now in
+  `tournament_type_codes/0` (still 54 codes); `FIDE_DUTCH_2026[_BAKU]`
+  stays accepted, outside that list, and reads as `FIDE_DUTCH_2025`, since
+  files carrying it exist. Nothing else in the table was missing; the four
+  parametrised families were already accepted by shape. OpenPairings
+  writes `FIDE_DUTCH_2026` in its TRF export and should move to `_2025`.
+- [Fix] **`-c` replayed every individual file as a Dutch Swiss, whatever
+  its `192` said**, and reported false differences on round robins,
+  Schiller and Scheveningen events, knockouts and the Dubov, Burstein and
+  Double Swiss systems. These now exit 2 with the reason - Ainalrami has no
+  Berger tables (Competition Rules Appendix 1) to replay a round robin
+  against, Schiller and Scheveningen are "not yet defined", and the engine
+  pairs the Dutch system only - as do `CUSTOM_*` systems and a `092` round
+  robin with no `192`. A `FIDE_DUTCH*_BAKU` file is replayed with the
+  virtual points it gives (`XXA`/`250`) and exits 2 when it gives none; a
+  2017-edition file is replayed with a warning that the engine pairs the
+  current edition; a code off the table is said to be one. The exit-2
+  message now reads "This checker replays the Dutch system (C.04.3) and
+  C.04.6 team Swiss events".
+
 ## [0.32.0] - 2026-09-27
 
 - [Verified] **A nightly tie-break check.** `.github/workflows/tiebreak-check.yml`

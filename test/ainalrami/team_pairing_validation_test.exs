@@ -26,8 +26,11 @@ defmodule Ainalrami.TeamPairingValidationTest do
       following scoregroup's bracket would need;
     * [C7] minimises the upfloaters that floated last round, before 3.5.4's
       order (open question 7);
-    * 3.6: least {C8, C10}, then the smallest identifier. Type A only here;
-      Type B's [C9] is proven at bracket level in `team_pairing_test.exs`.
+    * 3.6: least {C8, C10}, then the smallest identifier. Type A, and
+      1.7's "not to be used at all" (`type: :none`: nobody has a
+      preference, so [C8] is zero and Article 4 runs without its preference
+      rules); Type B's [C9] is proven at bracket level in
+      `team_pairing_test.exs`.
 
   ## Histories are reachable
 
@@ -61,88 +64,8 @@ defmodule Ainalrami.TeamPairingValidationTest do
     @tag :whole_rounds
     @tag timeout: :infinity
     test "every round of every generated event matches the reference" do
-      {seeds, run?} = validation_seeds()
-
-      checked =
-        for seed <- seeds, reduce: 0 do
-          acc ->
-            :rand.seed(:exsss, {seed, 2 * seed + 1, 7 * seed + 3})
-            size = Enum.random(4..10)
-            rounds = Enum.random(3..6)
-            initial = Enum.random([:white, :black])
-
-            acc +
-              play_event(size, rounds, initial, fn round_no, field, absent, opts ->
-                reference = ref_round(field, absent: absent, initial: initial, opts: opts)
-
-                where =
-                  "seed #{seed}, round #{round_no}, #{length(field)} teams, absent #{inspect(absent)}"
-
-                case TeamPairing.pair_round(field, opts) do
-                  {:ok, engine} ->
-                    run? ||
-                      send(
-                        self(),
-                        {:stat,
-                         %{
-                           upfloaters?: Enum.any?(engine.brackets, &(&1.upfloaters != [])),
-                           bye?: engine.bye != nil,
-                           absent?: absent != []
-                         }}
-                      )
-
-                    assert normalise(engine) == Map.take(reference, [:bye, :pairs]),
-                           """
-                           #{where}
-                             engine:    #{inspect(normalise(engine))}
-                             reference: #{inspect(reference)}
-                             field:     #{inspect(Enum.map(field, &describe_team/1))}
-                           """
-
-                    # Recording the reasons changes nothing, and the reasons
-                    # recorded are the reference's.
-                    assert {:ok, explained} =
-                             TeamPairing.pair_round(field, [explain: true] ++ opts)
-
-                    assert Map.delete(explained, :explanation) == engine,
-                           "#{where}: explain changed the round"
-
-                    run? ||
-                      send(
-                        self(),
-                        {:reasons,
-                         Enum.map(reference.reasons.brackets, & &1.decided_by) ++
-                           Enum.map(reference.reasons.rules, &elem(&1, 3)) ++
-                           Enum.map(reference.reasons.rules, &elem(&1, 2)) ++
-                           List.wrap(reference.reasons.bye && reference.reasons.bye.decided_by) ++
-                           if(reference.reasons.bye && reference.reasons.bye.passed_over != [],
-                             do: ["3.4.1"],
-                             else: []
-                           )}
-                      )
-
-                    assert reasons(explained.explanation) == reference.reasons,
-                           """
-                           #{where}: the recorded reasons are not the reference's
-                             engine:    #{inspect(reasons(explained.explanation))}
-                             reference: #{inspect(reference.reasons)}
-                             field:     #{inspect(Enum.map(field, &describe_team/1))}
-                           """
-
-                    engine
-
-                  # 3.3.3 - small fields run out of legal pairings (every
-                  # eligible team has had its bye, or everyone has met). The
-                  # engine may say so only when the definition agrees, and
-                  # the event ends there.
-                  {:error, reason} ->
-                    assert reference == :impossible,
-                           "#{where}: engine refused (#{inspect(reason)}) but the reference paired #{inspect(reference)}"
-
-                    :stop
-                end
-              end)
-        end
+      {seeds, run?} = validation_seeds("TEAM_VALIDATION_SEEDS", 1..90)
+      checked = whole_rounds(seeds, run?, :a)
 
       if run? do
         IO.puts("TEAMRUN seeds=#{Enum.count(seeds)} rounds=#{checked}")
@@ -150,12 +73,125 @@ defmodule Ainalrami.TeamPairingValidationTest do
         whole_round_coverage(checked)
       end
     end
+
+    # 1.7's third option, "colour preferences are not to be used at all"
+    # (TRF26's FIDE_TEAM_MP_GP and the other codes without TYPEA/TYPEB):
+    # the same events and the same reference, with no team ever holding a
+    # preference. TEAM_VALIDATION_NONE_SEEDS runs a longer range.
+    @tag :whole_rounds
+    @tag timeout: :infinity
+    test "with no colour preferences, every round matches the reference" do
+      {seeds, run?} = validation_seeds("TEAM_VALIDATION_NONE_SEEDS", 1..120)
+      checked = whole_rounds(seeds, run?, :none)
+
+      if run? do
+        IO.puts("TEAMRUN none seeds=#{Enum.count(seeds)} rounds=#{checked}")
+      else
+        assert checked > 300
+        seen = collect_reasons(%{})
+        _ = collect_stats([])
+
+        # Colours by the rules that do not mention a preference, and never by
+        # one that does.
+        for reason <- ~w(4.3.1 4.3.5 4.3.6 4.3.8 C4 C5 3.4.2 3.4.4) do
+          assert Map.get(seen, reason, 0) > 0, "no generated round was decided by #{reason}"
+        end
+
+        for reason <- ~w(4.3.2 4.3.3 4.3.4 4.3.7) do
+          assert Map.get(seen, reason, 0) == 0, "#{reason} decided a round with no preferences"
+        end
+      end
+    end
   end
 
-  defp validation_seeds do
-    case System.get_env("TEAM_VALIDATION_SEEDS") do
+  defp whole_rounds(seeds, run?, type) do
+    for seed <- seeds, reduce: 0 do
+      acc ->
+        :rand.seed(:exsss, {seed, 2 * seed + 1, 7 * seed + 3})
+        size = Enum.random(4..10)
+        rounds = Enum.random(3..6)
+        initial = Enum.random([:white, :black])
+
+        acc +
+          play_event(size, rounds, initial, fn round_no, field, absent, opts ->
+            opts = if type == :a, do: opts, else: [type: type] ++ opts
+            reference = ref_round(field, absent: absent, initial: initial, opts: opts)
+
+            where =
+              "seed #{seed} (type #{type}), round #{round_no}, #{length(field)} teams, " <>
+                "absent #{inspect(absent)}"
+
+            case TeamPairing.pair_round(field, opts) do
+              {:ok, engine} ->
+                run? ||
+                  send(
+                    self(),
+                    {:stat,
+                     %{
+                       upfloaters?: Enum.any?(engine.brackets, &(&1.upfloaters != [])),
+                       bye?: engine.bye != nil,
+                       absent?: absent != []
+                     }}
+                  )
+
+                assert normalise(engine) == Map.take(reference, [:bye, :pairs]),
+                       """
+                       #{where}
+                         engine:    #{inspect(normalise(engine))}
+                         reference: #{inspect(reference)}
+                         field:     #{inspect(Enum.map(field, &describe_team/1))}
+                       """
+
+                # Recording the reasons changes nothing, and the reasons
+                # recorded are the reference's.
+                assert {:ok, explained} =
+                         TeamPairing.pair_round(field, [explain: true] ++ opts)
+
+                assert Map.delete(explained, :explanation) == engine,
+                       "#{where}: explain changed the round"
+
+                run? ||
+                  send(
+                    self(),
+                    {:reasons,
+                     Enum.map(reference.reasons.brackets, & &1.decided_by) ++
+                       Enum.map(reference.reasons.rules, &elem(&1, 3)) ++
+                       Enum.map(reference.reasons.rules, &elem(&1, 2)) ++
+                       List.wrap(reference.reasons.bye && reference.reasons.bye.decided_by) ++
+                       if(reference.reasons.bye && reference.reasons.bye.passed_over != [],
+                         do: ["3.4.1"],
+                         else: []
+                       )}
+                  )
+
+                assert reasons(explained.explanation) == reference.reasons,
+                       """
+                       #{where}: the recorded reasons are not the reference's
+                         engine:    #{inspect(reasons(explained.explanation))}
+                         reference: #{inspect(reference.reasons)}
+                         field:     #{inspect(Enum.map(field, &describe_team/1))}
+                       """
+
+                engine
+
+              # 3.3.3 - small fields run out of legal pairings (every
+              # eligible team has had its bye, or everyone has met). The
+              # engine may say so only when the definition agrees, and
+              # the event ends there.
+              {:error, reason} ->
+                assert reference == :impossible,
+                       "#{where}: engine refused (#{inspect(reason)}) but the reference paired #{inspect(reference)}"
+
+                :stop
+            end
+          end)
+    end
+  end
+
+  defp validation_seeds(variable, default) do
+    case System.get_env(variable) do
       nil ->
-        {1..90, false}
+        {default, false}
 
       range ->
         [first, last] = range |> String.split("..") |> Enum.map(&String.to_integer/1)
@@ -420,6 +456,92 @@ defmodule Ainalrami.TeamPairingValidationTest do
       {:ok, round} = TeamPairing.pair_round(teams, round: 2, expected_rounds: 5)
       assert round.bye == 2
     end
+  end
+
+  # ==================================================================
+  # No colour preferences (1.7's third option)
+  # ==================================================================
+
+  describe "no colour preferences (type: :none)" do
+    # 1 and 3 had White twice, 2 and 4 Black twice: under Type A 1 and 3
+    # want Black and 2 and 4 White, so the first identifier (1-3 2-4)
+    # refuses two preferences and [C8] moves the bracket on to 1-4 2-3.
+    # With no preferences nothing is refused and 3.6.3's first identifier
+    # stands; the colours then come from 4.3.8 (alternate the first-team's
+    # last colour), since the colour differences are equal and the two
+    # histories never split.
+    defp preference_clash_field do
+      [
+        team(1, colours: [:white, :white]),
+        team(2, colours: [:black, :black]),
+        team(3, colours: [:white, :white]),
+        team(4, colours: [:black, :black])
+      ]
+    end
+
+    test "nobody has a preference, whatever the colour history" do
+      for t <- preference_clash_field(), type <- [:a, :b] do
+        assert Team.preference(t, type) != :none
+        assert Team.preference(t, :none) == :none
+        assert Team.preference(t, :none, true) == :none
+      end
+    end
+
+    test "[C8] counts nothing, so 3.6.3's first identifier is paired" do
+      field = preference_clash_field()
+      opts = [round: 3, expected_rounds: 9, explain: true]
+
+      assert {:ok, a} = TeamPairing.pair_round(field, opts)
+      assert normalise(a).pairs == [{2, 3}, {4, 1}]
+
+      assert {:ok, none} = TeamPairing.pair_round(field, [type: :none] ++ opts)
+      assert normalise(none).pairs == [{2, 4}, {3, 1}]
+      assert [%{criteria: {0, 0, 0}}] = none.brackets
+      assert Enum.all?(none.explanation.pairs, &(&1.colour_rule == "4.3.8"))
+    end
+
+    test "Article 4 without preferences: 4.3.5, then 4.3.6, then 4.3.8/4.3.9" do
+      numbers = %{1 => 1, 2 => 2}
+
+      # CD +2 against 0: under Type A 1 wants Black and 4.3.2 grants it;
+      # with no preferences 4.3.5 gives White to the lower CD - the same
+      # colours by another rule.
+      one = team(1, colours: [:white, :white])
+      two = team(2, colours: [:white, :black])
+
+      assert {2, 1, %{colour_rule: "4.3.2"}} =
+               engine_colours(one, two, numbers, :a)
+
+      assert {2, 1, %{colour_rule: "4.3.5"}} =
+               engine_colours(one, two, numbers, :none)
+
+      # Equal CDs, histories that split last round: 4.3.6 alternates it.
+      one = team(1, colours: [:black, :white])
+      two = team(2, colours: [:white, :black])
+      assert {2, 1, %{colour_rule: "4.3.6"}} = engine_colours(one, two, numbers, :none)
+
+      # Only the other team has played, to a CD of zero: 4.3.9.
+      one = team(1)
+      two = team(2, colours: [:white, :black])
+      assert {2, 1, %{colour_rule: "4.3.9"}} = engine_colours(one, two, numbers, :none)
+    end
+
+    test "any other :type is refused rather than read as Type A" do
+      for bad <- [:c, nil, "none", :typea] do
+        assert {:error, {:invalid_option, :type, ^bad}} =
+                 TeamPairing.pair_round([team(1), team(2)], type: bad)
+      end
+    end
+  end
+
+  defp engine_colours(a, b, numbers, type) do
+    {white, black, rules} =
+      Ainalrami.TeamPairing.Colour.allocate_explained(a, b,
+        parity_numbers: numbers,
+        type: type
+      )
+
+    {white.tpn, black.tpn, rules}
   end
 
   # ==================================================================

@@ -193,7 +193,7 @@ ainalrami input.trf -p output.trf
 | `ainalrami input.trf -p output.trf` | pair the next round |
 | `ainalrami input.trf -p` | same, printed to stdout |
 | `ainalrami -g output.trf` | Random Tournament Generator |
-| `ainalrami input.trf -c` | Pairings Checker: replay and diff every round |
+| `ainalrami input.trf -c` | Pairings Checker: replay and diff every round (team Swiss: team against team) |
 
 `-g` and `-c` mirror JaVaFo's own RTG/FPC modes, used for FIDE's FE1
 endorsement auto-test.
@@ -218,9 +218,25 @@ deep into a Swiss (`Ainalrami.Pairing.NoValidPairingError`).
 
 **`-c`** replays a completed tournament round by round, re-pairing each
 from the state that preceded it and diffing against what the file records.
-Exits 0 when every round matches, 1 otherwise. Colour differences are
+Exits 0 when every round matches, 1 otherwise (2 for a system it cannot
+replay - see *Which files are replayed* below). Colour differences are
 reported but never counted as errors: Article 5.1 leaves the first colour
 to a drawing of lots, so this engine's convention is its own.
+
+**Which files are replayed.** The file's `192` code decides, read as FIDE's
+Tournament Type Code Table defines it (`Ainalrami.TypeCode`):
+
+| `192` | `-c` |
+|---|---|
+| `FIDE_DUTCH_2025`, `FIDE_DUTCH` (and the draft's `FIDE_DUTCH_2026`) | replayed |
+| `FIDE_DUTCH_2017`, or `FIDE_DUTCH` for an event that started (`042`) before 1 July 2025 | replayed, with a warning: the engine pairs the current C.04.3, not the 2017 edition |
+| `FIDE_DUTCH*_BAKU` | replayed with the virtual points the file gives (`XXA`/`250`); exit 2 when it gives none - the engine does not derive C.04.7's groups itself |
+| `FIDE_TEAM*` without `_BAKU` | replayed team against team (*Team events* below) |
+| a round robin (`BERGER_ROUNDROBIN_Gn`, `FIDE_ROUNDROBIN`, `FIDE_DOUBLEROUNDROBIN`, the team ones, ...) | exit 2: predetermined by the Berger tables (Competition Rules Appendix 1), which Ainalrami does not have |
+| `FIDE_SCHILLER_TxP`, `FIDE_SCHEVENINGEN_Gn` and their shorthands | exit 2: predetermined, by rules FIDE has not yet defined |
+| `FIDE_DUBOV`, `FIDE_BURSTEIN`, `FIDE_DOUBLESWISS` (with or without `_BAKU`) | exit 2: Ainalrami pairs the Dutch system only |
+| `CUSTOM_*`, `FIDE_TEAM*_BAKU` | exit 2: a system of the competition's own; the team engine has no acceleration |
+| none, or one off the table (said so) | the `092` type (a round robin, Scheveningen, Schiller or knockout exits 2), else the games: team matches throughout make a team Swiss, anything else the Dutch system |
 
 When the file carries a tie-break list (`212`, or `202` after the score)
 and final ranks, `-c` also ranks the field with `Ainalrami.Tiebreaks` and
@@ -237,6 +253,45 @@ warning:   team 2: file says 1, tie-breaks give 2 (MPTS=3.0 GPTS=1.5)
 
 A team file with only `013` records has no team ranks, and the check is
 skipped with a note saying so.
+
+**Team events.** On a team Swiss the rounds are replayed team against team
+with the C.04.6 engine (`Ainalrami.TeamPairing`), from the history the file
+records - match and game points as the standings read them (`362`, `320`,
+`330`), opponents and board-1 colours of the matches actually played, the
+bye, forfeit wins and last round's floaters (`Ainalrami.TeamReplay` has the
+full reading). Pairs are `{White team, Black team}`, White meaning White
+on board 1, and the bye is `{team, nil}`:
+
+```
+==> Checking 7 team round(s) - C.04.6, Type A colour preferences, match points primary, game points for colours (192 FIDE_TEAM_TYPEA_MP_GP)
+warning: round 2: DIFFERS
+warning:   file:   [{1, 4}, {3, 2}, {5, 6}]
+warning:   engine: [{1, 2}, {3, 4}, {5, 6}]
+warning: round 3: DIFFERS in colours only - same pairing, board-1 colours differ in 1 match(es): [{4, 1}]
+```
+
+Unlike the individual replay, a colour difference counts: Article 4 decides
+every team colour from the initial colour, which is the file's `152` or,
+without one, whichever colour reproduces round 1. The settings come from
+the `192` code as FIDE's table defines it: `TYPEA`/`TYPEB` for Type A/Type
+B colour preferences and **neither for no colour preferences** (Article
+1.7's third option, paired with `TeamPairing`'s `type: :none`), then the
+primary score and, if named, the secondary one used for colours; `FIDE_TEAM`
+alone is `FIDE_TEAM_TYPEA_MP_GP`. A file with team records and no `192` is
+replayed as a team event with the C.04.6 defaults (Type A, match points,
+game points for colours) when its games are team matches throughout; an
+individual event listing club teams in `013` keeps the individual replay.
+
+A file whose pairings this checker cannot replay is reported as such and
+nothing is compared:
+
+```
+warning: rounds: not replayed - FIDE_TEAM_ROUNDROBIN is a round robin by the Berger tables (Competition Rules, Appendix 1): its pairings are predetermined, and Ainalrami has no Berger tables to replay them against. This checker replays the Dutch system (C.04.3) and C.04.6 team Swiss events, so no round was compared (exit code 2)
+```
+
+`-c` exit codes: **0** every round (and the standings, when checked)
+match; **1** something differs, or the file cannot be read; **2** a system
+that cannot be replayed, with the standings (if checked) in order.
 
 > **A checker is not an independent verifier of the rules.** It re-runs the
 > same engine and calls that the correct answer - exactly as bbpPairings'
@@ -318,7 +373,10 @@ corpus is measured on, and is the only spelling the CLI currently writes
 | `192` / `202` / `212` / `222` | tournament type code, tie-breaks, standings order, time control code - written by both dialects whenever the data carries them |
 
 The type code is checked against FIDE's own table
-(`tournament_type_codes/0`) and the time control against its encoding
+(`tournament_type_codes/0` and the parametrised `_Gn`/`_TxP` families;
+the draft table's `FIDE_DUTCH_2026` is still accepted and means
+`FIDE_DUTCH_2025`; `Ainalrami.TypeCode` says what each code means) and the
+time control against its encoding
 grammar (`encoded_time_control?/1`) before either line is written.
 
 Reading does not depend on which dialect wrote the file: `parse/1` reads

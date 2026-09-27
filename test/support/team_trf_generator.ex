@@ -30,10 +30,26 @@ defmodule Ainalrami.TeamTrfGenerator do
 
   `opts[:selector]` (0-9) picks the format instead of `rem(seed, 10)`.
 
+  `opts[:pairing]` - `:greedy` (the default, above) or `:engine`: a Swiss
+  paired round by round by `Ainalrami.TeamPairing` (C.04.6) itself, board
+  1's White to the team the engine gives White and the boards alternating
+  from it, for the checker's team replay (`ainalrami -c`,
+  `Ainalrami.TeamReplay`). The file then carries the settings as a `192`
+  code and the initial colour as `152`, from `opts[:type]` (`:a`, default,
+  `:b`, or `:none` for no colour preferences), `opts[:score_mode]` (`:match_points`, default, or
+  `:game_points`) and `opts[:initial_colour]` (`:white`, default, or
+  `:black`). The engine's view of the history is kept alongside: points,
+  opponents and board-1 colours of played matches, the bye, forfeit wins
+  (no board played, more game points) and last round's floaters. A round
+  the engine cannot pair ends the event there, the header keeping the
+  planned round count. The draws differ from `:greedy`'s, so a seed makes
+  a different event in each mode; `:greedy` is unchanged.
+
   Returns `%{text:, rounds:, boards:, format:, predetermined?:,
   match_points:, forfeited_matches:}`.
   """
 
+  alias Ainalrami.TeamPairing
   alias Ainalrami.Trf
 
   @wins %{"1" => 1.0, "=" => 0.5, "0" => 0.0, "+" => 1.0, "-" => 0.0}
@@ -79,16 +95,24 @@ defmodule Ainalrami.TeamTrfGenerator do
     players = rosters |> Map.values() |> List.flatten() |> Enum.sort()
     rating = Map.new(players, &{&1, 2400 - &1 * 3 + :rand.uniform(60)})
 
+    engine? = format == :swiss and Keyword.get(opts, :pairing, :greedy) == :engine
+
     ctx = %{
       boards: boards,
       rosters: rosters,
       rating: rating,
       mpts: mpts,
       forfeit_rate: forfeit_rate,
-      match_forfeit_rate: match_forfeit_rate
+      match_forfeit_rate: match_forfeit_rate,
+      engine?: engine?,
+      type: Keyword.get(opts, :type, :a),
+      score_mode: Keyword.get(opts, :score_mode, :match_points),
+      initial_colour: Keyword.get(opts, :initial_colour, :white)
     }
 
     {schedule, type_code, predetermined?} = schedule(format, teams, boards)
+
+    type_code = if engine?, do: engine_type_code(ctx), else: type_code
 
     zero = Map.new(1..teams, &{&1, 0.0})
 
@@ -99,31 +123,50 @@ defmodule Ainalrami.TeamTrfGenerator do
       met: MapSet.new(),
       byes: [],
       forfeited: [],
-      games: Map.new(players, &{&1, %{}})
+      games: Map.new(players, &{&1, %{}}),
+      # The engine's view (`pairing: :engine` only).
+      colours: Map.new(1..teams, &{&1, []}),
+      played: Map.new(1..teams, &{&1, []}),
+      forfeit_won: MapSet.new(),
+      floated: MapSet.new()
     }
 
-    rounds =
+    planned =
       case schedule do
         {:swiss, n} -> n
         list -> length(list)
       end
 
-    final =
-      Enum.reduce(1..rounds, start, fn r, st ->
-        {pairs, bye} =
+    {final, rounds} =
+      Enum.reduce_while(1..planned, {start, 0}, fn r, {st, _} ->
+        paired =
           case schedule do
-            {:swiss, _} -> swiss_round(st, teams)
-            list -> {Enum.at(list, r - 1), nil}
+            {:swiss, _} when engine? -> engine_round(st, teams, r, planned, ctx)
+            {:swiss, _} -> {:ok, swiss_round(st, teams)}
+            list -> {:ok, {Enum.at(list, r - 1), nil}}
           end
 
-        st = Enum.reduce(pairs, st, &play_match(&1, &2, r, ctx))
-        give_bye(st, bye, r, ctx)
+        case paired do
+          {:ok, {pairs, bye}} ->
+            floated =
+              for {a, b, _} <- pairs,
+                  score(st, a, ctx) != score(st, b, ctx),
+                  t <- [a, b],
+                  into: MapSet.new(),
+                  do: t
+
+            st = Enum.reduce(pairs, st, &play_match(&1, &2, r, ctx))
+            {:cont, {%{give_bye(st, bye, r, ctx) | floated: floated}, r}}
+
+          :stop ->
+            {:halt, {st, r - 1}}
+        end
       end)
 
     trf_players =
       for rank <- players do
         games =
-          for r <- 1..rounds do
+          for r <- 1..rounds//1 do
             case final.games[rank][r] do
               nil -> %{opponent_rank: nil, colour: "-", result: ""}
               {opp, colour, res} -> %{opponent_rank: opp, colour: colour, result: res}
@@ -152,9 +195,15 @@ defmodule Ainalrami.TeamTrfGenerator do
       %{
         name: "Ainalrami team tie-breaks seed=#{seed}",
         type: if(predetermined?, do: "Team round robin", else: "Team swiss"),
-        number_of_rounds: rounds
+        number_of_rounds: planned
       }
       |> then(&if(type_code, do: Map.put(&1, :type_code, type_code), else: &1))
+      |> then(
+        &if(engine?,
+          do: Map.put(&1, :initial_colour, if(ctx.initial_colour == :black, do: "b", else: "w")),
+          else: &1
+        )
+      )
 
     forfeited = Enum.reverse(final.forfeited)
 
@@ -291,6 +340,74 @@ defmodule Ainalrami.TeamTrfGenerator do
     greedy(List.delete(rest, b), met, [{a, b} | acc])
   end
 
+  # ---- pairing: :engine ---------------------------------------------------------
+
+  defp engine_type_code(ctx) do
+    # TRF26's table: no TYPEA/TYPEB means no colour preferences.
+    type = %{a: "TYPEA_", b: "TYPEB_", none: ""}[ctx.type]
+    scores = if ctx.score_mode == :game_points, do: "GP_MP", else: "MP_GP"
+    "FIDE_TEAM_#{type}#{scores}"
+  end
+
+  defp score(st, t, %{score_mode: :game_points}), do: st.gp[t]
+  defp score(st, t, _ctx), do: st.mp[t]
+
+  defp engine_round(st, teams, r, planned, ctx) do
+    structs =
+      for t <- 1..teams do
+        %TeamPairing.Team{
+          tpn: t,
+          match_points: st.mp[t],
+          game_points: st.gp[t],
+          opponents: st.played[t],
+          colours: st.colours[t],
+          had_pab?: t in st.byes,
+          won_by_forfeit?: MapSet.member?(st.forfeit_won, t),
+          floated_last_round?: MapSet.member?(st.floated, t)
+        }
+      end
+
+    opts = [
+      type: ctx.type,
+      score_mode: ctx.score_mode,
+      initial_colour: ctx.initial_colour,
+      round: r,
+      expected_rounds: planned
+    ]
+
+    case TeamPairing.pair_round(structs, opts) do
+      {:ok, result} -> {:ok, {Enum.map(result.pairs, &{&1.white, &1.black, 0}), result.bye}}
+      {:error, _} -> :stop
+    end
+  end
+
+  # `a` had White on board 1. Colours and opponents count only a match
+  # with a board played over the board; one without is won by forfeit by
+  # the side with more game points.
+  defp engine_history(st, a, b, pa, pb, played?) do
+    cond do
+      played? ->
+        %{
+          st
+          | colours: %{
+              st.colours
+              | a => st.colours[a] ++ [:white],
+                b => st.colours[b] ++ [:black]
+            },
+            played: %{st.played | a => st.played[a] ++ [b], b => st.played[b] ++ [a]}
+        }
+
+      pa > pb ->
+        %{st | forfeit_won: MapSet.put(st.forfeit_won, a)}
+
+      pb > pa ->
+        %{st | forfeit_won: MapSet.put(st.forfeit_won, b)}
+
+      true ->
+        st
+    end
+  end
+
   # ---- one match --------------------------------------------------------------
 
   defp lineup(ctx, t) do
@@ -308,8 +425,9 @@ defmodule Ainalrami.TeamTrfGenerator do
   defp play_match({a, b, offset}, st, r, ctx) do
     # Board 1's white to the team with fewer so far, in every format (see
     # swiss_round/2); swapping the teams turns the crosswise offset round.
+    # With `pairing: :engine` the engine has already given `a` White.
     {a, b, offset} =
-      if st.cd[a] <= st.cd[b],
+      if ctx.engine? or st.cd[a] <= st.cd[b],
         do: {a, b, offset},
         else: {b, a, rem(ctx.boards - offset, ctx.boards)}
 
@@ -348,12 +466,12 @@ defmodule Ainalrami.TeamTrfGenerator do
     a_white_at_top? = rem(top_board, 2) == 1
     tbs_white = if a_white_at_top?, do: a, else: b
     tbs_black = if tbs_white == a, do: b, else: a
-    flip? = st.cd[tbs_white] > st.cd[tbs_black]
+    flip? = not ctx.engine? and st.cd[tbs_white] > st.cd[tbs_black]
     {tbs_white, tbs_black} = if flip?, do: {tbs_black, tbs_white}, else: {tbs_white, tbs_black}
 
-    {games, pa, pb} =
+    {games, pa, pb, played?} =
       paired
-      |> Enum.reduce({st.games, 0.0, 0.0}, fn {{x, y}, board}, {games, pa, pb} ->
+      |> Enum.reduce({st.games, 0.0, 0.0, false}, fn {{x, y}, board}, {games, pa, pb, played?} ->
         {rx, ry} = result.(x, y)
         white_first? = rem(board, 2) == 1 != flip?
 
@@ -362,8 +480,10 @@ defmodule Ainalrami.TeamTrfGenerator do
           |> put_in([x, r], {y, if(white_first?, do: "w", else: "b"), rx})
           |> put_in([y, r], {x, if(white_first?, do: "b", else: "w"), ry})
 
-        {games, pa + @wins[rx], pb + @wins[ry]}
+        {games, pa + @wins[rx], pb + @wins[ry], played? or rx not in ["+", "-"]}
       end)
+
+    st = engine_history(st, a, b, pa, pb, played?)
 
     {w, d, l} = ctx.mpts
 

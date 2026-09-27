@@ -84,7 +84,8 @@ defmodule Ainalrami.TeamPairing.Bracket do
 
   Options:
 
-    * `:type` / `:last_round?` - colour-preference type (1.7), for [C8]/[C9].
+    * `:type` / `:last_round?` - colour-preference type (1.7: `:a`, `:b` or
+      `:none`), for [C8]/[C9].
     * `:upfloater_tpns` - the TPNs in this bracket that are upfloaters, for
       [C10] (which counts upfloaters' OPPONENTS that were floaters in the
       previous round). Empty for a bracket of residents only.

@@ -129,7 +129,8 @@ defmodule Ainalrami.TeamPairing.Colour do
     * `:use_secondary?` - whether the secondary score breaks a 4.2 tie
       (1.2.1: "and whether the other is used for colour allocation").
       Defaults to true, per 1.2.2.
-    * `:type` - `:a` (default) or `:b` colour preferences (1.7).
+    * `:type` - `:a` (default) or `:b` colour preferences, or `:none` for a
+      competition that uses none (1.7; see `Team.preference/3`).
     * `:last_round?` - affects Type B mild preferences only.
     * `:parity_numbers` - `%{tpn => number}`, the round's arrival numbering,
       whose parity 4.3.1 reads. Built once per round by

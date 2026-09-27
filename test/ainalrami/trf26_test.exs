@@ -56,7 +56,7 @@ defmodule Ainalrami.Trf26Test do
           zero_point_bye: 0.0
         },
         forbidden_pairs: [[1, 4]],
-        type_code: "FIDE_DUTCH_2026_BAKU",
+        type_code: "FIDE_DUTCH_2025_BAKU",
         tie_breaks: ["BH", "SB"],
         time_control_code: "5400+30"
       },
@@ -94,7 +94,7 @@ defmodule Ainalrami.Trf26Test do
       assert "142 7" in all
       assert "152 W" in all
       assert "162  W 3.0    D 1.0    L 0.0    A 0.0    P 1.0" in all
-      assert "192 FIDE_DUTCH_2026_BAKU" in all
+      assert "192 FIDE_DUTCH_2025_BAKU" in all
       assert "202 BH,SB" in all
       assert "222 5400+30" in all
 
@@ -151,7 +151,7 @@ defmodule Ainalrami.Trf26Test do
       assert from_trf26.tournament[:initial_colour] == "w"
 
       # What only the TRF26 file says.
-      assert from_trf26.tournament[:type_code] == "FIDE_DUTCH_2026_BAKU"
+      assert from_trf26.tournament[:type_code] == "FIDE_DUTCH_2025_BAKU"
       assert from_trf26.tournament[:tie_breaks] == ["BH", "SB"]
       assert from_trf26.tournament[:time_control_code] == "5400+30"
 
@@ -324,21 +324,35 @@ defmodule Ainalrami.Trf26Test do
 
   describe "the TRF26 headers" do
     test "a type code off the table is refused before the file is written" do
-      data = put_in(tournament(), [:tournament, :type_code], "FIDE_DUTCH_2025")
+      # There is no 2022 edition (see CHANGELOG 0.26.0).
+      data = put_in(tournament(), [:tournament, :type_code], "FIDE_DUTCH_2022")
 
       assert_raise ValidationError,
-                   ~r/192: "FIDE_DUTCH_2025" is not a tournament type code/,
+                   ~r/192: "FIDE_DUTCH_2022" is not a tournament type code/,
                    fn ->
                      Trf.serialize(data, dialect: :trf26)
                    end
 
       for code <-
-            ~w(FIDE_DUTCH_2017 BERGER_ROUNDROBIN_G2 FIDE_SCHILLER_4x3 FIDE_TEAM_BAKU CUSTOM_SWISS) do
+            ~w(FIDE_DUTCH_2017 FIDE_DUTCH_2025 FIDE_DUTCH_2025_BAKU BERGER_ROUNDROBIN_G2
+               FIDE_SCHILLER_4x3 FIDE_SCHEVENINGEN_G3 BERGER_TEAM_ROUNDROBIN_G4 FIDE_TEAM_BAKU
+               FIDE_TEAM_MP_GP CUSTOM_SWISS) do
         assert Trf.tournament_type_code?(code), code
       end
 
       refute Trf.tournament_type_code?("BERGER_ROUNDROBIN_G0")
+      refute Trf.tournament_type_code?("FIDE_TEAM_GP_MP_BAKU")
       assert length(Trf.tournament_type_codes()) == 54
+    end
+
+    test "the draft table's FIDE_DUTCH_2026 is still accepted, outside the published list" do
+      for code <- ~w(FIDE_DUTCH_2026 FIDE_DUTCH_2026_BAKU) do
+        assert Trf.tournament_type_code?(code)
+        refute code in Trf.tournament_type_codes()
+      end
+
+      data = put_in(tournament(), [:tournament, :type_code], "FIDE_DUTCH_2026")
+      assert Trf.serialize(data, dialect: :trf26) =~ "192 FIDE_DUTCH_2026"
     end
 
     test "a time control that is not encoded is refused" do
