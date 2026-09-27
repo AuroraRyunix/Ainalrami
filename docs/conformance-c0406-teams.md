@@ -493,6 +493,23 @@ brute-force reference.
 * **Questions 5-7** are answered by research, not ruled on. Still worth
   sending to the SPP with the wording in OpenPairings'
   `docs/teams-phase-2-plan.md`.
+* **What a TRF26 team Swiss code says (checker, 2026-09-27).** `ainalrami
+  -c` replays a team Swiss with the settings its `192` code names
+  (`Ainalrami.TeamReplay`, reading R1): `TYPEA`/`TYPEB` the colour
+  preference type, Type A when neither is written (1.7's default); the
+  first of `MP`/`GP` the primary score and a second one the secondary
+  score used for colours, a single one meaning none is used (4.2.2 off);
+  `FIDE_TEAM` alone 1.2.2's default. Not checked against the Tournament
+  Type Code Table's own descriptions, which are not in this repository.
+  If a code without `TYPEA`/`TYPEB` means 1.7's third option (no colour
+  preferences at all), this engine cannot replay it - it has no such mode.
+* **Which board is board 1 in a TRF (checker, 2026-09-27).** 1.6.1 reads a
+  team's colour off its first board. A TRF names no boards unless it
+  carries TRF26 `300` records, which are not read; the checker takes the
+  first player in `310`/`013` order who met somebody, as the team
+  tie-breaks already do. A file whose teams shift their board order
+  between rounds without `300` records will show colour differences that
+  are not there.
 
 ## Validation, 2026-09-13
 

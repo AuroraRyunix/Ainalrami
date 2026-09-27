@@ -63,6 +63,34 @@ with the reference on every one of them.
 
 ## [Unreleased]
 
+- [Feature] **The checker replays team Swiss rounds.** `ainalrami -c` on a
+  team file used to re-pair the players as an individual Dutch Swiss, find
+  every round different and exit 1. A team Swiss is now replayed team
+  against team with the C.04.6 engine (`Ainalrami.TeamReplay`): each round
+  re-paired from the history the file records before it (points as the
+  team standings read them, opponents and board-1 colours of played
+  matches, the bye, forfeit wins, last round's floaters, teams sitting a
+  round out as `:absent`) and compared in who meets whom, who has the bye
+  and which team has White on board 1 - colours count here, since Article
+  4 decides them all from the initial colour (the file's `152`, else the
+  one round 1 shows). Settings from the `192` code (`FIDE_TEAM`,
+  `FIDE_TEAM_TYPEB_GP_MP`, ...; reading R1 in
+  docs/conformance-c0406-teams.md); with no `192` the games decide
+  whether team records mean a team event, so an individual open listing
+  club teams keeps the individual replay. Output in the individual
+  replay's shape, pairs as `{White team, Black team}`.
+- [Feature] **`-c` exits 2 for a team system it cannot replay** - a round
+  robin, Scheveningen or Schiller (`192` or `092`), a knockout, a custom
+  team Swiss or an accelerated one (`*_BAKU`) - with a message saying which
+  and why, instead of comparing against a Swiss pairing. The standings are
+  still checked, and a standings difference still exits 1.
+- [Verified] 400 generated team Swiss events paired by the engine
+  (`TeamTrfGenerator` `pairing: :engine`, Types A and B, match or game
+  points primary, either initial colour; 2,678 rounds) replay with no
+  difference, as `310` files with `192` and `152` and again as `013` files
+  with neither. An exchange of opponents between two matches, and one
+  match's colours reversed, are both found in the round they were made.
+
 ## [0.32.0] - 2026-09-27
 
 - [Verified] **A nightly tie-break check.** `.github/workflows/tiebreak-check.yml`

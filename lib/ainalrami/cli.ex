@@ -8,7 +8,10 @@ defmodule Ainalrami.CLI do
   argument-building code. The same applies to JaVaFo's other two modes:
   `-c` (Pairings Checker, FPC) is implemented - it replays a completed
   tournament and diffs each round against what this engine would have
-  paired, exiting nonzero if any round differs. `-g` (Random Tournament
+  paired, exiting nonzero if any round differs; a team Swiss is replayed
+  team against team with the C.04.6 engine (`Ainalrami.TeamReplay`), and
+  a team event whose system it cannot replay (round robin, Scheveningen,
+  Schiller ...) exits 2 with a message saying so. `-g` (Random Tournament
   Generator) is implemented too - it takes no input file, since it creates
   a tournament rather than reading one.
 
@@ -21,7 +24,7 @@ defmodule Ainalrami.CLI do
   place that halts.
   """
 
-  alias Ainalrami.{Generator, Log, Pairing, Trf}
+  alias Ainalrami.{Generator, Log, Pairing, TeamReplay, Trf}
 
   @doc false
   def main(argv), do: argv |> run() |> System.halt()
@@ -783,34 +786,134 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
   # reported separately and never as an error, because Article 5.1 leaves
   # the first colour to a drawing of lots and this engine's convention is
   # its own - see `Ainalrami.Pairing.pair_round_one/1`.
+  #
+  # A team event is replayed team against team (`check_team/2`), and a
+  # team event whose system this checker cannot replay - a round robin,
+  # Scheveningen, Schiller, knockout, custom or accelerated team event - is
+  # said to be one and exits `@not_replayed` (`check_unreplayable/2`).
+  # `Ainalrami.TeamReplay.system/1` decides which.
   defp check(input_path) do
     Log.step("Loading #{input_path}")
 
     with {:ok, text} <- read_input(input_path),
          {:ok, parsed} <- parse_input(text) do
-      rounds = completed_rounds(parsed.players)
-
-      if rounds == 0 do
-        Log.warn("no completed rounds to check")
-        0
-      else
-        Log.step("Checking #{rounds} round(s)")
-
-        results = Enum.map(1..rounds, &check_round(parsed, &1))
-        differing = Enum.count(results, &(&1 != :ok))
-
-        Log.step(
-          "#{rounds - differing}/#{rounds} round(s) match this engine's own pairing" <>
-            if(differing == 0, do: "", else: " - #{differing} differ")
-        )
-
-        standings = check_standings(parsed)
-
-        if differing == 0 and standings != :differs, do: 0, else: 1
+      case TeamReplay.system(parsed) do
+        :individual -> check_individual(parsed)
+        {:team, settings} -> check_team(parsed, settings)
+        {:unreplayable, reason} -> check_unreplayable(parsed, reason)
       end
     else
       {:error, :halt} -> 1
     end
+  end
+
+  # `-c`'s exit code when the rounds could not be replayed at all because
+  # the file's pairing system is not one this checker replays - distinct
+  # from 1, which says something was compared and differed. A standings
+  # difference still exits 1: that WAS compared.
+  @not_replayed 2
+
+  defp check_individual(parsed) do
+    rounds = completed_rounds(parsed.players)
+
+    if rounds == 0 do
+      Log.warn("no completed rounds to check")
+      0
+    else
+      Log.step("Checking #{rounds} round(s)")
+
+      results = Enum.map(1..rounds, &check_round(parsed, &1))
+      finish_check(parsed, results, rounds)
+    end
+  end
+
+  defp finish_check(parsed, results, rounds) do
+    differing = Enum.count(results, &(&1 != :ok))
+
+    Log.step(
+      "#{rounds - differing}/#{rounds} round(s) match this engine's own pairing" <>
+        if(differing == 0, do: "", else: " - #{differing} differ")
+    )
+
+    standings = check_standings(parsed)
+
+    if differing == 0 and standings != :differs, do: 0, else: 1
+  end
+
+  # A team Swiss: every team round re-paired by `Ainalrami.TeamPairing`
+  # (C.04.6) from the history before it - `Ainalrami.TeamReplay` has the
+  # reading of the file. Reported in the individual replay's shape, pairs
+  # as `{white team, black team}` (White on board 1) and the bye as
+  # `{team, nil}`. Unlike the individual replay a colour difference is a
+  # difference: Article 4 decides every team colour from the initial
+  # colour, which the file gives (152) or round 1 shows.
+  defp check_team(parsed, settings) do
+    history = TeamReplay.history(parsed)
+    rounds = TeamReplay.paired_rounds(history)
+
+    if rounds == 0 do
+      Log.warn("no completed rounds to check")
+      0
+    else
+      Log.step("Checking #{rounds} team round(s) - #{TeamReplay.describe(settings)}")
+
+      opts = [expected_rounds: parsed.tournament[:number_of_rounds]]
+      {colour, source} = TeamReplay.initial_colour(history, parsed.tournament, settings, opts)
+
+      Log.detail(
+        "initial colour #{colour}" <>
+          if(source == :file,
+            do: " (152)",
+            else: " (no 152 in the file: the colour that reproduces round 1 best)"
+          )
+      )
+
+      opts = Keyword.put(opts, :initial_colour, colour)
+      results = Enum.map(1..rounds, &check_team_round(history, &1, settings, opts))
+      finish_check(parsed, results, rounds)
+    end
+  end
+
+  defp check_team_round(history, round, settings, opts) do
+    case TeamReplay.check_round(history, round, settings, opts) do
+      {:ok, _file} ->
+        Log.detail("round #{round}: matches")
+        :ok
+
+      {:colours, file, engine, differing} ->
+        Log.warn(
+          "round #{round}: DIFFERS in colours only - same pairing, board-1 colours differ " <>
+            "in #{length(differing)} match(es): #{inspect(differing)}"
+        )
+
+        Log.warn("  file:   #{inspect(file)}")
+        Log.warn("  engine: #{inspect(engine)}")
+        :differs
+
+      {:differs, file, engine} ->
+        Log.warn("round #{round}: DIFFERS")
+        Log.warn("  file:   #{inspect(file)}")
+        Log.warn("  engine: #{inspect(engine)}")
+        :differs
+
+      {:no_pairing, reason} when reason in [:no_legal_pairing, :no_legal_bye] ->
+        Log.warn("round #{round}: this engine finds no legal pairing at all (#{inspect(reason)})")
+
+        :differs
+
+      {:no_pairing, reason} ->
+        Log.warn("round #{round}: this engine could not pair it (#{inspect(reason)})")
+        :differs
+    end
+  end
+
+  defp check_unreplayable(parsed, reason) do
+    Log.warn(
+      "rounds: not replayed - #{reason}. This checker replays team Swiss events " <>
+        "(C.04.6) only, so no round was compared (exit code #{@not_replayed})"
+    )
+
+    if check_standings(parsed) == :differs, do: 1, else: @not_replayed
   end
 
   # The second half of the checker's job (FIDE's VCL4THP Q21): do the final
@@ -1199,7 +1302,12 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
                                                  check the final ranks against
                                                  the file's own tie-break list
                                                  (202/212); for a team file,
-                                                 the teams' ranks (TRF26 310)
+                                                 the team rounds (C.04.6) and
+                                                 the teams' ranks (TRF26 310).
+                                                 Exit 0 all match, 1 something
+                                                 differs, 2 a team system that
+                                                 cannot be replayed (round
+                                                 robin, Scheveningen, ...)
       ainalrami <input.trf> -x                   Explain: pair the next round and
                                                  report, per bracket, which
                                                  criteria decided it

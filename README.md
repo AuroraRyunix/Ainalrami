@@ -193,7 +193,7 @@ ainalrami input.trf -p output.trf
 | `ainalrami input.trf -p output.trf` | pair the next round |
 | `ainalrami input.trf -p` | same, printed to stdout |
 | `ainalrami -g output.trf` | Random Tournament Generator |
-| `ainalrami input.trf -c` | Pairings Checker: replay and diff every round |
+| `ainalrami input.trf -c` | Pairings Checker: replay and diff every round (team Swiss: team against team) |
 
 `-g` and `-c` mirror JaVaFo's own RTG/FPC modes, used for FIDE's FE1
 endorsement auto-test.
@@ -218,7 +218,8 @@ deep into a Swiss (`Ainalrami.Pairing.NoValidPairingError`).
 
 **`-c`** replays a completed tournament round by round, re-pairing each
 from the state that preceded it and diffing against what the file records.
-Exits 0 when every round matches, 1 otherwise. Colour differences are
+Exits 0 when every round matches, 1 otherwise (2 for a team system it
+cannot replay - see *Team events* below). Colour differences are
 reported but never counted as errors: Article 5.1 leaves the first colour
 to a drawing of lots, so this engine's convention is its own.
 
@@ -237,6 +238,46 @@ warning:   team 2: file says 1, tie-breaks give 2 (MPTS=3.0 GPTS=1.5)
 
 A team file with only `013` records has no team ranks, and the check is
 skipped with a note saying so.
+
+**Team events.** On a team Swiss the rounds are replayed team against team
+with the C.04.6 engine (`Ainalrami.TeamPairing`), from the history the file
+records - match and game points as the standings read them (`362`, `320`,
+`330`), opponents and board-1 colours of the matches actually played, the
+bye, forfeit wins and last round's floaters (`Ainalrami.TeamReplay` has the
+full reading). Pairs are `{White team, Black team}`, White meaning White
+on board 1, and the bye is `{team, nil}`:
+
+```
+==> Checking 7 team round(s) - C.04.6, Type A colour preferences, match points primary, game points for colours (192 FIDE_TEAM_TYPEA_MP_GP)
+warning: round 2: DIFFERS
+warning:   file:   [{1, 4}, {3, 2}, {5, 6}]
+warning:   engine: [{1, 2}, {3, 4}, {5, 6}]
+warning: round 3: DIFFERS in colours only - same pairing, board-1 colours differ in 1 match(es): [{4, 1}]
+```
+
+Unlike the individual replay, a colour difference counts: Article 4 decides
+every team colour from the initial colour, which is the file's `152` or,
+without one, whichever colour reproduces round 1. The settings come from
+the `192` code - `TYPEA`/`TYPEB` for the colour preferences (Type A when
+absent, Article 1.7's default), then the primary score and, if named, the
+secondary one used for colours (`FIDE_TEAM` alone is Article 1.2.2's
+default: match points, game points for colours). A file with team records
+and no `192` is replayed as a team event when its games are team matches
+throughout; an individual event listing club teams in `013` keeps the
+individual replay.
+
+A team event whose pairings this checker cannot replay - a round robin,
+Scheveningen or Schiller (predetermined pairings), a knockout, a custom
+team Swiss (`CUSTOM_TEAM_SWISS*`) or an accelerated one (`*_BAKU`; the team
+engine has no acceleration) - is reported as such and nothing is compared:
+
+```
+warning: rounds: not replayed - FIDE_TEAM_ROUNDROBIN is a team round robin, whose pairings are predetermined (Berger tables), not paired round by round. This checker replays team Swiss events (C.04.6) only, so no round was compared (exit code 2)
+```
+
+`-c` exit codes: **0** every round (and the standings, when checked)
+match; **1** something differs, or the file cannot be read; **2** a team
+system that cannot be replayed, with the standings (if checked) in order.
 
 > **A checker is not an independent verifier of the rules.** It re-runs the
 > same engine and calls that the correct answer - exactly as bbpPairings'
