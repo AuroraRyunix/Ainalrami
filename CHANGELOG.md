@@ -63,6 +63,8 @@ with the reference on every one of them.
 
 ## [Unreleased]
 
+## [0.32.0] - 2026-09-27
+
 - [Verified] **A nightly tie-break check.** `.github/workflows/tiebreak-check.yml`
   compares tie-breaks with FIDE's TieBreakServer (pinned commit) in both
   directions, on team events, and against the independent reference, on
