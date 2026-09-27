@@ -33,7 +33,7 @@ the engine now conforms. Both are documented rather than hidden - see
 |---|---|---|---|---|
 | Individual pairings (C.04.3) | bbpPairings 6.0.0, on this engine's generated tournaments | 2,536,328,265 pairings, 217,470,056 rounds | 2 disagreements, both a bbpPairings defect | [below](#where-it-stands) |
 | Individual pairings, three engines | bbpPairings and Gacrux | 649,207 rounds | never the odd one out | [validation](docs/validation.md#the-three-way-run-2026-08-27) |
-| Individual pairings, the other way | bbpPairings' own generator, checked here | in progress toward 50,000 tournaments; so far 5,584 tournaments, 3,230,505 pairings <!-- Q33-DIR2-FINAL --> | 0 disagreements, colours included | [validation](docs/validation.md#pairings-vcl4thp-q33-both-directions) |
+| Individual pairings, the other way | bbpPairings' own generator, checked here | 50,045 tournaments, 28,964,816 pairings | 0 disagreements, colours included | [validation](docs/validation.md#pairings-vcl4thp-q33-both-directions) |
 | Team Swiss (C.04.6), 4-10 teams | brute-force reference written from the regulation | 1,032,949,115 rounds (seeds 1-250,000,000) | 0 failures | [validation](docs/validation.md#team-swiss-pairings-c046) |
 | Team Swiss, 11-80 teams | exact engine-independent reference | 11,980 rounds | agrees (one budget defect found, fixed in 0.30.0) | [large fields](docs/team-proof-large-fields.md) |
 | Team Swiss, no colour preferences | brute-force reference | 123,593 rounds | 0 disagreements | [conformance](docs/conformance-c0406-teams.md#no-colour-preferences-17-2026-09-27) |

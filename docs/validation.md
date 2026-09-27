@@ -16,7 +16,7 @@ every known difference.
 |---|---|---|---|---|
 | Individual pairings (C.04.3), our generator | bbpPairings 6.0.0 | 2,536,328,265 pairings, 217,470,056 rounds, 6 corpora | 2 disagreements, both a bbpPairings [C2] defect | [The corpora](#the-corpora) |
 | Individual pairings, three engines | bbpPairings and Gacrux | 649,207 rounds | agrees with bbpPairings on every round; never the odd one out | [The three-way run](#the-three-way-run-2026-08-27) |
-| Individual pairings, bbpPairings' generator (Q33 direction 2) | bbpPairings' own `-g` tournaments, checked here | in progress toward 50,000 tournaments; so far 5,584 tournaments, 55,770 rounds, 3,230,505 pairings <!-- Q33-DIR2-FINAL --> | 0 composition, 0 colour disagreements | [Pairings (Q33)](#pairings-vcl4thp-q33-both-directions) |
+| Individual pairings, bbpPairings' generator (Q33 direction 2) | bbpPairings' own `-g` tournaments, checked here | 50,045 tournaments, 499,816 rounds, 28,964,816 pairings | 0 composition, 0 colour disagreements | [Pairings (Q33)](#pairings-vcl4thp-q33-both-directions) |
 | Team Swiss whole rounds (C.04.6), 4-10 teams | brute-force reference written from the regulation | seeds 1-250,000,000, 1,032,949,115 rounds | 0 failures, 0 errors | [Team Swiss pairings](#team-swiss-pairings-c046) |
 | Team Swiss whole rounds, 11-80 teams | exact engine-independent reference | 2,000 seeds, 11,980 rounds | agrees; one 3.6 candidate-budget disagreement found and fixed (0.30.0) | [team-proof-large-fields.md](team-proof-large-fields.md) |
 | Team Swiss, no colour preferences (1.7) | brute-force reference | 30,000 seeds, 123,593 rounds | 0 disagreements | [conformance-c0406-teams.md](conformance-c0406-teams.md#no-colour-preferences-17-2026-09-27) |
@@ -1181,7 +1181,7 @@ generators:
 | direction | generator, checked by | tournaments | rounds | individual pairs | disagreements |
 |---|---|---|---|---|---|
 | 1 | Ainalrami (`Ainalrami.Test.FuzzTournament`), checked by bbpPairings | 5,993,000 x2 + four smaller corpora | 217,470,056 | 2,536,328,265 | 2 (bbpPairings' own [C2] defect, see below) |
-| 2 | bbpPairings' own `-g` generator, checked by Ainalrami | in progress toward 50,000; so far 5,584 (+19 where bbpPairings' own generator found no legal pairing) <!-- Q33-DIR2-FINAL --> | 55,770 | 3,230,505 | 0 |
+| 2 | bbpPairings' own `-g` generator, checked by Ainalrami | 50,045 (+158 where bbpPairings' own generator found no legal pairing) | 499,816 | 28,964,816 | 0 |
 
 Direction 1 is "The corpora" and "The corpus" above - the number everything
 else on this page rests on. Direction 2 did not exist at any real scale
@@ -1251,32 +1251,29 @@ round 1 as matching "with different colours" rather than as plain clean.
 From round 2 on, no `initial_colour` is passed at all: inference runs for
 real, against a genuine bbpPairings history it did not construct - a path
 direction 1's 2.5 billion pairings never exercise, because every one of
-them states the colour instead. **Result: 2,882,629 boards formed by both
+them states the colour instead. **Result: 25,842,761 boards formed by both
 engines from round 2 on, zero colour disagreements.**
 
 ### The numbers, and what they don't cover
 
-5,603 tournaments attempted (seed indices 1-5,603, run 2026-09-27 on the
-development PC, ~62 minutes wall clock at 16-way concurrency); 19 excluded
+50,203 tournaments attempted (seed indices 1-50,203, run 2026-09-27 on the
+development PC: a first pass of 5,603 at 16-way concurrency, then resumed
+at 12 schedulers for the rest, about nine hours in all); 158 excluded
 because bbpPairings' OWN generator hit "no valid pairing exists" while
 building the tournament - its generator calls its own pairing engine every
 round exactly like a real event would, and can run out of legal pairings
 the same way direction 1's corpus does (see
 [what the corpus could not see](#what-the-corpus-could-not-see)). The
-remaining **5,584 tournaments, 55,770 rounds, 3,230,505 individual
+remaining **50,045 tournaments, 499,816 rounds, 28,964,816 individual
 pairings, zero disagreements** - composition and colour both - and zero
 Ainalrami refusals.
 
-**In progress toward Q33's 50,000.** The first pass was kept to what one
-PC can do in a few hours, and the run is resumable rather than one-shot:
+**Q33's 50,000 is met in this direction too.** The run is resumable:
 `tools/bbp_generator_reverse.exs` skips any seed index already present in
 its result log (kept locally, `tools/bbp_reverse_results.log`, gitignored
-like the tie-break corpus logs below), so extending toward 50,000 is a
-matter of re-running it with a higher `BBP_REVERSE_COUNT`, not redoing the
-work already done. The figures above are the interim ones
-<!-- Q33-DIR2-FINAL --> and are to be replaced with the final count at
-release. Tracked as an open item in `docs/vcl4thp/tracker.json`'s Q33
-entry until then.
+like the tie-break corpus logs below), so extending it is a matter of
+re-running it with a higher `BBP_REVERSE_COUNT`. Zero composition
+mismatches were dumped over the whole run.
 
 ## Team Swiss pairings (C.04.6)
 

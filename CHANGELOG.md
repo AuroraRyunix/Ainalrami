@@ -63,6 +63,8 @@ with the reference on every one of them.
 
 ## [Unreleased]
 
+## [0.33.0] - 2026-09-27
+
 - [Feature] **Bye exclusions - an organiser's "not this player" for the
   pairing-allocated bye (not a FIDE rule).** `pair_next_round/2`,
   `pair_later_round/2` and `explain_round/3` take `bye_exclusions:
@@ -190,15 +192,15 @@ with the reference on every one of them.
   ran at scale: bbpPairings' own `-g` random tournament generator, which
   pairs the whole tournament with its own engine and writes no round-count
   header or `152`, checked by this one (`tools/bbp_generator_reverse.exs`,
-  mirroring `Ainalrami.CLI`'s `-c` internals). 5,584 tournaments, 55,770
-  rounds, 3,230,505 individual pairings, zero disagreements; 2,882,629
+  mirroring `Ainalrami.CLI`'s `-c` internals). 50,045 tournaments, 499,816
+  rounds, 28,964,816 individual pairings, zero disagreements; 25,842,761
   boards agreed on colour too, from round 2 on, where the file's silence
   on `152` puts `infer_initial_colour/1` on real, external data for the
   first time at scale. Found and fixed a seeding trap first: bbpPairings'
   generator draws `RoundsNumber` from the LCG `-s` seeds first, and small
   consecutive seeds (1..100) all drew 5 - the tool now hashes its index
-  before seeding. The run continues toward Q33's 50,000; these are the
-  interim figures, resumable via the same result log. See
+  before seeding. Q33's 50,000 is met in this direction (158 more were
+  set aside where bbpPairings' own generator found no legal pairing). See
   `docs/validation.md`.
 
 ## [0.32.0] - 2026-09-27
