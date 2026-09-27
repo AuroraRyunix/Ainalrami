@@ -867,6 +867,12 @@ Stated so the claim's boundary is explicit:
 - ~~**Three-way agreement at scale**~~ - **raised 2026-08-27, from 3,352
   rounds to 649,207**, and given a colour instrument it never had. See
   "The three-way run" below. It is no longer the weakest number here.
+- **The reverse pairings direction (VCL4THP Q33), at the required scale.**
+  Reading a tournament bbpPairings' own generator produced, rather than
+  one this project wrote, had exactly one fixture behind it until
+  2026-09-27. Now 5,584 tournaments, zero disagreements - see "Pairings
+  (VCL4THP Q33), both directions" below - which is real, new coverage and
+  still short of the 50,000 Q33 asks for. Resumable; not yet closed.
 
 ## Late entrants (2026-09-14)
 
@@ -1095,6 +1101,111 @@ second including start-up. A 200-player open is about a second, a
 seven - against the C++ reference's fifty. Inside a long-lived process
 (the sibling OpenPairings app, or any server) the 0.63 s BEAM start-up is
 paid once rather than per round, which is most of the small-field cost.
+
+## Pairings (VCL4THP Q33), both directions
+
+VCL4THP v13 Q33 asks for at least 50,000 tournaments cross-checked each way
+against another public program, pairings and tie-breaks both. Tie-breaks
+are covered below. For pairings, "each way" means two different
+generators:
+
+| direction | generator, checked by | tournaments | rounds | individual pairs | disagreements |
+|---|---|---|---|---|---|
+| 1 | Ainalrami (`Ainalrami.Test.FuzzTournament`), checked by bbpPairings | 5,993,000 x2 + four smaller corpora | 217,470,056 | 2,536,328,265 | 2 (bbpPairings' own [C2] defect, see below) |
+| 2 | bbpPairings' own `-g` generator, checked by Ainalrami | 5,584 (+19 where bbpPairings' own generator found no legal pairing) | 55,770 | 3,230,505 | 0 |
+
+Direction 1 is "The corpora" and "The corpus" above - the number everything
+else on this page rests on. Direction 2 did not exist at any real scale
+until 2026-09-27: before it, this engine had read exactly one file it did
+not write (`test/fixtures/interop/bbppairings-generated.trf`, 209 players,
+five rounds) plus a handful of single-file performance benchmarks ("Against
+bbpPairings and Gacrux, on the same files" below) - real coverage of
+"can this engine read and correctly re-pair an arbitrary file from the
+other implementation", but nowhere near the fuzzed-axis scale direction 1
+has always had.
+
+### Why direction 2 needed its own tool, not a bigger `PAIRING_FUZZ_COUNT`
+
+bbpPairings ships its own random tournament generator (`-g`,
+`src/tournament/generator.cpp`): it picks `PlayersNumber` (15-215),
+`RoundsNumber` (5-15), forfeit/retirement/half-point-bye rates and a draw
+percentage, then PAIRS THE WHOLE TOURNAMENT ITSELF, round by round, with
+its own engine. `tools/bbp_generator_reverse.exs` generates one of these,
+parses it, and replays every round through
+`Ainalrami.Pairing.pair_next_round/2` from the state immediately before
+that round - the same `state_before_round/3` / `recorded_pairs/2` logic
+`Ainalrami.CLI`'s `-c` (Pairings Checker) uses internally, reimplemented
+here (both are private in `lib/ainalrami/cli.ex`) so a whole corpus can run
+without shelling out to the escript once per file. Cross-checked directly:
+the real `-c`, run on one of this run's own generated files, reports
+"10/10 round(s) match" (round 1 noted as "same pairing, different
+colours" - see "Colour" below) - confirming the reimplementation agrees
+with the project's own trusted checker rather than quietly checking
+something else.
+
+Two things make this a genuinely different axis from direction 1, not a
+relabelled copy of it:
+
+- **The generator writes no round-count header and no `152`.** Confirmed
+  against `test/fixtures/interop/README.md` and by direct invocation, so
+  `expected_rounds` is taken from the file itself (every player's games
+  list is padded to the tournament's true length, `U` entries included),
+  never supplied. Direction 1 states `initial_colour:` explicitly on every
+  single comparison (see `bbppairings_comparison_test.exs`'s moduledoc), so
+  `infer_initial_colour/1` is never reached by any of its 2.5 billion
+  pairings. Direction 2 never states it from round 2 on -
+  `pair_next_round/2` falls through to inference exactly as it would for
+  any real silent TRF, which is the realistic case this project's own
+  CHANGELOG describes running into first ("the comparison harness only
+  ever fed this project's files to them, and nothing here had ever read a
+  TRF written by anything other than this engine").
+- **A seeding trap, found and fixed before it silently produced a
+  degenerate corpus.** bbpPairings seeds a plain `std::minstd_rand` (a
+  Park-Miller LCG) with `-s`, and `RoundsNumber` is the FIRST value drawn
+  from it. Seeds 1..100, tried first, gave `RoundsNumber = 5` on every
+  single one (20/20 sampled) - an LCG correlating badly on consecutive
+  small seeds, not a property of the generator's intended 5-15 spread
+  (confirmed: the same 20 indices, run through a multiplicative hash
+  first, span 4-15 rounds instead). The tool hashes its running index
+  (`rem(i * 2_654_435_761, 2_147_483_646) + 1`) before handing it to `-s`,
+  keeping the seed-to-tournament mapping deterministic and resumable while
+  actually sampling the generator's real distribution rather than one
+  corner of it.
+
+### Colour
+
+Round 1 has nothing to infer colour from (no history, no `152`), so an
+arbitrary `initial_colour: "w"` is passed and only composition (who plays
+whom) is compared there - the same posture `test/ainalrami/interop_test.exs`
+already takes on the single fixture, and the reason the real `-c` reports
+round 1 as matching "with different colours" rather than as plain clean.
+From round 2 on, no `initial_colour` is passed at all: inference runs for
+real, against a genuine bbpPairings history it did not construct - a path
+direction 1's 2.5 billion pairings never exercise, because every one of
+them states the colour instead. **Result: 2,882,629 boards formed by both
+engines from round 2 on, zero colour disagreements.**
+
+### The numbers, and what they don't cover
+
+5,603 tournaments attempted (seed indices 1-5,603, run 2026-09-27 on the
+development PC, ~62 minutes wall clock at 16-way concurrency); 19 excluded
+because bbpPairings' OWN generator hit "no valid pairing exists" while
+building the tournament - its generator calls its own pairing engine every
+round exactly like a real event would, and can run out of legal pairings
+the same way direction 1's corpus does (see
+[what the corpus could not see](#what-the-corpus-could-not-see)). The
+remaining **5,584 tournaments, 55,770 rounds, 3,230,505 individual
+pairings, zero disagreements** - composition and colour both - and zero
+Ainalrami refusals.
+
+Short of Q33's 50,000, by design: the brief was "keep it to what one PC can
+do in a few hours" and this direction started from zero, so the run is
+resumable rather than one-shot. `tools/bbp_generator_reverse.exs` skips any
+seed index already present in its result log (kept locally,
+`tools/bbp_reverse_results.log`, gitignored like the tie-break corpus logs
+below), so extending toward 50,000 is a matter of re-running it with a
+higher `BBP_REVERSE_COUNT`, not redoing the work already done. Tracked as
+an open item in `docs/vcl4thp/tracker.json`'s Q33 entry until then.
 
 ## Tie-breaks (C.07, effective 1 March 2026), against TieBreakServer
 

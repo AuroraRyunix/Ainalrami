@@ -43,3 +43,6 @@ direction2_run.log
 team_tb_run.log
 direction1_state.json*
 direction1_run.log
+tools/bbp_reverse_results.log
+tools/bbp_reverse_run.out
+tools/bbp_reverse_dumps/
