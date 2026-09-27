@@ -62,6 +62,13 @@ defmodule Ainalrami.Alternatives do
   # which has no such key.
   defp pop_cap(opts), do: Keyword.pop(opts, :max_candidates, @max_candidates)
 
+  # Every report built here is compared rung by rung, never shown on its
+  # own, so it does not need `explain_round/3`'s account of who a bye
+  # exclusion passed over - which would re-pair the round once more per
+  # report, per candidate. The exclusions themselves stay in the options:
+  # they are rules the alternative must be scored under.
+  defp quiet(opts), do: Keyword.put(opts, :bye_passed_over, false)
+
   defp over_cap?(_candidates, :all), do: false
   defp over_cap?(candidates, cap) when is_integer(cap), do: length(candidates) > cap
 
@@ -178,8 +185,8 @@ defmodule Ainalrami.Alternatives do
   report for a caller that wants to show the bracket it changed.
   """
   def judge(players, actual_pairs, alternative_pairs, opts \\ []) do
-    actual = Pairing.explain_round(players, actual_pairs, opts)
-    alternative = Pairing.explain_round(players, alternative_pairs, opts)
+    actual = Pairing.explain_round(players, actual_pairs, quiet(opts))
+    alternative = Pairing.explain_round(players, alternative_pairs, quiet(opts))
 
     %{
       verdict: compare(actual, alternative),
@@ -207,7 +214,7 @@ defmodule Ainalrami.Alternatives do
   """
   def float_alternatives(players, pairs, opts \\ []) do
     {cap, opts} = pop_cap(opts)
-    actual = Pairing.explain_round(players, pairs, opts)
+    actual = Pairing.explain_round(players, pairs, quiet(opts))
     bye = bye_holder(pairs)
 
     for bracket <- actual, floater <- bracket.floats, floater != bye do
@@ -240,7 +247,9 @@ defmodule Ainalrami.Alternatives do
   candidate as in
   `float_alternatives/3` except that one C.2 cannot allow is
   `%{rank:, outcome: :ineligible, reason: :pairing_bye | :forfeit_win |
-  :full_point_bye}` and is not searched.
+  :full_point_bye}` and is not searched. A player the organiser excluded
+  from the bye (`:bye_exclusions`, not a FIDE rule) whom C.2 itself allows
+  is `reason: :organiser_exclusion`.
   """
   def bye_alternatives(players, pairs, opts \\ []) do
     case bye_holder(pairs) do
@@ -249,7 +258,7 @@ defmodule Ainalrami.Alternatives do
 
       holder ->
         {cap, opts} = pop_cap(opts)
-        actual = Pairing.explain_round(players, pairs, opts)
+        actual = Pairing.explain_round(players, pairs, quiet(opts))
         eligibility = Pairing.bye_eligibility(players, opts)
         bracket = Enum.find(actual, &(holder in &1.order)) || List.last(actual)
         candidates = bracket.order -- [holder]
@@ -286,7 +295,7 @@ defmodule Ainalrami.Alternatives do
 
     try do
       alt_pairs = Pairing.pair_next_round(players, forced_opts)
-      alt = Pairing.explain_round(players, alt_pairs, opts)
+      alt = Pairing.explain_round(players, alt_pairs, quiet(opts))
       verdict = compare(actual, alt)
 
       %{
@@ -371,7 +380,7 @@ defmodule Ainalrami.Alternatives do
   end
 
   defp force_legal_pair(players, pairs, a, b, opts) do
-    actual = Pairing.explain_round(players, pairs, opts)
+    actual = Pairing.explain_round(players, pairs, quiet(opts))
     ranks = Enum.map(players, & &1.rank)
 
     forced =
@@ -384,7 +393,7 @@ defmodule Ainalrami.Alternatives do
       alt_pairs = Pairing.pair_next_round(players, forced_opts)
 
       if paired_together?(alt_pairs, a, b) do
-        alt = Pairing.explain_round(players, alt_pairs, opts)
+        alt = Pairing.explain_round(players, alt_pairs, quiet(opts))
         verdict = compare(actual, alt)
 
         %{
@@ -441,14 +450,14 @@ defmodule Ainalrami.Alternatives do
         players = mark_absent(players, absent)
         remaining = Enum.reject(pairs, fn {x, y} -> absent in [x, y] end)
         full_pairs = Pairing.pair_next_round(players, opts)
-        full = Pairing.explain_round(players, full_pairs, opts)
+        full = Pairing.explain_round(players, full_pairs, quiet(opts))
         holder = bye_holder(remaining)
 
         options =
           (small_fixes(remaining, opponent, holder) ++ board_fixes(remaining, opponent, holder))
           |> Enum.flat_map(fn {candidate, affected} ->
             for coloured <- colour_variants(candidate, remaining),
-                report = Pairing.explain_round(players, coloured, opts),
+                report = Pairing.explain_round(players, coloured, quiet(opts)),
                 violations(report) == [] do
               verdict = compare(full, report)
 
@@ -605,7 +614,7 @@ defmodule Ainalrami.Alternatives do
       end
 
     players
-    |> Pairing.explain_round(alt, opts)
+    |> Pairing.explain_round(alt, quiet(opts))
     |> violations()
     |> Enum.find(&(Enum.sort(&1.players) == Enum.sort([a, b])))
   end

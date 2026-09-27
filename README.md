@@ -415,6 +415,48 @@ points), `320` (the team pairing-allocated bye) and `330` (forfeited
 matches) are read and written; `300` (boards out of order), `801`, `802`
 and national-rating records are not read.
 
+## Organiser deviations (not FIDE)
+
+Two options change the pairing in ways the Dutch system does not allow. A
+round paired with either is not a Dutch-system round in the homologation
+sense, and a FIDE checker replaying the file will not reproduce it - no TRF
+line records them. Without them the engine runs exactly the code it runs
+without them, byte for byte.
+
+- **Soft pairs** - `soft_pairs:` / `soft_position:` on `pair_next_round/2`
+  and `explain_round/3`: pairs to avoid if the alternative is not worse
+  (club protection, family). See the 0.20.0 changelog entry.
+- **Bye exclusions** - `bye_exclusions: [rank, ...]` on
+  `pair_next_round/2`, `pair_later_round/2` and `explain_round/3`: players
+  who must not receive the pairing-allocated bye this round (someone who
+  travelled far, a junior with a long drive home). Each is treated exactly
+  as [C2] treats a player who already had a pairing-allocated bye -
+  ineligible for the bye, and for nothing else; score, colours, floats and
+  every other criterion are untouched. Ranks not in the round are ignored,
+  and so is the whole option on an even field.
+
+  When the exclusions leave no legal round, `NoValidPairingError` is
+  raised with `reason: :bye_exclusions`, the active excluded ranks in
+  `excluded`, and in `override` one rank whose exclusion, lifted for this
+  round, makes it pairable (the player who takes the bye with no
+  exclusion) - so a program can offer "pair anyway, ignoring the exclusion
+  for this player". A round that is impossible anyway keeps
+  `reason: :no_legal_pairing`.
+
+  `explain_round/3` puts `bye_passed_over: [%{rank:, reason:
+  :organiser_exclusion}]` on the bracket holding the bye: the excluded
+  players who would have had it, in the order they would have had it.
+  `bye_eligibility/2` reports such a player as `:organiser_exclusion`, and
+  so does `Ainalrami.Alternatives.bye_alternatives/3`.
+
+  Validated against an exhaustive brute-force reference
+  (`test/support/bye_exclusion_reference.ex`, sharing no code with the
+  engine): 10,000 generated tournaments, 52,456 rounds, 0 disagreements on
+  whether the round can be paired, its legality, [C5]'s bye score, the
+  refusal and its override, and the passed-over account; and with no
+  exclusion the engine's pairings and explanations are identical to the
+  previous release's on 8,593 generated rounds. See `docs/validation.md`.
+
 ## What is not settled
 
 Documented rather than hidden, because an engine claiming 100% owes an

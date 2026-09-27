@@ -845,6 +845,43 @@ implemented: at 20% forbidden-pair density it seated a forbidden pair in
 **27.72%** of rounds, and Baku acceleration paired **66.12%** of rounds on
 the wrong scores.
 
+## Bye exclusions (organiser deviation, 2026-09-27)
+
+`bye_exclusions:` is not a FIDE rule, so no reference engine implements it
+and none can be compared against. It is checked instead against
+`Ainalrami.Test.ByeExclusionReference`, an exhaustive reference written
+from the article text that shares no code with the engine: every complete
+pairing of the active field is enumerated, the absolute criteria (C1, C3
+with the topscorer exception, forbidden pairs) are applied per pair, and
+the bye goes only to a player [C2] allows and the organiser did not
+exclude - the exclusion enters the reference in exactly one place, beside
+C2, which is the claim being tested.
+
+`test/ainalrami/bye_exclusion_validation_test.exs` plays whole generated
+tournaments (4-13 players, 3-9 rounds, requested `H`/`Z` byes,
+withdrawals, forfeits, sometimes forbidden pairs) paired by the engine
+WITH random exclusions, and on every round checks: that `[]` pairs as no
+option does; that on an even field, or with nobody active excluded, the
+option changes nothing; and on an odd field with someone excluded, that
+the engine pairs exactly when the reference finds a legal round, that the
+round is legal under the reference's rules, that its bye holder has
+[C5]'s minimum score, that the round equals the unexcluded one whenever
+the unexcluded bye holder was not excluded, that `explain_round/3`'s
+passed-over list is right, and that a refusal carries `:bye_exclusions`
+exactly when the round is pairable without the exclusions, with an
+override that really does make it pairable.
+
+**Seeds 1-10,000: 52,456 rounds - 15,949 paired with an exclusion in
+force, 5,169 refused (4,038 with an override offered), 3,495 with someone
+passed over - 0 disagreements.** A mutation that drops the exclusion from
+the engine is caught on the first seeds. The ordinary suite runs 150 seeds;
+`BYE_EXCL_SEEDS=1-10000` reruns the range.
+
+With no exclusion the engine's pairings and `explain_round/3` rungs were
+diffed against the previous `main` build on 1,500 generated tournaments of
+4-24 players (8,593 rounds, forbidden pairs and `H` byes included):
+byte-identical, so every corpus figure above still stands.
+
 ## Not covered
 
 Stated so the claim's boundary is explicit:

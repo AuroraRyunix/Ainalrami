@@ -16,8 +16,24 @@ defmodule Ainalrami.Pairing.NoValidPairingError do
   small field deep into a Swiss (colour-absolute exclusions stacking on
   top of near-exhausted rematch-free opponents) is the realistic way to
   hit this, not a bug in the matcher.
+
+  ## Fields
+
+    * `:reason` - `:no_legal_pairing` when the absolute criteria alone
+      leave no legal round, or `:bye_exclusions` when a legal round exists
+      but not one that keeps the pairing-allocated bye away from every
+      player in `pair_next_round/2`'s `:bye_exclusions` option - the
+      organiser's rule, not FIDE's, is what made the round impossible.
+    * `:excluded` - with `:bye_exclusions`, the excluded ranks that are
+      active in this round (sorted). `[]` otherwise.
+    * `:override` - with `:bye_exclusions`, ONE excluded rank whose
+      exclusion, lifted for this round alone, makes the round pairable: the
+      player who receives the bye when the round is paired without any
+      exclusion. A caller can offer "pair anyway, ignoring the exclusion
+      for this player" and pair again with that rank removed from the list.
+      `nil` otherwise.
   """
-  defexception [:message]
+  defexception [:message, reason: :no_legal_pairing, excluded: [], override: nil]
 end
 
 defmodule Ainalrami.Pairing do
@@ -153,6 +169,13 @@ defmodule Ainalrami.Pairing do
   # `""`, which is truthy here - so the sentinel is unambiguous and
   # `env_flag/2` reproduces `System.get_env/1` exactly, including for a
   # caller comparing the result against a string.
+  # The organiser's bye exclusions for the round being paired - a MapSet of
+  # the active players' ranks who must not receive the pairing-allocated
+  # bye, or nil. NOT a FIDE rule: see `bye_exclusion_set/2`. nil unless a
+  # caller asked AND the round actually has a bye to give, so that without
+  # the option every rule reads exactly what it read before it existed.
+  @bye_excluded_key :ainalrami_bye_excluded
+
   @env_completion_key :ainalrami_env_completion
   @env_trace_key :ainalrami_env_trace
   @env_nofast_key :ainalrami_env_nofast
@@ -166,8 +189,114 @@ defmodule Ainalrami.Pairing do
   `tournament[:forbidden_pairs]`. Acceleration needs no option: it rides on
   the players themselves, as each player's `:accelerations` list - again
   the shape `Ainalrami.Trf.parse/1` produces from `XXA`.
+
+  ## Bye exclusions (not FIDE)
+
+  `opts[:bye_exclusions]` is a list of starting ranks who must NOT receive
+  the pairing-allocated bye this round - an organiser's rule (a player who
+  travelled far, a junior whose parents drive an hour), not the Dutch
+  system's. Each listed player is treated exactly as [C2] treats a player
+  who has already had a pairing-allocated bye: ineligible for the bye, and
+  nothing else - their score, colours, floats and every other criterion
+  are untouched. A round paired with it is therefore not a Dutch-system
+  round in the homologation sense, and a FIDE checker replaying the file
+  will not reproduce it.
+
+  Ranks not active this round are ignored, as is the whole option on a
+  round with an even number of active players (there is no bye to keep
+  anyone from). With the option absent or `[]` the engine runs exactly the
+  code it ran before the option existed.
+
+  When the exclusions leave no legal round, `NoValidPairingError` is raised
+  with `reason: :bye_exclusions`, the active excluded ranks in `excluded`,
+  and in `override` the one rank whose exclusion, lifted, lets the round be
+  paired - see the exception's doc. A round that is impossible for reasons
+  of its own still raises with `reason: :no_legal_pairing`.
   """
   def pair_next_round(players, opts \\ []) do
+    do_pair_next_round(players, opts)
+  rescue
+    e in Ainalrami.Pairing.NoValidPairingError ->
+      reraise diagnose_exclusions(e, players, opts), __STACKTRACE__
+  end
+
+  # Tells "impossible" apart from "impossible because of the organiser's
+  # exclusions" by the only honest test there is: pair the same round
+  # without them. If that succeeds, the exclusions were the cause, and its
+  # bye holder is an excluded player (were it not, that very round would
+  # have been legal WITH the exclusions too) - so lifting that one player's
+  # exclusion is enough, since the round just computed is then legal.
+  #
+  # Costs a second pairing, but only on a round that has already failed.
+  defp diagnose_exclusions(%{reason: :no_legal_pairing} = e, players, opts) do
+    excluded = active_excluded(players, opts[:bye_exclusions])
+
+    if excluded == [] do
+      e
+    else
+      try do
+        pairs = do_pair_next_round(players, Keyword.delete(opts, :bye_exclusions))
+        holder = Enum.find_value(pairs, fn {w, b} -> if is_nil(b), do: w end)
+
+        if holder in excluded do
+          %Ainalrami.Pairing.NoValidPairingError{
+            message:
+              "no legal pairing keeps the pairing-allocated bye away from rank(s) " <>
+                "#{Enum.join(excluded, ", ")} (organiser exclusion, not a FIDE rule); " <>
+                "lifting the exclusion for rank #{holder} allows one",
+            reason: :bye_exclusions,
+            excluded: excluded,
+            override: holder
+          }
+        else
+          e
+        end
+      rescue
+        Ainalrami.Pairing.NoValidPairingError -> e
+      end
+    end
+  end
+
+  defp diagnose_exclusions(e, _players, _opts), do: e
+
+  defp active_excluded(players, ranks) do
+    played = rounds_played(players)
+    active = Enum.filter(players, &active_this_round?(&1, played))
+
+    case bye_exclusion_set(ranks, active) do
+      nil -> []
+      set -> set |> MapSet.to_list() |> Enum.sort()
+    end
+  end
+
+  # The option, reduced to what can matter this round: the listed players
+  # who are actually in it, and only when the round has a bye at all. nil
+  # otherwise - which is the value every rule already reads as "no
+  # exclusions", so a round the option cannot affect is paired by exactly
+  # the code that paired it before the option existed.
+  defp bye_exclusion_set(ranks, _active) when ranks in [nil, []], do: nil
+
+  defp bye_exclusion_set(ranks, active) when is_list(ranks) do
+    Enum.each(ranks, fn
+      rank when is_integer(rank) ->
+        :ok
+
+      other ->
+        raise ArgumentError,
+              ":bye_exclusions must be a list of starting ranks, got #{inspect(other)}"
+    end)
+
+    wanted = MapSet.new(ranks)
+    set = for p <- active, MapSet.member?(wanted, p.rank), into: MapSet.new(), do: p.rank
+
+    if MapSet.size(set) == 0 or rem(length(active), 2) == 0, do: nil, else: set
+  end
+
+  defp bye_exclusion_set(other, _active) do
+    raise ArgumentError, ":bye_exclusions must be a list of starting ranks, got #{inspect(other)}"
+  end
+
+  defp do_pair_next_round(players, opts) do
     # The tournament's total round count, when the caller knows it (a
     # TRF's `XXR`/`142`). Only one rule needs it - the final-round
     # exception in `colour_compatible?/2` - so it is optional rather than
@@ -193,6 +322,7 @@ defmodule Ainalrami.Pairing do
       Process.put(@soft_key, soft_map(opts, played + 1))
 
       active = Enum.filter(players, &active_this_round?(&1, played))
+      Process.put(@bye_excluded_key, bye_exclusion_set(opts[:bye_exclusions], active))
 
       # `pair_round_one/1` is a shortcut: it knows the whole field is tied
       # on zero, so rank order alone decides the split and nothing has to
@@ -201,9 +331,11 @@ defmodule Ainalrami.Pairing do
       # forbidden pair means the S1[i]-vs-S2[i] answer may not be legal -
       # and bbpPairings has no round-one special case for either to be
       # compared against: `computeMatching` runs the same bracket machinery
-      # from round 1 on. So when either is in play, so does this.
+      # from round 1 on. So when either is in play, so does this. A bye
+      # exclusion likewise: the shortcut hands the bye to the lowest-ranked
+      # player without asking whether they may have it.
       if Enum.all?(active, &(&1.games == [])) and is_nil(Process.get(@forbidden_key)) and
-           is_nil(Process.get(@soft_key)) and
+           is_nil(Process.get(@soft_key)) and is_nil(Process.get(@bye_excluded_key)) and
            not Enum.any?(active, &(acceleration_at(&1, played) != 0.0)) do
         pair_round_one(active)
       else
@@ -220,6 +352,7 @@ defmodule Ainalrami.Pairing do
       Process.delete(@played_key)
       Process.delete(@forbidden_key)
       Process.delete(@soft_key)
+      Process.delete(@bye_excluded_key)
       clear_env_flags()
     end
   end
@@ -331,8 +464,27 @@ defmodule Ainalrami.Pairing do
   perfectly balanced player still has a MILD preference for the opposite
   of their last colour, and only a player who has never played has none.
   So a C12 verdict is not evidence of a bug in the colour model.
+
+  ## Bye exclusions
+
+  Takes `pair_next_round/2`'s `:bye_exclusions` (not a FIDE rule), and
+  scores under it exactly as the pairing was made. When it is in force and
+  the round has a bye, the bracket that holds the bye holder also carries
+  `bye_passed_over: [%{rank:, reason: :organiser_exclusion}]` - the excluded
+  players who would have received the bye had they not been excluded, in
+  the order they would have received it: pairing the round with no
+  exclusion gives the bye to the first; excluding just that one gives it to
+  the second; and so on until the bye lands on someone the organiser did
+  not exclude. Empty when the exclusions changed nothing. Working that out
+  re-pairs the round once per name on the list plus once, so a caller that
+  only wants the brackets can pass `bye_passed_over: false`. Without the
+  option no bracket carries the key.
   """
   def explain_round(players, pairs, opts \\ []) do
+    # Before anything is stamped: it re-pairs the round, and
+    # `pair_next_round/2` clears every round-scoped key on its way out.
+    passed_over = bye_passed_over(players, pairs, opts)
+
     Process.put(@expected_rounds_key, opts[:expected_rounds])
 
     Process.put(
@@ -355,6 +507,14 @@ defmodule Ainalrami.Pairing do
       Process.put(@played_key, played)
       Process.put(@forbidden_key, forbidden_map(opts[:forbidden_pairs], played + 1))
       Process.put(@soft_key, soft_map(opts, played + 1))
+
+      Process.put(
+        @bye_excluded_key,
+        bye_exclusion_set(
+          opts[:bye_exclusions],
+          Enum.filter(players, &active_this_round?(&1, played))
+        )
+      )
 
       # Not read on this path today - `explain_bracket/7` grades a pairing
       # it was handed and never reaches `assign_colour_with_history/1`, so
@@ -406,6 +566,7 @@ defmodule Ainalrami.Pairing do
       end)
       |> elem(0)
       |> Enum.reverse()
+      |> attach_passed_over(passed_over, pairs)
     after
       Process.delete(@expected_rounds_key)
       Process.delete(@initial_colour_key)
@@ -414,6 +575,7 @@ defmodule Ainalrami.Pairing do
       Process.delete(@played_key)
       Process.delete(@forbidden_key)
       Process.delete(@soft_key)
+      Process.delete(@bye_excluded_key)
       Process.delete(@bye_score_key)
       Process.delete(@round_matcher_key)
       Process.delete(@oracle_key)
@@ -436,6 +598,53 @@ defmodule Ainalrami.Pairing do
   # players below the bracket) that ignored both the `byeAssigneeScore >=
   # next group` precondition and the clearing step entirely, and so could
   # score C9 in brackets where the engine itself does not.
+  # Who the organiser's exclusions passed over for the bye - see
+  # `explain_round/3`'s "Bye exclusions". nil when there is nothing to say:
+  # no exclusion that can matter this round, no bye in the pairing, or a
+  # caller that asked not to be told.
+  #
+  # The chain re-pairs with a GROWING subset of the exclusions, starting
+  # from none. Each subset is looser than the full list, and the full list
+  # was pairable (the round being explained exists), so none of these can
+  # fail for a pairing this engine made; one handed in from elsewhere might,
+  # and then the chain simply stops where it got to.
+  defp bye_passed_over(players, pairs, opts) do
+    excluded = active_excluded(players, opts[:bye_exclusions])
+    holder = Enum.find_value(pairs, fn {w, b} -> if is_nil(b), do: w end)
+
+    if excluded == [] or is_nil(holder) or opts[:bye_passed_over] == false do
+      nil
+    else
+      base = Keyword.put(opts, :bye_exclusions, [])
+      passed_over_chain(players, base, MapSet.new(excluded), [])
+    end
+  end
+
+  defp passed_over_chain(players, opts, excluded, passed) do
+    pairs = do_pair_next_round(players, Keyword.put(opts, :bye_exclusions, Enum.reverse(passed)))
+    holder = Enum.find_value(pairs, fn {w, b} -> if is_nil(b), do: w end)
+
+    if MapSet.member?(excluded, holder) and holder not in passed do
+      passed_over_chain(players, opts, excluded, [holder | passed])
+    else
+      Enum.reverse(passed)
+    end
+  rescue
+    Ainalrami.Pairing.NoValidPairingError -> Enum.reverse(passed)
+  end
+
+  defp attach_passed_over(reports, nil, _pairs), do: reports
+
+  defp attach_passed_over(reports, passed, pairs) do
+    holder = Enum.find_value(pairs, fn {w, b} -> if is_nil(b), do: w end)
+    entries = Enum.map(passed, &%{rank: &1, reason: :organiser_exclusion})
+
+    index =
+      Enum.find_index(reports, &(holder in &1.order)) || max(length(reports) - 1, 0)
+
+    List.update_at(reports, index, &Map.put(&1, :bye_passed_over, entries))
+  end
+
   defp next_single_bye?(_ctx, [], _floated, _partner, _points), do: false
 
   defp next_single_bye?(ctx, next_group, floated, partner, points) do
@@ -1084,6 +1293,17 @@ defmodule Ainalrami.Pairing do
 
     Process.put(@point_system_key, opts[:point_system] || Process.get(@point_system_key))
 
+    # The organiser's bye exclusions (`pair_next_round/2`'s doc), with the
+    # same inherit-from-the-outer-caller fallback as the options above.
+    Process.put(
+      @bye_excluded_key,
+      (opts[:bye_exclusions] &&
+         bye_exclusion_set(
+           opts[:bye_exclusions],
+           Enum.filter(players, &active_this_round?(&1, rounds_played(players)))
+         )) || Process.get(@bye_excluded_key)
+    )
+
     # The fourth option, and the last one this entry point was ignoring.
     # `pair_next_round/2` and `explain_round/3` both stamp it; this did not,
     # so a direct caller passing `initial_colour: "b"` had it silently
@@ -1123,6 +1343,7 @@ defmodule Ainalrami.Pairing do
     after
       Process.delete(@expected_rounds_key)
       Process.delete(@forbidden_key)
+      Process.delete(@bye_excluded_key)
       Process.delete(@point_system_key)
       Process.delete(@initial_colour_key)
       Process.delete(@parity_number_key)
@@ -4994,13 +5215,29 @@ defmodule Ainalrami.Pairing do
   rule even allowed it. Derived from the same `bye_disqualifying?/1` the
   pairing uses, under the same point system, so it cannot disagree with
   what was decided.
+
+  With `pair_next_round/2`'s `:bye_exclusions` (not a FIDE rule), a listed
+  player C.2 itself allows is `:organiser_exclusion`; one C.2 already rules
+  out keeps C.2's reason, since the exclusion changed nothing for them.
   """
   def bye_eligibility(players, opts \\ []) do
     previous = Process.get(@point_system_key)
     Process.put(@point_system_key, opts[:point_system] || Ainalrami.Trf.default_point_system())
+    excluded = MapSet.new(opts[:bye_exclusions] || [])
 
     try do
-      Map.new(players, fn player -> {player.rank, bye_disqualification(player)} end)
+      Map.new(players, fn player ->
+        reason =
+          case bye_disqualification(player) do
+            nil ->
+              if MapSet.member?(excluded, player.rank), do: :organiser_exclusion, else: nil
+
+            c2 ->
+              c2
+          end
+
+        {player.rank, reason}
+      end)
     after
       if previous,
         do: Process.put(@point_system_key, previous),
@@ -5019,8 +5256,21 @@ defmodule Ainalrami.Pairing do
     end)
   end
 
+  # [C2], plus the organiser's bye exclusions when a caller gave any - the
+  # one place they enter the engine. Every rule that asks whether a player
+  # may take the bye (the bootstrap that fixes the bye score, the ladder's
+  # bye-candidate rung, the completion check and its repair) asks here, so
+  # an excluded player is ineligible everywhere C2 would have made them
+  # ineligible, and nowhere else.
   defp eligible_for_bye?(player) do
-    not Enum.any?(player.games, &bye_disqualifying?/1)
+    not excluded_from_bye?(player) and not Enum.any?(player.games, &bye_disqualifying?/1)
+  end
+
+  defp excluded_from_bye?(player) do
+    case Process.get(@bye_excluded_key) do
+      nil -> false
+      set -> MapSet.member?(set, player.rank)
+    end
   end
 
   defp bye_disqualifying?(game) do

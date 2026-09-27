@@ -63,6 +63,38 @@ with the reference on every one of them.
 
 ## [Unreleased]
 
+- [Feature] **Bye exclusions - an organiser's "not this player" for the
+  pairing-allocated bye (not a FIDE rule).** `pair_next_round/2`,
+  `pair_later_round/2` and `explain_round/3` take `bye_exclusions:
+  [rank, ...]`: players who must not receive the bye this round. Each is
+  treated exactly as [C2] treats a player who already had one - ineligible
+  for the bye and for nothing else. Ranks not in the round, and the whole
+  option on an even field, are ignored; without it the engine runs the
+  same code as before, byte for byte (diffed against `main` on 8,593
+  generated rounds). A round paired with it is not a Dutch-system round in
+  the homologation sense and a FIDE checker will not reproduce it; see
+  README "Organiser deviations".
+- [Feature] **`NoValidPairingError` says when the organiser's exclusions
+  are the reason.** New fields: `reason` (`:no_legal_pairing`, or
+  `:bye_exclusions` when the round pairs without them), `excluded` (the
+  active excluded ranks) and `override` (one rank whose exclusion, lifted
+  for this round, makes it pairable - the player who takes the bye with no
+  exclusion), so a caller can offer "pair anyway, ignoring the exclusion
+  for this player". The message of a plain refusal is unchanged.
+- [Feature] **The explanation names who an exclusion passed over.**
+  `explain_round/3` adds `bye_passed_over: [%{rank:, reason:
+  :organiser_exclusion}]` to the bracket holding the bye - the excluded
+  players who would have had it, in order - when exclusions are in force
+  (`bye_passed_over: false` skips the re-pairing this costs).
+  `bye_eligibility/2` and `Alternatives.bye_alternatives/3` report an
+  excluded player C.2 itself allows as `:organiser_exclusion`.
+- [Verified] Bye exclusions against a new exhaustive brute-force reference
+  (`test/support/bye_exclusion_reference.ex`): 10,000 generated
+  tournaments, 52,456 rounds with random exclusions, 0 disagreements on
+  pairability, legality, [C5]'s bye score, invariance when the exclusion
+  does not bite, refusals and overrides, and the passed-over account. See
+  `docs/validation.md`.
+
 - [Verified] **Team Swiss whole rounds, a billion of them.**
   `tools/team_validation_run.py` ran `team_pairing_validation_test.exs`
   on seeds 1-250,000,000: 1,032,949,115 rounds of 4-10 teams, engine
