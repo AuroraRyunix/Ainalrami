@@ -36,7 +36,7 @@ defmodule Ainalrami.TeamTrfGenerator do
   from it, for the checker's team replay (`ainalrami -c`,
   `Ainalrami.TeamReplay`). The file then carries the settings as a `192`
   code and the initial colour as `152`, from `opts[:type]` (`:a`, default,
-  or `:b`), `opts[:score_mode]` (`:match_points`, default, or
+  `:b`, or `:none` for no colour preferences), `opts[:score_mode]` (`:match_points`, default, or
   `:game_points`) and `opts[:initial_colour]` (`:white`, default, or
   `:black`). The engine's view of the history is kept alongside: points,
   opponents and board-1 colours of played matches, the bye, forfeit wins
@@ -343,9 +343,10 @@ defmodule Ainalrami.TeamTrfGenerator do
   # ---- pairing: :engine ---------------------------------------------------------
 
   defp engine_type_code(ctx) do
-    type = if ctx.type == :b, do: "TYPEB", else: "TYPEA"
+    # TRF26's table: no TYPEA/TYPEB means no colour preferences.
+    type = %{a: "TYPEA_", b: "TYPEB_", none: ""}[ctx.type]
     scores = if ctx.score_mode == :game_points, do: "GP_MP", else: "MP_GP"
-    "FIDE_TEAM_#{type}_#{scores}"
+    "FIDE_TEAM_#{type}#{scores}"
   end
 
   defp score(st, t, %{score_mode: :game_points}), do: st.gp[t]

@@ -124,8 +124,14 @@ defmodule Ainalrami.TeamPairing.Team do
   `:none`. Type A never produces `:mild` - the strength is carried anyway so
   callers have one shape to match on, and [C9]/4.3.4 simply never fire.
 
-  `type` is `:a` (the default, 1.7) or `:b`. `last_round?` matters only to
-  Type B, whose mild preferences switch off when pairing the final round.
+  `type` is `:a` (the default, 1.7), `:b`, or `:none` - 1.7's third option,
+  a competition whose rules say "colour preferences are not to be used at
+  all" (TRF26's `FIDE_TEAM_MP_GP`, `FIDE_TEAM_GP`, ...). Under `:none` no
+  team ever has a preference, so [C8] and [C9] count nothing and Article
+  4.3's preference rules (4.3.2-4.3.4, 4.3.7) never fire; the rules that do
+  not mention a preference - 4.3.1, 4.3.5, 4.3.6, 4.3.8, 4.3.9 - still
+  allocate the colours. `last_round?` matters only to Type B, whose mild
+  preferences switch off when pairing the final round.
 
   ## The two types are not two rules
 
@@ -137,6 +143,9 @@ defmodule Ainalrami.TeamPairing.Team do
   bitten by elsewhere.
   """
   def preference(team, type \\ :a, last_round? \\ false)
+
+  # 1.7: "... or colour preferences are not to be used at all".
+  def preference(%__MODULE__{}, :none, _last_round?), do: :none
 
   def preference(%__MODULE__{} = team, type, last_round?) do
     case strong_preference(team) do

@@ -1432,12 +1432,18 @@ defmodule Ainalrami.Trf do
     :ok
   end
 
-  # The Tournament Type Code Table for `192` (FIDE handbook, ETT26), less
-  # the four parametrised families, which `tournament_type_code?/1` matches
-  # by shape.
+  # The Tournament Type Code Table for `192` (FIDE TEC, published with
+  # TRF-2026 at tec.fide.com/trf-2026), less the four parametrised
+  # families, which `tournament_type_code?/1` matches by shape. What each
+  # code means is `Ainalrami.TypeCode`'s.
+  #
+  # Until 2026-09-27 this list had `FIDE_DUTCH_2026` where the published
+  # table has `FIDE_DUTCH_2025` (the Dutch system "after June 30th, 2025"),
+  # copied from a draft; `@legacy_type_codes` keeps the draft's spelling
+  # readable and writable, since files carrying it exist.
   @tournament_type_codes ~w(
-    FIDE_DUTCH_2017 FIDE_DUTCH_2026 FIDE_DUTCH FIDE_DUBOV FIDE_BURSTEIN
-    FIDE_DUTCH_2017_BAKU FIDE_DUTCH_2026_BAKU FIDE_DUTCH_BAKU FIDE_DUBOV_BAKU
+    FIDE_DUTCH_2017 FIDE_DUTCH_2025 FIDE_DUTCH FIDE_DUBOV FIDE_BURSTEIN
+    FIDE_DUTCH_2017_BAKU FIDE_DUTCH_2025_BAKU FIDE_DUTCH_BAKU FIDE_DUBOV_BAKU
     FIDE_BURSTEIN_BAKU CUSTOM_SWISS FIDE_DOUBLESWISS FIDE_DOUBLESWISS_BAKU
     CUSTOM_DOUBLESWISS
     BERGER_ROUNDROBIN BERGER_DOUBLEROUNDROBIN FIDE_ROUNDROBIN FIDE_DOUBLEROUNDROBIN
@@ -1462,9 +1468,16 @@ defmodule Ainalrami.Trf do
   """
   def tournament_type_codes, do: @tournament_type_codes
 
-  @doc "Whether `code` is a value TRF26's `192` line may carry."
+  @legacy_type_codes ~w(FIDE_DUTCH_2026 FIDE_DUTCH_2026_BAKU)
+
+  @doc """
+  Whether `code` is a value TRF26's `192` line may carry: an entry of
+  `tournament_type_codes/0`, one of the parametrised families, or one of
+  the draft table's `FIDE_DUTCH_2026` / `FIDE_DUTCH_2026_BAKU`, still
+  accepted and read as `FIDE_DUTCH_2025` (see `Ainalrami.TypeCode`).
+  """
   def tournament_type_code?(code) when is_binary(code) do
-    code in @tournament_type_codes or
+    code in @tournament_type_codes or code in @legacy_type_codes or
       Enum.any?(
         [
           ~r/^BERGER_ROUNDROBIN_G[1-9]\d*$/,

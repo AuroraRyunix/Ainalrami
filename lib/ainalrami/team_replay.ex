@@ -11,49 +11,58 @@ defmodule Ainalrami.TeamReplay do
   and exited 1. This module is the team half, and `system/1` is what tells
   the two apart.
 
-  ## Which files are team events (`system/1`)
+  ## Which replay (`system/1`)
 
-  A file with team records (`013`, or TRF26 `310`) is not necessarily a team
-  event: an individual open routinely lists club teams in `013` lines for a
-  team prize. So the `192` type code decides when the file has one:
+  The `192` type code decides, read by `Ainalrami.TypeCode` against FIDE's
+  Tournament Type Code Table:
 
-    * a team Swiss code (`FIDE_TEAM`, `FIDE_TEAM_TYPEA_MP_GP`, ...) - the
-      team replay, with the settings the code names (below);
-    * a team code this checker cannot replay - a round robin
-      (`*_TEAM_ROUNDROBIN`, `*_TEAM_DOUBLEROUNDROBIN`, `BERGER_TEAM_*`), a
-      Scheveningen or Schiller (`FIDE_SCHEVENINGEN*`, `FIDE_SCHILLER*`,
-      `CUSTOM_*`), a knockout, a custom team Swiss (`CUSTOM_TEAM_SWISS*`) or
-      an accelerated one (`*_BAKU`: `Ainalrami.TeamPairing` has no
-      acceleration) - `{:unreplayable, reason}`;
-    * any other code (an individual system) - the individual replay, the
-      team records being a team competition inside an individual event.
+    * the Dutch system (`FIDE_DUTCH`, `FIDE_DUTCH_2017`, `FIDE_DUTCH_2025`)
+      - the individual replay, whatever team records the file has: an
+      individual open routinely lists club teams in `013` lines for a team
+      prize. Accelerated (`FIDE_DUTCH*_BAKU`) the same, when the file gives
+      the virtual points (`XXA` or `250`), which the engine pairs with; a
+      Baku file without them is unreplayable, since the engine does not
+      derive C.04.7's groups itself.
+    * a C.04.6 team Swiss (`FIDE_TEAM`, `FIDE_TEAM_TYPEA_MP_GP`,
+      `FIDE_TEAM_MP`, ...) - the team replay, with the settings the code
+      names (below);
+    * everything else is `{:unreplayable, reason}`: round robins
+      (individual or team - their pairings come from the Berger tables of
+      the Competition Rules' Appendix 1, which Ainalrami does not have),
+      Schiller and Scheveningen (predetermined, by rules FIDE has not yet
+      defined), knockouts, the Dubov, Burstein and Double Swiss systems
+      (Ainalrami pairs the Dutch system only), every `CUSTOM_*` system, and
+      an accelerated team Swiss (`Ainalrami.TeamPairing` has no
+      acceleration).
 
-  With no `192` the `092` type is read for a round robin, Scheveningen,
-  Schiller or knockout (unreplayable, as above), and otherwise the games
-  decide: the file is a team event when, in every round, all the players
-  of a team who met somebody met players of one and the same other team,
-  and that team's players met theirs. An individual event with team
-  records does not look like that past its first board.
+  With no `192` - or one that is not in the table - the `092` type is read
+  for a round robin, Scheveningen, Schiller or knockout (unreplayable, as
+  above), and otherwise the games decide: the file is a team event when, in
+  every round, all the players of a team who met somebody met players of
+  one and the same other team, and that team's players met theirs. An
+  individual event with team records does not look like that past its
+  first board.
 
-  ## What a team Swiss code says (reading R1)
+  ## What a team Swiss code says
 
-  TRF26's Tournament Type Code Table names the team Swiss variants
-  `FIDE_TEAM[_TYPEA|_TYPEB][_MP|_GP][_MP|_GP][_BAKU]`. Read here as:
+  The table spells the C.04.6 variants
+  `FIDE_TEAM[_TYPEA|_TYPEB]_{MP|GP}[_{GP|MP}][_BAKU]`, and says:
 
-    * `TYPEA` / `TYPEB` - Article 1.7's colour preference type. Without
-      either, Type A, which 1.7 makes the default ("Type A colour
-      preferences are used unless the rules of the team competition
-      specify ...").
+    * `TYPEA` / `TYPEB` - Type A / Type B colour preferences (1.7.1,
+      1.7.2). **Neither means "no colour preferences"** - 1.7's third
+      option, "colour preferences are not to be used at all" - replayed
+      with `type: :none` (see `Ainalrami.TeamPairing.Team.preference/3`).
+      Until 2026-09-27 this module read a code without either as Type A,
+      1.7's default; the table says otherwise.
     * the first of `MP`/`GP` - the primary score (1.2.1); the second, when
-      present, the secondary score used for colour allocation (4.2.2); a
-      single one means the secondary score is not used. Without either,
-      1.2.2's default: match points primary, game points for colours.
+      present, the secondary score "to be used in colour allocation"
+      (4.2.2); a single one - "secondary score ... not used".
+    * `FIDE_TEAM` alone is `FIDE_TEAM_TYPEA_MP_GP`, and `FIDE_TEAM_BAKU`
+      `FIDE_TEAM_TYPEA_MP_GP_BAKU`.
 
-  The table is not in this repository and its descriptions have not been
-  checked against this reading. The one alternative that would matter is a
-  code without `TYPEA`/`TYPEB` meaning 1.7's third option, "colour
-  preferences are not to be used at all", which `Ainalrami.TeamPairing`
-  does not implement.
+  A file with no usable `192` that the games show to be a team event is
+  replayed with the C.04.6 defaults: Type A (1.7), match points primary and
+  game points for colours (1.2.2) - the same as `FIDE_TEAM`.
 
   ## What the file's history says (`history/1`)
 
@@ -103,15 +112,23 @@ defmodule Ainalrami.TeamReplay do
   alias Ainalrami.TeamPairing
   alias Ainalrami.TeamPairing.Team
   alias Ainalrami.Tiebreaks
+  alias Ainalrami.TypeCode
 
   @type settings :: %{
-          type: :a | :b,
+          type: :a | :b | :none,
           score_mode: :match_points | :game_points,
           use_secondary?: boolean(),
-          code: String.t() | nil
+          code: String.t() | nil,
+          unlisted_code: String.t() | nil
         }
 
-  @defaults %{type: :a, score_mode: :match_points, use_secondary?: true, code: nil}
+  @defaults %{
+    type: :a,
+    score_mode: :match_points,
+    use_secondary?: true,
+    code: nil,
+    unlisted_code: nil
+  }
 
   # ---- which replay --------------------------------------------------------
 
@@ -119,24 +136,99 @@ defmodule Ainalrami.TeamReplay do
   How the checker replays this parsed file: `:individual`,
   `{:team, settings}` or `{:unreplayable, reason}`. See the moduledoc.
   """
-  def system(%{teams: []}), do: :individual
-
   def system(%{tournament: tournament} = parsed) do
-    code =
-      case tournament[:type_code] do
-        code when is_binary(code) and code != "" -> code |> String.trim() |> String.upcase()
-        _ -> nil
-      end
+    case tournament[:type_code] do
+      code when is_binary(code) and code != "" ->
+        case TypeCode.parse(code) do
+          {:ok, description} -> system_for(description, parsed)
+          :error -> system_without_code(parsed, tournament[:type], String.trim(code))
+        end
 
-    cond do
-      is_nil(code) -> system_without_code(parsed, tournament[:type])
-      reason = unreplayable(code) -> {:unreplayable, reason}
-      settings = team_swiss(code) -> {:team, settings}
-      true -> :individual
+      _ ->
+        system_without_code(parsed, tournament[:type], nil)
     end
   end
 
-  defp system_without_code(parsed, type) do
+  defp system_for(%{system: :dutch, baku?: true, code: code}, parsed) do
+    if Enum.any?(Map.get(parsed, :players, []), &accelerated?/1) do
+      :individual
+    else
+      {:unreplayable,
+       "#{code} is accelerated (Baku Acceleration Method, C.04.7) but the file gives no " <>
+         "virtual points (XXA or 250 lines), and this checker does not derive the " <>
+         "accelerated groups itself"}
+    end
+  end
+
+  defp system_for(%{system: :dutch}, _parsed), do: :individual
+
+  defp system_for(%{system: :team_swiss, baku?: true, code: code}, _parsed) do
+    {:unreplayable,
+     "#{code} is an accelerated team Swiss (Baku Acceleration Method), and the C.04.6 " <>
+       "engine has no acceleration"}
+  end
+
+  defp system_for(%{system: :team_swiss, code: code} = d, parsed) do
+    if Map.get(parsed, :teams, []) == [] do
+      {:unreplayable, "#{code} is a team Swiss, but the file has no team records (013 or 310)"}
+    else
+      {:team,
+       %{
+         @defaults
+         | type: d.colour_preferences,
+           score_mode: d.score_mode,
+           use_secondary?: d.use_secondary?,
+           code: code
+       }}
+    end
+  end
+
+  defp system_for(%{code: code} = d, _parsed), do: {:unreplayable, "#{code} #{not_replayed(d)}"}
+
+  defp not_replayed(%{system: system}) when system in [:round_robin, :team_round_robin] do
+    "is a round robin by the Berger tables (Competition Rules, Appendix 1): its pairings " <>
+      "are predetermined, and Ainalrami has no Berger tables to replay them against"
+  end
+
+  defp not_replayed(%{system: system}) when system in [:schiller, :scheveningen] do
+    "is a #{if system == :schiller, do: "Schiller", else: "Scheveningen"} event, whose " <>
+      "pairings are predetermined (by rules FIDE has not yet defined)"
+  end
+
+  defp not_replayed(%{system: system})
+       when system in [:custom_round_robin, :custom_team_round_robin] do
+    "is a round robin of the competition's own, whose pairings are predetermined"
+  end
+
+  defp not_replayed(%{system: system})
+       when system in [:custom_schiller, :custom_scheveningen] do
+    "is a predetermined system of the competition's own"
+  end
+
+  defp not_replayed(%{system: system}) when system in [:knockout, :team_knockout],
+    do: "is a knockout, not a Swiss"
+
+  defp not_replayed(%{system: :dubov}),
+    do: "is the Dubov system, and Ainalrami pairs the Dutch system only"
+
+  defp not_replayed(%{system: :burstein}),
+    do: "is the Burstein system, and Ainalrami pairs the Dutch system only"
+
+  defp not_replayed(%{system: :double_swiss}),
+    do: "is a Double Swiss, and Ainalrami pairs the Dutch system only"
+
+  defp not_replayed(%{system: system}) when system in [:custom_swiss, :custom_double_swiss],
+    do: "is a Swiss of the competition's own, not the Dutch system"
+
+  defp not_replayed(%{system: :custom_team_swiss}),
+    do: "is a custom team Swiss - a system of the competition's own, not C.04.6"
+
+  defp accelerated?(player) do
+    Enum.any?(player[:accelerations] || [], &(&1 != 0))
+  end
+
+  # No code, or one FIDE's table does not have (`unlisted`).
+  defp system_without_code(parsed, type, unlisted) do
     type = String.downcase(to_string(type || ""))
 
     cond do
@@ -153,61 +245,10 @@ defmodule Ainalrami.TeamReplay do
         {:unreplayable, "the file's type (092) is a knockout, which is not a Swiss"}
 
       team_structured?(parsed) ->
-        {:team, @defaults}
+        {:team, %{@defaults | unlisted_code: unlisted}}
 
       true ->
         :individual
-    end
-  end
-
-  # The codes this checker recognises as team events it cannot replay, and
-  # why. nil for anything else.
-  defp unreplayable(code) do
-    cond do
-      Regex.match?(~r/^(FIDE|BERGER|CUSTOM)_TEAM_(DOUBLE)?ROUNDROBIN/, code) ->
-        "#{code} is a team round robin, whose pairings are predetermined (Berger tables), " <>
-          "not paired round by round"
-
-      String.starts_with?(code, "FIDE_SCHEVENINGEN") or code == "CUSTOM_SCHEVENINGEN" or
-          String.starts_with?(code, "FIDE_DOUBLESCHEVENINGEN") ->
-        "#{code} is a Scheveningen event, whose pairings are predetermined"
-
-      String.starts_with?(code, "FIDE_SCHILLER") or code == "CUSTOM_SCHILLER" ->
-        "#{code} is a Schiller event, whose pairings are predetermined"
-
-      code == "CUSTOM_TEAM_KNOCKOUT" ->
-        "#{code} is a knockout, not a Swiss"
-
-      String.starts_with?(code, "CUSTOM_TEAM_SWISS") ->
-        "#{code} is a custom team Swiss - a system of the competition's own, not C.04.6"
-
-      String.starts_with?(code, "FIDE_TEAM") and String.ends_with?(code, "_BAKU") ->
-        "#{code} is an accelerated team Swiss, and the C.04.6 engine has no acceleration"
-
-      true ->
-        nil
-    end
-  end
-
-  # `FIDE_TEAM[_TYPEA|_TYPEB][_MP|_GP][_MP|_GP]` - reading R1 in the moduledoc.
-  defp team_swiss(code) do
-    case Regex.run(~r/^FIDE_TEAM(?:_TYPE([AB]))?(?:_(MP|GP))?(?:_(MP|GP))?$/, code) do
-      nil ->
-        nil
-
-      [_ | groups] ->
-        [type, first, second] = groups ++ List.duplicate("", 3 - length(groups))
-
-        if first != "" and first == second do
-          nil
-        else
-          %{
-            type: if(type == "B", do: :b, else: :a),
-            score_mode: if(first == "GP", do: :game_points, else: :match_points),
-            use_secondary?: first == "" or second != "",
-            code: code
-          }
-        end
     end
   end
 
@@ -224,10 +265,26 @@ defmodule Ainalrami.TeamReplay do
         do: "#{secondary} for colours",
         else: "no secondary score for colours"
 
-    type = if s.type == :b, do: "Type B", else: "Type A"
-    source = if s.code, do: " (192 #{s.code})", else: " (no 192: the C.04.6 defaults)"
+    type =
+      case s.type do
+        :a -> "Type A colour preferences"
+        :b -> "Type B colour preferences"
+        :none -> "no colour preferences"
+      end
 
-    "C.04.6, #{type} colour preferences, #{primary} primary, #{colours}#{source}"
+    source =
+      cond do
+        s.code ->
+          " (192 #{s.code})"
+
+        s[:unlisted_code] ->
+          " (192 #{s.unlisted_code} is not in FIDE's table: the C.04.6 defaults)"
+
+        true ->
+          " (no 192: the C.04.6 defaults)"
+      end
+
+    "C.04.6, #{type}, #{primary} primary, #{colours}#{source}"
   end
 
   # Every round's matches are team against team - see the moduledoc.
@@ -269,7 +326,8 @@ defmodule Ainalrami.TeamReplay do
   # as `Tiebreaks.Team.from_trf/2` numbers them.
   defp rosters(parsed) do
     rosters =
-      parsed.teams
+      parsed
+      |> Map.get(:teams, [])
       |> Enum.with_index(1)
       |> Enum.map(fn {team, index} -> {Map.get(team, :number) || index, team.player_ranks} end)
 

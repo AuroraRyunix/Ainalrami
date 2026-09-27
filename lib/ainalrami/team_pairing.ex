@@ -88,7 +88,12 @@ defmodule Ainalrami.TeamPairing do
     * `:score_mode` - `:match_points` (default, 1.2.2) or `:game_points`.
     * `:use_secondary?` - whether 4.2.2 may break a first-team tie. Default
       true.
-    * `:type` - `:a` (default) or `:b` colour preferences (1.7).
+    * `:type` - `:a` (default) or `:b` colour preferences (1.7), or `:none`
+      when the competition's rules say colour preferences "are not to be
+      used at all" (1.7's third option): no team has a preference, so
+      [C8]/[C9] count nothing and colours come from 4.3.1, 4.3.5, 4.3.6,
+      4.3.8 and 4.3.9 alone (`Team.preference/3`). Anything else is
+      `{:error, {:invalid_option, :type, value}}`.
     * `:initial_colour` - `:white` (default) or `:black`, drawn by lot
       before round one (4.1).
     * `:absent` - TPNs of teams that have ARRIVED (played, or held a bye, in
@@ -144,6 +149,7 @@ defmodule Ainalrami.TeamPairing do
   """
   def pair_round(teams, opts \\ []) when is_list(teams) do
     with {:ok, mode} <- validate_score_mode(Keyword.get(opts, :score_mode, :match_points)),
+         :ok <- validate_type(Keyword.get(opts, :type, :a)),
          {:ok, absent} <- validate_absent(Keyword.get(opts, :absent, []), teams),
          {:ok, explain} <- validate_explain(opts) do
       do_pair_round(teams, opts, mode, absent, explain)
@@ -185,6 +191,12 @@ defmodule Ainalrami.TeamPairing do
   # option is a caller's, so it is checked where the caller's options arrive.
   defp validate_score_mode(mode) when mode in [:match_points, :game_points], do: {:ok, mode}
   defp validate_score_mode(mode), do: {:error, {:invalid_option, :score_mode, mode}}
+
+  # The same reasoning for `:type`, which until `:none` existed was read
+  # unchecked: anything but `:b` quietly paired as Type A, so a host passing
+  # a spelling of "no preferences" of its own would have got Type A's.
+  defp validate_type(type) when type in [:a, :b, :none], do: :ok
+  defp validate_type(type), do: {:error, {:invalid_option, :type, type}}
 
   defp do_pair_round(teams, opts, mode, absent, explain) do
     round = Keyword.get(opts, :round)

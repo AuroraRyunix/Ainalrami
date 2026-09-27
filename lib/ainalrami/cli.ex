@@ -10,8 +10,9 @@ defmodule Ainalrami.CLI do
   tournament and diffs each round against what this engine would have
   paired, exiting nonzero if any round differs; a team Swiss is replayed
   team against team with the C.04.6 engine (`Ainalrami.TeamReplay`), and
-  a team event whose system it cannot replay (round robin, Scheveningen,
-  Schiller ...) exits 2 with a message saying so. `-g` (Random Tournament
+  a file whose system it cannot replay (a round robin, Scheveningen,
+  Schiller, knockout, Dubov, Burstein, custom system ...) exits 2 with a
+  message saying so. `-g` (Random Tournament
   Generator) is implemented too - it takes no input file, since it creates
   a tournament rather than reading one.
 
@@ -24,7 +25,7 @@ defmodule Ainalrami.CLI do
   place that halts.
   """
 
-  alias Ainalrami.{Generator, Log, Pairing, TeamReplay, Trf}
+  alias Ainalrami.{Generator, Log, Pairing, TeamReplay, Trf, TypeCode}
 
   @doc false
   def main(argv), do: argv |> run() |> System.halt()
@@ -788,10 +789,12 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
   # its own - see `Ainalrami.Pairing.pair_round_one/1`.
   #
   # A team event is replayed team against team (`check_team/2`), and a
-  # team event whose system this checker cannot replay - a round robin,
-  # Scheveningen, Schiller, knockout, custom or accelerated team event - is
-  # said to be one and exits `@not_replayed` (`check_unreplayable/2`).
-  # `Ainalrami.TeamReplay.system/1` decides which.
+  # file whose system this checker cannot replay - a round robin,
+  # Scheveningen, Schiller, knockout, a Swiss other than the Dutch system,
+  # a custom or accelerated team event, a Baku file without its virtual
+  # points - is said to be one and exits `@not_replayed`
+  # (`check_unreplayable/2`). `Ainalrami.TeamReplay.system/1` decides which,
+  # from the `192` code as `Ainalrami.TypeCode` reads FIDE's table.
   defp check(input_path) do
     Log.step("Loading #{input_path}")
 
@@ -814,6 +817,7 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
   @not_replayed 2
 
   defp check_individual(parsed) do
+    report_type_code(parsed)
     rounds = completed_rounds(parsed.players)
 
     if rounds == 0 do
@@ -907,10 +911,50 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
     end
   end
 
+  # What the individual replay should say about the file's `192` before it
+  # starts: a code FIDE's table does not have, the draft table's spelling,
+  # the 2017 edition (this engine pairs the current one), the virtual
+  # points a Baku file is replayed with.
+  defp report_type_code(parsed) do
+    code = parsed.tournament[:type_code]
+
+    case is_binary(code) and code != "" and TypeCode.parse(code) do
+      false ->
+        :ok
+
+      :error ->
+        Log.warn(
+          "192 #{String.trim(code)} is not a code in FIDE's Tournament Type Code Table - " <>
+            "replayed as a Dutch Swiss"
+        )
+
+      {:ok, description} ->
+        if description[:legacy?] do
+          Log.detail(
+            "192 #{description.code} is the draft TRF-2026 table's spelling of FIDE_DUTCH_2025"
+          )
+        end
+
+        if TypeCode.edition(description, parsed.tournament[:start_date]) == 2017 do
+          Log.warn(
+            "192 #{description.code}: the Dutch system's 2017 edition, in force before " <>
+              "1 July 2025 - this engine pairs the current C.04.3 (effective 1 February " <>
+              "2026), so a round may differ where the editions do"
+          )
+        end
+
+        if description.baku? do
+          Log.detail("Baku acceleration: the virtual points the file gives (XXA/250)")
+        end
+    end
+
+    :ok
+  end
+
   defp check_unreplayable(parsed, reason) do
     Log.warn(
-      "rounds: not replayed - #{reason}. This checker replays team Swiss events " <>
-        "(C.04.6) only, so no round was compared (exit code #{@not_replayed})"
+      "rounds: not replayed - #{reason}. This checker replays the Dutch system (C.04.3) " <>
+        "and C.04.6 team Swiss events, so no round was compared (exit code #{@not_replayed})"
     )
 
     if check_standings(parsed) == :differs, do: 1, else: @not_replayed

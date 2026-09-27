@@ -8,6 +8,10 @@ defmodule Ainalrami.TeamProof.NaiveReference do
   EVERY pairing of a bracket, pairability by trying every partner. It shares
   no code with `Ainalrami.TeamPairing` beyond the `%Team{}` struct, and is
   feasible to about ten teams.
+
+  It plays Type A, or no colour preferences at all when the engine options
+  it is handed say `type: :none` (1.7's third option: `ref_preference/2`
+  is nil for everyone). Type B is not played here.
   """
 
   def ref_round(field, opts) do
@@ -17,6 +21,7 @@ defmodule Ainalrami.TeamProof.NaiveReference do
     round = engine_opts[:round]
     expected = engine_opts[:expected_rounds]
     last_two? = round >= expected - 1
+    type = ref_type(engine_opts[:type])
 
     numbers = ref_numbers(field, absent)
     by_tpn = Map.new(field, &{&1.tpn, &1})
@@ -25,13 +30,13 @@ defmodule Ainalrami.TeamProof.NaiveReference do
          true <- ref_pairable?(rest) do
       {bracket_pairs, bracket_reasons} =
         rest
-        |> ref_brackets(last_two?, [])
+        |> ref_brackets({last_two?, type}, [])
         |> Enum.unzip()
 
       allocated =
         bracket_pairs
         |> Enum.concat()
-        |> Enum.map(fn {a, b} -> ref_colours(by_tpn[a], by_tpn[b], numbers, initial) end)
+        |> Enum.map(fn {a, b} -> ref_colours(by_tpn[a], by_tpn[b], numbers, initial, type) end)
 
       %{
         bye: bye,
@@ -102,9 +107,9 @@ defmodule Ainalrami.TeamProof.NaiveReference do
     Enum.any?(rest, fn o -> o.tpn not in t.opponents and ref_pairable?(List.delete(rest, o)) end)
   end
 
-  defp ref_brackets([], _last_two?, acc), do: Enum.reverse(acc)
+  defp ref_brackets([], _settings, acc), do: Enum.reverse(acc)
 
-  defp ref_brackets(remaining, last_two?, acc) do
+  defp ref_brackets(remaining, {last_two?, type} = settings, acc) do
     top = remaining |> Enum.map(& &1.match_points) |> Enum.max()
     {residents, lower} = Enum.split_with(remaining, &(&1.match_points == top))
 
@@ -155,9 +160,9 @@ defmodule Ainalrami.TeamProof.NaiveReference do
       end
 
     ups = MapSet.new(set, & &1.tpn)
-    pairs = ref_bracket_pairing(residents ++ set, ups, last_two?)
+    pairs = ref_bracket_pairing(residents ++ set, ups, last_two?, type)
     reasons = %{upfloaters: tpns, decided_by: decided_by}
-    ref_brackets(lower -- set, last_two?, [{pairs, reasons} | acc])
+    ref_brackets(lower -- set, settings, [{pairs, reasons} | acc])
   end
 
   defp c5(set), do: set |> Enum.map(& &1.match_points) |> Enum.sort() |> Enum.map(&(0 - &1))
@@ -190,7 +195,7 @@ defmodule Ainalrami.TeamProof.NaiveReference do
 
   # 3.6: every pairing, legal under [C1]; least {C8, C10}; smallest
   # identifier.
-  defp ref_bracket_pairing(bracket, ups, last_two?) do
+  defp ref_bracket_pairing(bracket, ups, last_two?, type) do
     bracket
     |> Enum.sort_by(& &1.tpn)
     |> all_pairings()
@@ -199,15 +204,15 @@ defmodule Ainalrami.TeamProof.NaiveReference do
       tops = Enum.map(pairs, fn {a, b} -> min(a.tpn, b.tpn) end)
       order = Enum.sort_by(pairs, fn {a, b} -> min(a.tpn, b.tpn) end)
       bottoms = Enum.map(order, fn {a, b} -> max(a.tpn, b.tpn) end)
-      {c8(pairs), c10(pairs, ups, last_two?), Enum.sort(tops) ++ bottoms}
+      {c8(pairs, type), c10(pairs, ups, last_two?), Enum.sort(tops) ++ bottoms}
     end)
     |> Enum.map(fn {a, b} -> {a.tpn, b.tpn} end)
   end
 
-  defp c8(pairs) do
+  defp c8(pairs, type) do
     Enum.count(pairs, fn {a, b} ->
-      pa = ref_preference(a)
-      pa != nil and pa == ref_preference(b)
+      pa = ref_preference(a, type)
+      pa != nil and pa == ref_preference(b, type)
     end)
   end
 
@@ -238,8 +243,18 @@ defmodule Ainalrami.TeamProof.NaiveReference do
     rest ++ Enum.map(rest, &[h | &1])
   end
 
-  # 1.7.1, Type A.
-  def ref_preference(team) do
+  # The types this reference plays: Type A and 1.7's "not to be used at
+  # all". Type B's [C9] is proven at bracket level elsewhere; asking for it
+  # here is a test bug, not a round to compare.
+  defp ref_type(nil), do: :a
+  defp ref_type(type) when type in [:a, :none], do: type
+
+  # 1.7.1, Type A; under `:none` nobody has a preference (1.7).
+  def ref_preference(team, type \\ :a)
+
+  def ref_preference(_team, :none), do: nil
+
+  def ref_preference(team, :a) do
     cd = Enum.count(team.colours, &(&1 == :white)) - Enum.count(team.colours, &(&1 == :black))
     last_two = team.colours |> Enum.reverse() |> Enum.take(2)
 
@@ -255,7 +270,7 @@ defmodule Ainalrami.TeamProof.NaiveReference do
   # Article 4 for one pair, returning {white_tpn, black_tpn, {4.2 rule, 4.3
   # rule}} - the clause that named the first-team and the one that gave it
   # its colour.
-  def ref_colours(a, b, numbers, initial) do
+  def ref_colours(a, b, numbers, initial, type \\ :a) do
     {first, other, first_rule} =
       cond do
         a.match_points != b.match_points ->
@@ -268,8 +283,8 @@ defmodule Ainalrami.TeamProof.NaiveReference do
           if a.tpn < b.tpn, do: {a, b, "4.2.3"}, else: {b, a, "4.2.3"}
       end
 
-    fp = ref_preference(first)
-    op = ref_preference(other)
+    fp = ref_preference(first, type)
+    op = ref_preference(other, type)
 
     cd = fn t ->
       Enum.count(t.colours, &(&1 == :white)) - Enum.count(t.colours, &(&1 == :black))

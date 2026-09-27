@@ -493,16 +493,24 @@ brute-force reference.
 * **Questions 5-7** are answered by research, not ruled on. Still worth
   sending to the SPP with the wording in OpenPairings'
   `docs/teams-phase-2-plan.md`.
-* **What a TRF26 team Swiss code says (checker, 2026-09-27).** `ainalrami
-  -c` replays a team Swiss with the settings its `192` code names
-  (`Ainalrami.TeamReplay`, reading R1): `TYPEA`/`TYPEB` the colour
-  preference type, Type A when neither is written (1.7's default); the
-  first of `MP`/`GP` the primary score and a second one the secondary
-  score used for colours, a single one meaning none is used (4.2.2 off);
-  `FIDE_TEAM` alone 1.2.2's default. Not checked against the Tournament
-  Type Code Table's own descriptions, which are not in this repository.
-  If a code without `TYPEA`/`TYPEB` means 1.7's third option (no colour
-  preferences at all), this engine cannot replay it - it has no such mode.
+* ~~**What a TRF26 team Swiss code says (checker, 2026-09-27).**~~
+  **Closed 2026-09-27** by FIDE's own Tournament Type Code Table for
+  TRF_CODE 192, published by the TEC with TRF-2026
+  (tec.fide.com/trf-2026). The first reading (R1) took a code without
+  `TYPEA`/`TYPEB` as Type A, 1.7's default. The table says otherwise:
+
+  | code | the table's meaning |
+  |---|---|
+  | `FIDE_TEAM_TYPEA_*` / `FIDE_TEAM_TYPEB_*` | Type A / Type B colour preferences |
+  | `FIDE_TEAM_MP_GP`, `_GP_MP`, `_MP`, `_GP`, `_MP_GP_BAKU`, `_MP_BAKU` | **no colour preferences** |
+  | `..._X_Y` | X primary, Y secondary "to be used in colour allocation" |
+  | `..._X` | X primary, the secondary score not used |
+  | `FIDE_TEAM` / `FIDE_TEAM_BAKU` | `FIDE_TEAM_TYPEA_MP_GP` / `FIDE_TEAM_TYPEA_MP_GP_BAKU` |
+
+  So the question the entry left open - whether a code without the type
+  means 1.7's third option - is answered yes, and the engine now has that
+  mode (*No colour preferences* below). `Ainalrami.TypeCode` holds the whole table's
+  reading; `Ainalrami.TeamReplay` replays with it.
 * **Which board is board 1 in a TRF (checker, 2026-09-27).** 1.6.1 reads a
   team's colour off its first board. A TRF names no boards unless it
   carries TRF26 `300` records, which are not read; the checker takes the
@@ -510,6 +518,47 @@ brute-force reference.
   tie-breaks already do. A file whose teams shift their board order
   between rounds without `300` records will show colour differences that
   are not there.
+
+## No colour preferences (1.7), 2026-09-27
+
+Article 1.7: "Type A colour preferences are used unless the rules of the
+team competition specify that either Type B colour preferences shall be
+used, or colour preferences are not to be used at all." The third option is
+`TeamPairing.pair_round/2`'s `type: :none`, and the text defines it without
+needing a reading:
+
+* **No team has a colour preference** (`Team.preference/3` is `:none`).
+  1.7.1 and 1.7.2 are the only definitions of a preference, and neither is
+  used.
+* **[C8] and [C9] count nothing** - they minimise unfulfilled preferences,
+  and there are none. 3.6.4's first pairing complying with [C1], [C8],
+  [C9] and [C10] is then the first legal one in identifier order with the
+  least [C10].
+* **Article 4.3 without its preference rules.** 4.3.2 ("if only one team
+  has a colour preference"), 4.3.3 (opposite preferences), 4.3.4 (Type B
+  strong) and 4.3.7 (the first-team's preference) have nothing to act on
+  and never fire. 4.3.1 (neither team has played: the initial colour by
+  parity), 4.3.5 (White to the lower colour difference), 4.3.6 (alternate
+  from the last time the two differed), 4.3.8 and 4.3.9 (alternate the
+  first-team's, then the other team's, last colour) do not mention a
+  preference and allocate every colour. The colour difference (1.6.2) is
+  still counted - it is a definition of its own, not a preference.
+
+Nothing else in the chapter reads a preference: the bye (3.4), the
+upfloater selection (3.5, [C4]-[C7]) and [C10] are unchanged.
+
+**Validation.** The brute-force whole-round reference
+(`test/support/team_proof/naive_reference.ex`) takes the type, and the
+whole-round test (`team_pairing_validation_test.exs`) plays generated
+events of 4-10 teams without preferences: 30,000 events (seeds
+1-30,000, `TEAM_VALIDATION_NONE_SEEDS`), 123,593 rounds, every one the
+reference's pairing, bye and colours, recorded reasons included. The suite
+runs 120 seeds and fails if 4.3.2, 4.3.3, 4.3.4 or 4.3.7 ever decides a
+colour; hand-worked positions pin the bracket that Type A's [C8] moves
+off the first identifier and no-preferences keeps, and 4.3.5, 4.3.6,
+4.3.8 and 4.3.9 each deciding. The checker replays engine-paired
+no-preference files clean, and the same files read as Type A (the first
+reading) differ in 20 of 46 events.
 
 ## Validation, 2026-09-13
 

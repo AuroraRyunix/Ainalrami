@@ -59,7 +59,11 @@ defmodule Ainalrami.TeamReplayTest do
           {11, []},
           {12, [initial_colour: :black]},
           {13, []},
-          {14, [type: :b]}
+          {14, [type: :b]},
+          {15, [type: :none]},
+          {16, [type: :none]},
+          {17, [type: :none, score_mode: :game_points]},
+          {18, [type: :none, initial_colour: :black]}
         ] do
       test "seed #{seed} #{inspect(opts)}" do
         gen = swiss(unquote(seed), unquote(opts))
@@ -69,6 +73,24 @@ defmodule Ainalrami.TeamReplayTest do
         assert out =~ "#{gen.rounds}/#{gen.rounds} round(s) match this engine's own pairing"
         assert out =~ "C.04.6"
       end
+    end
+
+    test "a no-preference code is replayed without preferences, not as Type A" do
+      # Seed 15 paired with no colour preferences, as FIDE_TEAM_MP_GP says.
+      # Read as Type A - this module's reading until 2026-09-27 - one of its
+      # rounds differs (20 of seeds 15-60 did, 2026-09-27).
+      gen = swiss(15, type: :none)
+      assert gen.text =~ "192 FIDE_TEAM_MP_GP"
+
+      {out, code} = check(gen.text)
+      assert code == 0, out
+      assert out =~ "no colour preferences, match points primary, game points for colours"
+
+      {out, code} =
+        check(String.replace(gen.text, "192 FIDE_TEAM_MP_GP", "192 FIDE_TEAM_TYPEA_MP_GP"))
+
+      assert code == 1, out
+      assert out =~ "DIFFERS"
     end
 
     test "with no 152, the initial colour is the one round 1 shows" do
@@ -188,41 +210,173 @@ defmodule Ainalrami.TeamReplayTest do
   end
 
   describe "system/1" do
-    defp sys(code, teams \\ [%{name: "T", player_ranks: [1]}]) do
+    defp sys(code, teams \\ [%{name: "T", player_ranks: [1]}], players \\ []) do
       TeamReplay.system(%{
         tournament: %{type_code: code},
         teams: teams,
-        players: []
+        players: players
       })
     end
 
-    test "reads a team Swiss code's settings" do
+    # Every C.04.6 code of TRF26's Tournament Type Code Table (FIDE TEC):
+    # TYPEA/TYPEB the colour preferences, NEITHER "no colour preferences";
+    # X_Y X primary and Y for colours, a single X "secondary score not used".
+    test "reads every team Swiss code's settings as FIDE's table gives them" do
+      for {type, prefix} <- [a: "TYPEA_", b: "TYPEB_", none: ""],
+          {scores, mode, secondary?} <- [
+            {"MP_GP", :match_points, true},
+            {"GP_MP", :game_points, true},
+            {"MP", :match_points, false},
+            {"GP", :game_points, false}
+          ] do
+        code = "FIDE_TEAM_" <> prefix <> scores
+
+        assert {:team,
+                %{type: ^type, score_mode: ^mode, use_secondary?: ^secondary?, code: ^code}} =
+                 sys(code),
+               code
+      end
+
+      # The two shorthands: FIDE_TEAM is FIDE_TEAM_TYPEA_MP_GP.
       assert {:team, %{type: :a, score_mode: :match_points, use_secondary?: true}} =
                sys("FIDE_TEAM")
 
-      assert {:team, %{type: :b, score_mode: :game_points, use_secondary?: true}} =
-               sys("FIDE_TEAM_TYPEB_GP_MP")
-
-      assert {:team, %{type: :a, score_mode: :match_points, use_secondary?: false}} =
-               sys("FIDE_TEAM_TYPEA_MP")
-
-      assert {:team, %{type: :a, score_mode: :game_points, use_secondary?: false}} =
-               sys("FIDE_TEAM_GP")
+      assert {:team, %{type: :none}} = sys("fide_team_mp_gp")
     end
 
-    test "an individual code keeps the individual replay, team records or not" do
-      assert sys("FIDE_DUTCH_2026") == :individual
+    test "the Dutch system keeps the individual replay, team records or not" do
+      for code <- ~w(FIDE_DUTCH FIDE_DUTCH_2017 FIDE_DUTCH_2025 FIDE_DUTCH_2026) do
+        assert sys(code) == :individual, code
+        assert sys(code, []) == :individual, code
+      end
+
       assert sys(nil, []) == :individual
     end
 
-    test "predetermined, custom and accelerated team systems are not replayed" do
-      for code <-
-            ~w(FIDE_TEAM_ROUNDROBIN FIDE_TEAM_DOUBLEROUNDROBIN BERGER_TEAM_ROUNDROBIN_G2
-               CUSTOM_TEAM_ROUNDROBIN FIDE_SCHEVENINGEN FIDE_SCHEVENINGEN_G2
-               FIDE_DOUBLESCHEVENINGEN FIDE_SCHILLER FIDE_SCHILLER_4x2 CUSTOM_TEAM_KNOCKOUT
-               CUSTOM_TEAM_SWISS FIDE_TEAM_MP_BAKU) do
-        assert {:unreplayable, _} = sys(code), code
+    test "a Baku Dutch file is replayed only with its virtual points" do
+      accelerated = [%{rank: 1, accelerations: [1.0, 0.5, 0.0]}, %{rank: 2}]
+
+      for code <- ~w(FIDE_DUTCH_BAKU FIDE_DUTCH_2017_BAKU FIDE_DUTCH_2025_BAKU) do
+        assert {:unreplayable, reason} = sys(code, [])
+        assert reason =~ "no virtual points", code
+        assert sys(code, [], accelerated) == :individual, code
       end
+    end
+
+    test "predetermined, other, custom and accelerated systems are not replayed" do
+      for code <-
+            ~w(FIDE_TEAM_ROUNDROBIN FIDE_TEAM_DOUBLEROUNDROBIN BERGER_TEAM_ROUNDROBIN
+               BERGER_TEAM_DOUBLEROUNDROBIN BERGER_TEAM_ROUNDROBIN_G2 CUSTOM_TEAM_ROUNDROBIN
+               FIDE_SCHEVENINGEN FIDE_SCHEVENINGEN_G2 FIDE_DOUBLESCHEVENINGEN
+               CUSTOM_SCHEVENINGEN FIDE_SCHILLER FIDE_SCHILLER_4x2 CUSTOM_SCHILLER
+               CUSTOM_TEAM_KNOCKOUT CUSTOM_KNOCKOUT CUSTOM_TEAM_SWISS CUSTOM_TEAM_SWISS_MP
+               CUSTOM_TEAM_SWISS_GP FIDE_TEAM_BAKU FIDE_TEAM_MP_BAKU FIDE_TEAM_MP_GP_BAKU
+               FIDE_TEAM_TYPEA_MP_GP_BAKU FIDE_TEAM_TYPEB_MP_BAKU
+               BERGER_ROUNDROBIN BERGER_ROUNDROBIN_G1 BERGER_ROUNDROBIN_G3
+               BERGER_DOUBLEROUNDROBIN FIDE_ROUNDROBIN FIDE_DOUBLEROUNDROBIN CUSTOM_ROUNDROBIN
+               FIDE_DUBOV FIDE_DUBOV_BAKU FIDE_BURSTEIN FIDE_BURSTEIN_BAKU CUSTOM_SWISS
+               FIDE_DOUBLESWISS FIDE_DOUBLESWISS_BAKU CUSTOM_DOUBLESWISS),
+          teams <- [[%{name: "T", player_ranks: [1]}], []] do
+        assert {:unreplayable, reason} = sys(code, teams), code
+        assert String.starts_with?(reason, code), reason
+      end
+    end
+
+    test "a team Swiss code on a file with no team records is not replayed" do
+      assert {:unreplayable, reason} = sys("FIDE_TEAM", [])
+      assert reason =~ "no team records"
+    end
+
+    test "a code off the table falls back to the file's type and games" do
+      assert sys("FIDE_DUTCH_2022", []) == :individual
+
+      assert {:unreplayable, _} =
+               TeamReplay.system(%{
+                 tournament: %{type_code: "RR", type: "Individual: Round Robin System"},
+                 teams: [],
+                 players: []
+               })
+    end
+  end
+
+  describe "individual files and their 192 code" do
+    defp individual(opts, code) do
+      {text, _seed} = Ainalrami.Generator.generate([seed: 11, players: 14, rounds: 5] ++ opts)
+      parsed = Trf.parse(text)
+
+      tournament =
+        if code, do: Map.put(parsed.tournament, :type_code, code), else: parsed.tournament
+
+      Trf.serialize(%{parsed | tournament: tournament})
+    end
+
+    test "a round robin, a Schiller, a knockout or a non-Dutch Swiss exits 2, not 1" do
+      for code <-
+            ~w(BERGER_ROUNDROBIN_G2 FIDE_ROUNDROBIN FIDE_DOUBLEROUNDROBIN CUSTOM_ROUNDROBIN
+               FIDE_SCHILLER_4x3 FIDE_SCHEVENINGEN CUSTOM_KNOCKOUT CUSTOM_SWISS FIDE_DUBOV
+               FIDE_BURSTEIN FIDE_DOUBLESWISS) do
+        {out, exit_code} = check(individual([], code))
+        assert exit_code == 2, "#{code}: #{out}"
+        assert out =~ "rounds: not replayed - #{code}"
+        refute out =~ "DIFFERS"
+      end
+    end
+
+    test "a 092 round robin with no 192 exits 2" do
+      {text, _seed} = Ainalrami.Generator.generate(seed: 12, players: 10, rounds: 4)
+      parsed = Trf.parse(text)
+      tournament = Map.put(parsed.tournament, :type, "Individual: Round Robin System")
+
+      {out, exit_code} = check(Trf.serialize(%{parsed | tournament: tournament}))
+      assert exit_code == 2, out
+      assert out =~ "the file's type (092) is a round robin"
+    end
+
+    test "the Dutch codes replay, the 2017 edition with a warning" do
+      for code <- ~w(FIDE_DUTCH FIDE_DUTCH_2025 FIDE_DUTCH_2026) do
+        {out, exit_code} = check(individual([], code))
+        assert exit_code == 0, "#{code}: #{out}"
+        refute out =~ "2017 edition"
+      end
+
+      {out, exit_code} = check(individual([], "FIDE_DUTCH_2017"))
+      assert exit_code == 0, out
+      assert out =~ "2017 edition"
+    end
+
+    test "FIDE_DUTCH is the 2017 edition for an event that started before 1 July 2025" do
+      {text, _seed} = Ainalrami.Generator.generate(seed: 11, players: 14, rounds: 5)
+      parsed = Trf.parse(text)
+
+      tournament =
+        parsed.tournament
+        |> Map.put(:type_code, "FIDE_DUTCH")
+        |> Map.put(:start_date, "2025/03/14")
+
+      {out, _exit_code} = check(Trf.serialize(%{parsed | tournament: tournament}))
+      assert out =~ "2017 edition"
+    end
+
+    test "a Baku file replays with its virtual points and exits 2 without them" do
+      {out, exit_code} = check(individual([acceleration: :baku], "FIDE_DUTCH_2025_BAKU"))
+      assert exit_code == 0, out
+      assert out =~ "Baku acceleration"
+
+      {out, exit_code} = check(individual([], "FIDE_DUTCH_BAKU"))
+      assert exit_code == 2, out
+      assert out =~ "no virtual points"
+    end
+
+    test "a code off the table is said to be one and replayed as the Dutch system" do
+      # `Trf.serialize/2` refuses to write such a code, so it is put in by
+      # hand, as another program would have.
+      text =
+        Regex.replace(~r/^012 [^\n]*\n/, individual([], nil), &(&1 <> "192 FIDE_DUTCH_2022\r\n"))
+
+      assert text =~ "\n192 FIDE_DUTCH_2022\r\n"
+      {out, exit_code} = check(text)
+      assert exit_code == 0, out
+      assert out =~ "192 FIDE_DUTCH_2022 is not a code in FIDE's Tournament Type Code Table"
     end
   end
 
