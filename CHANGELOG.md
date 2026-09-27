@@ -63,6 +63,22 @@ with the reference on every one of them.
 
 ## [Unreleased]
 
+- [Verified] **Pairings against bbpPairings, the direction that was
+  missing (Q33):** every prior pairing corpus - 2.5 billion pairings - is
+  this engine's own generator checked BY bbpPairings. The reverse never
+  ran at scale: bbpPairings' own `-g` random tournament generator, which
+  pairs the whole tournament with its own engine and writes no round-count
+  header or `152`, checked by this one (`tools/bbp_generator_reverse.exs`,
+  mirroring `Ainalrami.CLI`'s `-c` internals). 5,584 tournaments, 55,770
+  rounds, 3,230,505 individual pairings, zero disagreements; 2,882,629
+  boards agreed on colour too, from round 2 on, where the file's silence
+  on `152` puts `infer_initial_colour/1` on real, external data for the
+  first time at scale. Found and fixed a seeding trap first: bbpPairings'
+  generator draws `RoundsNumber` from the LCG `-s` seeds first, and small
+  consecutive seeds (1..100) all drew 5 - the tool now hashes its index
+  before seeding. Short of Q33's 50,000 by design (a few hours on one PC);
+  resumable via the same result log. See `docs/validation.md`.
+
 ## [0.32.0] - 2026-09-27
 
 - [Verified] **A nightly tie-break check.** `.github/workflows/tiebreak-check.yml`
