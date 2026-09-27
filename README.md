@@ -11,7 +11,9 @@ Ainalrami implements **C.04.3, the FIDE (Dutch) System, effective
 1 February 2026** - the current rules, not the 2017 edition most engines
 still ship. It reads and writes TRF16 and FIDE's 2026 TRF format (TRF26),
 mirrors JaVaFo's command-line shape, and is verified against two
-independent reference implementations.
+independent reference implementations. It also pairs team Swiss events
+(C.04.6) and computes the FIDE tie-breaks (C.07, effective 1 March 2026),
+individual and team.
 
 **Status: beta.** The engine is functionally complete and reproduces
 bbpPairings 6.0.0 exactly across 2.5 billion compared pairings, in six
@@ -24,6 +26,31 @@ the engine now conforms. Both are documented rather than hidden - see
 [A dispute this engine lost](#a-dispute-this-engine-lost).
 
 ---
+
+## Validation at a glance
+
+| area | compared against | size | result | detail |
+|---|---|---|---|---|
+| Individual pairings (C.04.3) | bbpPairings 6.0.0, on this engine's generated tournaments | 2,536,328,265 pairings, 217,470,056 rounds | 2 disagreements, both a bbpPairings defect | [below](#where-it-stands) |
+| Individual pairings, three engines | bbpPairings and Gacrux | 649,207 rounds | never the odd one out | [validation](docs/validation.md#the-three-way-run-2026-08-27) |
+| Individual pairings, the other way | bbpPairings' own generator, checked here | in progress toward 50,000 tournaments; so far 5,584 tournaments, 3,230,505 pairings <!-- Q33-DIR2-FINAL --> | 0 disagreements, colours included | [validation](docs/validation.md#pairings-vcl4thp-q33-both-directions) |
+| Team Swiss (C.04.6), 4-10 teams | brute-force reference written from the regulation | 1,032,949,115 rounds (seeds 1-250,000,000) | 0 failures | [validation](docs/validation.md#team-swiss-pairings-c046) |
+| Team Swiss, 11-80 teams | exact engine-independent reference | 11,980 rounds | agrees (one budget defect found, fixed in 0.30.0) | [large fields](docs/team-proof-large-fields.md) |
+| Team Swiss, no colour preferences | brute-force reference | 123,593 rounds | 0 disagreements | [conformance](docs/conformance-c0406-teams.md#no-colour-preferences-17-2026-09-27) |
+| Tie-breaks (C.07), individual | FIDE's TieBreakServer, both directions | 50,060 and 50,000 tournaments | 0 unexplained | [validation](docs/validation.md#tie-breaks-c07-effective-1-march-2026-against-tiebreakserver) |
+| Tie-breaks, team | TieBreakServer | 20,000 events, 1,643,308 values | 0 unexplained | [validation](docs/validation.md#team-events-extended-2026-09-26) |
+| Tie-breaks, individual and team | independent reference written from C.07 | 8.3 million + 2,760,888 individual values, 3,975,739 team values | 0 disagreements | [reference](docs/tiebreak-reference.md) |
+| Tie-breaks, real events | 43 SWAR tournaments re-ranked by OpenPairings | 43 tournaments | no Ainalrami bug found | [validation](docs/validation.md#real-tournaments) |
+
+A nightly CI job repeats the tie-break checks on fresh seeds against a
+pinned TieBreakServer. Team pairing has no outside program to compare
+with, so its references are written here from the regulation and share no
+code with the engine: they prove the computation, not the reading. The
+differences TieBreakServer does not share are written up in
+[docs/finding-tiebreakserver-2026-09.md](docs/finding-tiebreakserver-2026-09.md)
+(findings A-H) and
+[docs/conformance-c07-tiebreaks.md](docs/conformance-c07-tiebreaks.md).
+Full table and method: [docs/validation.md](docs/validation.md#summary).
 
 ## Where it stands
 
@@ -124,8 +151,8 @@ argument to be had. Written up in
 submittable report in
 [docs/bbppairings-c2-bug-report.md](docs/bbppairings-c2-bug-report.md).
 
-Against **JaVaFo** the engine measures 96.26%, and it *should not* be
-100%: JaVaFo implements the 2017 edition, superseded on 31 January 2026,
+Against **JaVaFo** the engine measures 83.68% to 100.00% of rounds exact,
+depending on the axis, and it *should not* be 100%: JaVaFo implements the 2017 edition, superseded on 31 January 2026,
 and differs from both 2026 references by roughly the same margin. That
 gap is the control. An engine agreeing with all three at once would mean
 the harness was measuring nothing.
@@ -495,6 +522,11 @@ probe, is in
 | [docs/dispute-initial-colour.md](docs/dispute-initial-colour.md) | the Article 5.2.5 dispute this engine lost, and the SPP ruling that closed it |
 | [docs/finding-gacrux-5-2-4.md](docs/finding-gacrux-5-2-4.md) | Gacrux reads Article 5.2.4's "higher ranked" as TPN order, not score then TPN |
 | [docs/finding-gacrux-5-2-5.md](docs/finding-gacrux-5-2-5.md) | Gacrux breaks Article 5.2.5: two boards of one round imply opposite initial colours |
+| [docs/conformance-c0406-teams.md](docs/conformance-c0406-teams.md) | team Swiss (C.04.6): readings, verification method, no colour preferences |
+| [docs/team-proof-large-fields.md](docs/team-proof-large-fields.md) | the exact whole-round reference for team fields up to 80 teams |
+| [docs/conformance-c07-tiebreaks.md](docs/conformance-c07-tiebreaks.md) | tie-breaks (C.07): every reading taken |
+| [docs/tiebreak-reference.md](docs/tiebreak-reference.md) | the independent tie-break reference and its results |
+| [docs/finding-tiebreakserver-2026-09.md](docs/finding-tiebreakserver-2026-09.md) | where TieBreakServer and C.07 part company (findings A-H) |
 | [docs/engineering-log.md](docs/engineering-log.md) | the dated build history, including what measured worse |
 | [TODO.md](TODO.md) | open work |
 
@@ -504,7 +536,7 @@ probe, is in
 mix test
 ```
 
-133 tests. Comparison tests against JaVaFo and Gacrux are tagged and
+About 740 tests. Comparison tests against JaVaFo and Gacrux are tagged and
 excluded by default - neither is vendored, and both must be supplied
 locally. See [docs/validation.md](docs/validation.md) for how to point the
 harness at them and how to run the large fuzz axes.

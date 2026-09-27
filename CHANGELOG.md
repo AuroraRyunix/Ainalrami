@@ -63,6 +63,13 @@ with the reference on every one of them.
 
 ## [Unreleased]
 
+- [Verified] **Team Swiss whole rounds, a billion of them.**
+  `tools/team_validation_run.py` ran `team_pairing_validation_test.exs`
+  on seeds 1-250,000,000: 1,032,949,115 rounds of 4-10 teams, engine
+  against the brute-force reference written from C.04.6, 0 failures and
+  0 errors (finished 2026-09-26, commit `d0f16e8`). README and
+  `docs/validation.md` now open with a summary of what every part of the
+  engine is validated against, team pairings and tie-breaks included.
 - [Feature] **The checker replays team Swiss rounds.** `ainalrami -c` on a
   team file used to re-pair the players as an individual Dutch Swiss, find
   every round different and exit 1. A team Swiss is now replayed team
@@ -158,8 +165,9 @@ with the reference on every one of them.
   first time at scale. Found and fixed a seeding trap first: bbpPairings'
   generator draws `RoundsNumber` from the LCG `-s` seeds first, and small
   consecutive seeds (1..100) all drew 5 - the tool now hashes its index
-  before seeding. Short of Q33's 50,000 by design (a few hours on one PC);
-  resumable via the same result log. See `docs/validation.md`.
+  before seeding. The run continues toward Q33's 50,000; these are the
+  interim figures, resumable via the same result log. See
+  `docs/validation.md`.
 
 ## [0.32.0] - 2026-09-27
 

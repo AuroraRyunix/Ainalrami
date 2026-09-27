@@ -585,6 +585,11 @@ reading) differ in 20 of 46 events.
 
 Not done: the large-field crash and budget fuzz on the fuzz server.
 
+Since then the same whole-round test has run on seeds 1-250,000,000
+(1,032,949,115 rounds, 0 failures, 2026-09-26), and an exact reference
+covers fields up to 80 teams ([team-proof-large-fields.md](team-proof-large-fields.md)).
+Totals: [validation.md](validation.md#team-swiss-pairings-c046).
+
 ## The engine reports its reasons (`explain: true`)
 
 `TeamPairing.pair_round/2` with `explain: true` adds `:explanation` to its

@@ -6,6 +6,34 @@ matters most - what the measurements could not have seen.
 The headline is in the [README](../README.md). This document is the
 methodology behind it and the reasoning that makes it worth anything.
 
+## Summary
+
+What each part of the engine is checked against, and how much of it. The
+sections below and the linked documents have the method, the limits and
+every known difference.
+
+| area | compared against | size | result | detail |
+|---|---|---|---|---|
+| Individual pairings (C.04.3), our generator | bbpPairings 6.0.0 | 2,536,328,265 pairings, 217,470,056 rounds, 6 corpora | 2 disagreements, both a bbpPairings [C2] defect | [The corpora](#the-corpora) |
+| Individual pairings, three engines | bbpPairings and Gacrux | 649,207 rounds | agrees with bbpPairings on every round; never the odd one out | [The three-way run](#the-three-way-run-2026-08-27) |
+| Individual pairings, bbpPairings' generator (Q33 direction 2) | bbpPairings' own `-g` tournaments, checked here | in progress toward 50,000 tournaments; so far 5,584 tournaments, 55,770 rounds, 3,230,505 pairings <!-- Q33-DIR2-FINAL --> | 0 composition, 0 colour disagreements | [Pairings (Q33)](#pairings-vcl4thp-q33-both-directions) |
+| Team Swiss whole rounds (C.04.6), 4-10 teams | brute-force reference written from the regulation | seeds 1-250,000,000, 1,032,949,115 rounds | 0 failures, 0 errors | [Team Swiss pairings](#team-swiss-pairings-c046) |
+| Team Swiss whole rounds, 11-80 teams | exact engine-independent reference | 2,000 seeds, 11,980 rounds | agrees; one 3.6 candidate-budget disagreement found and fixed (0.30.0) | [team-proof-large-fields.md](team-proof-large-fields.md) |
+| Team Swiss, no colour preferences (1.7) | brute-force reference | 30,000 seeds, 123,593 rounds | 0 disagreements | [conformance-c0406-teams.md](conformance-c0406-teams.md#no-colour-preferences-17-2026-09-27) |
+| Individual tie-breaks (C.07) | FIDE's TieBreakServer, both directions | 50,060 tournaments (~29 million values) and 50,000 (49,987,100 values); random lists 10,000 each way | 0 unexplained | [Tie-breaks](#tie-breaks-c07-effective-1-march-2026-against-tiebreakserver) |
+| Individual tie-breaks | independent reference (`Ainalrami.TiebreakReference`) | 15,000 events, 8.3 million values; 5,000 events, 2,760,888 values after the team extension | 0 disagreements | [tiebreak-reference.md](tiebreak-reference.md) |
+| Team tie-breaks | TieBreakServer | 20,000 events: fixed list 1,290,920 values, random lists 352,388 values; Swiss, round robin, Scheveningen, Schiller, 3-10 boards | 0 unexplained; TieBreakServer findings F, G, H | [Team events, extended](#team-events-extended-2026-09-26) |
+| Team tie-breaks | independent reference | 10,000 team events, 3,975,739 values | 0 disagreements | [tiebreak-reference.md](tiebreak-reference.md) |
+| Tie-breaks, every night | TieBreakServer (pinned) and the reference | fresh seeds each night | a failure names the seed | [The nightly check](#the-nightly-tie-break-check) |
+| Tie-breaks on real events | 43 SWAR tournaments, re-ranked by OpenPairings | 43 tournaments | no Ainalrami bug; every difference attributed to SWAR | [Real tournaments](#real-tournaments) |
+| Individual pairings, control | JaVaFo (2017 rules) | 2,000 + 1,600 tournaments over five axes | 83.68%-100.00% of rounds exact by axis, as expected for the older edition | [The references](#the-references) |
+
+Team pairing has no automatable outside oracle (bbpPairings, JaVaFo, Gacrux
+and SWAR do not pair teams; see
+[conformance-c0406-teams.md](conformance-c0406-teams.md#verification-no-reference-we-can-automate-against)),
+so its references are written here from the regulation text and share no
+code with the engine. They prove the computation, not the reading.
+
 ## The references
 
 Three external implementations, used for different purposes.
@@ -840,8 +868,11 @@ Stated so the claim's boundary is explicit:
   or all players at 0. 285 million pairings, zero disagreements.
 - ~~**Late entrants**~~ - **covered 2026-09-14.** See "Late entrants
   (2026-09-14)" below.
-- **Team tournaments**, and files where `rounds_count` disagrees with
-  `XXR`. The harness generates neither; see [TODO.md](../TODO.md).
+- **Team tournaments** in this harness, and files where `rounds_count`
+  disagrees with `XXR`. The harness generates neither; see
+  [TODO.md](../TODO.md). Team pairings are validated separately, against
+  references written from C.04.6: see
+  [Team Swiss pairings](#team-swiss-pairings-c046).
 - ~~**Non-default point configuration**~~ - **covered, and it was worth
   it.** `PAIRING_FUZZ_POINT_SYSTEM` now generates `BB*` lines across seven
   named systems (half-point bye, doubled, football 3-1-0, paid loss, paid
@@ -935,7 +966,8 @@ made or was suggested by anything this run found.
 **What this does not cover.** Every axis here draws entry between round 2
 and about the middle of the event; a late entrant arriving in the LAST
 few rounds, or a field where every player is a late entrant relative to
-some other reference round, is untested. Team tournaments and the
+some other reference round, is untested. Team tournaments (validated
+separately, see [Team Swiss pairings](#team-swiss-pairings-c046)) and the
 `rounds_count`/`XXR` mismatch remain the harness's other two gaps (see
 "Not covered" below).
 
@@ -1112,7 +1144,7 @@ generators:
 | direction | generator, checked by | tournaments | rounds | individual pairs | disagreements |
 |---|---|---|---|---|---|
 | 1 | Ainalrami (`Ainalrami.Test.FuzzTournament`), checked by bbpPairings | 5,993,000 x2 + four smaller corpora | 217,470,056 | 2,536,328,265 | 2 (bbpPairings' own [C2] defect, see below) |
-| 2 | bbpPairings' own `-g` generator, checked by Ainalrami | 5,584 (+19 where bbpPairings' own generator found no legal pairing) | 55,770 | 3,230,505 | 0 |
+| 2 | bbpPairings' own `-g` generator, checked by Ainalrami | in progress toward 50,000; so far 5,584 (+19 where bbpPairings' own generator found no legal pairing) <!-- Q33-DIR2-FINAL --> | 55,770 | 3,230,505 | 0 |
 
 Direction 1 is "The corpora" and "The corpus" above - the number everything
 else on this page rests on. Direction 2 did not exist at any real scale
@@ -1198,14 +1230,75 @@ remaining **5,584 tournaments, 55,770 rounds, 3,230,505 individual
 pairings, zero disagreements** - composition and colour both - and zero
 Ainalrami refusals.
 
-Short of Q33's 50,000, by design: the brief was "keep it to what one PC can
-do in a few hours" and this direction started from zero, so the run is
-resumable rather than one-shot. `tools/bbp_generator_reverse.exs` skips any
-seed index already present in its result log (kept locally,
-`tools/bbp_reverse_results.log`, gitignored like the tie-break corpus logs
-below), so extending toward 50,000 is a matter of re-running it with a
-higher `BBP_REVERSE_COUNT`, not redoing the work already done. Tracked as
-an open item in `docs/vcl4thp/tracker.json`'s Q33 entry until then.
+**In progress toward Q33's 50,000.** The first pass was kept to what one
+PC can do in a few hours, and the run is resumable rather than one-shot:
+`tools/bbp_generator_reverse.exs` skips any seed index already present in
+its result log (kept locally, `tools/bbp_reverse_results.log`, gitignored
+like the tie-break corpus logs below), so extending toward 50,000 is a
+matter of re-running it with a higher `BBP_REVERSE_COUNT`, not redoing the
+work already done. The figures above are the interim ones
+<!-- Q33-DIR2-FINAL --> and are to be replaced with the final count at
+release. Tracked as an open item in `docs/vcl4thp/tracker.json`'s Q33
+entry until then.
+
+## Team Swiss pairings (C.04.6)
+
+No outside program can check a team Swiss pairing automatically: bbpPairings,
+JaVaFo, Gacrux and SWAR do not pair teams, and Swiss-Manager is closed
+Windows software
+([conformance-c0406-teams.md](conformance-c0406-teams.md#verification-no-reference-we-can-automate-against)).
+C.04.6 makes up for it: Article 3.6 defines the pairing as the first
+element of an enumerable order, so a reference that enumerates it IS the
+definition. The references below are written from the regulation text
+and share no code with `Ainalrami.TeamPairing`. They share its readings
+(listed in the conformance notes), so they prove the computation, not the
+reading.
+
+| run | reference | seeds | rounds | result |
+|---|---|---|---|---|
+| whole rounds, 4-10 teams, Type A (2026-09-26) | brute-force whole-round reference | 1-250,000,000 | 1,032,949,115 | 0 failures, 0 errors |
+| whole rounds, 4-10 teams, no colour preferences (2026-09-27) | the same reference, `type: :none` | 1-30,000 | 123,593 | 0 disagreements |
+| whole rounds, 11-80 teams (2026-09-25) | exact reference (min-cost matchings) | 1-2,000 | 11,980 | every round agrees, reasons included |
+
+### Whole rounds, 4-10 teams
+
+`test/ainalrami/team_pairing_validation_test.exs` plays generated events
+(4-10 teams, 3-6 rounds, random results, whole-match forfeits, byes and
+teams sitting a round out, either initial colour) through the engine and
+compares every round with the brute-force reference
+(`test/support/team_proof/naive_reference.ex`): who meets whom, the bye,
+and the colours. `mix test` runs 90 seeds; `tools/team_validation_run.py`
+runs the same test many times at once on separate seed ranges and is
+resumable. The long run covered seeds 1-250,000,000 - 1,032,949,115 team
+rounds - with no failure and no error, finishing 2026-09-26 on Ainalrami
+commit `d0f16e8`.
+
+### Large fields, 11-80 teams
+
+Brute force stops at about ten teams. `docs/team-proof-large-fields.md`
+describes an exact reference for whole rounds up to 80 teams, built on
+minimum-cost matchings rather than enumeration and itself checked against
+the brute-force one (2,000 seeds, 8,273 rounds, no disagreement). It found
+one disagreement: the engine's 3.6 search stopped after a candidate budget
+and could return a legal round C.04.6 does not choose (seed 126 at the
+default budget, seed 480 at 10,000,000 candidates). 0.30.0 made 3.6 exact;
+since then 2,000 seeds and 11,980 rounds agree, reasons included.
+
+### No colour preferences
+
+C.04.6 Article 1.7's third option, which FIDE's TRF-2026 code table gives
+to `FIDE_TEAM_MP_GP` and the other codes without `TYPEA`/`TYPEB`: 30,000
+seeds, 123,593 rounds against the same brute-force reference, 0
+disagreements. Details in
+[conformance-c0406-teams.md](conformance-c0406-teams.md#no-colour-preferences-17-2026-09-27).
+
+### The checker on team files
+
+`ainalrami -c` replays a team Swiss file team against team with the C.04.6
+engine (`Ainalrami.TeamReplay`) and reads the `192` code per FIDE's
+published TRF-2026 Tournament Type Code Table (`Ainalrami.TypeCode`); see
+the README's command-line section. No real team TRF has been available to
+run it on (see "Real team files" under the team tie-break run below).
 
 ## Tie-breaks (C.07, effective 1 March 2026), against TieBreakServer
 
@@ -1405,3 +1498,10 @@ individual events; its SWAR import does not read team tournaments.
 Team rating tie-breaks are not compared: C.07 defines none and the engine
 has no team rating.
 
+### Real tournaments
+
+OpenPairings re-ranked 43 real SWAR tournaments with Ainalrami's
+tie-breaks and compared the result with SWAR's own standings. No Ainalrami
+bug was found; every difference was attributed to SWAR - its use of the
+2024 C.07 text, SWAR defects, or Belgian conventions. All 43 are
+individual events.
