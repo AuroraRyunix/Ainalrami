@@ -56,6 +56,19 @@
 #                    (default 25)
 #   DIFF_OUT         log path (default perf_diff.log)
 #   DIFF_EXTRAS      "0" turns the soft-pair / bye-exclusion extras off
+#
+# For `corpus` runs, which take hours on the small set:
+#
+#   DIFF_CHUNK       tournaments per chunk: each axis is run as consecutive
+#                    slices of this many seeds, each written to its own
+#                    `<axis>.<first seed>.log` (via a `.tmp` renamed on
+#                    completion), and a slice whose log already exists is
+#                    skipped - so an interrupted run resumes where it
+#                    stopped. `compare` reads every `.log` in a directory.
+#   DIFF_AXES        comma-separated axis names: run only these
+#   DIFF_LIMIT       at most this many tournaments of each axis (its first)
+#   DIFF_SUBSET      "1": `compare` checks only the rounds the SECOND
+#                    directory has (a partial run against a full baseline)
 
 alias Ainalrami.{Alternatives, Pairing}
 alias Ainalrami.Test.FuzzTournament, as: Fuzz
@@ -449,8 +462,15 @@ defmodule PerfDiff.Corpus do
   def run(name, dir, run_axis) do
     File.mkdir_p!(dir)
 
+    only =
+      case System.get_env("DIFF_AXES") do
+        nil -> nil
+        list -> String.split(list, ",", trim: true)
+      end
+
     set(name)
     |> Enum.with_index()
+    |> Enum.filter(fn {{axis, _, _}, _} -> only == nil or axis in only end)
     |> Enum.each(fn {{axis, count, env}, index} ->
       env = Map.merge(@base, env)
       previous = Map.new(env, fn {k, _} -> {k, System.get_env(k)} end)
@@ -459,9 +479,25 @@ defmodule PerfDiff.Corpus do
       offset =
         %{"small" => 0, "flags" => 5_000_000, "large" => 9_000_000, "early" => 12_000_000}[name]
       seed_from = offset + index * 100_000 + 1
+      count = min(count, PerfDiff.int("DIFF_LIMIT", count))
 
       try do
-        run_axis.(axis, seed_from, count, Path.join(dir, axis <> ".log"))
+        case PerfDiff.int("DIFF_CHUNK", 0) do
+          0 ->
+            run_axis.(axis, seed_from, count, Path.join(dir, axis <> ".log"))
+
+          chunk ->
+            for first <- seed_from..(seed_from + count - 1)//chunk do
+              out = Path.join(dir, "#{axis}.#{first}.log")
+              n = min(chunk, seed_from + count - first)
+
+              unless File.exists?(out) do
+                run_axis.(axis, first, n, out <> ".tmp")
+                File.rename!(out <> ".tmp", out)
+                if File.exists?(out <> ".tmp.stats"), do: File.rename!(out <> ".tmp.stats", out <> ".stats")
+              end
+            end
+        end
       after
         Enum.each(previous, fn
           {k, nil} -> System.delete_env(k)
@@ -538,8 +574,13 @@ case System.argv() do
       |> Map.new()
     end
 
-    left = read.(a)
     right = read.(b)
+
+    left =
+      if System.get_env("DIFF_SUBSET") == "1",
+        do: Map.take(read.(a), Map.keys(right)),
+        else: read.(a)
+
     keys = Map.keys(left) |> MapSet.new() |> MapSet.union(MapSet.new(Map.keys(right)))
 
     {same, differ, missing} =
