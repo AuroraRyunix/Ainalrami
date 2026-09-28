@@ -439,6 +439,125 @@ before it was committed (up to 30,000 sessions each).
   removed.
 
 
+## The alternatives, re-played from their round
+
+The float and bye alternatives are most of a late round's click, and
+each is a forced search: the round paired again with a few pairs
+forbidden (`y` against every other member of the bracket, or against
+everyone for the bye). Until this change each one was that full
+re-pairing, from scratch. Now `Alternatives` pairs the unforced round
+once more, keeping its work - a RECORDING
+(`Pairing.alternatives_recording/2`) - and every forced search takes what
+it can from it (`Pairing.pair_forced/4`, `Ainalrami.Pairing.Replay`).
+The answer is the full re-pairing's in every case; where that cannot be
+shown, the search IS the full re-pairing.
+
+### What a forced search takes from the recording
+
+* **A local bracket** (the bracket paired on its own graph) is a pure
+  function of the remaining field, the bracket's bounds and C9 flag, the
+  round context, and which pairs in its window are legal. Reached with the
+  recording's field, bounds and flag and no forced pair in the window, it
+  is the same call on the same arguments, and its recorded result is used.
+  The completability question that follows it is still asked of the
+  search's own oracle.
+* **The round matcher** - the whole-field matching a run of field
+  brackets is solved on, built and solved from cold, which was most of a
+  large round's time - starts from the recording's solved state with the
+  forced pairs taken out, and re-optimises: a few augmentations instead
+  of a cold solve. With no forced pair in the graph the recorded state is
+  exactly what the cold build gives, and is used as it is.
+* **Everything else** - the bye bootstrap, the oracle, the completion
+  check and repair, every bracket whose window holds a forced pair - the
+  search does itself, exactly as before. A forcing that changes the round
+  context (the bye score, the first bracket's C9 flag) takes nothing from
+  the recording.
+
+### Why the answer is the full re-pairing's
+
+The re-optimised matcher holds AN optimum of the forced graph, not
+necessarily the one a cold solve reaches: the matcher breaks ties by the
+order it meets edges in. So from a warm start until the matcher is next
+built from cold, **every read the bracket makes of its matching is
+certified to come out the same in every optimum** of the weights it was
+solved for. The cold search holds some optimum of the same weights, so it
+read the same value; by induction over the stages it took the same route,
+solved at the same points and wrote the same weights. A read that cannot
+be certified ends the search, and the caller runs the full re-pairing.
+
+A read is a predicate of a vertex's partner (`Pairing.read/4`): inside the
+bracket or not, paired downward or not, the partner itself where a pair is
+finalised, whether the partner's score reaches the next group where the
+C9 gate can fire. Two certificates, the second only where the first
+cannot settle it:
+
+* **The dual.** The matcher's dual solution is an optimality certificate,
+  and complementary slackness holds between it and every optimum: every
+  optimum matches a vertex along an edge of reduced cost zero, covers every
+  vertex with a positive dual, and fills every blossom with a positive
+  dual. `WeightedMatching.possible_mates/2` returns those partners - inside
+  a blossom, enumerating the ways a full blossom can be matched - and the
+  read is certified when the predicate is the same for all of them. It
+  checks what the vertex's own edges can refute (no negative reduced cost,
+  its matched edge at zero, an exposed vertex at dual zero) and refuses to
+  answer otherwise.
+* **A re-optimisation.** Remove every edge of the vertex that gives the
+  read value and solve again: every matching that reads differently is
+  still there, so if the best of them is worth less than the optimum, no
+  optimum reads differently.
+
+Two reads are counts whose members may differ between optima while the
+count cannot, and are certified as counts by the ladder: the remainder's
+pairs (C6 packs one unit per pair inside the bracket above every lower
+rung, the moved-down players' internal status is certified member by
+member, so the remainder's own pairs number the same in every optimum),
+and the higher half's exchanges (stage 4's guard term outweighs
+everything below it). The matcher's route choices - a dual shift that
+succeeds or is refused, a pair finalised by edge removal or by rewrite -
+end in an optimum of the same weights either way, a finalised pair
+isolated whatever its own edge weighs. Stage 8's dual shift is a point of
+certification (a cold search there shifted too or re-solved, and holds an
+optimum of the shifted weights either way); stage 7's is not (a cold
+search whose shift was refused reads the stage-6 matching until its next
+solve). The full statement is the module doc of
+`lib/ainalrami/pairing/replay.ex`.
+
+The certificate itself is checked against brute force
+(`test/ainalrami/replay_test.exs`: 400 random sessions of solves,
+re-weightings, edge removals and finalisations on graphs with heavy ties,
+every vertex's partners in every maximum-weight matching enumerated and
+found inside the certified set, and the dual verified at every step).
+
+### When it runs
+
+The recording costs one pairing of the round, so it is made only when a
+batch needs more than one wave of searches - more searches than
+schedulers; below that the searches all run side by side as full
+re-pairings and finish about when the recording alone would (450
+players, round 2, ten searches on 12 schedulers: 34 s full, 43 s with a
+recording). On the 2-core server that is three searches or more.
+`AINALRAMI_ALT_REPLAY=always|never` overrides. The batch now runs on one
+worker per scheduler taking searches off a shared counter, so what the
+searches share (players, explanation context, recording) is copied into
+each worker once instead of into each search.
+
+### Results
+
+`tools/alt_bench.exs`: the engine before this change (`083ec3d`, the head
+of the large-field pass) compiled beside this one in the same VM, every
+round of `tools/perf_bench.exs`'s first 450- and 600-player tournaments,
+each forced search `float_alternatives/3` and `bye_alternatives/3` make at
+the default cap timed one at a time - the full re-pairing before, the
+incremental search after (a fallback's full re-pairing added to its time)
+- and the whole click, both calls, as OpenPairings makes them. Answers
+compared as they ran: identical.
+
+ALT_RESULTS_PLACEHOLDER
+
+### How it was checked
+
+ALT_CHECKED_PLACEHOLDER
+
 ## Tried and reverted
 
 * **A per-solve cache of row lists** in the settle loop, to avoid
@@ -470,3 +589,13 @@ before it was committed (up to 30,000 sessions each).
     cd ../this-tree
     MIX_ENV=test mix run tools/perf_diff.exs corpus small OUT/new/small
     MIX_ENV=test mix run tools/perf_diff.exs compare OUT/base/small OUT/new/small
+
+    # alternatives: every forced search both ways, public answers vs v0.33.0
+    cd ../v0.33.0-checkout
+    MIX_ENV=test mix run ../this-tree/tools/alt_diff.exs corpus small OUT/base/alt
+    cd ../this-tree
+    MIX_ENV=test mix run tools/alt_diff.exs corpus small OUT/new/alt
+    MIX_ENV=test mix run tools/alt_diff.exs compare OUT/base/alt OUT/new/alt
+
+    # alternatives bench, this tree against the one before, in one VM
+    ELIXIR_ERL_OPTIONS="+S 2:2" ALT_REF=083ec3d mix run tools/alt_bench.exs
