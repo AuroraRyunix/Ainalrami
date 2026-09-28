@@ -45,6 +45,12 @@
 #   PERF_CORPUS       where generated tournaments are cached (default
 #                     bench_corpus/) - point a baseline checkout at the
 #                     same directory to time both on identical files
+#   PERF_REF          a git ref (e.g. v0.33.0): compile that release's
+#                     engine beside this one and time the two alternately,
+#                     round by round, in the same VM - and check they give
+#                     the same answers while doing so
+#   PERF_SOFT=club    add the arbiter's "keep clubmates apart" soft pairs
+#                     (n/8 clubs) to every round, as OpenPairings sends them
 
 alias Ainalrami.{Alternatives, Generator, Pairing, Trf}
 
@@ -141,25 +147,50 @@ defmodule PerfBench do
     {us / 1000, value}
   end
 
-  def run_round(players, opts, parts) do
-    {pair_ms, pairs} = time(fn -> Pairing.pair_next_round(players, opts) end)
+  # The arbiter's club list, as OpenPairings turns it into soft pairs for
+  # "keep clubmates apart": every player drawn into one of n/8 clubs, one
+  # group per club. Drawn from the tournament's own seed, so it is the same
+  # list every run.
+  def soft_opts(parsed, seed) do
+    case System.get_env("PERF_SOFT") do
+      nil ->
+        []
 
-    explain_ms =
+      "club" ->
+        :rand.seed(:exsss, {seed, 17, 29})
+        clubs = max(4, div(length(parsed.players), 8))
+
+        groups =
+          parsed.players
+          |> Enum.group_by(fn _ -> :rand.uniform(clubs) end, & &1.rank)
+          |> Map.values()
+          |> Enum.map(&Enum.sort/1)
+          |> Enum.filter(&(length(&1) >= 2))
+          |> Enum.sort()
+
+        [soft_pairs: groups, soft_position: :strong]
+    end
+  end
+
+  def run_round(engine, players, opts, parts) do
+    {pair_ms, pairs} = time(fn -> engine.pairing.pair_next_round(players, opts) end)
+
+    {explain_ms, report} =
       if :explain in parts,
-        do: elem(time(fn -> Pairing.explain_round(players, pairs, opts) end), 0)
+        do: time(fn -> engine.pairing.explain_round(players, pairs, opts) end),
+        else: {nil, nil}
 
-    alts_ms =
+    {alts_ms, alts} =
       if :alts in parts do
-        elem(
-          time(fn ->
-            Alternatives.float_alternatives(players, pairs, opts)
-            Alternatives.bye_alternatives(players, pairs, opts)
-          end),
-          0
-        )
+        time(fn ->
+          {engine.alternatives.float_alternatives(players, pairs, opts),
+           engine.alternatives.bye_alternatives(players, pairs, opts)}
+        end)
+      else
+        {nil, nil}
       end
 
-    %{pair: pair_ms, explain: explain_ms, alts: alts_ms}
+    {%{pair: pair_ms, explain: explain_ms, alts: alts_ms}, {pairs, report, alts}}
   end
 
   def percentile([], _p), do: nil
@@ -174,72 +205,141 @@ defmodule PerfBench do
   def fmt(ms) when ms >= 1000, do: "#{Float.round(ms / 1000, 2)} s"
   def fmt(ms), do: "#{round(ms)} ms"
 
-  def summary(label, rows, parts) do
+  def summary(label, rows, parts, ref?) do
     cells =
       Enum.flat_map(parts, fn part ->
-        values = rows |> Enum.map(&Map.fetch!(&1, part)) |> Enum.reject(&is_nil/1)
-        [fmt(percentile(values, 50)), fmt(percentile(values, 95)), fmt(Enum.max(values, fn -> nil end))]
+        stats = fn key ->
+          values = rows |> Enum.map(&get_in(&1, [key, part])) |> Enum.reject(&is_nil/1)
+          {percentile(values, 50), percentile(values, 95), Enum.max(values, fn -> nil end)}
+        end
+
+        {p50, p95, max} = stats.(:new)
+
+        if ref? do
+          {r50, r95, rmax} = stats.(:ref)
+          [fmt(r50), fmt(p50), fmt(r95), fmt(p95), fmt(rmax), fmt(max), speedup(rmax, max)]
+        else
+          [fmt(p50), fmt(p95), fmt(max)]
+        end
       end)
 
     IO.puts("| #{label} | #{length(rows)} | " <> Enum.join(cells, " | ") <> " |")
+  end
+
+  defp speedup(nil, _), do: "-"
+  defp speedup(_, nil), do: "-"
+  defp speedup(ref, new), do: "#{Float.round(ref / max(new, 0.001), 1)}x"
+
+  def header(parts, ref?) do
+    cols =
+      Enum.map_join(parts, " | ", fn part ->
+        if ref?,
+          do:
+            "#{part} p50 before | after | p95 before | after | max before | after | max speed-up",
+          else: "#{part} p50 | #{part} p95 | #{part} max"
+      end)
+
+    per = if ref?, do: 7, else: 3
+    "| field | rounds | #{cols} |\n|" <> String.duplicate("---|", 2 + per * length(parts))
+  end
+end
+
+defmodule PerfBench.Reference do
+  # The engine as it stood at a git ref, compiled beside the working tree's
+  # under `AinalramiRef.*`, so the two can be timed round by round in ONE
+  # VM - alternately, under the same load, which is the only fair
+  # comparison on a machine that is doing anything else - and their
+  # answers compared as they go.
+  @files ~w(log trf weighted_matching pairing alternatives)
+
+  def load(nil), do: nil
+
+  def load(ref) do
+    for file <- @files do
+      {source, 0} = System.cmd("git", ["show", "#{ref}:lib/ainalrami/#{file}.ex"])
+
+      source
+      |> String.replace("Ainalrami.", "AinalramiRef.")
+      |> Code.compile_string("#{ref}:lib/ainalrami/#{file}.ex")
+    end
+
+    %{pairing: AinalramiRef.Pairing, alternatives: AinalramiRef.Alternatives}
   end
 end
 
 parts = PerfBench.parts()
 tournaments = String.to_integer(System.get_env("PERF_TOURNAMENTS", "2"))
 out = System.get_env("PERF_OUT")
+ref_name = System.get_env("PERF_REF")
+reference = PerfBench.Reference.load(ref_name)
+current = %{pairing: Pairing, alternatives: Alternatives}
 
 IO.puts(
   "schedulers online: #{System.schedulers_online()}, " <>
-    "OTP #{System.otp_release()}, parts: #{Enum.join(parts, ",")}"
+    "OTP #{System.otp_release()}, parts: #{Enum.join(parts, ",")}" <>
+    if(ref_name, do: ", against #{ref_name}", else: "") <>
+    if(System.get_env("PERF_SOFT"), do: ", soft pairs: #{System.get_env("PERF_SOFT")}", else: "")
 )
 
 all =
   for size <- PerfBench.sizes(), index <- 1..tournaments do
     parsed = PerfBench.tournament(size, index)
-    opts = PerfBench.opts(parsed)
+    opts = PerfBench.opts(parsed) ++ PerfBench.soft_opts(parsed, size * 1000 + index)
     played = parsed.players |> Enum.map(&length(&1.games)) |> Enum.max()
 
     for round <- 1..played do
       players = PerfBench.state_before_round(parsed, round)
-      timing = PerfBench.run_round(players, opts, parts)
       active = Enum.count(players, &(length(&1.games) < round))
+
+      {ref_timing, ref_answer} =
+        if reference, do: PerfBench.run_round(reference, players, opts, parts), else: {nil, nil}
+
+      {timing, answer} = PerfBench.run_round(current, players, opts, parts)
+
+      same =
+        cond do
+          reference == nil -> ""
+          ref_answer == answer -> " (identical)"
+          true -> " ** ANSWERS DIFFER FROM #{ref_name} **"
+        end
+
       IO.puts(
         "  p#{size} t#{index} r#{round} active=#{active}: " <>
-          Enum.map_join(parts, " ", &"#{&1}=#{PerfBench.fmt(timing[&1])}")
+          Enum.map_join(parts, " ", fn part ->
+            if reference,
+              do: "#{part}=#{PerfBench.fmt(ref_timing[part])}->#{PerfBench.fmt(timing[part])}",
+              else: "#{part}=#{PerfBench.fmt(timing[part])}"
+          end) <> same
       )
 
-      Map.merge(timing, %{size: size, tournament: index, round: round, active: active})
+      %{size: size, tournament: index, round: round, active: active, new: timing, ref: ref_timing}
     end
   end
   |> List.flatten()
 
-header =
-  "| field | rounds | " <>
-    Enum.map_join(parts, " | ", &"#{&1} p50 | #{&1} p95 | #{&1} max") <> " |"
-
 IO.puts("\n## By field size\n")
-IO.puts(header)
-IO.puts("|" <> String.duplicate("---|", 2 + 3 * length(parts)))
+IO.puts(PerfBench.header(parts, reference != nil))
 
 for {size, rows} <- Enum.group_by(all, & &1.size) |> Enum.sort() do
-  PerfBench.summary("#{size}", rows, parts)
+  PerfBench.summary("#{size}", rows, parts, reference != nil)
 end
 
 IO.puts("\n## By field size and round\n")
-IO.puts(header)
-IO.puts("|" <> String.duplicate("---|", 2 + 3 * length(parts)))
+IO.puts(PerfBench.header(parts, reference != nil))
 
 for {{size, round}, rows} <- Enum.group_by(all, &{&1.size, &1.round}) |> Enum.sort() do
-  PerfBench.summary("#{size} r#{round}", rows, parts)
+  PerfBench.summary("#{size} r#{round}", rows, parts, reference != nil)
 end
 
 if out do
   File.write!(
     out,
-    ["size,tournament,round,active,pair_ms,explain_ms,alts_ms\n"] ++
+    ["size,tournament,round,active,pair_ms,explain_ms,alts_ms,ref_pair_ms,ref_explain_ms,ref_alts_ms\n"] ++
       Enum.map(all, fn r ->
-        "#{r.size},#{r.tournament},#{r.round},#{r.active},#{r.pair},#{r.explain},#{r.alts}\n"
+        ref = r.ref || %{}
+
+        "#{r.size},#{r.tournament},#{r.round},#{r.active},#{r.new.pair},#{r.new.explain}," <>
+          "#{r.new.alts},#{ref[:pair]},#{ref[:explain]},#{ref[:alts]}\n"
       end)
   )
 end

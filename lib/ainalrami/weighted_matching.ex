@@ -892,6 +892,9 @@ defmodule Ainalrami.WeightedMatching do
       shift_outer: 0,
       shift_cross: 0,
       min_outer: nil,
+      # The root-edge table - see its own section.
+      roots: MapSet.new(),
+      root_min: %{},
       next_blossom_id: n
     }
 
@@ -1524,7 +1527,8 @@ defmodule Ainalrami.WeightedMatching do
         end)
         |> Map.new()
 
-      state = %{state | cross: cross, best_outer: kept}
+      outer_vertices = Enum.flat_map(outer_blossoms, &blossom_vertices(state, &1))
+      state = %{state | cross: cross, best_outer: kept} |> carry_roots(outer_vertices)
 
       needing =
         state.label
@@ -1532,57 +1536,180 @@ defmodule Ainalrami.WeightedMatching do
         |> Enum.flat_map(fn {b, _} -> blossom_vertices(state, b) end)
         |> Enum.reject(&Map.has_key?(kept, &1))
 
-      # Two ways to give the `needing` vertices their entries, and the
-      # cheaper one depends on the stage:
-      #
-      #   * each needing vertex walks its OWN row looking for outer
-      #     neighbours -- O(|needing| x V);
-      #   * each OUTER vertex walks its row and offers itself to the
-      #     needing neighbours it finds -- O(|outer| x V), which is how
-      #     bbpPairings' `initializeInnerOuterEdges` is driven.
-      #
-      # Early in a cold solve the outer set is most of the graph and only
-      # the augmented tree needs recomputing, so the first wins. In a
-      # resumed solve after `set_weight/4` the outer set is the two or
-      # three prepared vertices and `needing` is every free vertex whose
-      # best partner was one of them -- a hundred row walks to find what
-      # three would have delivered. Measured on a 209-player round: 136,000
-      # row walks from this one reduce, a quarter of the round.
-      outer_vertices = Enum.flat_map(outer_blossoms, &blossom_vertices(state, &1))
+      # The needing vertices' entries come straight off `root_min`, which is
+      # exactly their least-resistance edge to the outer set - see
+      # `carry_roots/2`. They used to be found by walking rows: each needing
+      # vertex its own, or every outer vertex its own offering to them,
+      # whichever was fewer, which kept a cold solve at O(V^2) a stage and
+      # was half of it.
+      duals = state.dual
 
-      if length(needing) <= length(outer_vertices) do
-        Enum.reduce(needing, state, &recompute_vertex(&2, &1))
-      else
-        offer_outer_to(state, outer_vertices, MapSet.new(needing))
-      end
+      best_outer =
+        Enum.reduce(needing, state.best_outer, fn v, bo ->
+          case state.root_min do
+            %{^v => {key, x}} -> Map.put(bo, v, {key + Map.fetch!(duals, v), x})
+            _ -> bo
+          end
+        end)
+
+      %{state | best_outer: best_outer}
     end
   end
 
-  # `best_outer` entries for the vertices in `targets`, delivered by the
-  # outer vertices walking their own rows. The caller has already dropped
-  # any stale entries the targets held.
-  defp offer_outer_to(state, outer_vertices, targets) do
-    duals = state.dual
-    shift = state.shift_outer
+  ## ------------------------------------------------ the root-edge table
+  #
+  # `root_min[u]`, for every vertex u that is NOT a root, is u's least edge
+  # to the stage's ROOTS - the vertices outer at the stage's start, i.e.
+  # those of the exposed blossoms (`state.roots`) - keyed so that it
+  # survives the stage:
+  #
+  #     key(u, x) = (dual[x] + shift_outer) - w(u, x)       for a root x
+  #
+  # stored as `{key, x}`, least `{key, x}` wins. `dual[x] + shift_outer` is
+  # constant while x stays outer - every `apply_delta/2` takes delta off an
+  # outer dual and adds it to `shift_outer` - and a root stays outer until
+  # its tree augments. So the key never has to be recomputed while x is a
+  # root, whatever happens to u, and it is the same key a scan would compute
+  # today. u's resistance to x is `key + dual[u] - shift_outer`: for a
+  # fixed u that is the key plus a constant, so the least key is the least
+  # resistance, tie for tie, and `best_outer`'s stored (biased) value is
+  # `key + dual[u]` exactly.
+  #
+  # At a stage start the outer set IS the root set, so a vertex that needs a
+  # `best_outer` entry there - one that was in last stage's forest, or
+  # whose best edge was to a vertex that has since left the outer set - is
+  # answered from this table instead of by a walk. Keeping it current costs
+  # work only where the root set CHANGES:
+  #
+  #   * a vertex that has become a root (absorbed into a still-exposed
+  #     blossom last stage) drops its own entry and offers itself to its
+  #     non-root neighbours;
+  #   * a root that has left (its tree augmented) is a non-root now and
+  #     gets an entry, and so does every non-root whose least root it was:
+  #     each one re-derives its least root by `least_root/3`, over whichever
+  #     is shorter, its row or the root set.
+  #
+  # Early in a cold solve nearly every vertex is a root, so there is almost
+  # nobody to keep an entry for; late in one the roots are few, so every
+  # re-derivation is short. Either way it is a small fraction of what
+  # finding the needing vertices' entries by walking rows cost - that was
+  # O(V^2) a stage and half of a cold solve.
+  #
+  # Rebuilt from nothing by `rebuild_caches/1` at the first stage of every
+  # solve, with the other caches: a `set_weight/4` in between has changed
+  # weights the keys were computed from.
 
-    best_outer =
-      Enum.reduce(outer_vertices, state.best_outer, fn u, bo ->
-        case Map.get(state.weight, u) do
-          nil ->
-            bo
+  # The root table at a later stage start. `roots` is the new root set.
+  defp carry_roots(state, roots) do
+    root_set = MapSet.new(roots)
+    arrived = Enum.reject(roots, &MapSet.member?(state.roots, &1))
+    left = MapSet.difference(state.roots, root_set)
+    root_min = Map.drop(state.root_min, arrived)
 
-          row ->
-            dual_u = Map.fetch!(duals, u)
+    # Re-derived: the vertices that are no longer roots, and every non-root
+    # whose least root was one of them. A re-derivation sees the whole
+    # current root set, arrivals included.
+    rescan =
+      if MapSet.size(left) == 0 do
+        []
+      else
+        MapSet.to_list(left) ++
+          for({u, {_key, x}} <- root_min, MapSet.member?(left, x), do: u)
+      end
 
-            Enum.reduce(row, bo, fn {v, w}, bo ->
-              if MapSet.member?(targets, v),
-                do: offer(bo, v, stored(dual_u + Map.fetch!(duals, v) - w, shift), u),
-                else: bo
-            end)
+    roots_list = MapSet.to_list(root_set)
+
+    root_min =
+      Enum.reduce(rescan, root_min, fn u, rm ->
+        case least_root(state, u, root_set, roots_list) do
+          nil -> Map.delete(rm, u)
+          best -> Map.put(rm, u, best)
         end
       end)
 
-    %{state | best_outer: best_outer}
+    root_min = Enum.reduce(arrived, root_min, &root_offers(state, &2, &1, root_set))
+    %{state | root_min: root_min, roots: root_set}
+  end
+
+  # The root table from nothing, for a solve's first stage: every outer
+  # vertex is a root. Whichever side is cheaper does the walking - the
+  # roots offering along their rows, or each non-root deriving its own.
+  defp build_roots(state, roots) do
+    root_set = MapSet.new(roots)
+    roots_list = MapSet.to_list(root_set)
+    r = length(roots_list)
+    non_roots = for v <- 0..(state.n - 1)//1, not MapSet.member?(root_set, v), do: v
+
+    root_min =
+      if length(non_roots) * min(r, state.n) < r * state.n do
+        Enum.reduce(non_roots, %{}, fn u, rm ->
+          case least_root(state, u, root_set, roots_list) do
+            nil -> rm
+            best -> Map.put(rm, u, best)
+          end
+        end)
+      else
+        Enum.reduce(roots_list, %{}, &root_offers(state, &2, &1, root_set))
+      end
+
+    %{state | root_min: root_min, roots: root_set}
+  end
+
+  # Root `x` offers itself to every non-root neighbour.
+  defp root_offers(state, root_min, x, roots) do
+    case Map.get(state.weight, x) do
+      nil ->
+        root_min
+
+      row ->
+        dx = Map.fetch!(state.dual, x) + state.shift_outer
+
+        Enum.reduce(row, root_min, fn {u, w}, rm ->
+          if MapSet.member?(roots, u) do
+            rm
+          else
+            key = dx - w
+
+            case rm do
+              %{^u => {k0, x0}} when {k0, x0} <= {key, x} -> rm
+              _ -> Map.put(rm, u, {key, x})
+            end
+          end
+        end)
+    end
+  end
+
+  # `u`'s least `{key, x}` over its neighbours in `roots`, or nil - by
+  # walking `u`'s row and testing membership, or the roots and looking each
+  # one up in the row, whichever is shorter. The least of a set does not
+  # depend on the order it is visited in.
+  defp least_root(state, u, roots, roots_list) do
+    case Map.get(state.weight, u) do
+      nil ->
+        nil
+
+      row ->
+        duals = state.dual
+        shift = state.shift_outer
+
+        consider = fn x, w, best ->
+          candidate = {Map.fetch!(duals, x) + shift - w, x}
+          if best == nil or candidate < best, do: candidate, else: best
+        end
+
+        if MapSet.size(roots) < map_size(row) do
+          Enum.reduce(roots_list, nil, fn x, best ->
+            case row do
+              %{^x => w} -> consider.(x, w, best)
+              _ -> best
+            end
+          end)
+        else
+          Enum.reduce(row, nil, fn {x, w}, best ->
+            if MapSet.member?(roots, x), do: consider.(x, w, best), else: best
+          end)
+        end
+    end
   end
 
   # Every vertex's entry, from nothing. O(V^2), and run once per stage.
@@ -1609,10 +1736,14 @@ defmodule Ainalrami.WeightedMatching do
     # precisely the shape that makes iterating all V vertices wasteful.
     # Only the outer vertices are walked at all -- everything a non-outer
     # vertex needs is delivered TO it by an outer neighbour's offer.
-    state.label
-    |> Enum.filter(fn {_b, l} -> l == :outer end)
-    |> Enum.flat_map(fn {b, _} -> blossom_vertices(state, b) end)
+    outer =
+      state.label
+      |> Enum.filter(fn {_b, l} -> l == :outer end)
+      |> Enum.flat_map(fn {b, _} -> blossom_vertices(state, b) end)
+
+    outer
     |> Enum.reduce(state, &settle_outer_vertex(&2, &1))
+    |> build_roots(outer)
   end
 
   # Fold a set of just-changed vertices back in, doing exactly what each
