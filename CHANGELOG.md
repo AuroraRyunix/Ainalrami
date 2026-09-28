@@ -64,6 +64,8 @@ with the reference on every one of them.
 
 ## [Unreleased]
 
+## [0.34.0] - 2026-09-28
+
 - [Feature] **`Alternatives.float_alternative/5` - one floater's "why him
   and not me".** `float_alternative(players, pairs, group, floater, opts)`
   returns exactly the entry `float_alternatives/3` has for that floater
