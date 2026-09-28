@@ -4285,40 +4285,62 @@ defmodule Ainalrami.Pairing do
   # checks the invariants it relies on and refuses otherwise -- including
   # when a remainder vertex sits inside a blossom, which it dissolves
   # first -- and a refusal, or a matching not in that shape, takes the
-  # old path. Local graph only: the field graph's matcher indexes by
-  # field position and its brackets are small.
+  # old path.
+  #
+  # Why the stages after this one answer the same as after a re-solve,
+  # which may land on a different matching of the same weight: what they
+  # read from the matching is whether a player is paired down, and every
+  # such read is one the weights decide. Stage 4's guard term makes the
+  # number of exchanges the same in every optimum; stages 5 and 6 ask
+  # each player's question with a one-unit nudge on even weights, so the
+  # answer is "is there an optimum where this player is (not) paired
+  # down", whichever optimum the matcher holds; each answer is committed
+  # by cutting edges no optimum still uses, so the matcher's matching
+  # stays optimal and the next question is asked of the same weights;
+  # and stage 8 fixes one partner at a time with addends distinct per
+  # opponent, which no tie can split. What the weights do NOT decide is
+  # the tentative matching of the field below the bracket, which the next
+  # bracket reads (`carried_partner_scores`) and the round matcher carries.
+  # So on the field graph the shift is taken only when there is no field
+  # below: the bracket is everything left of the round. That argument is
+  # the reason to expect no change; the differential corpus against
+  # v0.33.0 (docs/performance.md) is the check that there is none.
   defp exchange_by_dual_shift(%{mode: :local} = st, changes) do
-    s1 = st.remainder |> Enum.take(st.remainder_pairs) |> MapSet.new()
-    remainder = MapSet.new(st.remainder)
-
-    # Every first-half member paired with a second-half member; a second-
-    # half member may be paired outside the remainder (the odd one floats).
-    shaped? =
-      Enum.all?(st.remainder, fn v ->
-        p = partner(st, v)
-
-        if MapSet.member?(s1, v),
-          do: MapSet.member?(remainder, p) and not MapSet.member?(s1, p),
-          else: not MapSet.member?(remainder, p) or MapSet.member?(s1, p)
-      end)
-
-    if shaped? do
+    if shaped_for_shift?(st, false) do
       weigh = edge_weigher(st, & &1, st.m)
-      s = st.bands.count_span
-
-      shifts =
-        for {p, idx} <- st.remainder |> Enum.take(st.remainder_pairs) |> Enum.with_index(),
-            into: %{},
-            do: {p, 2 * (weigh.(p, p + 1, 1 + 2 * (s * s - idx)) - weigh.(p, p + 1, 1))}
-
-      edges = for {p, opp, _, w} <- changes, do: {p, opp, weigh.(p, opp, w)}
+      {shifts, edges} = shift_terms(st, changes, weigh, & &1)
 
       case WeightedMatching.shift_and_set(st.wm, shifts, edges) do
-        {:ok, wm} ->
-          live =
-            Enum.reduce(changes, st.live, fn {p, opp, _, w}, acc -> put_w(acc, p, opp, w) end)
+        {:ok, wm} -> {:ok, %{st | wm: wm, live: put_changes(st.live, changes)}}
+        :error -> :no
+      end
+    else
+      :no
+    end
+  end
 
-          {:ok, %{st | wm: wm, live: live}}
+  # The field graph, when the bracket is everything left of the round:
+  # the same shift on the round matcher, at field positions. With nothing
+  # below the bracket, the only vertices outside it are players already
+  # finalised, whose edges are gone, so the argument above holds on this
+  # graph exactly as on the local one. The matcher must be the one the
+  # last solve left -- `synced` and no queued writes -- since the shift
+  # is checked against the matching that solve returned. A second-half
+  # member may be unmatched here, where the local graph pairs it with the
+  # stand-in: its own dual is not shifted, and none of its edges loses
+  # slack (an edge from the first half gains exactly what that end's dual
+  # does; one from the second half only loses weight).
+  defp exchange_by_dual_shift(%{mode: :field, synced: true, nsgb: n, m: n} = st, changes) do
+    {matcher, field_index, field_size} = Process.get(@round_matcher_key)
+
+    if matcher != nil and Process.get(@dirty_key, []) == [] and shaped_for_shift?(st, true) do
+      to_field = field_positions(st, field_index)
+      {shifts, edges} = shift_terms(st, changes, edge_weigher(st, to_field, field_size), to_field)
+
+      case WeightedMatching.shift_and_set(matcher, shifts, edges) do
+        {:ok, matcher} ->
+          Process.put(@round_matcher_key, {matcher, field_index, field_size})
+          {:ok, %{st | live: put_changes(st.live, changes)}}
 
         :error ->
           :no
@@ -4329,6 +4351,45 @@ defmodule Ainalrami.Pairing do
   end
 
   defp exchange_by_dual_shift(_st, _changes), do: :no
+
+  # Every first-half member paired with a second-half member; a second-
+  # half member may be paired outside the remainder (the odd one floats),
+  # or - on the field graph, `unmatched_ok?` - with nobody.
+  defp shaped_for_shift?(st, unmatched_ok?) do
+    s1 = st.remainder |> Enum.take(st.remainder_pairs) |> MapSet.new()
+    remainder = MapSet.new(st.remainder)
+
+    Enum.all?(st.remainder, fn v ->
+      p = partner(st, v)
+
+      cond do
+        MapSet.member?(s1, v) -> MapSet.member?(remainder, p) and not MapSet.member?(s1, p)
+        p == v -> unmatched_ok?
+        true -> not MapSet.member?(remainder, p) or MapSet.member?(s1, p)
+      end
+    end)
+  end
+
+  # Each first-half member's dual shift and every changed edge, as the
+  # matcher sees them: `weigh` puts a `live` weight on the matcher's
+  # scale and `to_matcher` a bracket index in the matcher's numbering.
+  defp shift_terms(st, changes, weigh, to_matcher) do
+    s = st.bands.count_span
+
+    shifts =
+      for {p, idx} <- st.remainder |> Enum.take(st.remainder_pairs) |> Enum.with_index(),
+          into: %{},
+          do:
+            {to_matcher.(p), 2 * (weigh.(p, p + 1, 1 + 2 * (s * s - idx)) - weigh.(p, p + 1, 1))}
+
+    edges =
+      for {p, opp, _, w} <- changes, do: {to_matcher.(p), to_matcher.(opp), weigh.(p, opp, w)}
+
+    {shifts, edges}
+  end
+
+  defp put_changes(live, changes),
+    do: Enum.reduce(changes, live, fn {p, opp, _, w}, acc -> put_w(acc, p, opp, w) end)
 
   # dutch.cpp:1055-1085. Two objectives, lexicographically: first keep the
   # pair inside its own half of the remainder (minimise the number of
@@ -4513,7 +4574,22 @@ defmodule Ainalrami.Pairing do
         end)
       end)
 
-    %{st | base: base, live: live}
+    st = %{st | base: base, live: live}
+
+    # Taking the exchange weights off again moves every pair by its smaller
+    # member's addend, so lowering (or, in the second half, raising) each
+    # paired-down member's dual by the addend its own pair loses keeps the
+    # matched pairs tight -- and every edge the reset leaves in place runs
+    # from a paired-down player to one who is not, whose slack that shift
+    # leaves exactly as it was. Where that holds the next solve would find
+    # nothing to do; see `shift_to_live/5`, and `exchange_by_dual_shift/2`
+    # for why the stages that follow cannot tell the difference.
+    down = Enum.filter(st.remainder, &paired_down?(st, &1))
+
+    case with_shiftable_matcher(st, &shift_to_live(st, down, &1, &2, &3)) do
+      {:ok, st} -> st
+      :no -> st
+    end
   end
 
   ## ---------- stage 8: partners for the higher half (dutch.cpp 1545-1599) ----------
@@ -4521,11 +4597,121 @@ defmodule Ainalrami.Pairing do
   defp stage_first_group_partners(st) do
     Enum.reduce(st.remainder, st, fn player, st ->
       if paired_down?(st, player) do
-        st |> prefer_high_remainder(player) |> solve() |> finalize_both(player)
+        st = prefer_high_remainder(st, player)
+
+        case keep_partner_by_dual_shift(st, player) do
+          {:ok, st} -> finalize_both(st, player)
+          _ -> st |> solve() |> finalize_both(player)
+        end
       else
         st
       end
     end)
+  end
+
+  # The same move as stage 4's `exchange_by_dual_shift/2`, for one player.
+  # `prefer_high_remainder/2` adds an addend to each of the player's edges,
+  # the largest to the highest-ranked opponent, and the solve that follows
+  # asks which partner the player gets. Raising the player's dual by the
+  # addend its CURRENT partner got keeps that pair tight, and leaves every
+  # other changed edge feasible exactly when no opponent with a larger
+  # addend is within reach -- `shift_and_set/3` checks that edge by edge
+  # and refuses otherwise. When it holds, the current matching is optimal
+  # for the new weights, and since the addends are distinct and sit below
+  # every criterion, every optimum gives the player the same partner: the
+  # one the solve would have returned, found without the search.
+  defp keep_partner_by_dual_shift(st, player) do
+    with_shiftable_matcher(st, fn matcher, to_matcher, weigh ->
+      shift_to_live(st, [player], matcher, to_matcher, weigh)
+    end)
+  end
+
+  # Where a dual shift may stand in for a re-solve: the local graph, or the
+  # field graph when the bracket is everything left of the round -- the
+  # places `exchange_by_dual_shift/2` shifts, for the reason given there.
+  # Hands `fun` the matcher, its vertex numbering and its weigher, and
+  # keeps the matcher `fun` returns.
+  defp with_shiftable_matcher(%{mode: :local, wm: wm} = st, fun) when wm != nil do
+    # The local matcher has only the bracket (and the stand-in); `live`
+    # also holds edges into the peek beyond it, which `solve_local/1`
+    # skips and so does this.
+    local = fn i -> if i < st.wl, do: i end
+
+    case fun.(wm, local, edge_weigher(st, & &1, st.m)) do
+      {:ok, wm} -> {:ok, %{st | wm: wm}}
+      :error -> :no
+    end
+  end
+
+  defp with_shiftable_matcher(%{mode: :field, synced: true, nsgb: n, m: n} = st, fun) do
+    case Process.get(@round_matcher_key) do
+      {nil, _, _} ->
+        :no
+
+      {matcher, field_index, field_size} ->
+        to_field = field_positions(st, field_index)
+
+        case fun.(matcher, to_field, edge_weigher(st, to_field, field_size)) do
+          {:ok, matcher} ->
+            Process.put(@round_matcher_key, {matcher, field_index, field_size})
+            {:ok, st}
+
+          :error ->
+            :no
+        end
+    end
+  end
+
+  defp with_shiftable_matcher(_st, _fun), do: :no
+
+  # Bring the matcher's weights up to `live` -- every write queued since
+  # the last solve, on the vertices the matcher has (`to_matcher` answers
+  # nil for the rest) -- by moving the duals of `shifted` (each by what its
+  # matched edge changed, so that edge stays tight) instead of preparing
+  # the written vertices for a re-solve. `shift_and_set/3` then checks
+  # what makes the unchanged matching optimal for the new weights: every
+  # dual non-negative, every matched edge tight, every listed edge
+  # feasible. A dual that goes DOWN can make an unwritten edge infeasible
+  # too, so every edge of such a vertex is listed. On success the queue
+  # has been applied and is cleared.
+  defp shift_to_live(st, shifted, matcher, to_matcher, weigh) do
+    edges =
+      Process.get(@dirty_key, [])
+      |> Enum.map(fn {i, j} -> {min(i, j), max(i, j)} end)
+      |> Enum.uniq()
+      |> Enum.flat_map(fn {i, j} ->
+        case {to_matcher.(i), to_matcher.(j)} do
+          {nil, _} -> []
+          {_, nil} -> []
+          {fi, fj} -> [{fi, fj, weigh.(i, j, get_w(st.live, i, j))}]
+        end
+      end)
+
+    shifts =
+      Map.new(shifted, fn v ->
+        q = partner(st, v)
+        {fv, fq} = {to_matcher.(v), to_matcher.(q)}
+        now = WeightedMatching.edge_weight(matcher, fv, fq)
+        {fv, 2 * (weigh.(v, q, get_w(st.live, v, q)) - now)}
+      end)
+
+    listed = MapSet.new(edges, fn {a, b, _} -> {min(a, b), max(a, b)} end)
+
+    kept =
+      for {fv, d} <- shifts,
+          d < 0,
+          {fu, w} <- WeightedMatching.neighbours(matcher, fv),
+          not MapSet.member?(listed, {min(fv, fu), max(fv, fu)}),
+          do: {fv, fu, w}
+
+    case WeightedMatching.shift_and_set(matcher, shifts, edges ++ kept) do
+      {:ok, matcher} ->
+        Process.delete(@dirty_key)
+        {:ok, matcher}
+
+      :error ->
+        :error
+    end
   end
 
   defp prefer_high_remainder(st, player) do
