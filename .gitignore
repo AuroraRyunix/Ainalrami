@@ -46,3 +46,6 @@ direction1_run.log
 tools/bbp_reverse_results.log
 tools/bbp_reverse_run.out
 tools/bbp_reverse_dumps/
+
+# tools/perf_bench.exs's generated tournaments - deterministic, regenerated on demand
+/bench_corpus/

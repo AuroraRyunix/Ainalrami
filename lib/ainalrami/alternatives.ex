@@ -217,23 +217,44 @@ defmodule Ainalrami.Alternatives do
     actual = Pairing.explain_round(players, pairs, quiet(opts))
     bye = bye_holder(pairs)
 
-    for bracket <- actual, floater <- bracket.floats, floater != bye do
-      candidates = bracket.order -- [floater]
+    # Laid out first, searched after: every forced search of every floater
+    # in the round goes through ONE `attempts/1` call, so they run side by
+    # side (see `attempts/1`) and come back in exactly this order.
+    entries =
+      for bracket <- actual, floater <- bracket.floats, floater != bye do
+        candidates = bracket.order -- [floater]
 
-      if over_cap?(candidates, cap) do
-        %{group: bracket.group, floater: floater, skipped: :too_many, count: length(candidates)}
-      else
-        %{
-          group: bracket.group,
-          floater: floater,
-          candidates:
-            Enum.map(candidates, fn y ->
-              forced = for m <- bracket.order, m != y, do: [y, m]
-              attempt(players, opts, actual, y, forced, floater)
-            end)
-        }
+        if over_cap?(candidates, cap) do
+          {:skipped,
+           %{group: bracket.group, floater: floater, skipped: :too_many, count: length(candidates)}}
+        else
+          {:searched, %{group: bracket.group, floater: floater},
+           Enum.map(candidates, fn y ->
+             forced = for m <- bracket.order, m != y, do: [y, m]
+             {players, opts, actual, y, forced, floater}
+           end)}
+        end
       end
-    end
+
+    results =
+      entries
+      |> Enum.flat_map(fn
+        {:searched, _entry, specs} -> specs
+        {:skipped, _entry} -> []
+      end)
+      |> attempts()
+
+    {out, []} =
+      Enum.map_reduce(entries, results, fn
+        {:skipped, entry}, results ->
+          {entry, results}
+
+        {:searched, entry, specs}, results ->
+          {mine, rest} = Enum.split(results, length(specs))
+          {Map.put(entry, :candidates, mine), rest}
+      end)
+
+    out
   end
 
   @doc """
@@ -267,24 +288,95 @@ defmodule Ainalrami.Alternatives do
         if over_cap?(candidates, cap) do
           %{holder: holder, group: bracket.group, skipped: :too_many, count: length(candidates)}
         else
+          searched =
+            candidates
+            |> Enum.filter(&is_nil(Map.get(eligibility, &1)))
+            |> Enum.map(fn y ->
+              forced = for m <- everyone, m != y, do: [y, m]
+              {players, opts, actual, y, forced, holder}
+            end)
+            |> attempts()
+            |> then(&Enum.zip(Enum.map(&1, fn %{rank: y} -> y end), &1))
+            |> Map.new()
+
           %{
             holder: holder,
             group: bracket.group,
             candidates:
               Enum.map(candidates, fn y ->
                 case Map.get(eligibility, y) do
-                  nil ->
-                    forced = for m <- everyone, m != y, do: [y, m]
-                    attempt(players, opts, actual, y, forced, holder)
-
-                  reason ->
-                    %{rank: y, outcome: :ineligible, reason: reason}
+                  nil -> Map.fetch!(searched, y)
+                  reason -> %{rank: y, outcome: :ineligible, reason: reason}
                 end
               end)
           }
         end
     end
   end
+
+  # Runs a batch of forced searches, `{players, opts, actual, y, forced,
+  # displaced}` each, and returns their results in the order given.
+  #
+  # Each one is a complete pairing of the round and none reads another's
+  # answer, so they run side by side, one per scheduler. They were the
+  # whole cost of storing a round's account: a late round of a 300-player
+  # open asks forty of them, each as long as the pairing itself, and an
+  # arbiter waited for all forty one after the other on a machine with a
+  # core sitting idle.
+  #
+  # Nothing about the answer changes. A search depends on nothing but its
+  # arguments - the engine's round state lives in the process dictionary of
+  # whichever process pairs, and every search stamps and clears its own -
+  # so each result is the value the sequential loop computed, and they are
+  # collected in order. A search that RAISES is reported exactly as the loop
+  # reported it: the first one to fail, in order, is re-raised in the
+  # caller with its own stacktrace; the loop would never have run the rest,
+  # and their results are discarded.
+  #
+  # Sequential when the engine is tracing (`Log.debug?/0`,
+  # `AINALRAMI_TRACE`, `AINALRAMI_TRACE_FALLBACK`), so a trace still reads
+  # top to bottom one search at a time; and for a single search, which
+  # gains nothing from a process of its own. The caller's log level is
+  # handed to each search, since a spawned process does not inherit it.
+  defp attempts([]), do: []
+
+  defp attempts([spec]), do: [attempt(spec)]
+
+  defp attempts(specs) do
+    if tracing?() do
+      Enum.map(specs, &attempt/1)
+    else
+      level = Ainalrami.Log.level()
+
+      specs
+      |> Task.async_stream(
+        fn spec ->
+          Ainalrami.Log.set_level(level)
+
+          try do
+            {:ok, attempt(spec)}
+          catch
+            kind, reason -> {:caught, kind, reason, __STACKTRACE__}
+          end
+        end,
+        max_concurrency: System.schedulers_online(),
+        ordered: true,
+        timeout: :infinity
+      )
+      |> Enum.map(fn
+        {:ok, {:ok, result}} -> result
+        {:ok, {:caught, kind, reason, stacktrace}} -> :erlang.raise(kind, reason, stacktrace)
+      end)
+    end
+  end
+
+  defp tracing? do
+    Ainalrami.Log.debug?() or System.get_env("AINALRAMI_TRACE") != nil or
+      System.get_env("AINALRAMI_TRACE_FALLBACK") != nil
+  end
+
+  defp attempt({players, opts, actual, y, forced, displaced}),
+    do: attempt(players, opts, actual, y, forced, displaced)
 
   # One forced search: pair again with `forced` added to the forbidden
   # pairs, then score the result under the REAL options - the forcing is how

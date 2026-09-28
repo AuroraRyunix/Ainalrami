@@ -470,6 +470,14 @@ defmodule Ainalrami.Trf do
       message: "result \"?\" is not known, so whether the game was played is not known either"
   end
 
+  # The seven codes every tournament is made of answer without the trim
+  # below: this predicate sits under the pairing engine's colour, float and
+  # rematch rules and is asked hundreds of thousands of times a round, and
+  # `String.trim/1` was most of what it cost. Both lists are exactly what
+  # the general clause answers for them.
+  def game_was_played?(result) when result in ~w(1 0 = W D L), do: true
+  def game_was_played?(result) when result in ~w(+ - H F U Z), do: false
+
   def game_was_played?(result),
     do: result not in ~w(+ - H F U Z) and String.trim(result) != ""
 

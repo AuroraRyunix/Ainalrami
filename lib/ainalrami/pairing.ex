@@ -180,6 +180,33 @@ defmodule Ainalrami.Pairing do
   @env_trace_key :ainalrami_env_trace
   @env_nofast_key :ainalrami_env_nofast
 
+  # Three facts about an active player that the rules ask for over and over
+  # within one round - once per candidate EDGE, not once per player - and
+  # that cannot change while the round is being paired:
+  #
+  #   * the ranks of every opponent they have actually PLAYED, as a map, for
+  #     C1's no-rematch half of `legal_pair?/2`;
+  #   * whether C2 (and the organiser's bye exclusions) let them take the
+  #     pairing-allocated bye - `eligible_for_bye?/1`;
+  #   * how many games they have played - C9's `unplayed_rank/2`.
+  #
+  # Each used to be recomputed from the game list at every call: a linear
+  # walk of the player's games, with `Trf.game_was_played?/1` trimming a
+  # string for every game on the way, twice per edge for eligibility alone
+  # (`completion_rung/4` asks it of both ends). On a 300-player round that
+  # was the largest single cost after the matcher - around a million game
+  # visits to recompute a few hundred answers.
+  #
+  # Stamped by `with_round_facts/1` on the ACTIVE players, after every
+  # round-scoped key the answers depend on (the point system, the bye
+  # exclusions) has been stamped, under this one key, as
+  # `{met, bye_eligible?, played_count}`. The three readers fall back to the
+  # old computation for a player map without it, so a caller reaching them
+  # with raw players - `bye_eligibility/2` is public - still gets the same
+  # answer. The answers are identical by construction: the same expression,
+  # evaluated once instead of many times, under the same stamped state.
+  @facts_key :ainalrami_round_facts
+
   @doc """
   Pairs the next round, dispatching to `pair_round_one/1` when no game
   history exists yet, or the bracket cascade below otherwise.
@@ -540,7 +567,7 @@ defmodule Ainalrami.Pairing do
         |> with_acceleration(played)
         |> Enum.filter(&active_this_round?(&1, played))
         |> Enum.sort_by(&{-&1.points, &1.rank})
-        |> Enum.map(&Map.put(&1, :colour_stats, colour_stats(&1)))
+        |> with_round_facts()
 
       brackets = field |> Enum.group_by(& &1.points) |> Enum.map(fn {_s, m} -> m end)
 
@@ -1375,7 +1402,10 @@ defmodule Ainalrami.Pairing do
       |> with_float_history(played)
       |> with_acceleration(played)
 
-    active = Enum.filter(field, &active_this_round?(&1, played))
+    active =
+      field
+      |> Enum.filter(&active_this_round?(&1, played))
+      |> with_round_facts()
 
     brackets =
       active
@@ -1654,6 +1684,28 @@ defmodule Ainalrami.Pairing do
       players
     end
   end
+
+  # The colour state and the three per-round facts (see `@facts_key`), once
+  # per active player. Must run after the point system and the bye
+  # exclusions are stamped - every caller builds its field after both.
+  #
+  # `colour_stats/1` used to be computed here twice over, by
+  # `bye_assignee_score/2` and again by `global_cascade/2`, each over its own
+  # copy of the field; both now keep the one stamped here.
+  defp with_round_facts(players) do
+    Enum.map(players, fn p ->
+      p
+      |> Map.put(:colour_stats, colour_stats(p))
+      |> Map.put(@facts_key, {met_ranks(p), eligible_for_bye?(p), played_games(p)})
+    end)
+  end
+
+  defp met_ranks(player) do
+    for g <- player.games, played?(g), into: %{}, do: {g.opponent_rank, true}
+  end
+
+  defp ensure_colour_stats(%{colour_stats: _} = player), do: player
+  defp ensure_colour_stats(player), do: Map.put(player, :colour_stats, colour_stats(player))
 
   # `accelerations[roundIndex]`, with `roundIndex >= size` reading as zero
   # (`tournament.h:346-348`). The index is the TOURNAMENT's played-round
@@ -2021,7 +2073,7 @@ defmodule Ainalrami.Pairing do
       brackets
       |> List.flatten()
       |> Enum.sort_by(&{-&1.points, &1.rank})
-      |> Enum.map(&Map.put(&1, :colour_stats, colour_stats(&1)))
+      |> Enum.map(&ensure_colour_stats/1)
 
     ctx = global_context(field)
 
@@ -2281,6 +2333,7 @@ defmodule Ainalrami.Pairing do
     |> Enum.reduce(%{}, fn {played, rank}, acc -> Map.put(acc, played, rank) end)
   end
 
+  defp played_games(%{@facts_key => {_met, _eligible, played}}), do: played
   defp played_games(player), do: Enum.count(player.games, &played?/1)
 
   # dutch.cpp:981 - keep going while a bracket still has two players to
@@ -3632,10 +3685,11 @@ defmodule Ainalrami.Pairing do
     # dutch.cpp:607 - no edge unless the LARGER index is a resident or
     # lower, which is what stops two MDPs being paired with each other.
     if j >= sgb and legal_pair?(a, b) and colour_compatible?(a, b) do
+      # `ranked/1` over the rungs, folded straight off the labelled list
+      # rather than through an intermediate `{value, span}` copy of it.
       a
       |> edge_rungs(b, reach, ctx, bands, single_bye?)
-      |> Enum.map(fn {_label, value, span} -> {value, span} end)
-      |> ranked()
+      |> Enum.reduce(0, fn {_label, value, span}, acc -> acc * span + value end)
       |> Kernel.*(bands.reserve)
     end
   end
@@ -3746,9 +3800,19 @@ defmodule Ainalrami.Pairing do
     scores_c8? = reach == 1
     nearness = bit(scores_c8?)
 
-    {c1, c2, c3, c4} = colour_criteria(a, b)
-    {f1, f2, f3, f4} = float_criteria(a, b)
-    {s18, s19, s20, s21} = float_score_criteria(a, b, %{score_place: bands.places})
+    # C10-C21 are all gated on `in_current` below, so for a pair outside the
+    # bracket - most of the graph, on a large field - every one of them is
+    # zero whatever the criteria say. They are not computed there: the
+    # placeholders are never read, since `gate` answers 0 without looking.
+    {c1, c2, c3, c4} =
+      if in_current, do: colour_criteria(a, b), else: {false, false, false, false}
+
+    {f1, f2, f3, f4} = if in_current, do: float_criteria(a, b), else: {0, 0, 0, 0}
+
+    {s18, s19, s20, s21} =
+      if in_current,
+        do: float_score_criteria(a, b, %{score_place: bands.places}),
+        else: {0, 0, 0, 0}
 
     gate = fn value, on? -> if on?, do: value, else: 0 end
 
@@ -4410,7 +4474,7 @@ defmodule Ainalrami.Pairing do
       brackets
       |> List.flatten()
       |> Enum.sort_by(&{-&1.points, &1.rank})
-      |> Enum.map(&Map.put(&1, :colour_stats, colour_stats(&1)))
+      |> Enum.map(&ensure_colour_stats/1)
 
     n = length(field)
 
@@ -5030,9 +5094,15 @@ defmodule Ainalrami.Pairing do
   # an absolute criterion of exactly the standing of "you have already
   # played this opponent" - never a term weighed against the others.
   defp legal_pair?(p1, p2) do
-    not forbidden_pair?(p1.rank, p2.rank) and
-      not Enum.any?(p1.games, &(played?(&1) and &1.opponent_rank == p2.rank))
+    not forbidden_pair?(p1.rank, p2.rank) and not met?(p1, p2.rank)
   end
+
+  # Whether `player` has PLAYED `rank` - `@facts_key`'s map when the round
+  # stamped one, the walk it replaces otherwise.
+  defp met?(%{@facts_key => {met, _eligible, _played}}, rank), do: is_map_key(met, rank)
+
+  defp met?(player, rank),
+    do: Enum.any?(player.games, &(played?(&1) and &1.opponent_rank == rank))
 
   defp forbidden_pair?(rank1, rank2) do
     case Process.get(@forbidden_key) do
@@ -5262,6 +5332,8 @@ defmodule Ainalrami.Pairing do
   # bye-candidate rung, the completion check and its repair) asks here, so
   # an excluded player is ineligible everywhere C2 would have made them
   # ineligible, and nowhere else.
+  defp eligible_for_bye?(%{@facts_key => {_met, eligible, _played}}), do: eligible
+
   defp eligible_for_bye?(player) do
     not excluded_from_bye?(player) and not Enum.any?(player.games, &bye_disqualifying?/1)
   end

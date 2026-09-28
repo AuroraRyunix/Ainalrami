@@ -2055,28 +2055,52 @@ defmodule Ainalrami.WeightedMatching do
 
   # Drop every entry of the blossoms that are no longer outer -- the
   # stage-start filter. Walks the leaving blossoms' rows, not the table.
+  #
+  # The removals are gathered first and applied once per surviving row, and
+  # a surviving row's minimum is recomputed at most ONCE, after all of its
+  # removals. This used to remove one leaving blossom at a time and
+  # recompute a row's minimum every time it pointed at the blossom just
+  # removed - often straight at the next leaving blossom, which then cost
+  # another full walk of the same row. At a stage boundary most of the
+  # forest leaves the outer set at once, and those repeated walks were a
+  # quarter of a cold solve.
+  #
+  # The result is the same table. The rows lose exactly the same entries.
+  # A row whose minimum pointed at a survivor keeps it: it was the least
+  # entry of the old row and is still in the new one. A row whose minimum
+  # pointed at a leaving blossom gets `row_min/1` of its final row - and
+  # that is what the one-at-a-time loop ended on too, because each
+  # recomputation there was over a superset of the final row, and it only
+  # stopped recomputing once the minimum it found was a survivor, i.e. an
+  # entry of the final row and so its least entry as well. The order
+  # `row_min/1` breaks ties in (`{r, partner}`) is a total order on the
+  # entries, so "the least entry" names one entry.
   defp cross_retain({rows, mins, _best}, outer_blossoms) do
     left = for {b, _} <- rows, not MapSet.member?(outer_blossoms, b), do: b
     left_set = MapSet.new(left)
 
-    {rows, mins} =
-      Enum.reduce(left, {rows, mins}, fn b, {rows, mins} ->
-        Enum.reduce(Map.fetch!(rows, b), {rows, mins}, fn {k, _}, {rows, mins} ->
-          if MapSet.member?(left_set, k) do
-            {rows, mins}
-          else
-            row = rows |> Map.fetch!(k) |> Map.delete(b)
-            rows = Map.put(rows, k, row)
-
-            mins =
-              case Map.get(mins, k) do
-                {_, ^b} -> Map.put(mins, k, row_min(row))
-                _ -> mins
-              end
-
-            {rows, mins}
-          end
+    # Surviving row -> the leaving blossoms it holds entries for.
+    removals =
+      Enum.reduce(left, %{}, fn b, acc ->
+        Enum.reduce(Map.fetch!(rows, b), acc, fn {k, _}, acc ->
+          if MapSet.member?(left_set, k),
+            do: acc,
+            else: Map.update(acc, k, [b], &[b | &1])
         end)
+      end)
+
+    {rows, mins} =
+      Enum.reduce(removals, {rows, mins}, fn {k, gone}, {rows, mins} ->
+        row = Map.drop(Map.fetch!(rows, k), gone)
+        rows = Map.put(rows, k, row)
+
+        mins =
+          case Map.get(mins, k) do
+            {_, p} -> if MapSet.member?(left_set, p), do: Map.put(mins, k, row_min(row)), else: mins
+            _ -> mins
+          end
+
+        {rows, mins}
       end)
 
     rows = Map.drop(rows, left)
@@ -2097,13 +2121,33 @@ defmodule Ainalrami.WeightedMatching do
     end
   end
 
+  # The least dual over the INNER non-trivial top-level blossoms, ties to
+  # the lowest blossom id.
+  #
+  # Found by walking the non-trivial blossoms (`state.children`'s keys)
+  # rather than every top-level blossom: the label map holds an entry only
+  # for a TOP-level blossom, so "has children and is labelled inner" is
+  # exactly the set the walk over `top_blossoms/1` filtered down to. That
+  # walk visited every vertex of the graph on every delta step - a resumed
+  # solve grows its tree one pair at a time, so that was O(V) per step for
+  # a set that is usually empty. The tie-break is the same: the old walk
+  # took `Enum.min_by/2`'s FIRST minimum over ids in ascending order, which
+  # is the least `{dual, id}`.
   defp min_inner_blossom_dual(state) do
-    top_blossoms(state)
-    |> Enum.filter(&(Map.get(state.label, &1) == :inner and Map.has_key?(state.children, &1)))
-    |> Enum.map(&{Map.fetch!(state.dual, &1), &1})
+    labels = state.label
+    duals = state.dual
+
+    Enum.reduce(state.children, nil, fn {b, _}, best ->
+      if Map.get(labels, b) == :inner do
+        candidate = {Map.fetch!(duals, b), b}
+        if best == nil or candidate < best, do: candidate, else: best
+      else
+        best
+      end
+    end)
     |> case do
-      [] -> {nil, nil}
-      pairs -> Enum.min_by(pairs, &elem(&1, 0))
+      nil -> {nil, nil}
+      best -> best
     end
   end
 
