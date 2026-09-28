@@ -12,6 +12,7 @@ Each entry is tagged so a version can be skimmed:
 | [Change] | existing behaviour works differently |
 | [Removed] | something is gone |
 | [Security] | a vulnerability closed, or judged not to apply |
+| [Performance] | faster, with every answer unchanged |
 | [Verified] | checked against a reference, no code change |
 
 Entries are a dated record of what was believed and measured at the time.
@@ -62,6 +63,49 @@ breaking a matcher invariant 734 times per 800 tournaments while agreeing
 with the reference on every one of them.
 
 ## [Unreleased]
+
+- [Performance] **Large fields: the whole "Pair round" 2.5-5x faster,
+  every answer unchanged.** What OpenPairings asks of the engine
+  for one round - the pairing, `explain_round/3` and the stored float and
+  bye alternatives - measured on generated 150-600-player opens against
+  v0.33.0 in the same VM, alternately round by round (`tools/perf_bench.exs`
+  with `PERF_REF`, new): over whole tournaments **2.5-2.8x on 2 cores**
+  (the production VPS) and **3.5-5.2x on 12**. The alternatives, most of
+  a late round's click, are 3x faster on 2 cores and 6-7x on 12 (run side
+  by side, one forced search per scheduler, each on a faster engine); the
+  explanation 4-10x; the pairing itself 1.5-1.7x, and round 1 of an even
+  field 4-7x. In OpenPairings' click on 2 cores: 300 players, round 7,
+  3.7 s -> 1.8 s; 450 players, round 1 with "keep clubmates apart", 22 s
+  -> 1.8 s; 450 players, round 2, 253 s -> 114 s. Rounds 1-2 of the
+  largest fields gained least (600 players, round 2: 45 s -> 36 s for the
+  pairing): the first bracket's cold solves of the whole field are still
+  the reference algorithm's. Tables, the profile behind them and the
+  reasoning for each change in `docs/performance.md`.
+- [Performance] Engine changes behind it: per-round player facts
+  instead of per-edge recomputation; out-of-bracket weights from the five
+  rungs that can be non-zero; one explanation context per round of
+  alternatives; a certified shortcut for the odd-field bye bootstrap; in
+  `WeightedMatching` a root-edge table for stage starts and cross-table
+  writes batched per settling blossom; and dual shifts in place of
+  re-solves after stages 4, 7 and 8 where nothing reads the tie the
+  re-solve would settle (the local graph, and the field graph's last
+  bracket).
+- [Verified] **Byte-identical to v0.33.0.** `tools/perf_diff.exs` (new)
+  fingerprints every pairing, refusal, explanation, perturbed-pairing
+  judgement and forced search: 445,172 rounds of 70,586 generated
+  tournaments, 4-600 players, 14 axes (byes, forfeits, withdrawals,
+  forbidden pairs, accelerations, late entrants, point systems, soft pairs,
+  bye exclusions, the NOFAST / FORCE_STRAND / completion flags), 107,106 of
+  them with alternatives - 0 differences. `tools/matching_lockstep.exs`
+  (new) holds the matcher to v0.33.0's call by call, state included:
+  46,000 sessions, identical. Against the references on the final engine:
+  bbpPairings both directions (26,455 rounds of this engine's tournaments,
+  366,792 pairs, 100.00%; 3,000 fresh tournaments from bbpPairings' own
+  generator, 29,854 rounds, 1,730,270 pairs, 0 mismatches, 0 colour
+  differences), team Swiss whole rounds against the brute-force reference
+  (1,157,965 rounds, 0 failures), bye exclusions against theirs (52,456
+  rounds, 0), and the full suite (804 tests, plus the 209-player interop
+  replay).
 
 ## [0.33.0] - 2026-09-27
 

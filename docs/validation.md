@@ -1010,6 +1010,11 @@ separately, see [Team Swiss pairings](#team-swiss-pairings-c046)) and the
 
 ## Performance
 
+**Current figures are in [performance.md](performance.md)**: the
+2026-09-28 pass over 150-600-player fields, measured against v0.33.0 and
+held byte-identical to it over 445,172 rounds. What follows is the
+history up to v0.33.0.
+
 Correctness has never been the constraint here; field size is. One round
 of a real 209-player tournament, cut down to size:
 

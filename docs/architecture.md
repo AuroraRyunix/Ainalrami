@@ -123,6 +123,15 @@ in [NOTICE](../NOTICE) as §4(b) changes, and the measurements, the
 reasoning that makes the caches sound, and what the work did *not* achieve
 are in [validation.md](validation.md#performance).
 
+The 2026-09-28 performance pass made a large field's whole round -
+pairing, explanation and alternatives - 2.5-5x faster with byte-identical
+output: per-round player
+facts, a certified shortcut for the bye bootstrap, a root-edge table and
+batched cross-table writes in the matcher, dual shifts in place of
+re-solves in stages 4, 7 and 8, and alternatives searched in parallel.
+What changed, why each change cannot move an answer, and the measurements
+are in [performance.md](performance.md).
+
 ### `Ainalrami.Sequence`
 
 Article 4's candidate generation order - transpositions of S2, then

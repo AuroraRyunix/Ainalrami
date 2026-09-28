@@ -43,7 +43,14 @@ equivalent caches, arrived at independently and structured per vertex
 rather than per blossom, and additionally divides all edge weights by
 their greatest common divisor before solving — a step BBP Pairings has no
 need of, since its weights are machine integers rather than the packed
-hundred-digit criteria values Ainalrami.Pairing produces.
+hundred-digit criteria values Ainalrami.Pairing produces. It also keeps,
+across stages, each free vertex's least edge to the exposed roots (a
+table BBP Pairings does not have) and applies a settling blossom's
+cross-table offers in one batch; neither changes a single returned value
+(docs/performance.md). Where BBP Pairings re-solves after the refinement
+stages 4, 7 and 8 rewrite weights, Ainalrami.Pairing first tries to absorb
+the change by moving dual variables, and re-solves only when that does
+not leave the matching optimal.
 Ainalrami.Pairing differs in its peek/window handling and in several
 places where a non-literal reading is argued in the code comments rather
 than copied. Individual deviations are documented at their call sites and
