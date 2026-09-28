@@ -27,6 +27,8 @@ defmodule Ainalrami.Alternatives do
       (see `@max_candidates`); a top bracket of a hundred players in round
       one is not where this question gets asked at pairing time. A caller
       with the arbiter knowingly waiting passes `max_candidates: :all`.
+      `float_alternative/5` answers it for one named floater only - the
+      same entry, for a page that works a question out when it is opened.
 
     * **"Why did HE get the bye and not me."** The same, forcing each
       candidate to be unpairable - `bye_alternatives/3` - after first asking
@@ -213,7 +215,7 @@ defmodule Ainalrami.Alternatives do
   actually kept the original floater in the bracket, which it need not.
 
   The pairing-allocated bye is not a float and is not analysed here; see
-  `bye_alternatives/3`.
+  `bye_alternatives/3`. For one floater's entry alone, `float_alternative/5`.
   """
   def float_alternatives(players, pairs, opts \\ []) do
     {cap, opts} = pop_cap(opts)
@@ -226,23 +228,7 @@ defmodule Ainalrami.Alternatives do
     # side (see `attempts/1`) and come back in exactly this order.
     entries =
       for bracket <- actual, floater <- bracket.floats, floater != bye do
-        candidates = bracket.order -- [floater]
-
-        if over_cap?(candidates, cap) do
-          {:skipped,
-           %{
-             group: bracket.group,
-             floater: floater,
-             skipped: :too_many,
-             count: length(candidates)
-           }}
-        else
-          {:searched, %{group: bracket.group, floater: floater},
-           Enum.map(candidates, fn y ->
-             forced = for m <- bracket.order, m != y, do: [y, m]
-             {players, opts, context, actual, y, forced, floater}
-           end)}
-        end
+        float_entry(bracket, floater, cap, players, opts, context, actual)
       end
 
     results =
@@ -264,6 +250,62 @@ defmodule Ainalrami.Alternatives do
       end)
 
     out
+  end
+
+  @doc """
+  One question of `float_alternatives/3`: why `floater` floated out of the
+  `group` bracket, and not somebody else.
+
+  Returns exactly the entry `float_alternatives/3` has for that floater -
+  `%{group:, floater:, candidates: [...]}`, or `%{group:, floater:,
+  skipped: :too_many, count: n}` past the cap (the `:max_candidates` option
+  as there) - without the forced searches for every other floater of the
+  round. A large round has dozens of floaters and a page opens one of them;
+  this is the call for that. `nil` when `floater` did not float out of
+  `group` in `pairs`, or holds the pairing-allocated bye (which is
+  `bye_alternatives/3`'s question, and already a single one).
+
+  `group` is the bracket's score as `explain_round/3` reports it; `2` and
+  `2.0` name the same bracket.
+  """
+  def float_alternative(players, pairs, group, floater, opts \\ []) do
+    {cap, opts} = pop_cap(opts)
+    context = Pairing.explain_context(players, quiet(opts), pairs)
+    actual = Pairing.explain_pairs(context, pairs)
+
+    with false <- floater == bye_holder(pairs),
+         %{} = bracket <- Enum.find(actual, &(&1.group == group and floater in &1.floats)) do
+      case float_entry(bracket, floater, cap, players, opts, context, actual) do
+        {:skipped, entry} -> entry
+        {:searched, entry, specs} -> Map.put(entry, :candidates, attempts(specs))
+      end
+    else
+      _ -> nil
+    end
+  end
+
+  # One floater's question, laid out: skipped past the cap, else the forced
+  # search for each other member of the bracket, in bracket order. Shared by
+  # `float_alternatives/3` and `float_alternative/5`, so the one-question
+  # answer is the all-at-once entry by construction.
+  defp float_entry(bracket, floater, cap, players, opts, context, actual) do
+    candidates = bracket.order -- [floater]
+
+    if over_cap?(candidates, cap) do
+      {:skipped,
+       %{
+         group: bracket.group,
+         floater: floater,
+         skipped: :too_many,
+         count: length(candidates)
+       }}
+    else
+      {:searched, %{group: bracket.group, floater: floater},
+       Enum.map(candidates, fn y ->
+         forced = for m <- bracket.order, m != y, do: [y, m]
+         {players, opts, context, actual, y, forced, floater}
+       end)}
+    end
   end
 
   @doc """

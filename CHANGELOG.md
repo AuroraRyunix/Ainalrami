@@ -64,6 +64,17 @@ with the reference on every one of them.
 
 ## [Unreleased]
 
+- [Feature] **`Alternatives.float_alternative/5` - one floater's "why him
+  and not me".** `float_alternative(players, pairs, group, floater, opts)`
+  returns exactly the entry `float_alternatives/3` has for that floater
+  (skipped past the cap as there, `nil` when they did not float out of
+  that bracket or hold the bye), running only that floater's forced
+  searches. For a page that works a question out when it is opened: a
+  large round has dozens of floaters and the arbiter opens one. Both calls
+  lay the question out through the same code, and a test over 300
+  generated tournaments holds every floater's single answer equal to its
+  all-at-once entry, at the default cap, `:all` and a cap of 3. The bye's
+  question was already a single call, `bye_alternatives/3`.
 - [Performance] **Large fields: the whole "Pair round" 2.5-5x faster,
   every answer unchanged.** What OpenPairings asks of the engine
   for one round - the pairing, `explain_round/3` and the stored float and
