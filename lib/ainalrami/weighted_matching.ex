@@ -2913,4 +2913,235 @@ defmodule Ainalrami.WeightedMatching do
         dual: Map.delete(state.dual, b)
     }
   end
+
+  # ------------------------------------------------ what every optimum shares
+
+  @doc false
+  # Who `v` can be matched to in a maximum-weight matching of the state's
+  # CURRENT weights - every one, possibly with some to spare - and whether
+  # one of them leaves `v` exposed: `{mates, exposable?}`, or `:invalid`
+  # when the duals at `v` are not an optimality certificate (see below).
+  #
+  # For `Ainalrami.Pairing`'s forced searches (`Ainalrami.Alternatives`),
+  # which re-optimise from another search's state instead of solving from
+  # cold and so may hold a DIFFERENT optimum from the one a cold solve
+  # would have returned. What such a search reads of its matching is only
+  # safe when every optimum agrees on it, and this is the evidence.
+  #
+  # The argument is LP duality. `state.dual` holds a vertex dual `y[x]` per
+  # vertex and a blossom dual `z[B]` per non-trivial blossom (see
+  # `dissolve_one/3`), all on the doubled scale, and the reduced cost of an
+  # edge is `y[u] + y[v] + sum(z[B] : B holds both) - w2(u, v)`. A state
+  # returned by `solve/1`, by `shift_and_set/3` or by `finalize_pair/3` is
+  # optimal: every reduced cost non-negative, every dual non-negative,
+  # every matched edge at reduced cost zero, every exposed vertex at dual
+  # zero, every blossom with a positive dual full. Against such a dual,
+  # complementary slackness holds for EVERY maximum-weight matching, not
+  # just the one the state holds: each of its edges has reduced cost zero,
+  # and each vertex with a positive dual is covered. So the neighbours at
+  # reduced cost zero are a superset of `v`'s possible partners, and `v` can
+  # be exposed only when `y[v]` is zero.
+  #
+  # The checks made here are the ones `v`'s own edges can refute: a
+  # negative reduced cost at `v`, a matched edge at `v` that is not at zero,
+  # or an exposed `v` with a positive dual all mean the state is not a
+  # certificate, and the answer is `:invalid` rather than a wrong superset.
+  #
+  # ## Inside a blossom
+  #
+  # Every edge of a blossom's odd cycle is at reduced cost zero, so a vertex
+  # inside one always has two or more candidates by the test above, whether
+  # or not a second optimum exists. The blossom duals say more: a blossom
+  # `B` with `z[B] > 0` is FULL in every optimum - `(|B| - 1) / 2` of its
+  # edges matched, exactly one vertex (its base in that optimum) matched
+  # outside it or exposed. So for `v` in a top-level blossom `T` with a
+  # positive dual, the optimum's restriction to `T` is: a base `b` that has
+  # an edge at reduced cost zero leaving `T` (or a zero dual, to be
+  # exposed), and a perfect matching of `T - b` on edges at reduced cost
+  # zero inside `T` under which every nested blossom with a positive dual
+  # is full too. Those are enumerated - up to `@mates_blossom_limit`
+  # vertices, past which the plain superset above is the answer - and
+  # `v`'s partner in each is collected: still a superset of the truth, and
+  # usually a single vertex.
+  @mates_blossom_limit 11
+
+  def possible_mates(state, v) do
+    top = Map.fetch!(state.in_blossom, v)
+
+    cond do
+      top == v ->
+        plain_mates(state, v)
+
+      Map.get(state.dual, top, 0) <= 0 ->
+        plain_mates(state, v)
+
+      true ->
+        vertices = blossom_leaves(state, top)
+
+        if length(vertices) > @mates_blossom_limit,
+          do: plain_mates(state, v),
+          else: blossom_mates(state, v, top, vertices)
+    end
+  end
+
+  defp plain_mates(state, v) do
+    case zero_edges(state, v) do
+      :invalid -> :invalid
+      mates -> {mates, Map.fetch!(state.dual, v) == 0}
+    end
+  end
+
+  # Every neighbour of `v` at reduced cost zero, or `:invalid` when an edge
+  # at `v` refutes the dual (see `possible_mates/2`).
+  defp zero_edges(state, v) do
+    yv = Map.fetch!(state.dual, v)
+    top = Map.fetch!(state.in_blossom, v)
+    chain = if top == v, do: [], else: enclosing_duals(state, v)
+    mate = Map.get(state.mate, v)
+
+    result =
+      state.weight
+      |> Map.get(v, %{})
+      |> Enum.reduce_while({[], mate == nil}, fn {u, w2}, {mates, mate_seen?} ->
+        z =
+          if chain == [] or Map.fetch!(state.in_blossom, u) != top,
+            do: 0,
+            else: common_dual(chain, enclosing_duals(state, u), 0)
+
+        reduced = yv + Map.fetch!(state.dual, u) + z - w2
+
+        cond do
+          reduced < 0 -> {:halt, :invalid}
+          reduced == 0 -> {:cont, {[u | mates], mate_seen? or u == mate}}
+          u == mate -> {:halt, :invalid}
+          true -> {:cont, {mates, mate_seen?}}
+        end
+      end)
+
+    case result do
+      :invalid -> :invalid
+      {_mates, false} -> :invalid
+      {_mates, true} when mate == nil and yv != 0 -> :invalid
+      {mates, true} -> mates
+    end
+  end
+
+  defp blossom_mates(state, v, top, vertices) do
+    inside = MapSet.new(vertices)
+
+    zero =
+      Enum.reduce_while(vertices, %{}, fn u, acc ->
+        case zero_edges(state, u) do
+          :invalid -> {:halt, :invalid}
+          mates -> {:cont, Map.put(acc, u, Enum.split_with(mates, &MapSet.member?(inside, &1)))}
+        end
+      end)
+
+    if zero == :invalid do
+      :invalid
+    else
+      # Every nested blossom with a positive dual, as its vertex set: each
+      # must be full.
+      full =
+        for b <- nested_blossoms(state, top),
+            Map.get(state.dual, b, 0) > 0,
+            do: MapSet.new(blossom_leaves(state, b))
+
+      bases =
+        Enum.filter(vertices, fn u ->
+          {_in, out} = Map.fetch!(zero, u)
+          out != [] or Map.fetch!(state.dual, u) == 0
+        end)
+
+      {mates, exposable?, any?} =
+        Enum.reduce(bases, {MapSet.new(), false, false}, fn b, {mates, exp?, any?} ->
+          configs =
+            (vertices -- [b])
+            |> Enum.sort()
+            |> perfect_matchings(zero, %{})
+            |> Enum.filter(fn pairs -> Enum.all?(full, &full?(&1, pairs)) end)
+
+          cond do
+            configs == [] ->
+              {mates, exp?, any?}
+
+            b == v ->
+              {_in, out} = Map.fetch!(zero, v)
+              {MapSet.union(mates, MapSet.new(out)), exp? or Map.fetch!(state.dual, v) == 0, true}
+
+            true ->
+              {Enum.reduce(configs, mates, &MapSet.put(&2, Map.fetch!(&1, v))), exp?, true}
+          end
+        end)
+
+      # The state's own matching is one of the configurations; finding none
+      # means the dual does not describe it.
+      if any?, do: {MapSet.to_list(mates), exposable?}, else: :invalid
+    end
+  end
+
+  # Every perfect matching of `vertices` (sorted) on the zero edges inside
+  # the blossom, each as a symmetric `%{vertex => partner}`.
+  defp perfect_matchings([], _zero, acc), do: [acc]
+
+  defp perfect_matchings([u | rest], zero, acc) do
+    {inside, _out} = Map.fetch!(zero, u)
+
+    for w <- inside,
+        w in rest,
+        m <- perfect_matchings(rest -- [w], zero, Map.merge(acc, %{u => w, w => u})),
+        do: m
+  end
+
+  # `(|B| - 1) / 2` edges of `pairs` inside `set`: all but one of its
+  # vertices matched to another of them. The base of the enclosing blossom
+  # has no entry in `pairs` - it is matched outside.
+  defp full?(set, pairs) do
+    internal = Enum.count(set, fn u -> MapSet.member?(set, Map.get(pairs, u)) end)
+    internal == MapSet.size(set) - 1
+  end
+
+  defp blossom_leaves(state, b) do
+    case Map.get(state.children, b) do
+      nil -> [b]
+      children -> Enum.flat_map(children, &blossom_leaves(state, &1))
+    end
+  end
+
+  defp nested_blossoms(state, b) do
+    case Map.get(state.children, b) do
+      nil ->
+        []
+
+      children ->
+        Enum.flat_map(children, fn c ->
+          if Map.has_key?(state.children, c), do: [c | nested_blossoms(state, c)], else: []
+        end)
+    end
+  end
+
+  # The blossoms enclosing `x`, outermost first, each paired with the sum of
+  # the blossom duals from the outermost down to it.
+  defp enclosing_duals(state, x), do: enclosing_duals(state, x, [])
+
+  defp enclosing_duals(state, x, inner) do
+    case Map.get(state.parent_of, x) do
+      nil ->
+        {chain, _} =
+          Enum.map_reduce(inner, 0, fn b, sum ->
+            sum = sum + Map.get(state.dual, b, 0)
+            {{b, sum}, sum}
+          end)
+
+        chain
+
+      b ->
+        enclosing_duals(state, b, [b | inner])
+    end
+  end
+
+  # The duals of every blossom holding both ends: the running sum at their
+  # innermost common blossom.
+  defp common_dual([{b, s} | xs], [{b, _} | ys], _acc), do: common_dual(xs, ys, s)
+  defp common_dual(_xs, _ys, acc), do: acc
 end

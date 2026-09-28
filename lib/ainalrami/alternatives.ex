@@ -343,50 +343,126 @@ defmodule Ainalrami.Alternatives do
   # caller with its own stacktrace; the loop would never have run the rest,
   # and their results are discarded.
   #
+  # One worker per scheduler, each taking the next search off a shared
+  # counter, rather than a process per search: what every search of the
+  # batch shares - the players, the explanation context, the recording
+  # (see `recording/1`) - is copied into each worker once instead of into
+  # every search.
+  #
   # Sequential when the engine is tracing (`Log.debug?/0`,
   # `AINALRAMI_TRACE`, `AINALRAMI_TRACE_FALLBACK`), so a trace still reads
   # top to bottom one search at a time; and for a single search, which
   # gains nothing from a process of its own. The caller's log level is
-  # handed to each search, since a spawned process does not inherit it.
+  # handed to each worker, since a spawned process does not inherit it.
   defp attempts([]), do: []
 
-  defp attempts([spec]), do: [attempt(spec)]
+  defp attempts([spec]), do: [attempt(spec, nil)]
 
   defp attempts(specs) do
     if tracing?() do
-      Enum.map(specs, &attempt/1)
+      Enum.map(specs, &attempt(&1, nil))
     else
       level = Ainalrami.Log.level()
+      recording = recording(specs)
+      {common, items} = split_common(specs)
+      next = :atomics.new(1, signed: false)
+      workers = min(System.schedulers_online(), tuple_size(items))
 
-      specs
-      |> Task.async_stream(
-        fn spec ->
+      1..workers
+      |> Enum.map(fn _ ->
+        Task.async(fn ->
           Ainalrami.Log.set_level(level)
-
-          try do
-            {:ok, attempt(spec)}
-          catch
-            kind, reason -> {:caught, kind, reason, __STACKTRACE__}
-          end
-        end,
-        max_concurrency: System.schedulers_online(),
-        ordered: true,
-        timeout: :infinity
-      )
+          work(common, items, next, recording, [])
+        end)
+      end)
+      |> Enum.flat_map(&Task.await(&1, :infinity))
+      |> Enum.sort_by(&elem(&1, 0))
       |> Enum.map(fn
-        {:ok, {:ok, result}} -> result
-        {:ok, {:caught, kind, reason, stacktrace}} -> :erlang.raise(kind, reason, stacktrace)
+        {_index, {:ok, result}} -> result
+        {_index, {:caught, kind, reason, stacktrace}} -> :erlang.raise(kind, reason, stacktrace)
       end)
     end
   end
+
+  defp work(common, items, next, recording, done) do
+    index = :atomics.add_get(next, 1, 1) - 1
+
+    if index >= tuple_size(items) do
+      done
+    else
+      result =
+        try do
+          {:ok, attempt(spec(common, elem(items, index)), recording)}
+        catch
+          kind, reason -> {:caught, kind, reason, __STACKTRACE__}
+        end
+
+      work(common, items, next, recording, [{index, result} | done])
+    end
+  end
+
+  # A batch's searches share the players, the options, the context and the
+  # actual report - the same terms, so the comparison is a pointer check -
+  # and differ in whom they force. Sent to a worker as one copy of the first
+  # and a list of the second, since copying a term to another process does
+  # not keep its sharing: forty searches holding the same players would be
+  # forty copies of them.
+  defp split_common([{players, opts, context, actual, _, _, _} | _] = specs) do
+    common = {players, opts, context, actual}
+
+    if Enum.all?(specs, fn {p, o, c, a, _, _, _} -> {p, o, c, a} == common end) do
+      {common, specs |> Enum.map(fn {_, _, _, _, y, f, d} -> {y, f, d} end) |> List.to_tuple()}
+    else
+      {nil, List.to_tuple(specs)}
+    end
+  end
+
+  defp spec(nil, spec), do: spec
+
+  defp spec({players, opts, context, actual}, {y, f, d}),
+    do: {players, opts, context, actual, y, f, d}
 
   defp tracing? do
     Ainalrami.Log.debug?() or System.get_env("AINALRAMI_TRACE") != nil or
       System.get_env("AINALRAMI_TRACE_FALLBACK") != nil
   end
 
-  defp attempt({players, opts, context, actual, y, forced, displaced}),
-    do: attempt(players, opts, context, actual, y, forced, displaced)
+  # ## Each search from the round it varies, not from scratch
+  #
+  # Every forced search is the round with a few more pairs forbidden, and
+  # most of its work is the unforced round's work: the same brackets, the
+  # same whole-field matching minus a handful of edges.
+  # `Pairing.alternatives_recording/2` pairs the unforced round once,
+  # keeping that work, and each search then re-optimises from it
+  # (`Pairing.pair_forced/4`, whose module `Ainalrami.Pairing.Replay` has
+  # the argument): a bracket it would compute on the same arguments is
+  # taken as computed, and the round's matcher starts from the recorded
+  # optimum with the forced pairs taken out instead of from cold. Every read
+  # of a re-optimised matching is certified to be the same in every optimum
+  # of its weights; one that is not sends that search to the full
+  # re-pairing, `Pairing.pair_next_round/2`, as before. Either way the
+  # answer is the full re-pairing's.
+  #
+  # The recording is one more pairing of the round, made before the batch's
+  # searches start and copied into each worker once. Two searches or fewer
+  # run as full re-pairings side by side, which the recording would only
+  # delay; from three it pays even on the two-core server, and more the
+  # more there are. `AINALRAMI_ALT_REPLAY=always` makes a recording for
+  # every batch of two or more, so that every search that can goes through
+  # it, and `=never` for none; the differential tests use both.
+  defp recording([{players, opts, _context, _actual, _y, _forced, _displaced} | _] = specs) do
+    replay? =
+      case System.get_env("AINALRAMI_ALT_REPLAY") do
+        "always" -> true
+        "never" -> false
+        _ -> length(specs) >= 3
+      end
+
+    if replay?, do: Pairing.alternatives_recording(players, opts)
+  end
+
+  defp attempt({players, opts, context, actual, y, forced, displaced}, recording),
+    do: attempt(players, opts, context, actual, y, forced, displaced, recording)
 
   # One forced search: pair again with `forced` added to the forbidden
   # pairs, then score the result under the REAL options - the forcing is how
@@ -396,12 +472,12 @@ defmodule Ainalrami.Alternatives do
   # real options, shared by every search of the round: scoring against it
   # is `explain_round/3` on the same arguments, without re-deriving the
   # field and the bye bootstrap for every search.
-  defp attempt(players, opts, context, actual, y, forced, displaced) do
+  defp attempt(players, opts, context, actual, y, forced, displaced, recording) do
     forced_opts =
       Keyword.put(opts, :forbidden_pairs, (Keyword.get(opts, :forbidden_pairs) || []) ++ forced)
 
     try do
-      alt_pairs = Pairing.pair_next_round(players, forced_opts)
+      alt_pairs = forced_pairing(players, forced_opts, forced, recording)
       alt = Pairing.explain_pairs(context, alt_pairs)
       verdict = compare(actual, alt)
 
@@ -415,6 +491,16 @@ defmodule Ainalrami.Alternatives do
     rescue
       e in Pairing.NoValidPairingError ->
         %{rank: y, outcome: :impossible, reason: Exception.message(e)}
+    end
+  end
+
+  defp forced_pairing(players, forced_opts, _forced, nil),
+    do: Pairing.pair_next_round(players, forced_opts)
+
+  defp forced_pairing(players, forced_opts, forced, recording) do
+    case Pairing.pair_forced(players, forced_opts, forced, recording) do
+      {:ok, pairs, _info} -> pairs
+      {:fallback, _reason} -> Pairing.pair_next_round(players, forced_opts)
     end
   end
 

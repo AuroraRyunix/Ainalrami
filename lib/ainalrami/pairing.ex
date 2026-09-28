@@ -54,6 +54,7 @@ defmodule Ainalrami.Pairing do
   """
 
   alias Ainalrami.Log
+  alias Ainalrami.Pairing.Replay
   alias Ainalrami.WeightedMatching
 
   # This engine used to carry a second pairing path - a per-bracket
@@ -285,6 +286,56 @@ defmodule Ainalrami.Pairing do
   end
 
   defp diagnose_exclusions(e, _players, _opts), do: e
+
+  @doc false
+  # For `Ainalrami.Alternatives`: pair the round as `pair_next_round/2`
+  # does, keeping what a forced search of the same round can take over -
+  # see `Ainalrami.Pairing.Replay`. nil when there is nothing to keep (the
+  # round went to `pair_round_one/1`, or cannot be paired).
+  def alternatives_recording(players, opts) do
+    Replay.start_recording()
+
+    try do
+      do_pair_next_round(players, opts)
+      Replay.finish_recording()
+    rescue
+      Ainalrami.Pairing.NoValidPairingError -> nil
+    after
+      Replay.stop()
+    end
+  end
+
+  @doc false
+  # `pair_next_round(players, forced_opts)` for a forced search whose
+  # forcing is `forced` - the groups `forced_opts[:forbidden_pairs]` has on
+  # top of the recorded round's own - taken from `recording` where
+  # `Ainalrami.Pairing.Replay` can show the answer is the same.
+  #
+  # `{:ok, pairs, info}` with the pairs `pair_next_round/2` returns, or
+  # `{:fallback, reason}` when the replay could not certify a read (or the
+  # round raised), in which case the caller runs `pair_next_round/2`
+  # itself - which also gives a round that cannot be paired its own error,
+  # bye-exclusion diagnosis included.
+  def pair_forced(players, forced_opts, forced, recording) do
+    Replay.start_replay(recording, forced)
+
+    try do
+      pairs = do_pair_next_round(players, forced_opts)
+      {:ok, pairs, Replay.replay_info()}
+    rescue
+      Ainalrami.Pairing.NoValidPairingError ->
+        {:fallback, :no_valid_pairing}
+
+      # Anything else is the replay's own failure, not the round's: the
+      # full re-pairing gives whatever answer - or error - is the round's.
+      e ->
+        {:fallback, {:raised, e}}
+    catch
+      {tag, reason} when tag == :ainalrami_replay_fallback -> {:fallback, reason}
+    after
+      Replay.stop()
+    end
+  end
 
   defp active_excluded(players, ranks) do
     played = rounds_played(players)
@@ -2143,6 +2194,7 @@ defmodule Ainalrami.Pairing do
       |> Enum.map(&ensure_colour_stats/1)
 
     ctx = global_context(field)
+    Replay.round_context(ctx)
 
     # Vertex ids for the round.s field matcher are positions in `field`,
     # which every bracket.s vertex set is a subsequence of. The matcher
@@ -2909,33 +2961,61 @@ defmodule Ainalrami.Pairing do
 
   defp attempt_local(combined, m, sgb, nsgb, wsgb, ctx, single_bye?) do
     wl = local_graph_length(nsgb)
-    st = new_bracket(:local, combined, m, sgb, nsgb, wsgb, wl, ctx, single_bye?) |> solve()
 
-    if map_size(st.matching) == wl do
-      {pairs, _, _, _} = result = st |> run_stages() |> collect_bracket()
+    # A pure function of its arguments and of the legality of the pairs in
+    # the window, which is what lets a forced search of this round take it
+    # from the recording (`Ainalrami.Pairing.Replay`). The queue of writes
+    # is dropped here as `new_bracket/9` drops it, taken from the
+    # recording or not.
+    Process.delete(@dirty_key)
 
-      # Condition (b): with this bracket's finalised players gone, the rest
-      # -- the floater included, on an odd bracket -- can still be paired.
-      positions =
-        Enum.flat_map(pairs, fn {w, b} ->
-          [Map.fetch!(ctx.field_index, w), Map.fetch!(ctx.field_index, b)]
-        end)
+    local =
+      Replay.local(
+        {Enum.map(combined, & &1.rank), sgb, nsgb, wsgb, single_bye?},
+        combined |> Enum.take(wsgb) |> Enum.map(& &1.rank),
+        fn ->
+          st = new_bracket(:local, combined, m, sgb, nsgb, wsgb, wl, ctx, single_bye?) |> solve()
 
-      case oracle_completable?(Process.get(@oracle_key), positions) do
-        {:ok, oracle} ->
-          # The bracket is out of the field for good, for the oracle and
-          # for the field matcher alike: the next field-graph bracket
-          # rebuilds its matcher from the players that remain.
-          Process.put(@oracle_key, oracle)
-          {_, field_index, field_size} = Process.get(@round_matcher_key)
-          Process.put(@round_matcher_key, {nil, field_index, field_size})
-          {:ok, result}
+          if map_size(st.matching) == wl do
+            # Kept as ranks: the carried players are `combined`'s own, and a
+            # recording holding every bracket's copy of them would be copied
+            # whole into every process that replays it.
+            {pairs, carried, new_sgb, scores} = st |> run_stages() |> collect_bracket()
+            {:perfect, pairs, Enum.map(carried, & &1.rank), new_sgb, scores}
+          else
+            :imperfect
+          end
+        end
+      )
 
-        :no ->
-          :field
-      end
-    else
-      :field
+    case local do
+      {:perfect, pairs, carried, new_sgb, scores} ->
+        by_rank = Map.new(combined, &{&1.rank, &1})
+        result = {pairs, Enum.map(carried, &Map.fetch!(by_rank, &1)), new_sgb, scores}
+
+        # Condition (b): with this bracket's finalised players gone, the rest
+        # -- the floater included, on an odd bracket -- can still be paired.
+        positions =
+          Enum.flat_map(pairs, fn {w, b} ->
+            [Map.fetch!(ctx.field_index, w), Map.fetch!(ctx.field_index, b)]
+          end)
+
+        case oracle_completable?(Process.get(@oracle_key), positions) do
+          {:ok, oracle} ->
+            # The bracket is out of the field for good, for the oracle and
+            # for the field matcher alike: the next field-graph bracket
+            # rebuilds its matcher from the players that remain.
+            Process.put(@oracle_key, oracle)
+            {_, field_index, field_size} = Process.get(@round_matcher_key)
+            Process.put(@round_matcher_key, {nil, field_index, field_size})
+            {:ok, result}
+
+          :no ->
+            :field
+        end
+
+      :imperfect ->
+        :field
     end
   end
 
@@ -2977,6 +3057,15 @@ defmodule Ainalrami.Pairing do
     # window's edges changing on an existing graph.
     {round_matcher, _, _} = Process.get(@round_matcher_key)
 
+    # Nor when a forced search is about to take the round matcher from the
+    # recording of its round (`Ainalrami.Pairing.Replay`): the far edges
+    # are the recording's, and only the window is read from `live`. The
+    # pinned weight `finalize_pair_by_rebuild/3` writes is then the
+    # recording's too - the same value where the graphs are the same.
+    recorded =
+      (mode == :field and round_matcher == nil) &&
+        Replay.recorded_start(start_key(combined, sgb, nsgb, wsgb, single_bye?))
+
     base =
       case mode do
         :local ->
@@ -2985,7 +3074,7 @@ defmodule Ainalrami.Pairing do
           |> stand_in_edges(arr, sgb, nsgb, wsgb, ctx, bands, single_bye?)
 
         :field ->
-          scored = if round_matcher != nil, do: min(wsgb, m), else: m
+          scored = if round_matcher != nil or recorded, do: min(wsgb, m), else: m
           base_edge_weights(arr, m, sgb, nsgb, scored, ctx, bands, single_bye?)
       end
 
@@ -3002,6 +3091,7 @@ defmodule Ainalrami.Pairing do
       sgb: sgb,
       nsgb: nsgb,
       wsgb: wsgb,
+      single_bye?: single_bye?,
       ctx: ctx,
       bands: bands,
       base: base,
@@ -3012,7 +3102,11 @@ defmodule Ainalrami.Pairing do
       # Any value above every real weight will do: `finalize_pair/3`
       # leaves the two vertices exactly one usable edge each, so the pair
       # is forced regardless of magnitude.
-      max_w: 1 + (base |> Map.values() |> Enum.max(fn -> 0 end)),
+      max_w:
+        if(recorded,
+          do: recorded.max_w,
+          else: 1 + (base |> Map.values() |> Enum.max(fn -> 0 end))
+        ),
       matched: MapSet.new(),
       matching: %{},
       remainder: [],
@@ -3323,12 +3417,21 @@ defmodule Ainalrami.Pairing do
 
           round_ceiling = 2 * span_product * st.bands.reserve * round_scale * s * (n * n + 1)
 
-          list =
-            for {{i, j}, w} <- st.live, w > 0 do
-              {to_field.(i), to_field.(j), weigh.(i, j, w)}
-            end
+          # A forced search of a recorded round may start from the
+          # recording's solved matcher instead (`Ainalrami.Pairing.Replay`).
+          Replay.field_start(
+            round_start_key(st),
+            Enum.map(Tuple.to_list(st.arr), & &1.rank),
+            field_index,
+            fn ->
+              list =
+                for {{i, j}, w} <- st.live, w > 0 do
+                  {to_field.(i), to_field.(j), weigh.(i, j, w)}
+                end
 
-          WeightedMatching.new(field_size, list, max_weight: round_ceiling, gcd: 1)
+              WeightedMatching.new(field_size, list, max_weight: round_ceiling, gcd: 1)
+            end
+          )
 
         not st.synced ->
           # Bracket boundary. For every vertex of the WINDOW (the bracket and
@@ -3384,7 +3487,19 @@ defmodule Ainalrami.Pairing do
           apply_dirty(round_matcher, st, dirty, to_field, weigh)
       end
 
-    {matcher, matching_f} = WeightedMatching.solve(matcher)
+    {matcher, matching_f} =
+      case matcher do
+        {:solved, matcher, matching_f} -> {matcher, matching_f}
+        {:unsolved, matcher} -> WeightedMatching.solve(matcher)
+        matcher -> WeightedMatching.solve(matcher)
+      end
+
+    Replay.field_solved(
+      if(round_matcher == nil, do: round_start_key(st)),
+      matcher,
+      matching_f,
+      st.max_w
+    )
 
     # Back to bracket-local indices; anything matched outside this
     # bracket's vertex set is another bracket's business.
@@ -3402,6 +3517,15 @@ defmodule Ainalrami.Pairing do
     Process.put(@round_matcher_key, {matcher, field_index, field_size})
     %{st | matching: matching, synced: true}
   end
+
+  # What a round matcher built from cold is a function of, besides the
+  # legality of the pairs in it: the remaining field, and the bracket whose
+  # weights it is built with.
+  defp round_start_key(st),
+    do: start_key(Tuple.to_list(st.arr), st.sgb, st.nsgb, st.wsgb, st.single_bye?)
+
+  defp start_key(combined, sgb, nsgb, wsgb, single_bye?),
+    do: {Enum.map(combined, & &1.rank), sgb, nsgb, wsgb, single_bye?}
 
   # The stages' writes since the last solve, most recent first. Each
   # `{modified, neighbour}` pair is applied once, at `live`'s current (final)
@@ -3638,25 +3762,31 @@ defmodule Ainalrami.Pairing do
   # bbpPairings reads an unmatched vertex as matched to ITSELF, and three
   # of the stage tests below (`< playerVertex`, `<= playerVertex`) depend
   # on that convention rather than on a nil check.
+  #
+  # Every read that DECIDES something goes through `read/4` instead, which
+  # names what is read of the partner: on a re-optimised field graph it is
+  # certified to be the same in every optimum
+  # (`Ainalrami.Pairing.Replay.certify/5`). `partner/2` itself is for the
+  # reads that decide nothing - tracing, and the choice between two routes
+  # to the same optimum.
   defp partner(st, i), do: Map.get(st.matching, i, i)
 
-  # Matched to a resident of this bracket's own score group.
-  defp internal?(st, i) do
-    p = partner(st, i)
-    p >= st.sgb and p < st.nsgb
+  defp read(st, i, what, of_partner) do
+    value = of_partner.(partner(st, i))
+    Replay.certify(st, i, what, value, of_partner)
+    value
   end
+
+  defp exact_partner(st, i), do: read(st, i, :partner, & &1)
+
+  # Matched to a resident of this bracket's own score group.
+  defp internal?(st, i), do: read(st, i, :internal, &(&1 >= st.sgb and &1 < st.nsgb))
 
   # Paired with someone LATER in the bracket - the "higher group" role in
   # an exchange.
-  defp paired_down?(st, i) do
-    p = partner(st, i)
-    p > i and p < st.nsgb
-  end
+  defp paired_down?(st, i), do: read(st, i, :down, &(&1 > i and &1 < st.nsgb))
 
-  defp exchange_needed?(st, i) do
-    p = partner(st, i)
-    p <= i or p >= st.nsgb
-  end
+  defp exchange_needed?(st, i), do: read(st, i, :exchange, &(&1 <= i or &1 >= st.nsgb))
 
   # `common.h:164`. Lock the pair by leaving each vertex exactly one
   # usable edge - the one to the other.
@@ -3699,6 +3829,7 @@ defmodule Ainalrami.Pairing do
         case WeightedMatching.finalize_pair(matcher, to_field.(i), to_field.(j)) do
           {:ok, matcher} ->
             Process.put(@round_matcher_key, {matcher, field_index, field_size})
+            Replay.field_changed(matcher)
             {:ok, %{st | live: drop_other_live(st, i, j)}}
 
           :error ->
@@ -4225,7 +4356,7 @@ defmodule Ainalrami.Pairing do
   end
 
   defp finalize_matched(st, i) do
-    case partner(st, i) do
+    case exact_partner(st, i) do
       ^i -> st
       p -> st |> Map.update!(:matched, &MapSet.put(&1, p)) |> finalize_pair(i, p)
     end
@@ -4238,7 +4369,21 @@ defmodule Ainalrami.Pairing do
   # S2: the first `remainder_pairs` entries are the higher half, the rest
   # the lower half, and pairing them is the homogeneous-bracket problem.
   defp stage_build_remainder(st) do
-    remainder = Enum.filter(st.sgb..(st.nsgb - 1)//1, &(partner(st, &1) >= st.sgb))
+    remainder =
+      Enum.filter(st.sgb..(st.nsgb - 1)//1, fn v -> read(st, v, :stays, &(&1 >= st.sgb)) end)
+
+    # The pair count is read as a COUNT, and a count can be the same in
+    # every optimum when the pairs themselves are not. Here it is, which is
+    # what lets a re-optimised field graph (`Ainalrami.Pairing.Replay`) use
+    # it without certifying each member's partner: C6 packs one unit per
+    # pair inside the bracket, above every lower rung, so every optimum has
+    # the same number of pairs inside the bracket; those are the moved-down
+    # players' pairs - whose every "internal or not" is read below, so the
+    # same in every optimum - and the remainder's own pairs. (Moved-down
+    # players have no edge to each other, and a resident outside the
+    # remainder is matched to a moved-down player.) So the remainder's own
+    # pairs number the same in every optimum too.
+    Enum.each(0..(st.sgb - 1)//1, &internal?(st, &1))
 
     %{
       st
@@ -4463,9 +4608,19 @@ defmodule Ainalrami.Pairing do
         0
 
       bound ->
+        # A count again, the same in every optimum without each member's
+        # partner being so (see `stage_build_remainder/1` for why that
+        # matters): stage 4's guard term adds `2 * s^2` for every pair whose
+        # higher-half member is paired down, which outweighs everything the
+        # index terms below it can add up to and is itself below every
+        # criterion. So every optimum pairs down the same NUMBER of the
+        # higher half, and this is the rest of it.
         st.remainder
         |> Enum.take_while(&(&1 < bound))
-        |> Enum.count(&exchange_needed?(st, &1))
+        |> Enum.count(fn i ->
+          p = partner(st, i)
+          p <= i or p >= st.nsgb
+        end)
     end
   end
 
@@ -4621,9 +4776,19 @@ defmodule Ainalrami.Pairing do
   # every criterion, every optimum gives the player the same partner: the
   # one the solve would have returned, found without the search.
   defp keep_partner_by_dual_shift(st, player) do
-    with_shiftable_matcher(st, fn matcher, to_matcher, weigh ->
-      shift_to_live(st, [player], matcher, to_matcher, weigh)
-    end)
+    result =
+      with_shiftable_matcher(st, fn matcher, to_matcher, weigh ->
+        shift_to_live(st, [player], matcher, to_matcher, weigh)
+      end)
+
+    # A search that re-solved here instead holds an optimum of the shifted
+    # weights too, so the read that follows is certified against them.
+    with {:ok, %{mode: :field}} <- result do
+      {matcher, _, _} = Process.get(@round_matcher_key)
+      Replay.field_changed(matcher)
+    end
+
+    result
   end
 
   # Where a dual shift may stand in for a re-solve: the local graph, or the
@@ -4738,7 +4903,7 @@ defmodule Ainalrami.Pairing do
   end
 
   defp finalize_both(st, i) do
-    case partner(st, i) do
+    case exact_partner(st, i) do
       ^i ->
         st
 
@@ -4754,7 +4919,12 @@ defmodule Ainalrami.Pairing do
   defp collect_bracket(st) do
     {pairs, carried, sgb} =
       Enum.reduce(0..(st.m - 1)//1, {[], [], 0}, fn i, {pairs, carried, sgb} ->
-        p = partner(st, i)
+        # Read only where it decides something: the pairs this bracket
+        # finalised. Everyone else carries forward whoever they are with.
+        p =
+          if i < st.nsgb and MapSet.member?(st.matched, i),
+            do: exact_partner(st, i),
+            else: partner(st, i)
 
         # `p < st.nsgb` is this port's own guard, not bbpPairings'. Their
         # recording condition tests only the near end of the pair, which
@@ -4797,9 +4967,10 @@ defmodule Ainalrami.Pairing do
     partner_scores =
       for i <- 0..(st.m - 1)//1,
           i < st.wsgb,
-          p = partner(st, i),
-          not (p != i and p < st.nsgb and MapSet.member?(st.matched, i)),
-          do: elem(st.arr, if(p == i, do: i, else: p)).points
+          matched? = MapSet.member?(st.matched, i),
+          p = if(matched?, do: exact_partner(st, i), else: partner(st, i)),
+          not (p != i and p < st.nsgb and matched?),
+          do: read(st, i, :score, &elem(st.arr, &1).points)
 
     {Enum.reverse(pairs), Enum.reverse(carried), sgb, partner_scores}
   end
