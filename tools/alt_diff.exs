@@ -35,6 +35,9 @@
 #
 #   DIFF_ROUNDS, DIFF_EXTRAS, PAIRING_FUZZ_*   as in perf_diff.exs
 #   ALT_SMALL_ALL    fields up to this size also run uncapped (default 24)
+#   ALT_SCALE        percent of each corpus axis's tournaments (default 100)
+#   ALT_COUNT        tournaments per corpus axis, overriding the table
+#   ALT_AXES         comma-separated axes of the set to run (default all)
 
 alias Ainalrami.{Alternatives, Pairing}
 alias Ainalrami.Test.FuzzTournament, as: Fuzz
@@ -410,7 +413,7 @@ defmodule AltDiff.Corpus do
       Enum.each(env, fn {k, v} -> System.put_env(k, v) end)
       offset = %{"small" => 20_000_000, "flags" => 25_000_000, "large" => 29_000_000}[name]
       seed_from = offset + index * 100_000 + 1
-      count = AltDiff.int("ALT_COUNT", count)
+      count = AltDiff.int("ALT_COUNT", max(1, div(count * AltDiff.int("ALT_SCALE", 100), 100)))
 
       try do
         run_axis.(axis, seed_from, count, Path.join(dir, axis <> ".log"))

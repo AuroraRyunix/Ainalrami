@@ -444,18 +444,21 @@ defmodule Ainalrami.Alternatives do
   # answer is the full re-pairing's.
   #
   # The recording is one more pairing of the round, made before the batch's
-  # searches start and copied into each worker once. Two searches or fewer
-  # run as full re-pairings side by side, which the recording would only
-  # delay; from three it pays even on the two-core server, and more the
-  # more there are. `AINALRAMI_ALT_REPLAY=always` makes a recording for
-  # every batch of two or more, so that every search that can goes through
-  # it, and `=never` for none; the differential tests use both.
+  # searches start and copied into each worker once. It pays when the
+  # batch needs more than one wave of searches: with no more searches than
+  # schedulers they all run side by side as full re-pairings, finished
+  # about when the recording alone would be (measured: 450 players, round
+  # 2, ten searches on 12 schedulers, 34 s full against 43 s recorded). On
+  # the two-core server that means three searches or more.
+  # `AINALRAMI_ALT_REPLAY=always` makes a recording for every batch of two
+  # or more, so that every search that can goes through it, and `=never`
+  # for none; the differential tests use both.
   defp recording([{players, opts, _context, _actual, _y, _forced, _displaced} | _] = specs) do
     replay? =
       case System.get_env("AINALRAMI_ALT_REPLAY") do
         "always" -> true
         "never" -> false
-        _ -> length(specs) >= 3
+        _ -> length(specs) > System.schedulers_online()
       end
 
     if replay?, do: Pairing.alternatives_recording(players, opts)
