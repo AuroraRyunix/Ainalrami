@@ -512,6 +512,36 @@ defmodule Ainalrami.Pairing do
     # `pair_next_round/2` clears every round-scoped key on its way out.
     passed_over = bye_passed_over(players, pairs, opts)
 
+    players
+    |> explain_context(opts, pairs)
+    |> explain_pairs(pairs)
+    |> attach_passed_over(passed_over, pairs)
+  end
+
+  @doc false
+  # `explain_round/3` in two halves, for a caller that explains several
+  # pairings of the SAME round: everything that does not depend on the
+  # pairs - the field with its float history and colour state, the
+  # bye-assignee bootstrap (a whole-field matching on an odd field), the
+  # weight bands - is worked out once by `explain_context/2`, and
+  # `explain_pairs/2` scores one pairing against it.
+  #
+  # `Ainalrami.Alternatives` is that caller: it scores every forced search
+  # it runs, forty or more per round, against the same players under the
+  # same options, and paid for the bootstrap every time. `explain_round/3`
+  # is these two calls composed, so a report reached either way is the same
+  # report. The `:bye_passed_over` account is not part of either half - it
+  # re-pairs the round, and only `explain_round/3` asks for it.
+  #
+  # The context also carries every round-scoped value the rules read, so
+  # `explain_pairs/2` can stamp them again: the halves each clean up after
+  # themselves, as `explain_round/3` always has.
+  #
+  # `pairs`, when given, is only walked - at the point where the undivided
+  # function built its partner map - so that a malformed pairing is refused
+  # at the same moment, relative to everything else that can raise here, as
+  # it always was. The context itself never depends on it.
+  def explain_context(players, opts, pairs \\ :none) do
     Process.put(@expected_rounds_key, opts[:expected_rounds])
 
     Process.put(
@@ -575,11 +605,45 @@ defmodule Ainalrami.Pairing do
       Process.put(@bye_score_key, bye_score)
       Process.put(@first_single_bye_key, first_single_bye?)
 
-      partner = partner_map(pairs)
+      if pairs != :none, do: partner_map(pairs)
       ctx = global_context(field)
 
-      groups = Enum.chunk_by(field, & &1.points)
-      points = Map.new(field, &{&1.rank, &1.points})
+      %{
+        field: field,
+        ctx: ctx,
+        groups: Enum.chunk_by(field, & &1.points),
+        points: Map.new(field, &{&1.rank, &1.points}),
+        # Every key stamped above, as stamped, for `explain_pairs/2`.
+        stamps:
+          Enum.map(
+            [
+              @expected_rounds_key,
+              @initial_colour_key,
+              @point_system_key,
+              @played_key,
+              @forbidden_key,
+              @soft_key,
+              @bye_excluded_key,
+              @parity_number_key,
+              @bye_score_key,
+              @first_single_bye_key
+            ],
+            &{&1, Process.get(&1)}
+          )
+      }
+    after
+      clear_explain_keys()
+    end
+  end
+
+  @doc false
+  # The pairs-dependent half of `explain_round/3` - see `explain_context/2`.
+  def explain_pairs(%{field: field, ctx: ctx, groups: groups, points: points} = context, pairs) do
+    Enum.each(context.stamps, fn {key, value} -> Process.put(key, value) end)
+    stamp_env_flags()
+
+    try do
+      partner = partner_map(pairs)
 
       groups
       |> Enum.with_index()
@@ -593,23 +657,26 @@ defmodule Ainalrami.Pairing do
       end)
       |> elem(0)
       |> Enum.reverse()
-      |> attach_passed_over(passed_over, pairs)
     after
-      Process.delete(@expected_rounds_key)
-      Process.delete(@initial_colour_key)
-      Process.delete(@parity_number_key)
-      Process.delete(@point_system_key)
-      Process.delete(@played_key)
-      Process.delete(@forbidden_key)
-      Process.delete(@soft_key)
-      Process.delete(@bye_excluded_key)
-      Process.delete(@bye_score_key)
-      Process.delete(@round_matcher_key)
-      Process.delete(@oracle_key)
-      Process.delete(@dirty_key)
-      Process.delete(@first_single_bye_key)
-      clear_env_flags()
+      clear_explain_keys()
     end
+  end
+
+  defp clear_explain_keys do
+    Process.delete(@expected_rounds_key)
+    Process.delete(@initial_colour_key)
+    Process.delete(@parity_number_key)
+    Process.delete(@point_system_key)
+    Process.delete(@played_key)
+    Process.delete(@forbidden_key)
+    Process.delete(@soft_key)
+    Process.delete(@bye_excluded_key)
+    Process.delete(@bye_score_key)
+    Process.delete(@round_matcher_key)
+    Process.delete(@oracle_key)
+    Process.delete(@dirty_key)
+    Process.delete(@first_single_bye_key)
+    clear_env_flags()
   end
 
   # The same shape as `bracket_loop/6`'s own gate (dutch.cpp:1608-1643),
@@ -2276,7 +2343,7 @@ defmodule Ainalrami.Pairing do
     {places, place_span} = score_places(field)
     count_span = length(field) + 1
 
-    %{
+    ctx = %{
       bye_score: bye_score,
       unplayed_ranks: unplayed_ranks(field, bye_score),
       odd_field?: rem(length(field), 2) == 1,
@@ -2290,6 +2357,44 @@ defmodule Ainalrami.Pairing do
         count_span: count_span,
         reserve: 2 * count_span * count_span * count_span
       }
+    }
+
+    Map.put(ctx, :outside, outside_layout(field, ctx))
+  end
+
+  # Where the rungs that can be non-zero for a pair OUTSIDE the bracket sit
+  # in the packed weight - see `outside_edge_weight/6`. Read off the ladder
+  # itself, one `edge_rungs/6` call on any player of the round at reach 2,
+  # so the positions and spans come from the one definition of the ladder
+  # rather than a second copy of it: the soft rung's place (strong or weak,
+  # or absent) is whatever `soften/3` put there this round.
+  #
+  # `suffix` holds, for each rung, the product of the spans of every rung
+  # after it - the factor `ranked/1`'s fold ends up multiplying that rung's
+  # value by.
+  defp outside_layout([], _ctx), do: nil
+
+  defp outside_layout([p | _], ctx) do
+    rungs = edge_rungs(p, p, 2, ctx, ctx.bands, false)
+    labels = Enum.map(rungs, &elem(&1, 0))
+
+    suffix =
+      rungs
+      |> Enum.map(&elem(&1, 2))
+      |> Enum.reverse()
+      |> Enum.map_reduce(1, fn span, product -> {product, product * span} end)
+      |> elem(0)
+      |> Enum.reverse()
+      |> List.to_tuple()
+
+    at = fn label -> Enum.find_index(labels, &(&1 == label)) end
+
+    %{
+      suffix: suffix,
+      soft: at.("S soft avoid"),
+      c8_pairs: at.("C8 pairs next bracket"),
+      c8_scores: at.("C8 scores next bracket"),
+      c9: at.("C9 bye unplayed games")
     }
   end
 
@@ -2887,6 +2992,7 @@ defmodule Ainalrami.Pairing do
     %{
       mode: mode,
       arr: arr,
+      field_pos: arr |> Tuple.to_list() |> Enum.map(&Map.fetch!(ctx.field_index, &1.rank)) |> List.to_tuple(),
       m: m,
       wl: wl,
       sgb: sgb,
@@ -3161,7 +3267,7 @@ defmodule Ainalrami.Pairing do
   # carried across every bracket.
   defp solve_field(st) do
     {round_matcher, field_index, field_size} = Process.get(@round_matcher_key)
-    to_field = fn i -> Map.fetch!(field_index, elem(st.arr, i).rank) end
+    to_field = field_positions(st, field_index)
     weigh = edge_weigher(st, to_field, field_size)
     dirty = Process.get(@dirty_key, [])
     Process.delete(@dirty_key)
@@ -3298,6 +3404,14 @@ defmodule Ainalrami.Pairing do
   # value; a write that left the matcher's weight as it was is skipped,
   # which prepares nothing the reference would not also have left
   # untouched in effect.
+  # Bracket-local index -> the player's position in the round's field, the
+  # round matcher's vertex id. A tuple built once per bracket
+  # (`new_bracket/9`'s `field_pos`, from the same `field_index` the round
+  # matcher was created with) rather than a rank lookup per endpoint per
+  # edge: the first field bracket of a round hands the matcher every pair
+  # of the field, and every translation went through two map lookups.
+  defp field_positions(%{field_pos: pos}, _field_index), do: &elem(pos, &1)
+
   defp apply_dirty(matcher, st, dirty, to_field, weigh) do
     {matcher, _seen} =
       Enum.reduce(dirty, {matcher, MapSet.new()}, fn {i, j} = key, {acc, seen} ->
@@ -3335,7 +3449,7 @@ defmodule Ainalrami.Pairing do
       {matcher, field_index, field_size} ->
         dirty = Process.get(@dirty_key, [])
         Process.delete(@dirty_key)
-        to_field = fn i -> Map.fetch!(field_index, elem(st.arr, i).rank) end
+        to_field = field_positions(st, field_index)
 
         matcher =
           apply_dirty(matcher, st, dirty, to_field, edge_weigher(st, to_field, field_size))
@@ -3576,7 +3690,7 @@ defmodule Ainalrami.Pairing do
         :error
 
       {matcher, field_index, field_size} ->
-        to_field = fn k -> Map.fetch!(field_index, elem(st.arr, k).rank) end
+        to_field = field_positions(st, field_index)
 
         case WeightedMatching.finalize_pair(matcher, to_field.(i), to_field.(j)) do
           {:ok, matcher} ->
@@ -3685,13 +3799,60 @@ defmodule Ainalrami.Pairing do
     # dutch.cpp:607 - no edge unless the LARGER index is a resident or
     # lower, which is what stops two MDPs being paired with each other.
     if j >= sgb and legal_pair?(a, b) and colour_compatible?(a, b) do
-      # `ranked/1` over the rungs, folded straight off the labelled list
-      # rather than through an intermediate `{value, span}` copy of it.
-      a
-      |> edge_rungs(b, reach, ctx, bands, single_bye?)
-      |> Enum.reduce(0, fn {_label, value, span}, acc -> acc * span + value end)
-      |> Kernel.*(bands.reserve)
+      if reach == 0 do
+        # `ranked/1` over the rungs, folded straight off the labelled list
+        # rather than through an intermediate `{value, span}` copy of it.
+        a
+        |> edge_rungs(b, reach, ctx, bands, single_bye?)
+        |> Enum.reduce(0, fn {_label, value, span}, acc -> acc * span + value end)
+        |> Kernel.*(bands.reserve)
+      else
+        outside_edge_weight(a, b, reach, ctx, bands, single_bye?)
+      end
     end
+  end
+
+  # The same integer as the fold above, for a pair outside the bracket.
+  #
+  # `ladder_rungs/6` gates every rung but five on `in_current`, which is
+  # false here: the completion rung, the soft rung when there is one, the
+  # two C8 rungs (non-zero at reach 1 only) and C9 (non-zero on a C9
+  # bracket only). The fold `acc * span + value` over the whole ladder is
+  # `sum(value_k * suffix_k)`, so with every other value zero it is those
+  # five terms and nothing else - three or four bignum products where the
+  # fold made eighteen, and none of the ladder's criteria computed only to
+  # be multiplied by zero. That is most of the graph: on the round's first
+  # field bracket every pair more than one score group below the bracket is
+  # one of these, forty thousand of them at 300 players.
+  #
+  # Each term is computed by the very expression `ladder_rungs/6` uses for
+  # it; `outside_layout/2` supplies where it sits.
+  defp outside_edge_weight(a, b, reach, ctx, bands, single_bye?) do
+    layout = ctx.outside
+    suffix = layout.suffix
+    {_label, completion, _span} = completion_rung(a, b, ctx, bands.count_span)
+    weight = completion * elem(suffix, 0)
+
+    weight =
+      case layout.soft do
+        nil -> weight
+        at -> weight + bit(not soft_pair?(a, b)) * elem(suffix, at)
+      end
+
+    weight =
+      if reach == 1 do
+        place = Map.fetch!(bands.places, a.points)
+        weight + elem(suffix, layout.c8_pairs) + place * elem(suffix, layout.c8_scores)
+      else
+        weight
+      end
+
+    weight =
+      if single_bye?,
+        do: weight + c9_rank(a, b, ctx) * elem(suffix, layout.c9),
+        else: weight
+
+    weight * bands.reserve
   end
 
   # The ladder itself, as LABELLED rungs highest-priority first, so the

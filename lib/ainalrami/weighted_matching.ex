@@ -809,17 +809,7 @@ defmodule Ainalrami.WeightedMatching do
     #
     # A caller that hands the finished structure over as `:adjacency` skips
     # this fold; see `new/3` for who does and why.
-    weights =
-      adjacency ||
-        Enum.reduce(edges, %{}, fn {i, j, w}, acc ->
-          if w > 0 do
-            acc
-            |> Map.update(i, %{j => 2 * w}, &Map.put(&1, j, 2 * w))
-            |> Map.update(j, %{i => 2 * w}, &Map.put(&1, i, 2 * w))
-          else
-            acc
-          end
-        end)
+    weights = adjacency || adjacency_of(edges)
 
     # `:adjacency` without `:max_weight` still has to get the ceiling from
     # somewhere, and the only place left is the map itself -- a full O(E)
@@ -906,6 +896,36 @@ defmodule Ainalrami.WeightedMatching do
     }
 
     state
+  end
+
+  # `%{u => %{v => 2w}}` from `[{u, v, w}]`, both directions of every edge
+  # with a positive weight; a later occurrence of the same edge overwrites
+  # an earlier one, and a non-positive one is skipped without removing
+  # anything.
+  #
+  # Built a row at a time: every endpoint's `{neighbour, 2w}` entries are
+  # gathered as a list first, and each row becomes a map in one
+  # `Map.new/1`, which keeps the LAST value for a repeated key - the same
+  # overwrite the edge-by-edge fold made. The fold this replaces did two
+  # nested map updates per edge, each rebuilding a path through an inner
+  # row and the outer map: 80,000 of them for the 40,000 edges of a
+  # 300-player round's field graph. The result is the same map, and a map's
+  # iteration order depends on its keys alone, so every later walk of a row
+  # visits it in the order it always did.
+  defp adjacency_of(edges) do
+    edges
+    |> Enum.reduce(%{}, fn
+      {i, j, w}, acc when w > 0 ->
+        w2 = 2 * w
+
+        acc
+        |> Map.update(i, [{j, w2}], &[{j, w2} | &1])
+        |> Map.update(j, [{i, w2}], &[{i, w2} | &1])
+
+      _edge, acc ->
+        acc
+    end)
+    |> Map.new(fn {v, entries} -> {v, Map.new(Enum.reverse(entries))} end)
   end
 
   # The starting point of a fresh solve: duals and a greedy matching, both

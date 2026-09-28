@@ -185,8 +185,11 @@ defmodule Ainalrami.Alternatives do
   report for a caller that wants to show the bracket it changed.
   """
   def judge(players, actual_pairs, alternative_pairs, opts \\ []) do
-    actual = Pairing.explain_round(players, actual_pairs, quiet(opts))
-    alternative = Pairing.explain_round(players, alternative_pairs, quiet(opts))
+    # Both reports are of the same round under the same options, so the
+    # pairs-independent half of `explain_round/3` is worked out once.
+    context = Pairing.explain_context(players, quiet(opts), actual_pairs)
+    actual = Pairing.explain_pairs(context, actual_pairs)
+    alternative = Pairing.explain_pairs(context, alternative_pairs)
 
     %{
       verdict: compare(actual, alternative),
@@ -214,7 +217,8 @@ defmodule Ainalrami.Alternatives do
   """
   def float_alternatives(players, pairs, opts \\ []) do
     {cap, opts} = pop_cap(opts)
-    actual = Pairing.explain_round(players, pairs, quiet(opts))
+    context = Pairing.explain_context(players, quiet(opts), pairs)
+    actual = Pairing.explain_pairs(context, pairs)
     bye = bye_holder(pairs)
 
     # Laid out first, searched after: every forced search of every floater
@@ -231,7 +235,7 @@ defmodule Ainalrami.Alternatives do
           {:searched, %{group: bracket.group, floater: floater},
            Enum.map(candidates, fn y ->
              forced = for m <- bracket.order, m != y, do: [y, m]
-             {players, opts, actual, y, forced, floater}
+             {players, opts, context, actual, y, forced, floater}
            end)}
         end
       end
@@ -279,7 +283,8 @@ defmodule Ainalrami.Alternatives do
 
       holder ->
         {cap, opts} = pop_cap(opts)
-        actual = Pairing.explain_round(players, pairs, quiet(opts))
+        context = Pairing.explain_context(players, quiet(opts), pairs)
+        actual = Pairing.explain_pairs(context, pairs)
         eligibility = Pairing.bye_eligibility(players, opts)
         bracket = Enum.find(actual, &(holder in &1.order)) || List.last(actual)
         candidates = bracket.order -- [holder]
@@ -293,7 +298,7 @@ defmodule Ainalrami.Alternatives do
             |> Enum.filter(&is_nil(Map.get(eligibility, &1)))
             |> Enum.map(fn y ->
               forced = for m <- everyone, m != y, do: [y, m]
-              {players, opts, actual, y, forced, holder}
+              {players, opts, context, actual, y, forced, holder}
             end)
             |> attempts()
             |> then(&Enum.zip(Enum.map(&1, fn %{rank: y} -> y end), &1))
@@ -314,8 +319,8 @@ defmodule Ainalrami.Alternatives do
     end
   end
 
-  # Runs a batch of forced searches, `{players, opts, actual, y, forced,
-  # displaced}` each, and returns their results in the order given.
+  # Runs a batch of forced searches, `{players, opts, context, actual, y,
+  # forced, displaced}` each, and returns their results in the order given.
   #
   # Each one is a complete pairing of the round and none reads another's
   # answer, so they run side by side, one per scheduler. They were the
@@ -375,19 +380,24 @@ defmodule Ainalrami.Alternatives do
       System.get_env("AINALRAMI_TRACE_FALLBACK") != nil
   end
 
-  defp attempt({players, opts, actual, y, forced, displaced}),
-    do: attempt(players, opts, actual, y, forced, displaced)
+  defp attempt({players, opts, context, actual, y, forced, displaced}),
+    do: attempt(players, opts, context, actual, y, forced, displaced)
 
   # One forced search: pair again with `forced` added to the forbidden
   # pairs, then score the result under the REAL options - the forcing is how
   # the alternative is reached, not a rule it should be judged by.
-  defp attempt(players, opts, actual, y, forced, displaced) do
+  #
+  # `context` is `Pairing.explain_context/3` of `players` under the quiet
+  # real options, shared by every search of the round: scoring against it
+  # is `explain_round/3` on the same arguments, without re-deriving the
+  # field and the bye bootstrap for every search.
+  defp attempt(players, opts, context, actual, y, forced, displaced) do
     forced_opts =
       Keyword.put(opts, :forbidden_pairs, (Keyword.get(opts, :forbidden_pairs) || []) ++ forced)
 
     try do
       alt_pairs = Pairing.pair_next_round(players, forced_opts)
-      alt = Pairing.explain_round(players, alt_pairs, quiet(opts))
+      alt = Pairing.explain_pairs(context, alt_pairs)
       verdict = compare(actual, alt)
 
       %{
@@ -472,7 +482,8 @@ defmodule Ainalrami.Alternatives do
   end
 
   defp force_legal_pair(players, pairs, a, b, opts) do
-    actual = Pairing.explain_round(players, pairs, quiet(opts))
+    context = Pairing.explain_context(players, quiet(opts), pairs)
+    actual = Pairing.explain_pairs(context, pairs)
     ranks = Enum.map(players, & &1.rank)
 
     forced =
@@ -485,7 +496,7 @@ defmodule Ainalrami.Alternatives do
       alt_pairs = Pairing.pair_next_round(players, forced_opts)
 
       if paired_together?(alt_pairs, a, b) do
-        alt = Pairing.explain_round(players, alt_pairs, quiet(opts))
+        alt = Pairing.explain_pairs(context, alt_pairs)
         verdict = compare(actual, alt)
 
         %{
@@ -542,14 +553,17 @@ defmodule Ainalrami.Alternatives do
         players = mark_absent(players, absent)
         remaining = Enum.reject(pairs, fn {x, y} -> absent in [x, y] end)
         full_pairs = Pairing.pair_next_round(players, opts)
-        full = Pairing.explain_round(players, full_pairs, quiet(opts))
+        # Every report below is of the same (reduced) round under the same
+        # options: the pairs-independent half is worked out once.
+        context = Pairing.explain_context(players, quiet(opts), full_pairs)
+        full = Pairing.explain_pairs(context, full_pairs)
         holder = bye_holder(remaining)
 
         options =
           (small_fixes(remaining, opponent, holder) ++ board_fixes(remaining, opponent, holder))
           |> Enum.flat_map(fn {candidate, affected} ->
             for coloured <- colour_variants(candidate, remaining),
-                report = Pairing.explain_round(players, coloured, quiet(opts)),
+                report = Pairing.explain_pairs(context, coloured),
                 violations(report) == [] do
               verdict = compare(full, report)
 
