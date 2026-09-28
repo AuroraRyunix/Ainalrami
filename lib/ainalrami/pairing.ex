@@ -4967,7 +4967,9 @@ defmodule Ainalrami.Pairing do
     partner_scores =
       for i <- 0..(st.m - 1)//1,
           i < st.wsgb,
-          matched? = MapSet.member?(st.matched, i),
+          # A generator, not `matched? = ...`: a match in a comprehension
+          # is a FILTER, and `false` would drop the player.
+          matched? <- [MapSet.member?(st.matched, i)],
           p = if(matched?, do: exact_partner(st, i), else: partner(st, i)),
           not (p != i and p < st.nsgb and matched?),
           do: read(st, i, :score, &elem(st.arr, &1).points)
