@@ -2992,7 +2992,11 @@ defmodule Ainalrami.Pairing do
     %{
       mode: mode,
       arr: arr,
-      field_pos: arr |> Tuple.to_list() |> Enum.map(&Map.fetch!(ctx.field_index, &1.rank)) |> List.to_tuple(),
+      field_pos:
+        arr
+        |> Tuple.to_list()
+        |> Enum.map(&Map.fetch!(ctx.field_index, &1.rank))
+        |> List.to_tuple(),
       m: m,
       wl: wl,
       sgb: sgb,
@@ -4902,7 +4906,9 @@ defmodule Ainalrami.Pairing do
       internal = Enum.count(pairs, fn {i, j} -> elem(top, i) == 1 and elem(top, j) == 1 end)
 
       if internal == bound do
-        matching = Enum.reduce(pairs, %{}, fn {i, j}, m -> m |> Map.put(i, j) |> Map.put(j, i) end)
+        matching =
+          Enum.reduce(pairs, %{}, fn {i, j}, m -> m |> Map.put(i, j) |> Map.put(j, i) end)
+
         score = elem(arr, leftover).points
         {:ok, {score, first_single_bye?(arr, n, matching, score)}}
       else

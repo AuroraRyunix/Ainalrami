@@ -230,7 +230,12 @@ defmodule Ainalrami.Alternatives do
 
         if over_cap?(candidates, cap) do
           {:skipped,
-           %{group: bracket.group, floater: floater, skipped: :too_many, count: length(candidates)}}
+           %{
+             group: bracket.group,
+             floater: floater,
+             skipped: :too_many,
+             count: length(candidates)
+           }}
         else
           {:searched, %{group: bracket.group, floater: floater},
            Enum.map(candidates, fn y ->

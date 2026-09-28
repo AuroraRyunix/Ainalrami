@@ -2133,12 +2133,22 @@ defmodule Ainalrami.WeightedMatching do
   defp cross_apply({rows, mins, best}, a, updates) do
     rows = Map.put(rows, a, Map.merge(Map.get(rows, a, %{}), updates))
 
-    Enum.reduce(updates, {rows, mins, best}, fn {b, {r, va, vb}}, {rows, mins, best} ->
-      rows = Map.update(rows, b, %{a => {r, vb, va}}, &Map.put(&1, a, {r, vb, va}))
-      mins = mins |> offer_min(a, {r, b}) |> offer_min(b, {r, a})
-      {lo, hi} = if a < b, do: {a, b}, else: {b, a}
-      {rows, mins, lower_best(best, {r, lo, hi})}
-    end)
+    # Each partner's mirror entry and minimum are its own; `a`'s minimum and
+    # the running best are one minimum over all the updates, offered once.
+    # (For a fixed `a`, the least `{r, lo, hi}` is the entry with the least
+    # `{r, partner}`: equal `r` puts the pair with the smaller partner first
+    # whether that partner sits below `a` or above it.)
+    {rows, mins, least} =
+      Enum.reduce(updates, {rows, mins, nil}, fn {b, {r, va, vb}}, {rows, mins, least} ->
+        rows = Map.update(rows, b, %{a => {r, vb, va}}, &Map.put(&1, a, {r, vb, va}))
+        mins = offer_min(mins, b, {r, a})
+        least = if least == nil, do: {r, b}, else: lower_min(least, {r, b})
+        {rows, mins, least}
+      end)
+
+    {r, b} = least
+    {lo, hi} = if a < b, do: {a, b}, else: {b, a}
+    {rows, offer_min(mins, a, least), lower_best(best, {r, lo, hi})}
   end
 
   # Write the row minimum only when it changes; a `Map.update` that puts
@@ -2299,8 +2309,11 @@ defmodule Ainalrami.WeightedMatching do
 
         mins =
           case Map.get(mins, k) do
-            {_, p} -> if MapSet.member?(left_set, p), do: Map.put(mins, k, row_min(row)), else: mins
-            _ -> mins
+            {_, p} ->
+              if MapSet.member?(left_set, p), do: Map.put(mins, k, row_min(row)), else: mins
+
+            _ ->
+              mins
           end
 
         {rows, mins}
