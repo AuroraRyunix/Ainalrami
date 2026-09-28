@@ -4964,6 +4964,17 @@ defmodule Ainalrami.Pairing do
     # the full peek window here fixed one traced case and broke two others
     # (docs/engineering-log.md), which is what a too-wide scan looks like: players who are
     # nowhere near this decision clearing its gate.
+    #
+    # What the gate reads of each score is whether it reaches the next
+    # group's, and only when the gate's other conditions hold
+    # (`c9_gate_live?/4`); otherwise the scores go unread. That is what a
+    # re-optimised field graph (`Ainalrami.Pairing.Replay`) certifies of
+    # them, and all it needs to.
+    gate =
+      if st.ctx.odd_field? and not is_nil(st.ctx.bye_score) and st.wsgb > st.nsgb and
+           st.ctx.bye_score >= elem(st.arr, st.nsgb).points,
+         do: elem(st.arr, st.nsgb).points
+
     partner_scores =
       for i <- 0..(st.m - 1)//1,
           i < st.wsgb,
@@ -4971,8 +4982,10 @@ defmodule Ainalrami.Pairing do
           # is a FILTER, and `false` would drop the player.
           matched? <- [MapSet.member?(st.matched, i)],
           p = if(matched?, do: exact_partner(st, i), else: partner(st, i)),
-          not (p != i and p < st.nsgb and matched?),
-          do: read(st, i, :score, &elem(st.arr, &1).points)
+          not (p != i and p < st.nsgb and matched?) do
+        if gate, do: read(st, i, :c9, &(elem(st.arr, &1).points >= gate))
+        elem(st.arr, p).points
+      end
 
     {Enum.reverse(pairs), Enum.reverse(carried), sgb, partner_scores}
   end
