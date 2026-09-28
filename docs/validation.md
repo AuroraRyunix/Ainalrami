@@ -1176,6 +1176,113 @@ seven - against the C++ reference's fifty. Inside a long-lived process
 (the sibling OpenPairings app, or any server) the 0.63 s BEAM start-up is
 paid once rather than per round, which is most of the small-field cost.
 
+### Re-run for the large-field matcher rewrite (2026-09-28)
+
+Same methodology, same three programs, run again to compare the matcher
+rewrite (`perf-large-fields`, 083ec3d) against both the reference it is
+built on (v0.33.0, fb7eecc, `origin/main`) and the external references.
+209/400/1,000-player files generated exactly as before (`Ainalrami.Generator`,
+seed `20260827 + players`, 5 of 9 rounds played, round 6 timed); 600
+players added at three round shapes from the same generator - round 1
+(no history), round 2 (one round of history, the shape that turns out to
+matter most below) and round 9, a late round with `final_round_topscorers?/2`'s
+relaxation live. Every file's declared round count was raised to 9 (a
+header edit only - `142`/`XXR`, no player history touched) so a
+5-of-9-rounds file asks for round 6, not "the tournament is over".
+
+**Machine load.** This machine has 16 logical processors and another
+agent's job (`python`, pid 28012) was running the whole time, `Get-Counter`
+sampling 40-80% total processor time throughout. That inflates every
+absolute number below relative to the original table's (which was not
+taken under load) - the BEAM floor alone reads 0.87 s here against 0.63 s
+before, and Gacrux's 1.18 s against 0.68 s. What stays meaningful is the
+**relative** standing between engines, because all four ran back-to-back,
+file by file, under the same load. 5 repeats per file (3 for 1,000
+players, whose bbpPairings runs alone cost 50 s each); min and median of
+each are reported. Identical boards were checked on every file across all
+four engines (composition and colour) before any timing ran:
+105/105 (209), 200/200 (400), 500/500 (1,000), 300/300 on each of the
+three 600-player round shapes - zero disagreements, as before.
+
+**Cold process, start to finish** (min / median):
+
+| players | bbpPairings (C++) | Gacrux (Python) | Ainalrami v0.33.0 | Ainalrami perf-large-fields |
+|---|---|---|---|---|
+| 10 (start-up floor) | **0.16 / 0.17 s** | 1.14 / 1.18 s | 0.85 / 0.87 s | 0.84 / 0.87 s |
+| 209 | **0.70 / 0.73 s** | 1.42 / 1.52 s | 1.33 / 1.42 s | 1.16 / 1.31 s |
+| 400 | 2.84 / 2.92 s | **1.96 / 2.05 s** | 2.49 / 2.62 s | 1.96 / 2.13 s |
+| 1,000 | 49.98 / 50.87 s | **6.86 / 6.87 s** | 10.22 / 10.26 s | 7.76 / 8.00 s |
+
+(min / median; bold marks the fastest of the four on that row.)
+
+Pairing work (each engine's own median floor above subtracted from its
+own median cold number):
+
+| players | bbpPairings | Gacrux | Ainalrami v0.33.0 | Ainalrami perf-large-fields |
+|---|---|---|---|---|
+| 209 | 0.57 s | **0.34 s** | 0.55 s | 0.44 s |
+| 400 | 2.75 s | **0.87 s** | 1.75 s | 1.26 s |
+| 1,000 | 50.71 s | **5.69 s** | 9.39 s | 7.13 s |
+
+perf-large-fields over v0.33.0: **1.24×, 1.39×, 1.32×** faster on this
+axis (209/400/1,000) - in the same range as `docs/performance.md`'s own
+"pairing" part at 150-600 players (1.5-1.7×), on a very different
+workload (cold CLI process vs. a click's worth of work timed in-VM).
+Against Gacrux, pairing work is still **1.29×, 1.44×, 1.25×
+slower** - the same "1.15-1.45×" band the original table found, not
+narrowed by this rewrite, because the rewrite targets the matcher
+perf-large-fields improves on both sides of. Against bbpPairings the
+pairing work is **1.29×, 2.19×, 7.11×** quicker.
+
+**The 600-player round shapes** (cold process, min / median) turn out to
+matter more than the player count:
+
+| round | bbpPairings | Gacrux | Ainalrami v0.33.0 | Ainalrami perf-large-fields |
+|---|---|---|---|---|
+| 1 (no history) | 9.46 / 9.87 s | 2.09 / 2.11 s | 0.82 / 0.86 s | **0.83 / 0.83 s** |
+| 2 (one round played) | 8.16 / 8.19 s | **2.19 / 2.26 s** | 11.20 / 11.21 s | 7.20 / 7.30 s |
+| 9 (late, relaxed colour) | 12.35 / 12.91 s | 3.79 / 3.99 s | 5.20 / 6.08 s | **3.27 / 3.40 s** |
+
+Round 1 has no history for the local-graph fast path to worry about, so
+both Ainalrami builds clear bbpPairings by ~11× and Gacrux by ~2.5×.
+Round 9 - the shape that exercises `final_round_topscorers?/2`'s
+last-two-rounds relaxation - is perf-large-fields's best result of this
+whole pass: faster than Gacrux, not just bbpPairings. Round 2 is the
+opposite: a field one round in has few, very large score-group brackets,
+which is exactly the shape `local_eligible?/4`'s parity-dependent guard
+turns away from the cheap path (documented in `tools/parity_bench.exs`'s
+own moduledoc) - both Ainalrami builds fall back to the whole-field
+matcher there, and even perf-large-fields lands behind bbpPairings and
+more than 3× behind Gacrux on this one shape.
+
+**Pinned, `+S 2:2`** (the production VPS's core count; bbpPairings and
+Gacrux are single-threaded already, so only Ainalrami was re-measured -
+min / median):
+
+| file | Ainalrami v0.33.0 | Ainalrami perf-large-fields |
+|---|---|---|
+| 209 | 1.57 / 1.59 s | **1.37 / 1.38 s** |
+| 400 | 2.78 / 3.81 s | **2.41 / 2.44 s** |
+| 1,000 | 12.26 / 13.14 s | **9.32 / 9.54 s** |
+| 600, round 1 | 1.01 / 1.04 s | **0.91 / 0.97 s** |
+| 600, round 2 | 13.21 / 14.20 s | **8.57 / 9.37 s** |
+| 600, round 9 | 5.23 / 5.36 s | **3.44 / 3.52 s** |
+
+perf-large-fields is faster than v0.33.0 at every size and every round
+shape, pinned or not - the round-2 gap is the widest of all of them
+(v0.33.0 loses more of its two cores to the whole-field matcher than
+perf-large-fields does).
+
+**Read honestly: still behind Gacrux, not ahead of it.** The rewrite
+narrows Ainalrami's own gap to its predecessor by roughly a third
+(1.24-1.39×) without closing the gap to Gacrux, which sits essentially
+where the original table left it (1.15-1.45× before, 1.25-1.44× now - the
+difference is machine load, not the matcher). Where Ainalrami now wins
+outright is round shape rather than field size: a fresh round 1 and a
+late, colour-relaxed round both beat Gacrux under this load, and only the
+one-round-of-history shape - large, thin score-group brackets - still
+sends it to the slow path Gacrux's transposition procedure never needs.
+
 ## Pairings (VCL4THP Q33), both directions
 
 VCL4THP v13 Q33 asks for at least 50,000 tournaments cross-checked each way
