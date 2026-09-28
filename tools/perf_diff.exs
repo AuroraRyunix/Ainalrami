@@ -53,6 +53,8 @@
 #                    (default 25)
 #   DIFF_OUT         log path (default perf_diff.log)
 #   DIFF_EXTRAS      "0" turns the soft-pair / bye-exclusion extras off
+#   DIFF_SCALE       percent of each corpus axis's tournaments to run
+#                    (default 100; the first seeds of each axis)
 
 alias Ainalrami.{Alternatives, Pairing}
 alias Ainalrami.Test.FuzzTournament, as: Fuzz
@@ -405,6 +407,8 @@ defmodule PerfDiff.Corpus do
       # Seeds are disjoint between axes and between sets.
       offset = %{"small" => 0, "flags" => 5_000_000, "large" => 9_000_000}[name]
       seed_from = offset + index * 100_000 + 1
+      # DIFF_SCALE=25 runs a quarter of every axis, on the same first seeds.
+      count = max(1, div(count * PerfDiff.int("DIFF_SCALE", 100), 100))
 
       try do
         run_axis.(axis, seed_from, count, Path.join(dir, axis <> ".log"))
