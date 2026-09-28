@@ -4832,6 +4832,108 @@ defmodule Ainalrami.Pairing do
     # field - see `tie_unit` above.
     top = field |> Enum.map(&bit(&1.points >= top_score)) |> List.to_tuple()
 
+    case certain_bootstrap(arr, n, blocked, ranks, prefs, vertex, top) do
+      {:ok, result} ->
+        result
+
+      :search ->
+        searched_bootstrap(arr, n, blocked, ranks, prefs, vertex, top, half_const, tie_unit)
+    end
+  end
+
+  # The bootstrap's answer without the matching, where it can be proved.
+  #
+  # Written out on the matcher's (doubled) scale, the weight of a matching
+  # M that pairs every player but one, L, over compatible edges only is
+  #
+  #     2 * tie_unit * (K + C - (eligibility_unit * inelig(L) + place(L))) + 2 * T
+  #
+  # where K and C are the same for every such M - `cardinality_unit` and
+  # the per-vertex terms summed over the whole field - and T is the number
+  # of M's edges lying wholly inside the top score group. A matching that
+  # uses an incompatible edge pairs one fewer compatible edge and loses a
+  # whole `cardinality_unit`, which outweighs everything after it (that is
+  # what `cardinality_unit` is sized for above), and T is below `tie_unit`.
+  # So the optimum is lexicographic: first all but one player paired over
+  # compatible edges, if that is possible at all; then the leftover's
+  # `(inelig, place)` as small as possible (`eligibility_unit` outranks any
+  # place); then T as large as possible.
+  #
+  # The two things this function returns depend on the optimum only
+  # through those three: the bye score is the leftover's score, which its
+  # place names (places are distinct per score), and `first_single_bye?/4`
+  # asks whether the leftover is in the top group and every other top
+  # player is paired inside it - T at its ceiling `(|top| - 1) / 2`. Every
+  # optimal matching agrees on all three, so every optimal matching gives
+  # the same answer, and the matcher returns one of them.
+  #
+  # So if a matching can be EXHIBITED that reaches the best value each of
+  # the three could possibly take - all but one paired, a leftover whose
+  # `vertex` term is the least in the field, and T at its bound
+  # `(|top| - [leftover in top]) / 2` - it is optimal, and its answer is
+  # the answer. This builds one greedily: leave out the LAST player with the
+  # least `vertex` term (`vertex` is exactly `(inelig, place)` in
+  # lexicographic order), and pair the rest in field order, each with the
+  # first later player it is compatible with - the same compatibility the
+  # search's edges are weighted by. When that pairs everyone and the top
+  # group comes out internal, the answer is read off it. Anything else -
+  # a player left without a partner, a top group split more than it had
+  # to be - goes to the search, which is the old path unchanged; failing
+  # to find the certificate costs nothing but the attempt.
+  #
+  # The search was a whole-field matching over a complete graph - on an
+  # odd field it built every one of the field's n^2/2 edges and grew a
+  # tree over all of them, a sixth of a 300-player round - and the round
+  # pays for it again in every forced search `Ainalrami.Alternatives` runs.
+  defp certain_bootstrap(arr, n, blocked, ranks, prefs, vertex, top) do
+    least = vertex |> Tuple.to_list() |> Enum.min()
+    leftover = Enum.max(for i <- 0..(n - 1)//1, elem(vertex, i) == least, do: i)
+
+    compatible? = fn i, j ->
+      not is_map_key(elem(blocked, i), elem(ranks, j)) and
+        colours_pairable?(arr, elem(prefs, i), elem(prefs, j), i, j)
+    end
+
+    others = for i <- 0..(n - 1)//1, i != leftover, do: i
+
+    with {:ok, pairs} <- pair_in_order(others, compatible?, []) do
+      top_players = Enum.count(0..(n - 1)//1, &(elem(top, &1) == 1))
+      bound = div(top_players - elem(top, leftover), 2)
+      internal = Enum.count(pairs, fn {i, j} -> elem(top, i) == 1 and elem(top, j) == 1 end)
+
+      if internal == bound do
+        matching = Enum.reduce(pairs, %{}, fn {i, j}, m -> m |> Map.put(i, j) |> Map.put(j, i) end)
+        score = elem(arr, leftover).points
+        {:ok, {score, first_single_bye?(arr, n, matching, score)}}
+      else
+        :search
+      end
+    else
+      :none -> :search
+    end
+  end
+
+  # Each player in order with the first later one it is compatible with.
+  defp pair_in_order([], _compatible?, acc), do: {:ok, acc}
+
+  defp pair_in_order([i | rest], compatible?, acc) do
+    case take_first(rest, &compatible?.(i, &1), []) do
+      {j, rest} -> pair_in_order(rest, compatible?, [{i, j} | acc])
+      nil -> :none
+    end
+  end
+
+  defp take_first([], _match?, _skipped), do: nil
+
+  defp take_first([x | xs], match?, skipped) do
+    if match?.(x),
+      do: {x, Enum.reverse(skipped, xs)},
+      else: take_first(xs, match?, [x | skipped])
+  end
+
+  # The bootstrap as a whole-field maximum-weight matching - the path every
+  # case the certificate above cannot settle still takes, unchanged.
+  defp searched_bootstrap(arr, n, blocked, ranks, prefs, vertex, top, half_const, tie_unit) do
     # dutch.cpp:768-791: `compatible/4`-failing pairs still get a
     # real edge here (`edgeWeight` starts at, and for these stays,
     # exactly 0) - the bootstrap matching_computer is built as a
