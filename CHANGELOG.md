@@ -64,6 +64,40 @@ with the reference on every one of them.
 
 ## [Unreleased]
 
+- [Performance] **The pairing past Gacrux on every benchmark file, every
+  answer unchanged.** Pairing work (a cold run minus start-up) on the
+  files `docs/validation.md` compares the three engines on: 209 players
+  0.32 s -> 0.08 s, 400 players 1.24 s -> 0.11 s, 1,000 players 7.17 s ->
+  0.14 s, a 600-player round 2 6.72 s -> 0.07 s and round 9 2.58 s -> 0.17
+  s - Gacrux 0.24, 0.97, 6.39, 1.29 and 2.55 s on the same files, so 3x
+  to 46x behind now where it was 1.25-5x ahead. From 400 players up this
+  engine is the fastest of the three cold as well; at 209 bbpPairings'
+  start-up still wins the cold total. How: most brackets are now answered
+  without the eight refinement stages, by walking Article 3's own order
+  (MDP partners, then S1 into S2) and accepting only a matching that meets
+  an upper bound on every ladder rung - which proves it is the stages'
+  answer - or, on a graph of up to 12 vertices, by listing every
+  maximum-weight matching and applying the stages' decisions to the list;
+  in certified mode also the round-2 brackets over players on zero and the
+  lone leaders on top of a round, which used to run on the whole-field
+  graph. Anything the proof does not cover goes to the stages as before.
+  `AINALRAMI_DIRECT=off` turns it off, `=check` holds every direct answer
+  to the stages' and raises on a difference. The completability oracle is
+  solved once instead of by every question before the first bracket.
+  Details in `docs/performance.md`.
+- [Verified] The direct brackets against v0.33.0 on the differential
+  corpus: 892,324 rounds (every set, in the default configuration and with certified mode forced), 0 differences; in check mode (each direct answer held to the stages
+  on the same bracket, certified mode forced) 44,325 rounds, 149,356 direct
+  answers, 0 differences; `mix test --timeout 300000` 811 of 811;
+  bbpPairings direction 1 on 1,000 tournaments of 4-40 players (8,402
+  rounds, 99,305 pairs) and 100 of 60-160 (800 rounds, 43,888 pairs),
+  100.00% and no colour disagreement on 138,816 boards; direction 2 on
+  595 bbpPairings-generated tournaments (5,930 rounds, 346,901 pairs), 0
+  composition and 0 colour mismatches.
+- [Change] `tools/perf_diff.exs`: `DIFF_CHUNK` runs a corpus in resumable
+  chunks, `DIFF_AXES` and `DIFF_LIMIT` narrow it, `DIFF_SUBSET=1` compares a
+  partial run against a full baseline.
+
 ## [0.34.0] - 2026-09-28
 
 - [Feature] **`Alternatives.float_alternative/5` - one floater's "why him

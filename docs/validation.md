@@ -1010,10 +1010,12 @@ separately, see [Team Swiss pairings](#team-swiss-pairings-c046)) and the
 
 ## Performance
 
-**Current figures are in [performance.md](performance.md)**: the
-2026-09-28 pass over 150-600-player fields, measured against v0.33.0 and
-held byte-identical to it over 445,172 rounds. What follows is the
-history up to v0.33.0.
+**Current figures are in [performance.md](performance.md)**: the direct
+bracket, which put the pairing ahead of Gacrux on every benchmark file
+(see [the re-run for it](#re-run-for-the-direct-bracket-2026-09-28-beat-gacrux)
+below), and before it the 2026-09-28 pass over 150-600-player fields,
+each held byte-identical to v0.33.0 on the differential corpus. What
+follows is the history up to v0.33.0.
 
 Correctness has never been the constraint here; field size is. One round
 of a real 209-player tournament, cut down to size:
@@ -1282,6 +1284,64 @@ outright is round shape rather than field size: a fresh round 1 and a
 late, colour-relaxed round both beat Gacrux under this load, and only the
 one-round-of-history shape - large, thin score-group brackets - still
 sends it to the slow path Gacrux's transposition procedure never needs.
+
+### Re-run for the direct bracket (2026-09-28, `beat-gacrux`)
+
+The same six files and the same cold-process method, on the branch that
+answers most brackets without the refinement stages
+([performance.md](performance.md#the-direct-bracket-2026-09-28)),
+against perf-certify (the tree it builds on: v0.34.0 plus the certified
+shortcuts) and both references. Boards identical across all four
+programs on every file, colours included - 105/105, 200/200, 500/500 and
+300/300 on each 600-player round shape. Median of 5 cold runs (3 at 1,000
+players); one other job (`python`) ran throughout at ~15% of total CPU,
+much less than the 40-80% of the re-run above, which is why every
+absolute number here is lower than there.
+
+**Cold process, start to finish:**
+
+| file | bbpPairings (C++) | Gacrux (Python) | Ainalrami perf-certify | Ainalrami beat-gacrux |
+|---|---|---|---|---|
+| 10 players (start-up floor) | **0.05 s** | 1.08 s | 0.75 s | 0.75 s |
+| 209, round 6 | **0.59 s** | 1.32 s | 1.07 s | 0.83 s |
+| 400, round 6 | 2.81 s | 2.05 s | 1.99 s | **0.86 s** |
+| 1,000, round 6 | 51.6 s | 7.47 s | 7.92 s | **0.89 s** |
+| 600, round 1 | 9.59 s | 2.22 s | 0.74 s | **0.74 s** |
+| 600, round 2 | 8.29 s | 2.37 s | 7.47 s | **0.82 s** |
+| 600, round 9 | 10.8 s | 3.63 s | 3.33 s | **0.92 s** |
+
+**Pairing work** (each program's own floor subtracted):
+
+| file | bbpPairings | Gacrux | Ainalrami perf-certify | Ainalrami beat-gacrux |
+|---|---|---|---|---|
+| 209 | 0.54 s | 0.24 s | 0.32 s | **0.08 s** |
+| 400 | 2.76 s | 0.97 s | 1.24 s | **0.11 s** |
+| 1,000 | 51.6 s | 6.39 s | 7.17 s | **0.14 s** |
+| 600, round 1 | 9.54 s | 1.14 s | 0.00 s | **0.00 s** |
+| 600, round 2 | 8.24 s | 1.29 s | 6.72 s | **0.07 s** |
+| 600, round 9 | 10.8 s | 2.55 s | 2.58 s | **0.17 s** |
+
+**Read honestly: ahead of Gacrux now, on every file.** 3.0x at 209
+players, 8.8x at 400, 46x at 1,000, 18x on the one-round-of-history shape
+that was 5x behind, 15x on the late round. Against bbpPairings the pairing
+work is 7-370x quicker. The one cold total this engine does not win is the
+209-player file, where bbpPairings' 0.05 s start-up against the BEAM's 0.75
+s decides it; from 400 players up this engine is the fastest of the three
+cold as well. What closed the gap was not faster code but less matching -
+Gacrux's own lesson: most brackets are now answered by walking Article 3's
+order and proving the result is what the stages would return, and a
+1,000-player round is cheaper to pair than to start the VM for. Pinned to
+two schedulers (the production VPS) the beat-gacrux column is unchanged
+within noise. Every answer is the one v0.33.0 gives: 892,324 rounds of the
+differential corpus, 0 differences
+([performance.md](performance.md#how-it-was-checked)).
+
+The files and scripts: `Ainalrami.Generator` with
+`--seed=<20260827 + players> --players=<n> --rounds=<played>`, every file's
+`142` raised to 9 and no `XXR` line added (bbpPairings refuses a file whose
+`XXR` disagrees with the rounds it holds); Gacrux
+invoked as `pairingchecker.py -i FILE -o OUT -p -dT -m dutch`, bbpPairings
+as `--dutch FILE -p OUT`, this engine as its escript's `FILE -p OUT`.
 
 ## Pairings (VCL4THP Q33), both directions
 

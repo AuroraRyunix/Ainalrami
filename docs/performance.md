@@ -1,4 +1,241 @@
-# Performance: large fields (2026-09-28)
+# Performance
+
+Two passes, newest first: the direct bracket, which took the pairing past
+Gacrux on every benchmark file, and the large-field pass before it.
+
+## The direct bracket (2026-09-28)
+
+On the benchmark files `docs/validation.md` compares the three engines
+on, the pairing work - a cold run minus the engine's own start-up - is
+now **0.08 s at 209 players, 0.11 s at 400, 0.14 s at 1,000, and 0.07 s
+and 0.17 s for rounds 2 and 9 of a 600-player open**, from 0.32-7.2 s, and
+the output is byte-identical to v0.33.0's. Gacrux (Python + networkx) was
+faster than this engine on every file but a fresh round 1; it is now 3x
+slower at 209 players and 9-46x slower on the rest.
+
+### Results
+
+Cold process, start to finish, median of 5 runs (3 at 1,000 players; min
+within 0.03 s of the median everywhere): the same six files as
+`docs/validation.md`'s 2026-09-28 re-run (`Ainalrami.Generator`, seed
+`20260827 + players`; 5 rounds played and round 6 paired at 209, 400 and
+1,000; rounds 1, 2 and 9 at 600), every file's boards identical across all
+four programs, colours included (105/105, 200/200, 500/500, 300/300 x3).
+"Before" is perf-certify (v0.34.0 plus the certified shortcuts), which this
+builds on. An i7-10700 (8 cores, 16 threads) with one other job running
+throughout at ~15% of total CPU.
+
+| file | bbpPairings | Gacrux | before | after |
+|---|---|---|---|---|
+| 10 players (start-up floor) | **0.05 s** | 1.08 s | 0.75 s | 0.75 s |
+| 209, round 6 | **0.59 s** | 1.32 s | 1.07 s | 0.83 s |
+| 400, round 6 | 2.81 s | 2.05 s | 1.99 s | **0.86 s** |
+| 1,000, round 6 | 51.6 s | 7.47 s | 7.92 s | **0.89 s** |
+| 600, round 1 | 9.59 s | 2.22 s | 0.74 s | **0.74 s** |
+| 600, round 2 | 8.29 s | 2.37 s | 7.47 s | **0.82 s** |
+| 600, round 9 | 10.8 s | 3.63 s | 3.33 s | **0.92 s** |
+
+Pairing work, each program's own floor subtracted:
+
+| file | bbpPairings | Gacrux | before | after | after vs Gacrux |
+|---|---|---|---|---|---|
+| 209, round 6 | 0.54 s | 0.24 s | 0.32 s | **0.08 s** | 3.0x faster |
+| 400, round 6 | 2.76 s | 0.97 s | 1.24 s | **0.11 s** | 8.8x |
+| 1,000, round 6 | 51.6 s | 6.39 s | 7.17 s | **0.14 s** | 46x |
+| 600, round 1 | 9.54 s | 1.14 s | 0.00 s | **0.00 s** | - |
+| 600, round 2 | 8.24 s | 1.29 s | 6.72 s | **0.07 s** | 18x |
+| 600, round 9 | 10.8 s | 2.55 s | 2.58 s | **0.17 s** | 15x |
+
+Pinned to two schedulers (`ERL_FLAGS="+S 2:2"`, the production VPS; the
+pairing is single-threaded) the after column is 0.80, 0.83, 0.86, 0.72,
+0.78 and 0.89 s cold - the same within noise. What is left of a cold run
+is the BEAM's start-up and reading the file; a 1,000-player round is now
+cheaper to pair than to start the VM for. bbpPairings keeps the smallest
+cold total on the 209-player file, on start-up alone (0.05 s against
+0.75 s).
+
+### Where the time was
+
+Profiled on the six benchmark files (perf-certify, which this builds on,
+timed in-VM with the per-bracket trace and `:tprof`):
+
+| file | round | in-VM | where |
+|---|---|---|---|
+| 209 players | 6 | 0.30 s | two small top brackets on the whole-field graph 0.20 s, seven local brackets 0.10 s |
+| 400 players | 6 | 1.2 s | a 3-player top bracket on the whole field 0.63 s, local brackets 0.6 s |
+| 1,000 players | 6 | 7.2 s | local brackets 7.1 s: 213 players 2.8 s, 218 2.1 s, 172 1.4 s |
+| 600 players | 2 | 6.8 s | field brackets of 172 (4.1 s) and 214 (2.1 s), a local one of 214 (0.7 s) |
+| 600 players | 9 | 2.3 s | a 5-player top bracket on the whole field 1.5 s, local brackets 0.9 s |
+
+Inside a bracket the time was the eight refinement stages' matcher work:
+on the 213-player bracket, the initial solve ~0.6 s, stage 4's re-solve
+1.4 s (its dual shift refused), stage 8 0.7 s. `:tprof` put 70-80% of a
+round in `Ainalrami.WeightedMatching`.
+
+Gacrux, `cProfile` on the same files: its pairing is one `pair_bracket`
+per score group, and most brackets are answered by `simple_permute` - a
+depth-first walk of Article 3's transposition order that accepts the first
+candidate every pair of which is clean on C9-C21 and whose colour clashes
+meet a counting bound - with a networkx `min_weight_matching` only where
+that walk fails (4-11 small matchings a round on these files). Its time
+goes mostly to building the crosstable - one Python object per pair of
+players, 500,000 at 1,000 players (`list_edges`, 2.0 s of 7.1 s there) - and
+the "hamilton" completability pre-pass (1.3 s); `pair_bracket` itself is
+2.5 s at 1,000 players and 0.19 s at 600 players round 2. So Gacrux was
+not faster code: it did less matching - a walk per bracket where this
+engine ran eight stages of a general weighted matcher, on the whole field
+for the top brackets.
+
+### What changed
+
+The same idea, held to a proof: a bracket whose answer can be shown to
+be the stages' answer is answered without them. Three pieces, in
+`Ainalrami.Pairing`:
+
+* **The direct walk** ("the direct bracket"). For a bracket on the local
+  graph, the stages' answer is the first matching, in the order "each MDP's
+  partner in turn, then each S1 player's partner in turn", among the
+  matchings of maximum criteria weight `C*` - when one of those pairs every
+  MDP and pairs S1 into S2 with no exchange. The walk visits that order
+  depth first and accepts a matching only when it meets an upper bound on
+  every ladder rung at once - per-edge bests for C10, C11, C15, C17, C19
+  and C21; counting bounds for C12 and C13 from the members' colour
+  preferences; the floater's own downfloat bits for C14 and C16 - which
+  makes it a `C*`-optimum outright; every choice it discards breaks a
+  necessary condition of meeting those bounds. The derivation of each
+  bound, and why each stage returns what the walk returns, is the
+  section comment. It gives up (and the stages run as before) when a
+  choice for an MDP passes every necessary condition but its remainder
+  has no exchange-free answer, when it runs past a budget of `32n + 512`
+  edge checks, or on soft pairs and the experimental ladder switches.
+* **The small bracket.** A graph of at most 12 vertices has few enough
+  maximum-weight matchings to list, and the stages' decisions are then
+  filters over that list, applied in their order - stage 1 keeps an MDP
+  inside if some optimum does, stage 2 and stage 8 take the best-ranked
+  partner some optimum gives, stages 4-6 keep the exchange weights' optima
+  and exchange a player if some optimum does. Every value a stage reads
+  off the matching is checked to be the same across the optima left at
+  that point, and a read that is not ends the attempt. This covers the
+  small brackets the walk cannot, exchanges included.
+* **Brackets the local graph turned away** (`attempt_direct_field/7`,
+  certified mode only). An even bracket of an even field whose window
+  holds players on zero - round 2 of every large open - is its own local
+  problem once the rest of the field can be completed: with no bye, every
+  optimum of the field graph is perfect and C6 then keeps the bracket
+  inside. An odd bracket over a next group too small for the stand-in
+  (the lone leaders at the top of a round) is the direct walk over the
+  floaters the field below can absorb at the completion and C8 rungs'
+  bounds: shown by the completability oracle for the rest of the field
+  and a small exact matching on the next group plus the floater. Neither
+  leaves the round matcher the reference would carry, so a later field
+  bracket's reads are certified (the certified mode's own contract), and a
+  later bracket that would build the matcher with a different C9 gate
+  than the reference's sends the round back to the reference path.
+
+And one cost the direct brackets exposed: the completability oracle was
+solved from cold by every question asked of it before the first bracket
+was accepted - eight times for the 400-player file's first bracket. It
+is now solved once and kept; its answers are properties of its graph, not
+of the state it keeps.
+
+### How it was checked
+
+Every check below ran on the committed engine.
+
+#### Differential against v0.33.0: 892,324 rounds, 0 differences
+
+`tools/perf_diff.exs` (described under the large-field pass below), run
+on this tree and compared with the v0.33.0 logs of that pass, round by
+round - the pairing or refusal, `explain_round/3`, the perturbed pairing's
+explanation and `Alternatives.judge/4`, and on a sampled share of rounds
+every forced search `Alternatives` runs. Twice: in the default
+configuration, where the local-graph direct brackets run on every field
+size and the field-graph ones from 100 players up, and with
+`AINALRAMI_CERT=force`, which puts the field-graph ones on the small
+fields too.
+
+| set | default | `AINALRAMI_CERT=force` |
+|---|---|---|
+| small (8 axes, 4-40 players) | 370,777 rounds | 370,777 rounds |
+| flags (field graph only, strand repair, completion reading) | 68,898 | 68,898 |
+| large (60-600 players) | 5,497 | 5,497 |
+| early (100-600 players, opening rounds) | 1,980 | - |
+| | **447,152 rounds, 0 differing, 0 missing** | **445,172 rounds, 0 differing, 0 missing** |
+
+214,272 of those rounds also fingerprinted the alternatives. The pairing
+calls of the two runs (the alternatives' own forced pairings not counted)
+were answered directly 2,113,871 times.
+
+#### Each direct answer held to the stages' on the same bracket
+
+`AINALRAMI_DIRECT=check` pairs every bracket the direct brackets answer
+with the stages as well, from the same state, and raises on any
+difference. Run on the first 400 tournaments of every axis of the four
+sets (fewer where an axis has fewer), certified mode forced: 44,325
+rounds, 149,356 direct answers checked, 0 differences - and the same
+44,325 rounds identical to v0.33.0 end to end. `test/ainalrami/direct_bracket_test.exs`
+does the same on 243 generated tournaments of 4-180 players at every
+`mix test`, and also pairs every round with `AINALRAMI_DIRECT=off` and
+requires the two to agree.
+
+#### Against the references
+
+* **`mix test --timeout 300000`**: 811 tests, 0 failures (5 tags excluded
+  by default); `--only interop` 2 of 2.
+* **bbpPairings, direction 1** (`mix test --only bbppairings`): 1,000
+  tournaments of 4-40 players over 9 rounds (8,402 rounds, 99,305 pairs)
+  and 100 of 60-160 players over 8 rounds (800 rounds, 43,888 pairs) -
+  **100.00%, 0 refused, 0 illegal**, no disagreement about who is White on
+  138,816 boards.
+* **bbpPairings, direction 2** (`tools/bbp_generator_reverse.exs`, seeds
+  910001-910600): bbpPairings could not generate 5; on the other 595,
+  **5,930 rounds, 346,901 pairs, 0 composition mismatches**, 0 colour
+  mismatches on 309,481 shared boards.
+* The matcher (`Ainalrami.WeightedMatching`) is unchanged, so the
+  lockstep was not re-run.
+
+#### Reproducing
+
+    # the corpus, resumably, against a baseline's logs
+    DIFF_CHUNK=100 MIX_ENV=test mix run tools/perf_diff.exs corpus small OUT/new/small
+    MIX_ENV=test mix run tools/perf_diff.exs compare OUT/base/small OUT/new/small
+
+    # each direct answer against the stages, a slice of every axis
+    AINALRAMI_DIRECT=check AINALRAMI_CERT=force DIFF_LIMIT=400 DIFF_CHUNK=50 \
+      MIX_ENV=test mix run tools/perf_diff.exs corpus small OUT/check/small
+
+    # the benchmark files
+    ainalrami -g f.trf --seed=$((20260827 + N)) --players=N --rounds=5   # then 142 -> 9
+
+### What is left, and what was tried
+
+* **Where the direct brackets give up.** Over the check-mode run above,
+  the walk and the small bracket answered 149,356 brackets; the stages
+  still paired those with no perfect local matching (17,726 - they go to
+  the field graph as before), those whose floater the walk could not show
+  to be the stages' (1,405), MDP choices whose remainder needed an
+  exchange (319, plus 285 whose bounds no matching met) and 250 walks
+  past their budget. A large bracket that needs an exchange is the case
+  still paid in full.
+* **Odd fields.** An odd 1,001-player round 6 (seed 20261828), measured
+  once while the differential corpus was running: Gacrux 11.8 s cold,
+  perf-certify 10.7 s, this 2.2 s. Its first bracket asks the
+  completability oracle once per member of an even next group (18 there);
+  re-adding each member to one solved state instead of removing the rest
+  from scratch each time is the next saving.
+* **Not re-measured**: the explanation and the alternatives. Both call
+  the same pairing, so both inherit the speed-up; the click tables of
+  the large-field pass below are v0.34.0's.
+* **Tried and fixed before the first commit**: the C13 bound first
+  counted two absolute preferences for the same colour as a pair that
+  keeps C13, which only the final-round exception allows - an unreachable
+  bound, so the walk exhausted its budget on the large brackets of the
+  1,000-player file (never a wrong answer, since nothing below a met
+  bound is accepted). And the first cut of the field-graph odd brackets
+  solved the oracle from cold for every question: 0.43 s of a 0.56 s
+  round at 400 players.
+
+## The large-field pass (2026-09-28)
 
 A pass over the engine for fields of 150-600 players. A large field's
 whole round - pairing, explanation and alternatives - is now **2.5-2.8x
@@ -8,7 +245,7 @@ output is **byte-identical to v0.33.0**: the same pairings, the same
 rounds. This document says where the time was, what changed, why each
 change cannot move an answer, and how that was checked.
 
-## Results
+### Results
 
 Generated opens of 150, 300, 450 and 600 players (`tools/perf_bench.exs`:
 ratings falling with the starting rank, results drawn from FIDE's expected
@@ -26,7 +263,7 @@ itself is single-threaded, so it is the same on both; the alternatives
 run one forced search per scheduler and gain more the more cores there
 are.
 
-### The whole click
+#### The whole click
 
 At `+S 2:2`:
 
@@ -63,7 +300,7 @@ slower of the two):
 | 10 |  |  |  |  | 13.8 s | 3.84 s | 36.9 s | 12.6 s |
 | 11 |  |  |  |  | 67.7 s | 20.0 s | 115.4 s | 32.3 s |
 
-### Each part, `+S 2:2`
+#### Each part, `+S 2:2`
 
 The pairing:
 
@@ -92,7 +329,7 @@ The alternatives:
 | 450 | 22 | 10.3 s | 3.26 s | 65.4 s | 18.8 s | 157.2 s | 59.3 s | 3.1x |
 | 600 | 22 | 6.73 s | 2.57 s | 50.1 s | 16.3 s | 110.3 s | 29.7 s | 3.3x |
 
-### Each part, `+S 12:12`
+#### Each part, `+S 12:12`
 
 The pairing:
 
@@ -121,7 +358,7 @@ The alternatives:
 | 450 | 22 | 10.6 s | 1.86 s | 66.1 s | 9.56 s | 157.7 s | 25.1 s | 6.7x |
 | 600 | 22 | 6.68 s | 1.97 s | 54.5 s | 9.18 s | 111.0 s | 14.6 s | 6.4x |
 
-### The pairing by round, `+S 2:2`
+#### The pairing by round, `+S 2:2`
 
 | round | 150 before | after | 300 before | after | 450 before | after | 600 before | after |
 |---|---|---|---|---|---|---|---|---|
@@ -155,7 +392,7 @@ gate reads the tie they settle in the field below, so nothing here may
 pick a different optimum there. That is the next target (see "Tried and
 reverted").
 
-### OpenPairings, end to end
+#### OpenPairings, end to end
 
 OpenPairings' "Pair round" click (`PairingsEngine.Pairing.pair_next_round/2`)
 timed span by span on a development copy (SQLite, the dev database), with
@@ -198,7 +435,7 @@ the pin bump that follows it. The dominant remaining cost of a late
 round is still the alternatives, one forced re-pairing per candidate; on
 the 2-vCPU server they run two at a time.
 
-## Where the time was
+### Where the time was
 
 Measured on v0.33.0 (`tools/perf_bench.exs`,
 and OpenPairings' "Pair round" click instrumented span by span):
@@ -228,11 +465,11 @@ and OpenPairings' "Pair round" click instrumented span by span):
   matching over the complete graph of the field to find the bye score
   (100 ms of every 300-player explanation).
 
-## What changed, and why it cannot move an answer
+### What changed, and why it cannot move an answer
 
 Grouped by the argument that makes each one safe.
 
-### Same values, computed once
+#### Same values, computed once
 
 * **Per-round player facts** (`Pairing.with_round_facts/1`): who each
   player has met, whether they may take the bye, and how many games they
@@ -253,7 +490,7 @@ Grouped by the argument that makes each one safe.
 
 These are refactors: the same functions of the same inputs.
 
-### The same searches, side by side
+#### The same searches, side by side
 
 * **Alternatives run in parallel** (`Alternatives.attempts/1`), one
   forced search per scheduler. Each search is a complete pairing that
@@ -263,7 +500,7 @@ These are refactors: the same functions of the same inputs.
   a search that raises is re-raised in the caller exactly where the loop
   would have raised it. Tracing keeps the sequential order.
 
-### The matcher, held to v0.33.0 call by call
+#### The matcher, held to v0.33.0 call by call
 
 `Ainalrami.WeightedMatching` is shared by the individual and the team
 engines, and it breaks ties by the order edges are offered - so a faster
@@ -295,7 +532,7 @@ after every call. It detects a flipped tie-break in a single minimum
 (mutation-tested). Result: every call identical, state included, over
 46,000 sessions of the final matcher.
 
-### A certificate instead of a search: the bye bootstrap
+#### A certificate instead of a search: the bye bootstrap
 
 On an odd field the bye assignee's score came from a maximum-weight
 matching over the complete graph of the field. Its two outputs - the bye
@@ -308,7 +545,7 @@ that does is optimal and gives the same answer. Any field it cannot
 certify goes to the search exactly as before. Checked against the search
 on 19,142 bootstraps before the self-check was taken out.
 
-### A dual shift instead of a re-solve: stages 4, 7 and 8
+#### A dual shift instead of a re-solve: stages 4, 7 and 8
 
 The refinement stages rewrite weights and re-solve: stage 4 adds the
 exchange weights to every remainder pair, stage 7 takes them off again,
@@ -350,12 +587,12 @@ That is an argument, not a proof by construction like the lockstep; the
 differential corpus below is the check, and every one of its rounds that
 reaches a last bracket or a local bracket goes through these shifts.
 
-## How it was checked
+### How it was checked
 
 Every check below ran on the final engine (commit `eb23820`, the
 matcher unchanged since `b958b3e`), not on an intermediate one.
 
-### Differential against v0.33.0: 445,172 rounds, 0 differences
+#### Differential against v0.33.0: 445,172 rounds, 0 differences
 
 `tools/perf_diff.exs` plays generated tournaments forward
 (`Ainalrami.Test.FuzzTournament`, the generator every corpus in this
@@ -398,7 +635,7 @@ builds to v0.33.0 as well (12,882 + 12,820 rounds at 4-40, 1,080 at
 60-200), and 744 round-1 fields of 4-129 players with club soft pairs or
 forbidden pairs.
 
-### The matcher: lockstep with v0.33.0
+#### The matcher: lockstep with v0.33.0
 
 `tools/matching_lockstep.exs` on the final matcher: 46,000 random
 sessions (seeds 700,000-705,999 and 1,000,001-1,040,000) shaped like the
@@ -409,7 +646,7 @@ value and every observable field of the state equal to v0.33.0's after
 every call. Each intermediate matcher commit was held to the same test
 before it was committed (up to 30,000 sessions each).
 
-### Against the references
+#### Against the references
 
 * **`mix test --timeout 300000`**: 804 tests, 0 failures (5 tags
   excluded by default); `--only interop` (the 209-player real
@@ -439,7 +676,7 @@ before it was committed (up to 30,000 sessions each).
   removed.
 
 
-## Tried and reverted
+### Tried and reverted
 
 * **A per-solve cache of row lists** in the settle loop, to avoid
   `:maps.to_list/1` per settle: 0.95-1.0x. Reverted.
@@ -455,7 +692,7 @@ before it was committed (up to 30,000 sessions each).
   unique optimum for the stage solves; a two-table cross design in the
   matcher. Each would need an argument this pass could not make airtight.
 
-## Reproducing
+### Reproducing
 
     # bench, this tree against v0.33.0 in one VM, alternately
     ELIXIR_ERL_OPTIONS="+S 2:2" PERF_REF=v0.33.0 mix run tools/perf_bench.exs
