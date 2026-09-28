@@ -106,6 +106,16 @@ defmodule Ainalrami.Pairing do
   # with the rest of the round-scoped keys.
   @round_matcher_key :ainalrami_round_matcher
   @dirty_key :ainalrami_dirty_edges
+  # Certified mode - see "Certified shortcuts" below `run_stages/1`. Whether
+  # the round's current attempt may take shortcuts (`@cert_key`), whether
+  # the round matcher has left the state the reference search would be in
+  # (`@taint_key`), the memo of dual contexts and candidate sets, and the
+  # run's counters (kept across rounds, only when AINALRAMI_CERT_STATS is
+  # set, for the benchmarks).
+  @cert_key :ainalrami_cert_mode
+  @taint_key :ainalrami_cert_tainted
+  @cert_memo_key :ainalrami_cert_memo
+  @cert_stats_key :ainalrami_cert_stats
   # The round.s completability oracle -- see `build_oracle/3`. Set by
   # `global_cascade/2`, consulted by `attempt_local/7`, cleared with the
   # rest of the round-scoped keys.
@@ -179,6 +189,8 @@ defmodule Ainalrami.Pairing do
   @env_completion_key :ainalrami_env_completion
   @env_trace_key :ainalrami_env_trace
   @env_nofast_key :ainalrami_env_nofast
+  @env_cert_key :ainalrami_env_cert
+  @env_cert_stats_key :ainalrami_env_cert_stats
 
   # Three facts about an active player that the rules ask for over and over
   # within one round - once per candidate EDGE, not once per player - and
@@ -1491,7 +1503,7 @@ defmodule Ainalrami.Pairing do
     Process.put(@first_single_bye_key, first_single_bye?)
 
     try do
-      case global_cascade(brackets, allowed_byes) do
+      case certified_cascade(brackets, allowed_byes) do
         {:ok, pairs, leftover} ->
           # `global_cascade/2` returns `:ok` only after `check_completion/3`
           # has passed on exactly these pairs and this leftover, so the round
@@ -1518,6 +1530,77 @@ defmodule Ainalrami.Pairing do
       Process.delete(@oracle_key)
       Process.delete(@dirty_key)
       Process.delete(@first_single_bye_key)
+      Process.delete(@cert_key)
+      Process.delete(@taint_key)
+      Process.delete(@cert_memo_key)
+    end
+  end
+
+  # `global_cascade/2` with the certified shortcuts allowed, and - if a
+  # shortcut's state ever meets a read it cannot certify - again from the
+  # start without them, which is the reference computation exactly: every
+  # round-scoped key the cascade uses is (re)initialised at its entry, and
+  # nothing before this call depends on the attempt.
+  #
+  # Only on a large field unless forced: a small round's searches are cheap
+  # and its reads are the ones most often tied, so the shortcuts would
+  # mostly buy certification work and retries.
+  @cert_min_field 100
+
+  defp certified_cascade(brackets, allowed_byes) do
+    size = brackets |> Enum.map(&length/1) |> Enum.sum()
+
+    if cert_enabled?() and (size >= @cert_min_field or cert_force?()) do
+      Process.put(@cert_key, true)
+
+      try do
+        global_cascade(brackets, allowed_byes)
+      catch
+        :throw, {:cert_abort, reason} ->
+          cert_count(:abort)
+          cert_count({:abort, reason})
+          Process.put(@cert_key, false)
+          global_cascade(brackets, allowed_byes)
+      end
+    else
+      Process.put(@cert_key, false)
+      global_cascade(brackets, allowed_byes)
+    end
+  end
+
+  # AINALRAMI_CERT=off takes the reference path everywhere; =force takes
+  # every shortcut there is, however small the solve it saves (for the
+  # corpus, which is mostly small fields).
+  defp cert_enabled?, do: env_flag(@env_cert_key, "AINALRAMI_CERT") != "off"
+
+  defp cert_force?, do: env_flag(@env_cert_key, "AINALRAMI_CERT") == "force"
+
+  @doc false
+  # The certified-mode counters accumulated in the calling process since the
+  # last call, when AINALRAMI_CERT_STATS is set (the benchmark reads them).
+  def take_cert_stats do
+    Process.delete(@cert_stats_key) || %{}
+  end
+
+  defp cert_count(key, by \\ 1) do
+    if env_flag(@env_cert_stats_key, "AINALRAMI_CERT_STATS") do
+      Process.put(
+        @cert_stats_key,
+        Map.update(Process.get(@cert_stats_key, %{}), key, by, &(&1 + by))
+      )
+    end
+
+    :ok
+  end
+
+  # `fun.()`, its time added to the counter `key` (ms) when counting.
+  defp cert_timed(key, fun) do
+    if env_flag(@env_cert_stats_key, "AINALRAMI_CERT_STATS") do
+      {us, value} = :timer.tc(fun)
+      cert_count(key, div(us, 1000))
+      value
+    else
+      fun.()
     end
   end
 
@@ -1990,12 +2073,16 @@ defmodule Ainalrami.Pairing do
     Process.put(@env_completion_key, read_env_flag("AINALRAMI_COMPLETION"))
     Process.put(@env_trace_key, read_env_flag("AINALRAMI_TRACE"))
     Process.put(@env_nofast_key, read_env_flag("AINALRAMI_NOFAST"))
+    Process.put(@env_cert_key, read_env_flag("AINALRAMI_CERT"))
+    Process.put(@env_cert_stats_key, read_env_flag("AINALRAMI_CERT_STATS"))
   end
 
   defp clear_env_flags do
     Process.delete(@env_completion_key)
     Process.delete(@env_trace_key)
     Process.delete(@env_nofast_key)
+    Process.delete(@env_cert_key)
+    Process.delete(@env_cert_stats_key)
   end
 
   defp read_env_flag(name), do: System.get_env(name) || :unset
@@ -2149,6 +2236,9 @@ defmodule Ainalrami.Pairing do
     # itself is created lazily by the first field-graph `solve/1`, and
     # rebuilt after any bracket the local graph answered.
     Process.put(@round_matcher_key, {nil, ctx.field_index, length(field)})
+    # A fresh matcher is the reference's own state until a shortcut is taken.
+    Process.put(@taint_key, false)
+    Process.delete(@cert_memo_key)
     # Whole-field and round-scoped, like the matcher: see `build_oracle/3`.
     Process.put(@oracle_key, build_oracle(field, allowed_byes, ctx))
 
@@ -2929,6 +3019,9 @@ defmodule Ainalrami.Pairing do
           Process.put(@oracle_key, oracle)
           {_, field_index, field_size} = Process.get(@round_matcher_key)
           Process.put(@round_matcher_key, {nil, field_index, field_size})
+          # The next field bracket builds its matcher from nothing, exactly
+          # as the reference does, so no shortcut's state survives this.
+          Process.put(@taint_key, false)
           {:ok, result}
 
         :no ->
@@ -2940,13 +3033,15 @@ defmodule Ainalrami.Pairing do
   end
 
   defp attempt_field(combined, m, sgb, nsgb, wsgb, ctx, single_bye?) do
-    {pairs, _, _, _} =
-      result =
+    st =
       new_bracket(:field, combined, m, sgb, nsgb, wsgb, m, ctx, single_bye?)
+      |> window_setup()
       |> solve()
       |> run_stages()
       |> flush_live()
-      |> collect_bracket()
+
+    {pairs, _, _, _} = result = collect_bracket(st)
+    graft_back(st)
 
     # Keep the oracle in step: whoever this bracket finalised is out of the
     # field for every later bracket's (b).
@@ -2962,6 +3057,12 @@ defmodule Ainalrami.Pairing do
   defp new_bracket(mode, combined, m, sgb, nsgb, wsgb, wl, ctx, single_bye?) do
     arr = List.to_tuple(combined)
     Process.delete(@dirty_key)
+
+    field_pos =
+      arr
+      |> Tuple.to_list()
+      |> Enum.map(&Map.fetch!(ctx.field_index, &1.rank))
+      |> List.to_tuple()
 
     # Field-wide and constant for the round -- see `global_context/2`. That
     # is what bbpPairings does too: `scoreGroupSizeBits`/`scoreGroupShifts`
@@ -2992,11 +3093,8 @@ defmodule Ainalrami.Pairing do
     %{
       mode: mode,
       arr: arr,
-      field_pos:
-        arr
-        |> Tuple.to_list()
-        |> Enum.map(&Map.fetch!(ctx.field_index, &1.rank))
-        |> List.to_tuple(),
+      field_pos: field_pos,
+      from_field: field_pos |> Tuple.to_list() |> Enum.with_index() |> Map.new(),
       m: m,
       wl: wl,
       sgb: sgb,
@@ -3015,6 +3113,13 @@ defmodule Ainalrami.Pairing do
       max_w: 1 + (base |> Map.values() |> Enum.max(fn -> 0 end)),
       matched: MapSet.new(),
       matching: %{},
+      # The round matcher as of the moment `matching` was last read off it
+      # (field graph only), for certifying reads - see `certified/3`.
+      snap: nil,
+      # A matching the next certified install may try besides the one held.
+      guess: nil,
+      # Set when the bracket runs on its window alone - see `window_setup/1`.
+      window: nil,
       remainder: [],
       remainder_pairs: 0,
       exchange_count: 0
@@ -3100,6 +3205,900 @@ defmodule Ainalrami.Pairing do
   defp solve(%{mode: :local} = st), do: solve_local(st)
   defp solve(st), do: solve_field(st)
 
+  ## ---------- certified shortcuts ----------
+  #
+  # The refinement stages ask the round matcher the same question again and
+  # again after small weight changes, and each answer is a search whose
+  # result the stages then READ: whether a player is paired down, paired
+  # inside the bracket, with whom, against what score. Where the answer can
+  # be PROVED instead of searched for, the search can be skipped - but the
+  # matcher breaks ties by the order of its search, and the next search
+  # starts from the state the last one left, so a shortcut that leaves a
+  # different optimum (or merely different duals) behind could change which
+  # optimum a later search lands on. The engine would then be answering a
+  # different question than v0.33.0 answered.
+  #
+  # So a shortcut is allowed to change the matcher's state only under a
+  # contract that makes the state irrelevant. From the first shortcut of a
+  # round on (the state is "tainted"), every value the stages read from a
+  # matching is CERTIFIED to be the same in every maximum-weight matching of
+  # the weights it was read at (`certified/3`), using an optimal dual
+  # solution of those weights: complementary slackness pins every optimum's
+  # partners of a vertex to its zero-reduced-cost edges (and lets it go
+  # unmatched only when its dual is at the floor), so a property all of
+  # those candidates share is a property of every optimum - of the one the
+  # reference search would have returned in particular. By induction over
+  # the reads, the reference and this engine read the same values, write the
+  # same weights and finalise the same pairs; the states they hold may
+  # differ and nothing observes it. A read that cannot be certified throws,
+  # and `certified_cascade/2` pairs the round again from the start with the
+  # shortcuts off, which is the reference computation step for step.
+  #
+  # Which weights a read is "at": `matching` is refreshed by a solve, and a
+  # stage-8 dual shift keeps the matching it had, which is optimal for the
+  # shifted weights whichever way the reference went (its own shift keeping
+  # it, or its search finding an optimum of the same weights). `snap` is the
+  # matcher at that moment and nothing else: a stage-7 shift changes the
+  # matcher but not `matching`, and the reads that follow it are still
+  # about the weights of the last solve, which is what the reference's
+  # `matching` is an optimum of.
+
+  # A read of `class.(partner)`, certified when the round matcher's state is
+  # not the reference's. `tag` names the question (with `st`'s bracket
+  # bounds and `i` it determines `class`), so a certified answer is
+  # remembered per snapshot and asked again for free.
+  defp certified(st, i, tag, class) do
+    if st.mode == :field and Process.get(@taint_key) == true do
+      {_matcher, ref} = st.snap || throw({:cert_abort, :no_snapshot})
+      key = {ref, i, tag}
+
+      case Process.get(@cert_memo_key, %{}) do
+        %{^key => value} ->
+          value
+
+        _ ->
+          value = class.(partner(st, i))
+          cert_timed(:ms_reads, fn -> certify_read(st, i, tag, class, value) end)
+          Process.put(@cert_memo_key, Map.put(Process.get(@cert_memo_key, %{}), key, value))
+          value
+      end
+    else
+      class.(partner(st, i))
+    end
+  end
+
+  # A count over `vertices` of `class.(partner) == true`, certified as a
+  # COUNT: the stages read how many (C6's pairs in the remainder, the
+  # exchanges stage 4 left, an MDP group's internal members), which the
+  # ladder fixes even where each member's own answer is tied.
+  #
+  # Each answer certified on its own is enough; when some are not, the
+  # count is certified directly. Over any matching `M'` it is a constant
+  # plus `c(M')`, a sum over `M'`'s edges of `c(u, v) = [u counted] *
+  # (class_u(v) - class_u(u)) + [v counted] * (class_v(u) - class_v(v))`
+  # (an unmatched vertex answers for itself). Two ways to show that every
+  # optimum has the held matching's `c`: over the optimal face of the
+  # snapshot's duals (`count_on_face?/5`), or by asking the matcher for an
+  # optimum of `K * w + c` and of `K * w - c` (`count_by_search?/4`).
+  defp certified_count(st, vertices, tag, class) do
+    count = Enum.count(vertices, &class.(&1, partner(st, &1)))
+
+    if st.mode == :field and Process.get(@taint_key) == true do
+      {matcher, ref} = st.snap || throw({:cert_abort, :no_snapshot})
+      key = {ref, :count, tag, vertices}
+
+      case Process.get(@cert_memo_key, %{}) do
+        %{^key => ^count} ->
+          count
+
+        _ ->
+          cheap? =
+            Enum.all?(vertices, fn v ->
+              value = class.(v, partner(st, v))
+
+              try do
+                certify_read_cheap(st, v, &class.(v, &1), value)
+              catch
+                :throw, {:cert_abort, _} -> false
+              end
+            end)
+
+          ok? =
+            cheap? or
+              cert_timed(:ms_count, fn -> count_on_face?(st, matcher, ref, vertices, class) end) or
+              cert_timed(:ms_count_search, fn ->
+                count_by_search?(st, matcher, vertices, class)
+              end)
+
+          cert_count({:count, cheap?, ok?})
+          unless ok?, do: throw({:cert_abort, :count})
+          Process.put(@cert_memo_key, Map.put(Process.get(@cert_memo_key, %{}), key, count))
+          count
+      end
+    else
+      count
+    end
+  end
+
+  # `certify_read/4` without the walk and the forced search: true when every
+  # candidate partner answers alike.
+  defp certify_read_cheap(st, i, class, value) do
+    {matcher, ref} = st.snap
+    cands = read_candidates(st, matcher, ref, i)
+    partner(st, i) in cands and Enum.all?(cands, &(class.(&1) == value))
+  end
+
+  # The count over the optimal face. Every optimum uses tight edges only and
+  # covers every vertex whose dual is above the floor; on a window alone
+  # that is every window vertex (their duals are held above the dummies'
+  # offers), so every optimum's window part is a PERFECT matching of the
+  # window's tight graph. The count is `const + c(M')` over such a matching
+  # (see `certified_count/4`), so if the heaviest and the lightest perfect
+  # matching of the tight graph under `c` both weigh what the held matching
+  # does, no optimum can count differently. Both are small-integer
+  # matchings on a sparse graph: weights `B * 2 + 3 + c(e)` with `B` above
+  # any sum of the small parts, so that the optimum is perfect first and
+  # extreme in `c` second, and the constant 3 keeps every weight positive
+  # and is the same on every perfect matching. Any shortfall - the solve
+  # not perfect, or not at the held matching's value - is inconclusive.
+  #
+  # The cardinality has to be pinned for the constant to cancel, and it is
+  # where every optimum covers all but at most one vertex: on a window
+  # (every window vertex's dual is held above the dummies' offers), when
+  # at most one vertex with edges sits at the dual floor, or when the one
+  # unmatched vertex's top blossom has a positive dual and holds every
+  # vertex with edges (every optimum is then near-perfect in it). Otherwise
+  # inconclusive.
+  defp count_on_face?(st, matcher, ref, vertices, class) do
+    ctx = read_ctx(st, matcher, ref)
+    to_local = st.from_field
+
+    live =
+      for {v, row} <- matcher.weight,
+          map_size(row) > 0,
+          not dummy?(st, v),
+          lv = Map.get(to_local, v),
+          lv != nil,
+          do: {v, lv}
+
+    if face_pinned?(st, matcher, ctx, live) do
+      counted = MapSet.new(vertices)
+
+      c = fn u, v ->
+        side = fn a, b ->
+          if MapSet.member?(counted, a), do: bit(class.(a, b)) - bit(class.(a, a)), else: 0
+        end
+
+        side.(u, v) + side.(v, u)
+      end
+
+      index = live |> Enum.with_index() |> Map.new(fn {{_f, lv}, k} -> {lv, k} end)
+
+      edges =
+        Enum.flat_map(live, fn {f, i} ->
+          {tight, _} = tight_row(matcher, ctx, ref, f)
+
+          Enum.flat_map(tight, fn g ->
+            case Map.get(to_local, g) do
+              j when is_integer(j) and j > i and is_map_key(index, j) -> [{i, j}]
+              _ -> []
+            end
+          end)
+        end)
+
+      n = length(live)
+      big = 8 * n + 16
+
+      held =
+        Enum.reduce(live, 0, fn {_f, i}, acc ->
+          p = partner(st, i)
+          if p > i and is_map_key(index, p), do: acc + c.(i, p), else: acc
+        end)
+
+      held_size =
+        Enum.count(live, fn {_f, i} ->
+          is_map_key(index, partner(st, i)) and partner(st, i) != i
+        end)
+
+      live_t = List.to_tuple(live)
+
+      Enum.all?([1, -1], fn sign ->
+        list =
+          for {i, j} <- edges,
+              do: {Map.fetch!(index, i), Map.fetch!(index, j), 2 * big + 3 + sign * c.(i, j)}
+
+        best = WeightedMatching.solve(n, list)
+
+        map_size(best) == held_size and
+          Enum.reduce(best, 0, fn {a, b}, acc ->
+            if a < b do
+              {_, i} = elem(live_t, a)
+              {_, j} = elem(live_t, b)
+              acc + sign * c.(i, j)
+            else
+              acc
+            end
+          end) == sign * held
+      end)
+    else
+      false
+    end
+  end
+
+  # Whether every optimum of the snapshot's weights matches the same number
+  # of vertices as the held matching - see `count_on_face?/5`.
+  defp face_pinned?(%{window: w}, _matcher, _ctx, _live) when w != nil, do: true
+
+  defp face_pinned?(_st, matcher, ctx, live) do
+    at_floor = Enum.count(live, fn {f, _} -> Map.fetch!(matcher.dual, f) == ctx.xi end)
+    exposed = Enum.reject(live, fn {f, _} -> is_map_key(matcher.mate, f) end)
+
+    at_floor <= 1 or
+      case exposed do
+        [{x, _}] ->
+          top = Map.fetch!(matcher.in_blossom, x)
+
+          Map.has_key?(matcher.children, top) and Map.get(matcher.dual, top, 0) > 0 and
+            Enum.all?(live, fn {f, _} -> Map.fetch!(matcher.in_blossom, f) == top end)
+
+        _ ->
+          false
+      end
+  end
+
+  defp read_ctx(st, matcher, ref) do
+    _ = read_candidates(st, matcher, ref, 0)
+    Map.fetch!(Process.get(@cert_memo_key), {ref, :ctx})
+  end
+
+  # The count by search. `K * w + c` scaled into the snapshot's state (a
+  # valid state for `K * w`, see `WeightedMatching.scale/2`), `c` written
+  # onto the counted vertices' edges only - the only edges where it is not
+  # zero - and the search resumed: its optimum is an optimum of `w` with the
+  # largest `c` there is among them, since `K` exceeds anything `c` adds up
+  # to on a matching. The same with `-c` gives the smallest. Both equal to
+  # the held matching's `c`: every optimum counts alike. Costs a search
+  # that re-examines the counted vertices, so it is the last resort.
+  #
+  # On a window alone the search runs on the window's matcher, and the
+  # window part of every optimum of the whole graph is an optimum of the
+  # window (see `forced_loses?/5`), so the answer carries over.
+  defp count_by_search?(st, matcher, vertices, class) do
+    counted = MapSet.new(vertices, &elem(st.field_pos, &1))
+    to_local = st.from_field
+    k = 4 * map_size(matcher.weight) + 8
+
+    answer = fn u, x ->
+      # `class_u(x)`: bracket indices; a vertex outside the bracket's graph
+      # (a dummy of a window) is never a partner in an optimum, see
+      # `window_setup/1`, and contributes nothing.
+      case {Map.get(to_local, u), Map.get(to_local, x)} do
+        {lu, lx} when lu != nil and lx != nil -> bit(class.(lu, lx))
+        _ -> nil
+      end
+    end
+
+    c = fn u, v ->
+      side = fn a, b ->
+        if MapSet.member?(counted, a) do
+          case {answer.(a, b), answer.(a, a)} do
+            {nil, _} -> 0
+            {x, y} -> x - y
+          end
+        else
+          0
+        end
+      end
+
+      side.(u, v) + side.(v, u)
+    end
+
+    held =
+      Enum.reduce(matcher.mate, 0, fn {u, v}, acc -> if u < v, do: acc + c.(u, v), else: acc end)
+
+    scaled = WeightedMatching.scale(matcher, k)
+
+    Enum.all?([1, -1], fn sign ->
+      # Weights read off `scaled`, not the state being written: an edge
+      # between two counted vertices is written from both ends, to the
+      # same value.
+      perturbed =
+        Enum.reduce(counted, scaled, fn v, acc ->
+          scaled
+          |> WeightedMatching.neighbours(v)
+          |> Enum.reduce(acc, fn {u, w}, acc ->
+            case c.(v, u) do
+              0 -> acc
+              g -> WeightedMatching.set_weight(acc, v, u, w + sign * g)
+            end
+          end)
+        end)
+
+      {_state, best} = WeightedMatching.solve(perturbed)
+      found = Enum.reduce(best, 0, fn {u, v}, acc -> if u < v, do: acc + c.(u, v), else: acc end)
+      found == held
+    end)
+  end
+
+  defp read_candidates(st, matcher, ref, i) do
+    memo = Process.get(@cert_memo_key, %{})
+    ctx_key = {ref, :ctx}
+    cands_key = {ref, i}
+
+    {ctx, memo} =
+      case memo do
+        %{^ctx_key => ctx} ->
+          {ctx, memo}
+
+        _ ->
+          ctx = WeightedMatching.dual_context(matcher)
+
+          ctx =
+            cond do
+              ctx == :invalid ->
+                cert_count({:invalid, :context})
+                :invalid
+
+              not window_valid?(st, matcher) ->
+                cert_count({:invalid, :window})
+                :invalid
+
+              true ->
+                ctx
+            end
+
+          {ctx, Map.put(memo, ctx_key, ctx)}
+      end
+
+    if ctx == :invalid, do: throw({:cert_abort, :dual})
+
+    case memo do
+      %{^cands_key => cands} ->
+        Process.put(@cert_memo_key, memo)
+        cands
+
+      _ ->
+        {tight, exposable?} =
+          WeightedMatching.possible_partners(matcher, ctx, elem(st.field_pos, i))
+
+        # A window's dummy is not a vertex of the graph: the combined dual
+        # leaves every real crossing edge strictly slack whatever the
+        # dummy's own edge does (see `window_setup/1`).
+        cands =
+          tight
+          |> Enum.reject(&dummy?(st, &1))
+          |> Enum.map(fn f -> Map.get(st.from_field, f) || throw({:cert_abort, :outside}) end)
+
+        cands = if exposable?, do: [i | cands], else: cands
+        Process.put(@cert_memo_key, Map.put(memo, cands_key, cands))
+        cands
+    end
+  end
+
+  # A read is certified when every candidate partner (`read_candidates/4`)
+  # answers `class` alike. A candidate that answers differently is ruled out
+  # by the cheap walk (`alternative_exists?/7`) or, failing that, by the
+  # exact forced search (`forced_loses?/5`); a candidate neither rules out
+  # is a genuine tie on the answer, and the attempt is abandoned.
+  defp certify_read(st, i, tag, class, value) do
+    {matcher, ref} = st.snap
+    cands = read_candidates(st, matcher, ref, i)
+    ctx = Map.fetch!(Process.get(@cert_memo_key), {ref, :ctx})
+    cert_count(:read)
+
+    p = partner(st, i)
+    odd = Enum.reject(cands, &(class.(&1) == value))
+
+    ok? =
+      p in cands and
+        (odd == [] or
+           (cert_count(:read_walk) == :ok and
+              Enum.all?(odd, fn c ->
+                not alternative_exists?(st, matcher, ctx, ref, i, p, c) or
+                  (cert_count(:read_forced) == :ok and
+                     cert_timed(:ms_forced, fn -> forced_loses?(st, matcher, ref, i, c) end))
+              end)))
+
+    unless ok? do
+      cert_count({:tied_read, tag})
+      throw({:cert_abort, :read})
+    end
+
+    :ok
+  end
+
+  # Could some maximum-weight matching give `i` the candidate `c` (bracket
+  # indices; `c == i` is "leave `i` unmatched") instead of its partner `p`?
+  #
+  # Such an optimum `M'` differs from the current one `M` on a disjoint
+  # union of alternating paths and cycles, all of whose edges are tight
+  # (complementary slackness: `M'` uses tight edges only), and the component
+  # through `i` would carry the change. Walking it from `i`'s side: the edge
+  # `(i, c)` enters `c`, `c`'s old `M` edge leaves it, a tight edge enters
+  # the next vertex, and so on - a walk in the digraph "`s` -> `M(w)` for
+  # every tight non-`M` edge `(s, w)`". A cycle closes back at `i`; a path
+  # ends where a tight edge reaches a vertex `M` leaves unmatched, or where
+  # a vertex whose dual sits at the floor (and so may go unmatched) stops.
+  # Both sides of `i` must end properly for a path. The digraph allows walks
+  # that revisit a vertex, which no alternating path does, so "no walk"
+  # proves "no such optimum"; "a walk" proves nothing, and the candidate is
+  # left to the forced search.
+  defp alternative_exists?(st, matcher, ctx, ref, i, p, c) do
+    v = elem(st.field_pos, i)
+    mate = matcher.mate
+    real? = fn u -> not dummy?(st, u) end
+    ends? = fn s -> walk_reaches?(matcher, ctx, ref, s, :end, real?) end
+
+    cond do
+      c == i ->
+        ends?.(elem(st.field_pos, p))
+
+      p == i ->
+        cf = elem(st.field_pos, c)
+        not is_map_key(mate, cf) or ends?.(Map.fetch!(mate, cf))
+
+      true ->
+        cf = elem(st.field_pos, c)
+
+        case Map.fetch(mate, cf) do
+          :error ->
+            ends?.(elem(st.field_pos, p))
+
+          {:ok, mc} ->
+            walk_reaches?(matcher, ctx, ref, mc, {:vertex, v}, real?) or
+              (ends?.(mc) and ends?.(elem(st.field_pos, p)))
+        end
+    end
+  end
+
+  # The exact form of the same question, asked of the matcher itself: the
+  # best matching that gives `i` the candidate `c` (or leaves `i` unmatched,
+  # `c == i`) is a maximum-weight matching of the graph with every other
+  # edge at `i` and `c` deleted, and the snapshot's state - a valid state for
+  # these weights - is a valid starting point for that search once the
+  # deletions have prepared `i` and `c`. If it weighs less than the matching
+  # held, no optimum makes that choice. Only asked when the walk could not
+  # rule the candidate out.
+  #
+  # On a window alone (`window_setup/1`) the question is asked of the
+  # window's matcher, and the answer still holds for the whole graph. The
+  # combined dual is optimal and leaves every crossing edge strictly slack,
+  # so any optimum of the whole graph is a window matching plus a matching
+  # of the field below, each at most as heavy as the one held (both are
+  # optimal on their own part) and so exactly as heavy: its window part is
+  # an optimal matching of the window. The dummies only add options, so a
+  # forced search that loses with them would lose without them too.
+  defp forced_loses?(st, matcher, ref, i, c) do
+    key = {ref, :forced, i, c}
+
+    case Process.get(@cert_memo_key, %{}) do
+      %{^key => answer} ->
+        answer
+
+      _ ->
+        v = elem(st.field_pos, i)
+        cf = if c == i, do: nil, else: elem(st.field_pos, c)
+
+        forced =
+          [v | if(cf, do: [cf], else: [])]
+          |> Enum.reduce(matcher, fn x, acc ->
+            acc
+            |> WeightedMatching.neighbours(x)
+            |> Enum.reduce(acc, fn {u, _w}, acc ->
+              if {x, u} in [{v, cf}, {cf, v}],
+                do: acc,
+                else: WeightedMatching.set_weight(acc, x, u, 0)
+            end)
+          end)
+
+        {forced, best} = WeightedMatching.solve(forced)
+        answer = matching_weight(forced, best) < matching_weight(matcher, matcher.mate)
+        Process.put(@cert_memo_key, Map.put(Process.get(@cert_memo_key, %{}), key, answer))
+        answer
+    end
+  end
+
+  defp matching_weight(state, mate) do
+    Enum.reduce(mate, 0, fn {u, v}, acc ->
+      if u < v, do: acc + WeightedMatching.edge_weight(state, u, v), else: acc
+    end)
+  end
+
+  # Breadth-first over the walk digraph from `start` (itself included):
+  # does it reach `{:vertex, v}`, or (`:end`) a vertex that may go
+  # unmatched or that has a tight edge to one `M` leaves unmatched? Edges
+  # to vertices `real?` rejects (a window's dummies) are not edges of the
+  # graph and are not walked.
+  defp walk_reaches?(matcher, ctx, ref, start, goal, real?) do
+    mate = matcher.mate
+    do_walk(:queue.from_list([start]), MapSet.new([start]), matcher, ctx, ref, mate, goal, real?)
+  end
+
+  defp do_walk(queue, seen, matcher, ctx, ref, mate, goal, real?) do
+    case :queue.out(queue) do
+      {:empty, _} ->
+        false
+
+      {{:value, s}, queue} ->
+        {tight, floor?} = tight_row(matcher, ctx, ref, s)
+        tight = Enum.filter(tight, real?)
+        own = Map.get(mate, s)
+
+        cond do
+          goal == {:vertex, s} ->
+            true
+
+          goal == :end and (floor? or Enum.any?(tight, &(&1 != own and not is_map_key(mate, &1)))) ->
+            true
+
+          true ->
+            {queue, seen} =
+              Enum.reduce(tight, {queue, seen}, fn w, {q, sn} = acc ->
+                case Map.get(mate, w) do
+                  nil ->
+                    acc
+
+                  next when w == own ->
+                    _ = next
+                    acc
+
+                  next ->
+                    if MapSet.member?(sn, next),
+                      do: acc,
+                      else: {:queue.in(next, q), MapSet.put(sn, next)}
+                end
+              end)
+
+            do_walk(queue, seen, matcher, ctx, ref, mate, goal, real?)
+        end
+    end
+  end
+
+  defp tight_row(matcher, ctx, ref, s) do
+    key = {ref, :row, s}
+
+    case Process.get(@cert_memo_key, %{}) do
+      %{^key => row} ->
+        row
+
+      memo ->
+        row = WeightedMatching.possible_partners(matcher, ctx, s)
+        Process.put(@cert_memo_key, Map.put(memo, key, row))
+        row
+    end
+  end
+
+  defp taint! do
+    if Process.get(@taint_key) != true, do: cert_count(:tainted_round)
+    Process.put(@taint_key, true)
+  end
+
+  # The minimum number of vertices a solve must re-examine before a
+  # certificate is worth trying in its place: `set_weight/4` prepares one
+  # vertex per distinct modified end, and a resumed solve costs about that
+  # many row walks, against a certificate's one pass over the graph.
+  @install_min_prepared 24
+
+  # Skip a solve by proving that the matching the matcher held before the
+  # writes is still optimal for the weights after them - optimal with a
+  # certificate strong enough (`Ainalrami.MatchCertificate`) to install as
+  # the matcher's new state, so the stages that follow can shift duals on
+  # it rather than search. The certificate's window is the bracket and the
+  # next group: strictness there is what lets the reads that follow be
+  # certified.
+  defp certified_install(nil, _prepared, _st, _dirty, _to_field), do: :no
+
+  defp certified_install(before, prepared, st, dirty, to_field) do
+    prepared_count = dirty |> Enum.map(&elem(&1, 0)) |> Enum.uniq() |> length()
+
+    # Only where the bracket is everything left: with a field below, the
+    # optimum needs odd-set duals for the bracket (C6 would otherwise gain
+    # from a fractional matching of an odd bracket) that a vertex-dual
+    # certificate cannot express, and the attempt only costs.
+    if Process.get(@cert_key) == true and st.nsgb == st.m and st.window == nil and
+         (prepared_count >= @install_min_prepared or (cert_force?() and prepared_count > 0)) do
+      held = still_matched(before.mate, prepared)
+      window = MapSet.new(0..(min(st.wsgb, st.m) - 1)//1, to_field)
+      hint = WeightedMatching.vertex_duals(before)
+
+      # The shaped guess first when there is one: it is offered exactly when
+      # the held matching was found out of shape.
+      guesses =
+        case st.guess do
+          nil -> [{:held, held}]
+          {members, pairs} -> [{:shaped, reshape(held, members, pairs, to_field)}, {:held, held}]
+        end
+
+      # Strict on the window first: the duals then leave as few edges tight
+      # as the ties allow, which is what makes the reads that follow
+      # certifiable. Failing that, any optimal duals will do for the state -
+      # each read is certified on its own.
+      attempts =
+        Enum.map(guesses, fn {label, guess} -> {label, guess, true} end) ++
+          [{:held, held, false}]
+
+      Enum.find_value(attempts, :no, fn {label, guess, strict} ->
+        case Ainalrami.MatchCertificate.certify(
+               prepared.weight,
+               guess,
+               &MapSet.member?(window, &1),
+               hint,
+               strict: strict
+             ) do
+          {:ok, cert} ->
+            cert_count({:install_ok, label, strict})
+            taint!()
+            {:ok, {WeightedMatching.install(prepared, guess, cert.dual), guess}}
+
+          {:error, _} ->
+            cert_count({:install_fail, label, strict})
+            nil
+        end
+      end)
+    else
+      :no
+    end
+  end
+
+  ## ---------- the window alone ----------
+  #
+  # A field-graph bracket's stages read the matching only on its WINDOW -
+  # the bracket and the next score group - but every search runs over the
+  # whole remaining field. When the field below is large (round 2 of a big
+  # open: a 273-player bracket over a 291-player field of zeros), most of
+  # each search is spent there.
+  #
+  # In certified mode such a bracket can run on the window alone. The field
+  # below is solved on its own, once - its weights do not change while this
+  # bracket is paired - and certified optimal (`Ainalrami.MatchCertificate`,
+  # optimality only) with duals `y'` and, if it leaves one player unmatched,
+  # the level `xi` of the odd set of every vertex. What the field below
+  # offers a window player `v` is then a single number,
+  # `L(v) = max(xi, max_f (w(v, f) - y'(f))) + 1`, and a private dummy
+  # vertex joined to `v` at weight `L(v)` puts exactly that offer into the
+  # window's own matcher: while every dummy is unmatched with dual 0, every
+  # window dual is at least `L(v)`, which makes the window's duals, the
+  # field's `y'` and `xi` together a dual solution for the WHOLE graph -
+  # feasible on every edge (window, field and crossing ones, the crossing
+  # ones strictly) and complementary to the window's matching plus the
+  # field's. Reads are certified against that combined solution, exactly as
+  # on the whole graph (`window_valid?/2` is the condition). A search that
+  # breaks it - the window's optimum matching a dummy, or pricing one - ends
+  # the window there and then: the bracket goes on over the whole field
+  # (`leave_window/4`), from a matcher with the reference's weights, before
+  # anything is read off that search.
+  #
+  # At the bracket's end the round matcher is rebuilt (`graft_back/1`) with
+  # the weights the reference's round matcher has - the window's as they now
+  # stand, the far and crossing weights it held, minus every edge of a
+  # player finalised here - so the next bracket continues from the same
+  # weights, with a different but valid state.
+  #
+  # Worth it where both halves are large: a bracket whose searches are
+  # expensive, over a field below that makes up much of each search. A
+  # small bracket pays the setup (one search of the field below and its
+  # certificate) for little.
+  @window_min_bracket 60
+  @window_min_below 60
+
+  defp window_setup(st) do
+    {r_matcher, field_index, field_size} = Process.get(@round_matcher_key)
+
+    big? = st.nsgb >= @window_min_bracket and st.m - st.wsgb >= @window_min_below
+
+    if Process.get(@cert_key) == true and st.m > st.wsgb and rem(st.wsgb, 2) == 0 and
+         st.nsgb >= 2 and (big? or cert_force?()) do
+      case cert_timed(:ms_window_setup, fn ->
+             window_parts(st, r_matcher, field_index, field_size)
+           end) do
+        {:ok, window_matcher, window} ->
+          cert_count(:window_mode)
+          taint!()
+          Process.put(@round_matcher_key, {window_matcher, field_index, field_size})
+          %{st | window: window}
+
+        :no ->
+          cert_count(:window_declined)
+          st
+      end
+    else
+      st
+    end
+  end
+
+  defp window_parts(st, r_matcher, field_index, field_size) do
+    to_field = field_positions(st, field_index)
+    weigh = edge_weigher(st, to_field, field_size)
+    w_last = st.wsgb - 1
+    in_window = MapSet.new(0..w_last//1, to_field)
+    far_set = MapSet.new(st.wsgb..(st.m - 1)//1, to_field)
+
+    # Far and crossing weights as the round matcher holds them (frozen
+    # since the bracket that built it), or as this bracket would build it.
+    {far_edges, cross_edges} =
+      case r_matcher do
+        nil ->
+          Enum.reduce(st.live, {[], []}, fn {{i, j}, w}, {far, cross} ->
+            cond do
+              w <= 0 -> {far, cross}
+              i >= st.wsgb -> {[{to_field.(i), to_field.(j), weigh.(i, j, w)} | far], cross}
+              j >= st.wsgb -> {far, [{to_field.(i), to_field.(j), weigh.(i, j, w)} | cross]}
+              true -> {far, cross}
+            end
+          end)
+
+        matcher ->
+          Enum.reduce(far_set, {[], []}, fn f, acc ->
+            matcher
+            |> WeightedMatching.neighbours(f)
+            |> Enum.reduce(acc, fn {u, w}, {far, cross} ->
+              cond do
+                MapSet.member?(far_set, u) and f < u -> {[{f, u, w} | far], cross}
+                MapSet.member?(in_window, u) -> {far, [{u, f, w} | cross]}
+                true -> {far, cross}
+              end
+            end)
+          end)
+      end
+
+    ceiling = round_ceiling(st, field_size)
+
+    {far_state, far_mate} =
+      WeightedMatching.new(field_size, far_edges, max_weight: ceiling, gcd: 1)
+      |> WeightedMatching.solve()
+
+    # A far player whose only edges cross into the window would be a second
+    # unmatched vertex of the field part that its certificate never saw.
+    far_live = MapSet.new(Ainalrami.MatchCertificate.live_vertices(far_state.weight))
+
+    {far_hint, far_family} = WeightedMatching.certificate_hint(far_state)
+
+    with true <- Enum.all?(cross_edges, fn {_v, f, _w} -> MapSet.member?(far_live, f) end),
+         {:ok, far_cert} <-
+           Ainalrami.MatchCertificate.certify(
+             far_state.weight,
+             far_mate,
+             fn _ -> false end,
+             far_hint,
+             strict: false,
+             family: far_family
+           ) do
+      far_dual = far_cert.dual
+      xi = far_cert.xi
+
+      offer =
+        Enum.reduce(cross_edges, %{}, fn {v, f, w}, acc ->
+          need = 2 * w - Map.get(far_dual, f, 0)
+          Map.update(acc, v, need, &max(&1, need))
+        end)
+
+      window_vertices = Enum.map(0..w_last//1, to_field)
+
+      {dummy_edges, dummies} =
+        window_vertices
+        |> Enum.with_index(field_size)
+        |> Enum.reduce({[], %{}}, fn {v, d}, {edges, dummies} ->
+          l2 = max(xi, Map.get(offer, v, 0)) + 1
+          l2 = l2 + Bitwise.band(l2, 1)
+          {[{v, d, div(l2, 2)} | edges], Map.put(dummies, v, d)}
+        end)
+
+      window_edges =
+        for {{i, j}, w} <- st.live,
+            w > 0,
+            j <= w_last,
+            do: {to_field.(i), to_field.(j), weigh.(i, j, w)}
+
+      matcher =
+        WeightedMatching.new(field_size + length(window_vertices), window_edges ++ dummy_edges,
+          max_weight: ceiling,
+          gcd: 1
+        )
+
+      {:ok, matcher,
+       %{
+         dummies: dummies,
+         first_dummy: field_size,
+         far_edges: far_edges,
+         cross_edges: cross_edges,
+         ceiling: ceiling
+       }}
+    else
+      _ -> :no
+    end
+  end
+
+  # The round matcher the next bracket continues from: every edge the
+  # reference's round matcher holds at this point - the window's final
+  # weights, and the far and crossing weights as they were, less every edge
+  # of a player finalised here - in a fresh matcher that the next bracket's
+  # first search completes. A state, not a solution: the next bracket's
+  # reads are certified like every other read of a tainted round.
+  defp graft_back(%{window: nil}), do: :ok
+
+  defp graft_back(st) do
+    {matcher, field_index, field_size} = Process.get(@round_matcher_key)
+    Process.put(@round_matcher_key, whole_field_matcher(st, matcher, field_index, field_size))
+    :ok
+  end
+
+  # A fresh, unsolved matcher over the whole remaining field with exactly the
+  # reference's current weights: the window's (as the window matcher holds
+  # them now, dummies left out), and the far and crossing ones it was built
+  # from, less every edge of a player finalised in this bracket.
+  defp whole_field_matcher(st, window_matcher, field_index, field_size) do
+    w = st.window
+    finalised = MapSet.new(st.matched, &elem(st.field_pos, &1))
+
+    window_edges =
+      for {v, _d} <- w.dummies,
+          {u, wt} <- WeightedMatching.neighbours(window_matcher, v),
+          u < field_size and v < u,
+          do: {v, u, wt}
+
+    cross = Enum.reject(w.cross_edges, fn {v, _f, _w} -> MapSet.member?(finalised, v) end)
+
+    fresh =
+      WeightedMatching.new(field_size, window_edges ++ w.far_edges ++ cross,
+        max_weight: w.ceiling,
+        gcd: 1
+      )
+
+    {fresh, field_index, field_size}
+  end
+
+  defp dummy?(%{window: nil}, _v), do: false
+  defp dummy?(%{window: w}, v), do: v >= w.first_dummy
+
+  # The window's extra condition on a snapshot: every dummy unmatched, at
+  # dual 0, and a bare vertex - outside every blossom, so that its edge's
+  # reduced cost is `y[v] - L(v)` and nothing else, which is what holds `v`'s
+  # own dual at `L(v)` - see the section comment above.
+  defp window_valid?(%{window: nil}, _matcher), do: true
+
+  defp window_valid?(st, matcher) do
+    Enum.all?(st.window.dummies, fn {_v, d} ->
+      not is_map_key(matcher.mate, d) and Map.fetch!(matcher.dual, d) == 0 and
+        Map.fetch!(matcher.in_blossom, d) == d and not is_map_key(matcher.parent_of, d)
+    end)
+  end
+
+  # The pairs of `mate` whose edge the writes left in place.
+  defp still_matched(mate, prepared) do
+    kept =
+      Enum.reduce(mate, %{}, fn {u, v}, acc ->
+        case prepared.weight do
+          %{^u => %{^v => w}} when w > 0 -> Map.put(acc, u, v)
+          _ -> acc
+        end
+      end)
+
+    Map.filter(kept, fn {u, v} -> Map.get(kept, v) == u end)
+  end
+
+  # `held` with every pair touching `members` (bracket indices) replaced by
+  # `pairs`; a member left out of `pairs` keeps a partner outside `members`
+  # if it had one.
+  defp reshape(held, members, pairs, to_field) do
+    members_f = MapSet.new(members, to_field)
+
+    kept =
+      Map.filter(held, fn {u, v} ->
+        not (MapSet.member?(members_f, u) and MapSet.member?(members_f, v))
+      end)
+
+    paired = Enum.flat_map(pairs, fn {a, b} -> [to_field.(a), to_field.(b)] end) |> MapSet.new()
+
+    kept =
+      Map.filter(kept, fn {u, v} ->
+        not MapSet.member?(paired, u) and not MapSet.member?(paired, v)
+      end)
+
+    Enum.reduce(pairs, kept, fn {a, b}, acc ->
+      acc |> Map.put(to_field.(a), to_field.(b)) |> Map.put(to_field.(b), to_field.(a))
+    end)
+  end
+
   # The LOCAL graph: the bracket's own `nsgb` vertices, bracket-local
   # indices, one fresh matcher per bracket, the full ladder on every edge.
   # See `pair_bracket/6` for when this is exact. The weights carry the
@@ -3154,7 +4153,7 @@ defmodule Ainalrami.Pairing do
       end
 
     {wm, matching} = WeightedMatching.solve(wm)
-    %{st | wm: wm, matching: matching}
+    %{st | wm: wm, matching: matching, guess: nil}
   end
 
   ## ------------------------------------------- the completability oracle
@@ -3313,22 +4312,15 @@ defmodule Ainalrami.Pairing do
           # tie-break is switched on; doubled for room. Too LARGE is
           # harmless -- it is only the initial dual, and bbpPairings'
           # `aboveMaxEdgeWeight` is likewise a bound, not exact.
-          n = field_size
-          s = st.bands.count_span
-          ps = st.bands.place_span
-          span_product = Integer.pow(s, 12) * Integer.pow(ps, 6) * Integer.pow(s, 4) * 64
-
-          round_scale =
-            if st.transposition.scale == 1, do: 1, else: Integer.pow(n + 2, div(n, 2) + 1)
-
-          round_ceiling = 2 * span_product * st.bands.reserve * round_scale * s * (n * n + 1)
-
           list =
             for {{i, j}, w} <- st.live, w > 0 do
               {to_field.(i), to_field.(j), weigh.(i, j, w)}
             end
 
-          WeightedMatching.new(field_size, list, max_weight: round_ceiling, gcd: 1)
+          WeightedMatching.new(field_size, list,
+            max_weight: round_ceiling(st, field_size),
+            gcd: 1
+          )
 
         not st.synced ->
           # Bracket boundary. For every vertex of the WINDOW (the bracket and
@@ -3384,11 +4376,21 @@ defmodule Ainalrami.Pairing do
           apply_dirty(round_matcher, st, dirty, to_field, weigh)
       end
 
-    {matcher, matching_f} = WeightedMatching.solve(matcher)
+    install =
+      st.synced and
+        cert_timed(:ms_install, fn ->
+          certified_install(round_matcher, matcher, st, dirty, to_field)
+        end)
+
+    {matcher, matching_f} =
+      case install do
+        {:ok, installed} -> installed
+        _ -> cert_timed(:ms_solve, fn -> WeightedMatching.solve(matcher) end)
+      end
 
     # Back to bracket-local indices; anything matched outside this
     # bracket's vertex set is another bracket's business.
-    from_field = Map.new(0..(st.m - 1)//1, fn i -> {to_field.(i), i} end)
+    from_field = st.from_field
 
     matching =
       Enum.reduce(matching_f, %{}, fn {a, b}, acc ->
@@ -3400,7 +4402,49 @@ defmodule Ainalrami.Pairing do
       end)
 
     Process.put(@round_matcher_key, {matcher, field_index, field_size})
-    %{st | matching: matching, synced: true}
+    st = %{st | matching: matching, synced: true, snap: {matcher, make_ref()}, guess: nil}
+
+    # A window whose optimum wants the field below (a dummy matched, or
+    # priced) no longer stands for the whole graph: the bracket continues on
+    # the whole field from here, before anything is read off this solve.
+    if st.window != nil and not window_valid?(st, matcher),
+      do: leave_window(st, matcher, field_index, field_size),
+      else: st
+  end
+
+  defp leave_window(st, window_matcher, field_index, field_size) do
+    cert_count(:window_left)
+
+    {fresh, _field_index, _field_size} =
+      whole_field_matcher(st, window_matcher, field_index, field_size)
+
+    {solved, matching_f} = WeightedMatching.solve(fresh)
+
+    matching =
+      Enum.reduce(matching_f, %{}, fn {a, b}, acc ->
+        case {Map.get(st.from_field, a), Map.get(st.from_field, b)} do
+          {nil, _} -> acc
+          {_, nil} -> acc
+          {i, j} -> Map.put(acc, i, j)
+        end
+      end)
+
+    Process.put(@round_matcher_key, {solved, field_index, field_size})
+    %{st | matching: matching, window: nil, snap: {solved, make_ref()}}
+  end
+
+  # The round matcher's weight ceiling: see the first branch of
+  # `solve_field/1`.
+  defp round_ceiling(st, field_size) do
+    n = field_size
+    s = st.bands.count_span
+    ps = st.bands.place_span
+    span_product = Integer.pow(s, 12) * Integer.pow(ps, 6) * Integer.pow(s, 4) * 64
+
+    round_scale =
+      if st.transposition.scale == 1, do: 1, else: Integer.pow(n + 2, div(n, 2) + 1)
+
+    2 * span_product * st.bands.reserve * round_scale * s * (n * n + 1)
   end
 
   # The stages' writes since the last solve, most recent first. Each
@@ -3638,24 +4682,37 @@ defmodule Ainalrami.Pairing do
   # bbpPairings reads an unmatched vertex as matched to ITSELF, and three
   # of the stage tests below (`< playerVertex`, `<= playerVertex`) depend
   # on that convention rather than on a nil check.
+  #
+  # `partner/2` is the raw read, for the places that only choose between two
+  # ways of reaching the same weights (a dual shift or a search) or format a
+  # trace. Everything the stages DECIDE on goes through `certified/3` - the
+  # helpers below and `certified_partner/2` - see "certified shortcuts".
   defp partner(st, i), do: Map.get(st.matching, i, i)
+
+  defp certified_partner(st, i), do: certified(st, i, :exact, & &1)
 
   # Matched to a resident of this bracket's own score group.
   defp internal?(st, i) do
-    p = partner(st, i)
-    p >= st.sgb and p < st.nsgb
+    sgb = st.sgb
+    nsgb = st.nsgb
+    certified(st, i, :internal, fn p -> p >= sgb and p < nsgb end)
   end
 
   # Paired with someone LATER in the bracket - the "higher group" role in
   # an exchange.
   defp paired_down?(st, i) do
+    nsgb = st.nsgb
+    certified(st, i, :down, fn p -> p > i and p < nsgb end)
+  end
+
+  defp raw_paired_down?(st, i) do
     p = partner(st, i)
     p > i and p < st.nsgb
   end
 
   defp exchange_needed?(st, i) do
-    p = partner(st, i)
-    p <= i or p >= st.nsgb
+    nsgb = st.nsgb
+    certified(st, i, :need, fn p -> p <= i or p >= nsgb end)
   end
 
   # `common.h:164`. Lock the pair by leaving each vertex exactly one
@@ -4143,14 +5200,10 @@ defmodule Ainalrami.Pairing do
   # are by definition higher-scored than the group they landed in.
   defp count_mdp_group(st, from) do
     score = elem(st.arr, from).points
-
-    Enum.reduce_while(from..(st.m - 1)//1, {score, 0, 0}, fn k, {s, remaining, matched_left} ->
-      if elem(st.arr, k).points >= s do
-        {:cont, {s, remaining + 1, matched_left + bit(internal?(st, k))}}
-      else
-        {:halt, {s, remaining, matched_left}}
-      end
-    end)
+    members = Enum.take_while(from..(st.m - 1)//1, &(elem(st.arr, &1).points >= score))
+    {sgb, nsgb} = {st.sgb, st.nsgb}
+    matched_left = certified_count(st, members, :internal, fn _k, p -> p >= sgb and p < nsgb end)
+    {score, length(members), matched_left}
   end
 
   # dutch.cpp:1168 `edgeWeight |= 1u` - the smallest bump there is, enough
@@ -4225,7 +5278,7 @@ defmodule Ainalrami.Pairing do
   end
 
   defp finalize_matched(st, i) do
-    case partner(st, i) do
+    case certified_partner(st, i) do
       ^i -> st
       p -> st |> Map.update!(:matched, &MapSet.put(&1, p)) |> finalize_pair(i, p)
     end
@@ -4238,12 +5291,15 @@ defmodule Ainalrami.Pairing do
   # S2: the first `remainder_pairs` entries are the higher half, the rest
   # the lower half, and pairing them is the homogeneous-bracket problem.
   defp stage_build_remainder(st) do
-    remainder = Enum.filter(st.sgb..(st.nsgb - 1)//1, &(partner(st, &1) >= st.sgb))
+    sgb = st.sgb
+
+    remainder =
+      Enum.filter(sgb..(st.nsgb - 1)//1, &certified(st, &1, :resident, fn p -> p >= sgb end))
 
     %{
       st
       | remainder: remainder,
-        remainder_pairs: Enum.count(remainder, &(partner(st, &1) < &1))
+        remainder_pairs: certified_count(st, remainder, :earlier, fn v, p -> p < v end)
     }
   end
 
@@ -4263,8 +5319,17 @@ defmodule Ainalrami.Pairing do
         live =
           Enum.reduce(changes, st.live, fn {p, opp, _, w}, acc -> set_live(acc, p, opp, w) end)
 
-        solve(%{st | live: live})
+        # The shape the exchange weights reward, offered to a certified
+        # install as a second guess besides the matching already held: the
+        # shift fails exactly when that matching is not in this shape.
+        solve(%{st | live: live, guess: canonical_remainder_pairs(st)})
     end
+  end
+
+  # S1[k] against S2[k] over the remainder, as `{remainder members, pairs}`.
+  defp canonical_remainder_pairs(st) do
+    {s1, s2} = Enum.split(st.remainder, st.remainder_pairs)
+    {st.remainder, Enum.zip(s1, s2)}
   end
 
   # Stage 4 rewrites every remainder pair's weight, which through
@@ -4330,19 +5395,31 @@ defmodule Ainalrami.Pairing do
   # stand-in: its own dual is not shifted, and none of its edges loses
   # slack (an edge from the first half gains exactly what that end's dual
   # does; one from the second half only loses weight).
-  defp exchange_by_dual_shift(%{mode: :field, synced: true, nsgb: n, m: n} = st, changes) do
+  #
+  # With a field below, the same shift is taken only in certified mode, and
+  # taking it taints the round: the reads that follow are then certified
+  # (see "certified shortcuts") rather than argued.
+  defp exchange_by_dual_shift(%{mode: :field, synced: true} = st, changes) do
     {matcher, field_index, field_size} = Process.get(@round_matcher_key)
+    whole? = st.nsgb == st.m
 
-    if matcher != nil and Process.get(@dirty_key, []) == [] and shaped_for_shift?(st, true) do
+    if matcher != nil and (whole? or Process.get(@cert_key) == true) and
+         Process.get(@dirty_key, []) == [] and shaped_for_shift?(st, true) do
       to_field = field_positions(st, field_index)
       {shifts, edges} = shift_terms(st, changes, edge_weigher(st, to_field, field_size), to_field)
 
       case WeightedMatching.shift_and_set(matcher, shifts, edges) do
         {:ok, matcher} ->
+          if not whole? do
+            taint!()
+            cert_count(:exchange_shift_ok)
+          end
+
           Process.put(@round_matcher_key, {matcher, field_index, field_size})
           {:ok, %{st | live: put_changes(st.live, changes)}}
 
         :error ->
+          if not whole?, do: cert_count(:exchange_shift_refused)
           :no
       end
     else
@@ -4463,9 +5540,9 @@ defmodule Ainalrami.Pairing do
         0
 
       bound ->
-        st.remainder
-        |> Enum.take_while(&(&1 < bound))
-        |> Enum.count(&exchange_needed?(st, &1))
+        nsgb = st.nsgb
+        first = Enum.take_while(st.remainder, &(&1 < bound))
+        certified_count(st, first, :need, fn v, p -> p <= v or p >= nsgb end)
     end
   end
 
@@ -4584,7 +5661,7 @@ defmodule Ainalrami.Pairing do
     # leaves exactly as it was. Where that holds the next solve would find
     # nothing to do; see `shift_to_live/5`, and `exchange_by_dual_shift/2`
     # for why the stages that follow cannot tell the difference.
-    down = Enum.filter(st.remainder, &paired_down?(st, &1))
+    down = Enum.filter(st.remainder, &raw_paired_down?(st, &1))
 
     case with_shiftable_matcher(st, &shift_to_live(st, down, &1, &2, &3)) do
       {:ok, st} -> st
@@ -4620,10 +5697,22 @@ defmodule Ainalrami.Pairing do
   # for the new weights, and since the addends are distinct and sit below
   # every criterion, every optimum gives the player the same partner: the
   # one the solve would have returned, found without the search.
+  #
+  # On the field graph the matching the player's partner is then read from
+  # is the one the shift kept, optimal for the shifted weights - so that is
+  # the state a certified read of it is checked against.
   defp keep_partner_by_dual_shift(st, player) do
     with_shiftable_matcher(st, fn matcher, to_matcher, weigh ->
       shift_to_live(st, [player], matcher, to_matcher, weigh)
     end)
+    |> case do
+      {:ok, %{mode: :field} = st} ->
+        {matcher, _, _} = Process.get(@round_matcher_key)
+        {:ok, %{st | snap: {matcher, make_ref()}}}
+
+      other ->
+        other
+    end
   end
 
   # Where a dual shift may stand in for a re-solve: the local graph, or the
@@ -4643,21 +5732,35 @@ defmodule Ainalrami.Pairing do
     end
   end
 
-  defp with_shiftable_matcher(%{mode: :field, synced: true, nsgb: n, m: n} = st, fun) do
+  # With a field below, only in certified mode, and tainting the round - see
+  # `exchange_by_dual_shift/2`.
+  defp with_shiftable_matcher(%{mode: :field, synced: true} = st, fun) do
+    whole? = st.nsgb == st.m
+
     case Process.get(@round_matcher_key) do
       {nil, _, _} ->
         :no
 
       {matcher, field_index, field_size} ->
-        to_field = field_positions(st, field_index)
+        if whole? or Process.get(@cert_key) == true do
+          to_field = field_positions(st, field_index)
 
-        case fun.(matcher, to_field, edge_weigher(st, to_field, field_size)) do
-          {:ok, matcher} ->
-            Process.put(@round_matcher_key, {matcher, field_index, field_size})
-            {:ok, st}
+          case fun.(matcher, to_field, edge_weigher(st, to_field, field_size)) do
+            {:ok, matcher} ->
+              if not whole? do
+                taint!()
+                cert_count(:shift_ok)
+              end
 
-          :error ->
-            :no
+              Process.put(@round_matcher_key, {matcher, field_index, field_size})
+              {:ok, st}
+
+            :error ->
+              if not whole?, do: cert_count(:shift_refused)
+              :no
+          end
+        else
+          :no
         end
     end
   end
@@ -4738,7 +5841,7 @@ defmodule Ainalrami.Pairing do
   end
 
   defp finalize_both(st, i) do
-    case partner(st, i) do
+    case certified_partner(st, i) do
       ^i ->
         st
 
@@ -4754,7 +5857,10 @@ defmodule Ainalrami.Pairing do
   defp collect_bracket(st) do
     {pairs, carried, sgb} =
       Enum.reduce(0..(st.m - 1)//1, {[], [], 0}, fn i, {pairs, carried, sgb} ->
-        p = partner(st, i)
+        # Read only where the answer depends on it: a player who is not
+        # `matched` carries forward whoever the matching has them with.
+        matched? = i < st.nsgb and MapSet.member?(st.matched, i)
+        p = if matched?, do: certified_partner(st, i), else: i
 
         # `p < st.nsgb` is this port's own guard, not bbpPairings'. Their
         # recording condition tests only the near end of the pair, which
@@ -4763,7 +5869,7 @@ defmodule Ainalrami.Pairing do
         # while its partner also carried forward. bbpPairings never
         # finalises a cross-bracket pair (see docs/engineering-log.md); this makes that
         # invariant explicit rather than relying on it.
-        if i < st.nsgb and p != i and p < st.nsgb and MapSet.member?(st.matched, i) do
+        if matched? and p != i and p < st.nsgb do
           if i < p,
             do:
               {[assign_colour_with_history({elem(st.arr, i), elem(st.arr, p)}) | pairs], carried,
@@ -4794,12 +5900,42 @@ defmodule Ainalrami.Pairing do
     # the full peek window here fixed one traced case and broke two others
     # (docs/engineering-log.md), which is what a too-wide scan looks like: players who are
     # nowhere near this decision clearing its gate.
+    #
+    # The scores are read by `bracket_loop/6`'s C9 gate and nothing else, and
+    # only as "is every one at or above the next group's score", and only
+    # when the gate's other conditions hold (`c9_gate_live?/4`). That one
+    # answer is what a round in certified mode certifies - as a count of
+    # tentative partners below that score, see `certified_count/4` - and
+    # only when the gate can fire; a single player's tentative partner is
+    # often genuinely tied, the answer seldom is.
+    arr = st.arr
+    score_of = fn q -> elem(arr, q).points end
+    window = 0..(min(st.wsgb, st.m) - 1)//1
+
     partner_scores =
-      for i <- 0..(st.m - 1)//1,
-          i < st.wsgb,
-          p = partner(st, i),
-          not (p != i and p < st.nsgb and MapSet.member?(st.matched, i)),
-          do: elem(st.arr, if(p == i, do: i, else: p)).points
+      window
+      |> Enum.reduce([], fn i, acc ->
+        if MapSet.member?(st.matched, i) do
+          p = certified_partner(st, i)
+          if p != i and p < st.nsgb, do: acc, else: [score_of.(p) | acc]
+        else
+          [score_of.(partner(st, i)) | acc]
+        end
+      end)
+      |> Enum.reverse()
+
+    if st.wsgb > st.nsgb and st.nsgb < st.m do
+      next_points = elem(arr, st.nsgb).points
+
+      # `c9_gate_live?/4`, on the bracket's own arrays.
+      if st.ctx.odd_field? and not is_nil(st.ctx.bye_score) and st.ctx.bye_score >= next_points do
+        open = Enum.reject(window, &MapSet.member?(st.matched, &1))
+
+        certified_count(st, open, {:below, next_points}, fn _i, p ->
+          score_of.(p) < next_points
+        end)
+      end
+    end
 
     {Enum.reverse(pairs), Enum.reverse(carried), sgb, partner_scores}
   end

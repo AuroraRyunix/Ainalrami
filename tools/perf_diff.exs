@@ -7,8 +7,11 @@
 #   (the same in a checkout of the release being compared against)
 #   mix run tools/perf_diff.exs compare A B    # two logs, or two directories
 #
-# The named sets - `small`, `flags`, `large` - are the standing corpus; see
-# `PerfDiff.Corpus` below for their axes.
+# The named sets - `small`, `flags`, `large`, and `early` (large fields,
+# opening rounds) - are the standing corpus; see `PerfDiff.Corpus` below for
+# their axes. AINALRAMI_CERT=force exercises the certified shortcuts on
+# every field size; AINALRAMI_CERT_STATS=1 writes their counters next to
+# each log (`<axis>.log.stats`).
 #
 # ## What is fingerprinted
 #
@@ -123,6 +126,15 @@ defmodule PerfDiff do
     lines
     |> Enum.reverse()
     |> Enum.map(fn [round | rest] -> [seed, round | rest] end)
+    |> then(fn lines -> {lines, cert_stats()} end)
+  end
+
+  # Absent from releases before the certified shortcuts, which this tool is
+  # also run against.
+  defp cert_stats do
+    if function_exported?(Pairing, :take_cert_stats, 0),
+      do: apply(Pairing, :take_cert_stats, []),
+      else: %{}
   end
 
   # The pairing, or the refusal. A refusal the organiser's exclusions
@@ -389,9 +401,50 @@ defmodule PerfDiff.Corpus do
      }}
   ]
 
+  # The certified shortcuts' own ground: large fields, weighted towards the
+  # opening rounds where whole-field brackets and windows over a large field
+  # below occur, with byes, forfeits, forbidden pairs and accelerations.
+  @early [
+    {"e_100_200_r9", 120,
+     %{
+       "PAIRING_FUZZ_MIN_PLAYERS" => "100",
+       "PAIRING_FUZZ_MAX_PLAYERS" => "200",
+       "DIFF_ROUNDS" => "9",
+       "DIFF_ALTS" => "4",
+       "PAIRING_FUZZ_BYE_PCT" => "4",
+       "PAIRING_FUZZ_FORFEIT_PCT" => "3",
+       "PAIRING_FUZZ_FORBIDDEN_PCT" => "2",
+       "PAIRING_FUZZ_ACCEL" => "mixed",
+       "PAIRING_FUZZ_LATE_PCT" => "3"
+     }},
+    {"e_150_350_r3", 240,
+     %{
+       "PAIRING_FUZZ_MIN_PLAYERS" => "150",
+       "PAIRING_FUZZ_MAX_PLAYERS" => "350",
+       "DIFF_ROUNDS" => "3",
+       "DIFF_ALTS" => "3",
+       "PAIRING_FUZZ_BYE_PCT" => "3",
+       "PAIRING_FUZZ_FORFEIT_PCT" => "2",
+       "PAIRING_FUZZ_FORBIDDEN_PCT" => "1",
+       "PAIRING_FUZZ_POINT_SYSTEM" => "mixed"
+     }},
+    {"e_350_600_r2", 90,
+     %{
+       "PAIRING_FUZZ_MIN_PLAYERS" => "350",
+       "PAIRING_FUZZ_MAX_PLAYERS" => "600",
+       "DIFF_ROUNDS" => "2",
+       "DIFF_ALTS" => "2",
+       "PAIRING_FUZZ_BYE_PCT" => "3",
+       "PAIRING_FUZZ_FORFEIT_PCT" => "2",
+       "PAIRING_FUZZ_FORBIDDEN_PCT" => "1",
+       "PAIRING_FUZZ_ACCEL" => "mixed"
+     }}
+  ]
+
   def set("small"), do: @small
   def set("flags"), do: @flags
   def set("large"), do: @large
+  def set("early"), do: @early
 
   def run(name, dir, run_axis) do
     File.mkdir_p!(dir)
@@ -403,7 +456,8 @@ defmodule PerfDiff.Corpus do
       previous = Map.new(env, fn {k, _} -> {k, System.get_env(k)} end)
       Enum.each(env, fn {k, v} -> System.put_env(k, v) end)
       # Seeds are disjoint between axes and between sets.
-      offset = %{"small" => 0, "flags" => 5_000_000, "large" => 9_000_000}[name]
+      offset =
+        %{"small" => 0, "flags" => 5_000_000, "large" => 9_000_000, "early" => 12_000_000}[name]
       seed_from = offset + index * 100_000 + 1
 
       try do
@@ -432,7 +486,7 @@ run_axis = fn axis, seed_from, count, out ->
   file = File.open!(out, [:append, :utf8])
   started = System.monotonic_time(:millisecond)
 
-  total =
+  {total, stats} =
     seed_from..(seed_from + count - 1)
     |> Task.async_stream(
       fn seed -> PerfDiff.run(seed, rounds, range, alts_pct, extras?) end,
@@ -440,14 +494,21 @@ run_axis = fn axis, seed_from, count, out ->
       timeout: :infinity,
       ordered: false
     )
-    |> Enum.reduce(0, fn {:ok, lines}, n ->
+    |> Enum.reduce({0, %{}}, fn {:ok, {lines, stats}}, {n, acc} ->
       for line <- lines, do: IO.write(file, Enum.join([axis | line], "\t") <> "\n")
-      n + length(lines)
+      {n + length(lines), Map.merge(acc, stats, fn _k, a, b -> a + b end)}
     end)
 
   File.close(file)
   secs = (System.monotonic_time(:millisecond) - started) / 1000
   IO.puts("#{axis}: #{count} tournaments, #{total} rounds in #{Float.round(secs, 1)} s -> #{out}")
+
+  # AINALRAMI_CERT_STATS=1: the certified-shortcut counters of the pairing
+  # calls made in the tournament workers (alternatives run in tasks of their
+  # own and are not counted), next to the log.
+  if stats != %{} do
+    File.write!(out <> ".stats", inspect(Enum.sort(stats), limit: :infinity, pretty: true) <> "\n")
+  end
 end
 
 case System.argv() do
