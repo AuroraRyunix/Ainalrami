@@ -1714,23 +1714,29 @@ defmodule Ainalrami.WeightedMatching do
         # neighbours that take an offer: an inner neighbour, or one in the
         # same blossom, costs one lookup rather than two lookups and two
         # bignum operations.
-        {cross, best_outer} =
-          Enum.reduce(row, {cross, best_outer}, fn {u, w}, {cr, bo} ->
+        #
+        # The cross-table offers are GATHERED here and applied once, after
+        # the walk - see `cross_gather/6` for why that is the same table.
+        # `own` is `blossom`'s row as the walk started.
+        own = cross_row(cross, blossom)
+
+        {updates, best_outer} =
+          Enum.reduce(row, {%{}, best_outer}, fn {u, w}, {up, bo} ->
             ub = Map.fetch!(in_blossom, u)
 
             case Map.get(labels, ub) do
               :outer when ub != blossom ->
-                {cross_offer(cr, blossom, ub, dv_cross + Map.fetch!(duals, u) - w, v, u), bo}
+                {cross_gather(up, own, ub, dv_cross + Map.fetch!(duals, u) - w, v, u), bo}
 
               label when label in [:free, :zero] ->
-                {cr, offer(bo, u, dv_outer + Map.fetch!(duals, u) - w, v)}
+                {up, offer(bo, u, dv_outer + Map.fetch!(duals, u) - w, v)}
 
               _ ->
-                {cr, bo}
+                {up, bo}
             end
           end)
 
-        %{state | cross: cross, best_outer: best_outer}
+        %{state | cross: cross_apply(cross, blossom, updates), best_outer: best_outer}
     end
   end
 
@@ -1954,22 +1960,54 @@ defmodule Ainalrami.WeightedMatching do
 
   defp cross_empty, do: {%{}, %{}, nil}
 
-  defp cross_offer({rows, mins, best} = cross, a, b, r, va, vb) do
-    case rows do
-      %{^a => %{^b => {old, _, _}}} when old <= r ->
-        cross
+  # An OFFER of the edge `(va in a, vb in b)` at stored resistance `r` is
+  # kept unless the table already holds an entry for `{a, b}` with
+  # `old <= r` - so among equal resistances the first offered wins - and a
+  # kept offer writes `{r, va, vb}` into `a`'s row, its mirror
+  # `{r, vb, va}` into `b`'s, and lowers both row minima and the running
+  # best. That rule is applied in batches, one per settling blossom
+  # (`settle_outer_vertex/2`, the one place edges are offered):
+  #
+  # `cross_row/2` is `a`'s row as it stands. `cross_gather/6` records one
+  # offer in `updates`, keeping the incumbent exactly as the rule says -
+  # whether that incumbent is in the table or was gathered earlier in the
+  # same run - and `cross_apply/3` then writes the survivors. An offer only
+  # ever replaces an entry by a strictly smaller one, and a row's minimum,
+  # the running best and the partner's mirror entry are each a function of
+  # the final entries alone, so one write per touched entry reaches the
+  # same table as one write per offer did. That used to be one rewrite of
+  # `a`'s row, `a`'s minimum and the best per outer neighbour: a hundred
+  # rewrites of the same row per settle on a cold solve, where nearly every
+  # neighbour is outer.
+  defp cross_row({rows, _mins, _best}, a), do: Map.get(rows, a, %{})
+
+  defp cross_gather(updates, own, b, r, va, vb) do
+    case updates do
+      %{^b => {old, _, _}} when old <= r ->
+        updates
+
+      %{^b => _} ->
+        Map.put(updates, b, {r, va, vb})
 
       _ ->
-        rows =
-          rows
-          |> Map.update(a, %{b => {r, va, vb}}, &Map.put(&1, b, {r, va, vb}))
-          |> Map.update(b, %{a => {r, vb, va}}, &Map.put(&1, a, {r, vb, va}))
-
-        mins = mins |> offer_min(a, {r, b}) |> offer_min(b, {r, a})
-        {lo, hi} = if a < b, do: {a, b}, else: {b, a}
-        best = lower_best(best, {r, lo, hi})
-        {rows, mins, best}
+        case own do
+          %{^b => {old, _, _}} when old <= r -> updates
+          _ -> Map.put(updates, b, {r, va, vb})
+        end
     end
+  end
+
+  defp cross_apply(cross, _a, updates) when map_size(updates) == 0, do: cross
+
+  defp cross_apply({rows, mins, best}, a, updates) do
+    rows = Map.put(rows, a, Map.merge(Map.get(rows, a, %{}), updates))
+
+    Enum.reduce(updates, {rows, mins, best}, fn {b, {r, va, vb}}, {rows, mins, best} ->
+      rows = Map.update(rows, b, %{a => {r, vb, va}}, &Map.put(&1, a, {r, vb, va}))
+      mins = mins |> offer_min(a, {r, b}) |> offer_min(b, {r, a})
+      {lo, hi} = if a < b, do: {a, b}, else: {b, a}
+      {rows, mins, lower_best(best, {r, lo, hi})}
+    end)
   end
 
   # Write the row minimum only when it changes; a `Map.update` that puts
@@ -1994,12 +2032,26 @@ defmodule Ainalrami.WeightedMatching do
   defp lower_best(nil, new), do: new
   defp lower_best(old, new), do: if(new < old, do: new, else: old)
 
-  # Row a's minimum, from its entries.
-  defp row_min(row) do
-    Enum.reduce(row, nil, fn {b, {r, _, _}}, acc ->
-      if acc == nil, do: {r, b}, else: lower_min(acc, {r, b})
-    end)
-  end
+  # Row a's minimum, from its entries: the least `{r, partner}`.
+  #
+  # A tight loop over the row's entries rather than a fold calling
+  # `lower_min/2` with a fresh tuple per entry - this is the most-called
+  # scan in the matcher (a row is rescanned whenever the blossom its
+  # minimum pointed at merges or leaves the outer set, which on a cold
+  # solve is most rows at most steps). The minimum of a set under a total
+  # order does not depend on the order it is visited in, and every entry
+  # has its own partner, so the order here is free.
+  defp row_min(row), do: row |> :maps.to_list() |> least_entry(nil, nil)
+
+  defp least_entry([], nil, _b), do: nil
+  defp least_entry([], r, b), do: {r, b}
+  defp least_entry([{b, {r, _, _}} | rest], nil, _), do: least_entry(rest, r, b)
+
+  defp least_entry([{b, {r, _, _}} | rest], best_r, best_b)
+       when r < best_r or (r == best_r and b < best_b),
+       do: least_entry(rest, r, b)
+
+  defp least_entry([_ | rest], best_r, best_b), do: least_entry(rest, best_r, best_b)
 
   defp cross_best(mins) do
     Enum.reduce(mins, nil, fn {a, {r, b}}, acc ->
