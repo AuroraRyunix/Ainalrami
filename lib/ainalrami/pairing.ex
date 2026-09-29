@@ -259,8 +259,25 @@ defmodule Ainalrami.Pairing do
   and in `override` the one rank whose exclusion, lifted, lets the round be
   paired - see the exception's doc. A round that is impossible for reasons
   of its own still raises with `reason: :no_legal_pairing`.
+
+  ## Bye preferences (not FIDE)
+
+  `opts[:bye_preferences]` - per player, "must get", "rather gets",
+  "rather not" or "must not get" the pairing-allocated bye, for every round
+  or chosen rounds - is resolved by `Ainalrami.ByePreference.pair/2`, which
+  also returns an account of what each preference did; this returns its
+  pairs. Absent or `[]`, the engine runs exactly the code it ran before the
+  option existed.
   """
   def pair_next_round(players, opts \\ []) do
+    if Ainalrami.ByePreference.active?(opts) do
+      players |> Ainalrami.ByePreference.pair(opts) |> elem(0)
+    else
+      pair_without_preferences(players, opts)
+    end
+  end
+
+  defp pair_without_preferences(players, opts) do
     do_pair_next_round(players, opts)
   rescue
     e in Ainalrami.Pairing.NoValidPairingError ->
@@ -528,6 +545,30 @@ defmodule Ainalrami.Pairing do
   option no bracket carries the key.
   """
   def explain_round(players, pairs, opts \\ []) do
+    if Ainalrami.ByePreference.active?(opts) do
+      explain_with_preferences(players, pairs, opts)
+    else
+      explain_without_preferences(players, pairs, opts)
+    end
+  end
+
+  # `:bye_preferences` (not FIDE) resolved the way `pair_next_round/2`
+  # resolves them, so the round is scored under the exclusions it was
+  # really paired by. The bracket holding the bye carries the account as
+  # `bye_preference`. The organiser-exclusion chain is not re-run over the
+  # resolved list - for a "must get" wish that list is the whole field
+  # but one - unless the caller asks for it.
+  defp explain_with_preferences(players, pairs, opts) do
+    {_pairs, report} = Ainalrami.ByePreference.pair(players, opts)
+    resolved = Keyword.put_new(report.opts, :bye_passed_over, false)
+    reports = explain_without_preferences(players, pairs, resolved)
+    holder = Enum.find_value(pairs, fn {w, b} -> if is_nil(b), do: w end)
+    index = Enum.find_index(reports, &(holder in &1.order)) || max(length(reports) - 1, 0)
+    account = Map.drop(report, [:opts])
+    List.update_at(reports, index, &Map.put(&1, :bye_preference, account))
+  end
+
+  defp explain_without_preferences(players, pairs, opts) do
     # Before anything is stamped: it re-pairs the round, and
     # `pair_next_round/2` clears every round-scoped key on its way out.
     passed_over = bye_passed_over(players, pairs, opts)
@@ -562,6 +603,15 @@ defmodule Ainalrami.Pairing do
   # at the same moment, relative to everything else that can raise here, as
   # it always was. The context itself never depends on it.
   def explain_context(players, opts, pairs \\ :none) do
+    # Unresolved bye preferences would be judged as absent here - and by
+    # every forced search `Ainalrami.Alternatives` runs on this context -
+    # which is a report about a round that was not the one paired.
+    if Ainalrami.ByePreference.active?(opts) do
+      raise ArgumentError,
+            "resolve :bye_preferences first: pass the :opts of " <>
+              "Ainalrami.ByePreference.pair/2's report instead"
+    end
+
     Process.put(@expected_rounds_key, opts[:expected_rounds])
 
     Process.put(
@@ -8138,6 +8188,20 @@ defmodule Ainalrami.Pairing do
         do: Process.put(@point_system_key, previous),
         else: Process.delete(@point_system_key)
     end
+  end
+
+  @doc false
+  # The round's active players, each with the score its bracket is built on
+  # (points plus this round's acceleration), as `%{rank => score}`. For
+  # `Ainalrami.ByePreference`, which compares bye holders' scores and must
+  # read them by the same rule the brackets do rather than a copy of it.
+  def round_scores(players) do
+    played = rounds_played(players)
+
+    players
+    |> Enum.filter(&active_this_round?(&1, played))
+    |> with_acceleration(played)
+    |> Map.new(&{&1.rank, &1.points})
   end
 
   defp bye_disqualification(player) do
