@@ -53,6 +53,7 @@ defmodule Ainalrami.Pairing do
   - the shape `Ainalrami.Trf.parse/1` returns.
   """
 
+  alias Ainalrami.CardinalityMatching
   alias Ainalrami.Log
   alias Ainalrami.WeightedMatching
 
@@ -2859,9 +2860,11 @@ defmodule Ainalrami.Pairing do
         {:idle, {[], combined, nsgb, Enum.map(Enum.take(combined, min(wsgb, m)), & &1.points)}}
 
       false ->
-        case attempt_direct_field(combined, m, sgb, nsgb, wsgb, ctx, single_bye?) do
+        with :no <- attempt_direct_last(combined, m, sgb, nsgb, wsgb, ctx, single_bye?),
+             :no <- attempt_direct_field(combined, m, sgb, nsgb, wsgb, ctx, single_bye?) do
+          {:field, attempt_field(combined, m, sgb, nsgb, wsgb, ctx, single_bye?)}
+        else
           {:ok, result} -> {:direct, result}
-          :no -> {:field, attempt_field(combined, m, sgb, nsgb, wsgb, ctx, single_bye?)}
         end
 
       _ ->
@@ -3107,6 +3110,35 @@ defmodule Ainalrami.Pairing do
   # C8 the rest of the field scores nothing, so the bracket's answer is the
   # direct walk's over that pool.
   #
+  # On an ODD field two more shapes, both where the bracket's window reaches
+  # the players the bye may go to. With one bye, every optimum of the field
+  # graph pairs all but one player and leaves over a bye candidate, when
+  # that can be done at all (the completion rung is `|M|` plus the matched
+  # non-candidates: largest on a near-perfect matching whose leftover is a
+  # candidate) - a property of the whole matching, whatever each edge's own
+  # term is. And the next bracket's C9 gate, which reads the tentative
+  # partners of this window, must be decided without them: it is shut when
+  # the next group scores above the bye, and when the next group is the last
+  # one every partner the window can have scores at least as much as it, so
+  # the gate reads true on both paths (`direct_result/4` reports scores that
+  # say so). Anything else falls back.
+  #
+  # **An even bracket of an odd field**: as on an even field, once the
+  # bracket has a perfect internal matching and the rest of the field can be
+  # completed leaving a candidate over (the oracle, after the walk), every
+  # optimum has the bracket inside (C6), and the bracket's part is its own
+  # optimum.
+  #
+  # **An odd bracket over the bye group**: every member of the bracket above
+  # the bye score, the next group the last group. The argument of the odd
+  # bracket above holds with "completed" read as "near-perfect, leaving a
+  # candidate": a resident F meets the completion and C8 bounds exactly when
+  # the group and F have `q / 2` pairs covering F and leaving a candidate
+  # over (`bye_group_pool/4`, exact), every such F meets them alike, and
+  # below C8 the group scores nothing - C9 is off here, and the completion
+  # rung's per-edge terms only move the matching's total, which is the same
+  # for every such F.
+  #
   # The reference would carry the round matcher it built here into the next
   # bracket; this leaves none. Every far edge a later bracket builds is the
   # weight the reference carries, as long as the C9 gate that builds it
@@ -3125,7 +3157,7 @@ defmodule Ainalrami.Pairing do
 
     with true <- Process.get(@cert_key) == true and not single_bye? and not far_c9,
          true <- direct_allowed?(sgb, nsgb),
-         {:ok, pool} <- direct_field_pool(arr, sgb, nsgb, wsgb, ctx),
+         {:ok, pool, kind} <- direct_field_pool(arr, sgb, nsgb, wsgb, ctx),
          {:ok, {pairs, _, _, _} = result} <-
            direct_bracket(combined, m, sgb, nsgb, wsgb, ctx, single_bye?, pool),
          positions =
@@ -3135,8 +3167,10 @@ defmodule Ainalrami.Pairing do
          {:ok, oracle} <- oracle_completable?(Process.get(@oracle_key), positions) do
       if env_flag(@env_direct_key, "AINALRAMI_DIRECT") == "check" do
         check_direct_field!(result, combined, m, sgb, nsgb, wsgb, ctx, single_bye?)
+        cert_count({:direct_field_checked, kind})
       end
 
+      cert_count({:direct_field, kind})
       Process.put(@oracle_key, oracle)
       Process.put(@round_matcher_key, {nil, field_index, field_size})
       Process.put(@virtual_builder_key, false)
@@ -3147,25 +3181,105 @@ defmodule Ainalrami.Pairing do
     end
   end
 
-  # The floaters a field-graph bracket may take (see `attempt_direct_field/7`):
-  # `{:ok, nil}` for an even bracket of an even field, `{:ok, pool}` for an
-  # odd bracket whose field below is shown to take any of the pool and none
-  # of the other residents, `:no` otherwise.
+  # The last bracket of an odd field: whoever it leaves over takes the bye.
+  # Answered by the direct bracket with the bye as its floater, in any mode -
+  # nothing is paired after it, so no later bracket reads a matcher it did
+  # not leave.
+  #
+  # The bracket is the whole remaining graph (no next group, nothing below),
+  # so every edge is inside it. The completion rung sums to the matched
+  # pairs (none under `AINALRAMI_COMPLETION=eligibility`) plus the matched
+  # non-candidates, and C6 to the pairs; a matching of `P = nsgb div 2`
+  # pairs leaving a bye candidate L over meets both bounds, so once the walk
+  # has found one, every optimum is such a matching. Over those, two rungs
+  # are sums of per-vertex terms fixed by L alone: the completion rung, and
+  # C9 when its gate is on, `(sum of the unplayed-game ranks) - rank(L)`,
+  # largest for the least rank (the most games played: C9's "fewest
+  # unplayed games of the assignee"); C7, between them, pairs every MDP, so
+  # L is a resident. The pool is the resident candidates of that least rank,
+  # and every optimum's L is among them. Below C9 the ladder is the local
+  # graph's, with the floater
+  # standing on no edge at all, which is how the walk already treats an odd
+  # bracket's floater (the stand-in's edge is outside the bracket, where no
+  # rung below C9 is live); and the stages read an unmatched member exactly
+  # as one matched to the stand-in - not paired down, and in the remainder.
+  # The walk skips the per-edge completion and C9 tests here for that
+  # reason: their sums are fixed by L.
+  defp attempt_direct_last(combined, m, sgb, nsgb, wsgb, ctx, single_bye?) do
+    with true <-
+           ctx.odd_field? and not is_nil(ctx.bye_score) and rem(nsgb, 2) == 1 and nsgb == m and
+             wsgb == m,
+         true <- direct_allowed?(sgb, nsgb),
+         arr = List.to_tuple(combined),
+         [_ | _] = pool <- last_pool(arr, sgb, nsgb, ctx, single_bye?),
+         {:ok, result} <-
+           direct_bracket(combined, m, sgb, nsgb, wsgb, ctx, single_bye?, pool, true) do
+      if env_flag(@env_direct_key, "AINALRAMI_DIRECT") == "check" do
+        check_direct_last!(result, combined, m, sgb, nsgb, wsgb, ctx, single_bye?)
+        cert_count({:direct_field_checked, :last})
+      end
+
+      cert_count({:direct_field, :last})
+      {:ok, result}
+    else
+      _ -> :no
+    end
+  end
+
+  # The residents the last bracket may leave over, as its rungs above C10
+  # allow (see `attempt_direct_last/7`).
+  defp last_pool(arr, sgb, nsgb, ctx, single_bye?) do
+    candidates = Enum.filter(sgb..(nsgb - 1)//1, &bye_candidate?(elem(arr, &1), ctx.bye_score))
+    rank = &unplayed_rank(elem(arr, &1), ctx)
+
+    if single_bye? and candidates != [] do
+      least = candidates |> Enum.map(rank) |> Enum.min()
+      Enum.filter(candidates, &(rank.(&1) == least))
+    else
+      candidates
+    end
+  end
+
+  # The floaters a field-graph bracket may take (see `attempt_direct_field/7`),
+  # with the shape's name for the counters: `{:ok, nil, _}` for an even
+  # bracket, `{:ok, pool, _}` for an odd bracket whose field below is shown
+  # to take any of the pool and none of the other residents, `:no`
+  # otherwise.
   defp direct_field_pool(arr, sgb, nsgb, wsgb, ctx) do
     q = wsgb - nsgb
+    m = tuple_size(arr)
+    bye_score = ctx.bye_score
 
     non_candidate? = fn p ->
       if ctx.odd_field?,
-        do: not is_nil(ctx.bye_score) and p.points > ctx.bye_score,
+        do: not is_nil(bye_score) and p.points > bye_score,
         else: not bye_candidate?(p, nil)
     end
 
-    cond do
-      rem(nsgb, 2) == 0 ->
-        if ctx.odd_field?, do: :no, else: {:ok, nil}
+    # On an odd field, what the next bracket's C9 gate reads off this one
+    # is decided without a matching when the next group scores above the
+    # bye (the gate is shut) or is the last group (every tentative partner
+    # in the window then scores at least as much as it).
+    gate_decided? = fn ->
+      q >= 1 and not is_nil(bye_score) and
+        (elem(arr, nsgb).points > bye_score or window_to_end?(wsgb, m))
+    end
 
-      q < 1 or not Enum.all?(0..(wsgb - 1)//1, &non_candidate?.(elem(arr, &1))) ->
+    cond do
+      rem(nsgb, 2) == 0 and not ctx.odd_field? ->
+        {:ok, nil, :even}
+
+      rem(nsgb, 2) == 0 ->
+        if gate_decided?.(), do: {:ok, nil, :even_odd_field}, else: :no
+
+      q < 1 ->
         :no
+
+      not Enum.all?(0..(wsgb - 1)//1, &non_candidate?.(elem(arr, &1))) ->
+        if ctx.odd_field? and gate_decided?.() and window_to_end?(wsgb, m) and
+             Enum.all?(0..(nsgb - 1)//1, &non_candidate?.(elem(arr, &1))),
+           do: bye_group_pool(arr, sgb, nsgb, ctx),
+           else: :no
 
       true ->
         # Solved once here rather than by each question below, which would
@@ -3188,7 +3302,7 @@ defmodule Ainalrami.Pairing do
 
         pool = if rest_ok?, do: Enum.filter(sgb..(nsgb - 1)//1, &absorbed?(arr, &1, next_group))
 
-        if rest_ok? and pool != [], do: {:ok, pool}, else: :no
+        if rest_ok? and pool != [], do: {:ok, pool, :odd}, else: :no
     end
   end
 
@@ -3211,12 +3325,99 @@ defmodule Ainalrami.Pairing do
     map_size(matching) == 2 * div(q + 1, 2) and is_map_key(matching, 0)
   end
 
+  # Whether the window runs to the end of the field: nothing is left below
+  # the next group (`AINALRAMI_PEEK=<n>` hides groups from the graph, so
+  # there the end of the graph is not the end of the field).
+  defp window_to_end?(wsgb, m), do: wsgb >= m and peek_budget() == :unbounded
+
+  # The pool of an odd bracket whose next group is the last group and holds
+  # the bye (see `attempt_direct_field/7`): the residents `F` for which the
+  # next group and `F` have `q / 2` pairs covering `F` and leaving a bye
+  # candidate over. With `x` a vertex joined to the group's candidates,
+  # that is "the group plus `x` less some `G` next to `F` has a perfect
+  # matching", i.e. `G` is one a maximum matching of the group plus `x` can
+  # leave exposed (`Ainalrami.CardinalityMatching.exposable/1`) - one search
+  # for every resident at once, where asking per resident is a matching
+  # per resident.
+  defp bye_group_pool(arr, sgb, nsgb, ctx) do
+    m = tuple_size(arr)
+    q = m - nsgb
+    compatible? = fn a, b -> legal_pair?(a, b) and colour_compatible?(a, b) end
+
+    # Parity: a near-perfect matching of the rest leaves an even group
+    # plus the floater.
+    if rem(q, 2) == 0 do
+      group = List.to_tuple(for i <- nsgb..(m - 1)//1, do: elem(arr, i))
+      x = q
+
+      pairs =
+        for a <- 0..(q - 1)//1,
+            b <- (a + 1)..(q - 1)//1,
+            compatible?.(elem(group, a), elem(group, b)),
+            do: {a, b}
+
+      stand_in =
+        for a <- 0..(q - 1)//1, bye_candidate?(elem(group, a), ctx.bye_score), do: {a, x}
+
+      adj =
+        Enum.reduce(pairs ++ stand_in, Map.new(0..q//1, &{&1, []}), fn {a, b}, acc ->
+          acc |> Map.update!(a, &[b | &1]) |> Map.update!(b, &[a | &1])
+        end)
+        |> then(fn adj ->
+          List.to_tuple(for v <- 0..q//1, do: Enum.reverse(Map.fetch!(adj, v)))
+        end)
+
+      with {:ok, exposable} <- CardinalityMatching.exposable(adj) do
+        pool =
+          Enum.filter(sgb..(nsgb - 1)//1, fn f ->
+            Enum.any?(0..(q - 1)//1, fn g ->
+              MapSet.member?(exposable, g) and compatible?.(elem(arr, f), elem(group, g))
+            end)
+          end)
+
+        if pool != [], do: {:ok, pool, :odd_bye_group}, else: :no
+      end
+    else
+      :no
+    end
+  end
+
   # The check for `attempt_direct_field/7`: the field path on a copy of the
   # round's state, compared on what the next bracket reads (the pairs, who
   # is carried, how many float) - its tentative partners' scores are read
   # only by the C9 gate, which cannot open below a window that scores above
   # the bye (an odd field) or on a field with no bye (an even one).
   defp check_direct_field!(
+         {pairs, carried, sgb_out, scores},
+         combined,
+         m,
+         sgb,
+         nsgb,
+         wsgb,
+         ctx,
+         single_bye?
+       ) do
+    {ref_pairs, ref_carried, ref_sgb, ref_scores} =
+      reference_field_bracket(combined, m, sgb, nsgb, wsgb, ctx, single_bye?)
+
+    # What `bracket_loop/6`'s gate makes of the tentative partners' scores
+    # (the gate's other conjuncts are the same on both paths).
+    gate = fn scores ->
+      c9_gate_live?(combined, nsgb, wsgb, ctx) and
+        Enum.all?(scores, &(&1 >= Enum.at(combined, nsgb).points))
+    end
+
+    mine = {pairs, Enum.map(carried, & &1.rank), sgb_out, gate.(scores)}
+    ref = {ref_pairs, Enum.map(ref_carried, & &1.rank), ref_sgb, gate.(ref_scores)}
+
+    if mine != ref do
+      raise "direct field bracket differs from the stages: #{inspect(mine)} vs #{inspect(ref)}"
+    end
+  end
+
+  # The check for `attempt_direct_last/7`: the last bracket on the field
+  # graph, from the same state.
+  defp check_direct_last!(
          {pairs, carried, sgb_out, _},
          combined,
          m,
@@ -3226,6 +3427,19 @@ defmodule Ainalrami.Pairing do
          ctx,
          single_bye?
        ) do
+    {ref_pairs, ref_carried, ref_sgb, _} =
+      reference_field_bracket(combined, m, sgb, nsgb, wsgb, ctx, single_bye?)
+
+    mine = {pairs, Enum.map(carried, & &1.rank), sgb_out}
+    ref = {ref_pairs, Enum.map(ref_carried, & &1.rank), ref_sgb}
+
+    if mine != ref do
+      raise "direct last bracket differs from the stages: #{inspect(mine)} vs #{inspect(ref)}"
+    end
+  end
+
+  # `attempt_field/7` on a copy of the round's state.
+  defp reference_field_bracket(combined, m, sgb, nsgb, wsgb, ctx, single_bye?) do
     saved =
       for key <- [
             @round_matcher_key,
@@ -3238,20 +3452,14 @@ defmodule Ainalrami.Pairing do
           ],
           do: {key, Process.get(key)}
 
-    {ref_pairs, ref_carried, ref_sgb, _} =
-      attempt_field(combined, m, sgb, nsgb, wsgb, ctx, single_bye?)
+    reference = attempt_field(combined, m, sgb, nsgb, wsgb, ctx, single_bye?)
 
     Enum.each(saved, fn
       {key, nil} -> Process.delete(key)
       {key, value} -> Process.put(key, value)
     end)
 
-    mine = {pairs, Enum.map(carried, & &1.rank), sgb_out}
-    ref = {ref_pairs, Enum.map(ref_carried, & &1.rank), ref_sgb}
-
-    if mine != ref do
-      raise "direct field bracket differs from the stages: #{inspect(mine)} vs #{inspect(ref)}"
-    end
+    reference
   end
 
   # `AINALRAMI_DIRECT=check`: every direct answer is held to the stages' own
@@ -3277,13 +3485,26 @@ defmodule Ainalrami.Pairing do
     # its own C9 gate. After a direct field bracket the reference's matcher
     # was built with the gate `@virtual_builder_key` holds, and a different
     # one would be a different graph: the round is paired again without the
-    # shortcuts (`certified_cascade/2`).
+    # shortcuts (`certified_cascade/2`) - unless the window is everything that
+    # is left: then there is no far edge, the reference's boundary sets every
+    # edge of the graph to this bracket's weights (`solve_field/1`), and a
+    # matcher built from them is that graph.
     case Process.get(@round_matcher_key) do
       {nil, _, _} ->
         case Process.get(@virtual_builder_key) do
-          nil -> :ok
-          ^single_bye? -> Process.delete(@virtual_builder_key)
-          _ -> throw({:cert_abort, :builder_gate})
+          nil ->
+            :ok
+
+          ^single_bye? ->
+            Process.delete(@virtual_builder_key)
+
+          _ ->
+            if window_to_end?(wsgb, m) do
+              cert_count(:builder_gate_whole_window)
+              Process.delete(@virtual_builder_key)
+            else
+              throw({:cert_abort, :builder_gate})
+            end
         end
 
         Process.put(@builder_c9_key, single_bye?)
@@ -3525,7 +3746,7 @@ defmodule Ainalrami.Pairing do
   @direct_budget_per_member 32
   @direct_small_max 12
 
-  defp direct_bracket(combined, m, sgb, nsgb, wsgb, ctx, single_bye?, pool \\ nil) do
+  defp direct_bracket(combined, m, sgb, nsgb, wsgb, ctx, single_bye?, pool \\ nil, last? \\ false) do
     if direct_allowed?(sgb, nsgb) do
       Process.put(@direct_budget_key, @direct_budget_per_member * nsgb + 512)
 
@@ -3534,10 +3755,10 @@ defmodule Ainalrami.Pairing do
         wl = local_graph_length(nsgb)
 
         if wl <= @direct_small_max do
-          weights = small_weights(arr, m, sgb, nsgb, wsgb, ctx, single_bye?, pool)
+          weights = small_weights(arr, m, sgb, nsgb, wsgb, ctx, single_bye?, pool, last?)
           {:ok, direct_small(arr, weights, wl, m, sgb, nsgb, wsgb, ctx, pool)}
         else
-          direct_walk(arr, m, sgb, nsgb, wsgb, ctx, single_bye?, pool)
+          direct_walk(arr, m, sgb, nsgb, wsgb, ctx, single_bye?, pool, last?)
         end
       catch
         :throw, {:direct_abort, reason} ->
@@ -3560,7 +3781,7 @@ defmodule Ainalrami.Pairing do
       is_nil(Process.get(@soft_key)) and nsgb >= 2 and 2 * sgb <= nsgb
   end
 
-  defp direct_walk(arr, m, sgb, nsgb, wsgb, ctx, single_bye?, pool) do
+  defp direct_walk(arr, m, sgb, nsgb, wsgb, ctx, single_bye?, pool, last?) do
     facts = List.to_tuple(for i <- 0..(nsgb - 1)//1, do: direct_fact(elem(arr, i)))
     odd? = rem(nsgb, 2) == 1
     # Who may float: any resident on the local graph (the stand-in takes
@@ -3611,6 +3832,9 @@ defmodule Ainalrami.Pairing do
       floaters: floaters,
       ctx: ctx,
       single_bye?: single_bye?,
+      # The last bracket of an odd field (`attempt_direct_last/7`): the
+      # completion and C9 rungs' sums are fixed by who is left over.
+      last?: last?,
       completion:
         if(env_flag(@env_completion_key, "AINALRAMI_COMPLETION") == "eligibility", do: 2, else: 3)
     }
@@ -3851,8 +4075,8 @@ defmodule Ainalrami.Pairing do
           bit(typed_clash) != 1 - c12 or bit(typed_breach) != 1 - c13 ->
             throw({:direct_abort, :types})
 
-          (completion == env.completion or not env.odd?) and c9 == 0 and c10 == 1 and c11 == 1 and
-            c15 == 1 and c17 == 1 ->
+          (env.last? or ((completion == env.completion or not env.odd?) and c9 == 0)) and
+            c10 == 1 and c11 == 1 and c15 == 1 and c17 == 1 ->
             {:ok, 1 - c12, 1 - c13}
 
           true ->
@@ -3902,7 +4126,8 @@ defmodule Ainalrami.Pairing do
     scores =
       for i <- 0..(min(wsgb, m) - 1)//1, not is_map_key(partner, i) do
         cond do
-          i == floater -> elem(arr, env.nsgb).points
+          # The last bracket's floater is unmatched, and reads as its own.
+          i == floater and env.nsgb < m -> elem(arr, env.nsgb).points
           floater != nil and i == env.nsgb -> elem(arr, floater).points
           true -> elem(arr, i).points
         end
@@ -4132,21 +4357,29 @@ defmodule Ainalrami.Pairing do
   # whose edge is the float every floater of the pool scores in full, and
   # any other member one C8 unit less - so an optimum that floats one of them
   # has won above C8, where no pool floater could, and is refused.
-  defp small_weights(arr, m, sgb, nsgb, wsgb, ctx, single_bye?, pool) do
+  defp small_weights(arr, m, sgb, nsgb, wsgb, ctx, single_bye?, pool, last?) do
     bands = ctx.bands
     base = base_edge_weights(arr, m, sgb, nsgb, nsgb, ctx, bands, single_bye?)
-    local = stand_in_edges(base, arr, sgb, nsgb, wsgb, ctx, bands, single_bye?)
 
-    case pool do
-      nil ->
-        local
+    cond do
+      # The last bracket: the one left over stands on the stand-in, whose
+      # edge is the same for everyone - leaving L over is already priced by
+      # the rungs of the pairs it is not in (`attempt_direct_last/7`).
+      last? ->
+        Enum.reduce(0..(nsgb - 1)//1, base, fn i, acc -> Map.put(acc, {i, nsgb}, 1) end)
 
-      pool ->
-        ideal =
-          case pool |> Enum.map(&Map.fetch!(local, {&1, nsgb})) |> Enum.uniq() do
-            [w] -> w
-            _ -> throw({:direct_abort, :float_weights})
-          end
+      pool == nil ->
+        stand_in_edges(base, arr, sgb, nsgb, wsgb, ctx, bands, single_bye?)
+
+      true ->
+        local = stand_in_edges(base, arr, sgb, nsgb, wsgb, ctx, bands, single_bye?)
+
+        # Every floater of the pool scores the same outside the bracket, and
+        # every perfect matching here has one stand-in edge, so any common
+        # value is exact; the stand-in's edge for a member is its float
+        # against the first partner it has in the next group, whose
+        # completion term (over the bye group) need not be the same for all.
+        ideal = pool |> Enum.map(&Map.fetch!(local, {&1, nsgb})) |> Enum.max()
 
         short = ideal - elem(ctx.outside.suffix, ctx.outside.c8_pairs) * bands.reserve
 

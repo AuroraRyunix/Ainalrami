@@ -38,12 +38,15 @@ defmodule Ainalrami.DirectBracketTest do
        "PAIRING_FUZZ_INITIAL_COLOUR" => "mixed"
      }},
     {"large 100-180", 601..603, 100..180,
+     %{"PAIRING_FUZZ_BYE_PCT" => "3", "PAIRING_FUZZ_FORFEIT_PCT" => "2"}},
+    {"large 101-151", 701..702, 101..151,
      %{"PAIRING_FUZZ_BYE_PCT" => "3", "PAIRING_FUZZ_FORFEIT_PCT" => "2"}}
   ]
 
   setup do
     saved =
-      for key <- ~w(AINALRAMI_DIRECT AINALRAMI_CERT AINALRAMI_CERT_STATS), do: {key, System.get_env(key)}
+      for key <- ~w(AINALRAMI_DIRECT AINALRAMI_CERT AINALRAMI_CERT_STATS),
+          do: {key, System.get_env(key)}
 
     on_exit(fn ->
       Enum.each(saved, fn
@@ -73,6 +76,14 @@ defmodule Ainalrami.DirectBracketTest do
     assert rounds > 2_000
     assert Map.get(stats, :direct_ok, 0) > 0, "the walk never answered: #{inspect(stats)}"
     assert Map.get(stats, :direct_small_ok, 0) > 0, "the small bracket never answered"
+
+    # The odd field's shapes, each held to the field path's answer by the
+    # check mode: the last bracket (the bye), an odd bracket over the bye
+    # group, an even bracket of an odd field.
+    for kind <- [:last, :odd_bye_group, :even_odd_field] do
+      assert Map.get(stats, {:direct_field_checked, kind}, 0) > 0,
+             "no #{kind} bracket was answered directly: #{inspect(stats)}"
+    end
   end
 
   defp play(seed, range) do

@@ -85,7 +85,9 @@ defmodule Ainalrami.MatchCertificateTest do
                state.weight,
                m,
                fn _ -> false end,
-               WeightedMatching.vertex_duals(state), strict: false) do
+               WeightedMatching.vertex_duals(state),
+               strict: false
+             ) do
           {:ok, cert} ->
             assert {:ok, _} =
                      MatchCertificate.check(state.weight, m, fn _ -> false end, cert.dual)
@@ -123,7 +125,9 @@ defmodule Ainalrami.MatchCertificateTest do
                state.weight,
                m,
                fn _ -> false end,
-               WeightedMatching.vertex_duals(state), strict: false) do
+               WeightedMatching.vertex_duals(state),
+               strict: false
+             ) do
           {:ok, cert} ->
             installed = WeightedMatching.install(state, m, cert.dual)
             assert_covers(installed, maxima, "seed #{seed} installed")
@@ -157,7 +161,9 @@ defmodule Ainalrami.MatchCertificateTest do
                  state.weight,
                  m,
                  fn _ -> false end,
-                 WeightedMatching.vertex_duals(state), strict: false) do
+                 WeightedMatching.vertex_duals(state),
+                 strict: false
+               ) do
             {:ok, cert} ->
               [
                 {1, WeightedMatching.install(state, m, cert.dual)},
