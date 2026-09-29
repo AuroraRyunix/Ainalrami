@@ -1,7 +1,152 @@
 # Performance
 
-Two passes, newest first: the direct bracket, which took the pairing past
-Gacrux on every benchmark file, and the large-field pass before it.
+Three passes, newest first: the direct bracket on odd fields, the direct
+bracket itself, which took the pairing past Gacrux on every benchmark
+file, and the large-field pass before it.
+
+## The direct bracket on odd fields (2026-09-29)
+
+A 1,001-player round 2 took **31.9 s**, where 1,000 players took 0.05 s:
+two brackets of the odd field went to the whole-field matcher. It now
+takes **0.12 s**, with the same pairing, and every answer on the
+differential corpus is unchanged.
+
+### Where the time was
+
+The fuzz generator's position at 1,001 players (seed 9,501,001, the
+position the Gacrux benchmark on the validation VM pairs), round 2: the
+1.0 group (319) was already direct; the 0.5 bracket (364 residents and one
+MDP, window 683) took 26.6 s and the 0.0 group with its floater (319)
+5.3 s, both on the field graph (timed in-VM at `+S 4:4`).
+
+* **The 0.5 bracket.** Its next group is the 0.0 group, the bye
+  candidates, so the local graph turned it away (its members' completion
+  terms vary), and the field-graph direct bracket did too: it required a
+  window of non-candidates.
+* **The last group.** The bracket the bye comes out of has the C9 gate on,
+  which the field-graph direct bracket excluded by design.
+
+### What changed
+
+Three more shapes of the direct bracket, each argued in the section
+comments of `Ainalrami.Pairing` (`attempt_direct_field/7`,
+`attempt_direct_last/7`):
+
+* **The last bracket of an odd field** (every mode, since nothing is
+  paired after it). The bracket is the whole remaining graph, so once the
+  walk finds a matching of all members but one that leaves a bye
+  candidate over, every optimum is one; over those, the completion rung
+  and C9 are sums of per-vertex terms fixed by the one left over - a bye
+  candidate, then the least unplayed-game rank (C9: the assignee with the
+  fewest unplayed games) - and C7 keeps every MDP paired. So the walk runs
+  with the bye as its floater and the resident candidates of that least
+  rank as its pool, and skips the per-edge completion and C9 tests whose
+  sums the floater fixes. The stages read an unmatched member exactly as
+  one matched to the local graph's stand-in (not paired down, in the
+  remainder), which is the walk's model of an odd bracket's floater.
+* **An odd bracket over the bye group** (certified mode): every member
+  above the bye score, the next group the last one. The existing odd
+  bracket's argument goes through with "the rest completed" read as
+  "near-perfect, leaving a bye candidate over": a resident F meets the
+  completion and C8 bounds exactly when the group and F have `q / 2`
+  pairs covering F with a candidate left over, and every such F meets
+  them alike. That set is exact and found for all residents at once: F
+  qualifies when it can play some G that a maximum matching of the group
+  plus a stand-in joined to its candidates can leave exposed - the D of
+  the Gallai-Edmonds decomposition, one Edmonds search
+  (`Ainalrami.CardinalityMatching`, checked against exhaustive search on
+  3,000 random graphs) where the old per-floater question was a matching
+  per resident.
+* **An even bracket of an odd field** (certified mode), as on an even
+  field: the bracket perfectly matched inside, the rest shown completable
+  with a candidate over by the oracle, so C6 keeps it inside in every
+  optimum.
+
+On an odd field the next bracket's C9 gate reads the tentative partners
+of this bracket's window; the new shapes are taken only where that read
+is decided without them - the next group scores above the bye (the gate
+is shut), or it is the last group (every partner the window can have
+scores at least as much, so the gate reads true on both paths).
+
+And one abort that was needlessly conservative: after a field-graph direct
+bracket, a later bracket that would build the round matcher with a
+different C9 gate from the reference's sent the whole round back to the
+reference path. When that bracket's window is the whole remaining field
+there is no far edge for the gate to have scored - the reference's
+boundary sets every edge to the bracket's own weights - so it now goes on
+(`builder_gate_whole_window` in the counters: 21 times in the default
+corpus).
+
+### Results
+
+In-VM `Pairing.pair_next_round/2`, `+S 2:2`, medians of 3-7 runs, the
+two builds run alternately on the same idle machine (an i7-10700); the
+positions are the Gacrux benchmark's (`/root/bench.exs` on the validation
+VM: the fuzz generator at seed `9,500,000 + players`, earlier rounds paired
+by this engine). Every pairing is the same in both builds.
+
+| position | before (bbcd392) | after |
+|---|---|---|
+| 1,001 players, round 2 | 31.9 s | **0.12 s** |
+| 1,001 players, round 9 | 0.31-0.34 s | 0.31 s |
+| 1,000 players, round 2 | 0.049 s | 0.049 s |
+| 1,000 players, round 9 | 1.17 s | 1.17 s |
+
+Round 2 at 1,001 players is now its three brackets answered directly:
+65 ms for the 1.0 group (as before), 53 ms for the 0.5 bracket over the
+bye group (the pool search and the walk) and 2 ms for the last group.
+Gacrux takes 4.6 s on that position on the validation VM. Round 9's bye
+comes out of an even bracket over a one-player last group, which moves
+from the field graph (30 ms) to the direct bracket (2 ms); the rest of
+that round is unchanged. The even field is untouched.
+
+### How it was checked
+
+* **Differential against v0.33.0** (`tools/perf_diff.exs`, the baseline
+  logs of the passes below), default configuration: small 370,777 rounds,
+  flags 68,898, large 5,497, early 1,980 - **447,152 rounds, 0 differing,
+  0 missing** (89,665 + 16,964 + 477 + 60 of them with the alternatives
+  fingerprinted). Its pairing calls took the new shapes 145,909 times:
+  143,792 last brackets (every field size - this one needs no certified
+  mode), 925 odd brackets over the bye group, 1,192 even brackets of an
+  odd field; the relaxed builder gate went on 21 times.
+* **Check mode** (`AINALRAMI_DIRECT=check`, which now also holds the new
+  shapes to the field path on the same bracket from the same state -
+  pairs, who is carried, how many float, and for the field-graph shapes
+  the next bracket's C9 gate - and raises on any difference), certified
+  mode forced, the first 400 tournaments of every axis of the four sets:
+  44,325 rounds, identical to v0.33.0 end to end, with **33,367 new direct
+  answers checked, 0 differences** (14,418 last brackets, 6,905 odd
+  brackets over the bye group, 12,044 even brackets of an odd field),
+  besides 60,481 of the existing field-graph shapes.
+* **Generated odd fields**: 80 tournaments of 107-999 players (odd sizes
+  drawn from 101-1,001; 3% requested byes, 2% forfeits, 1% withdrawals),
+  9 rounds, paired in check mode - 566 new direct answers checked (250 last
+  brackets, 142 odd over the bye group, 174 even of an odd field), 0
+  differences - and again with `AINALRAMI_DIRECT=off`: the 720 rounds
+  identical.
+* `mix test`: 812 tests, 0 failures; `direct_bracket_test.exs` gains an
+  axis of 101-151-player fields and requires each new shape to have been
+  answered (and checked) at least once;
+  `cardinality_matching_test.exs` checks the exposable set against
+  exhaustive search on 3,000 random graphs.
+
+### What is left
+
+* **The bye group with a group below it.** An odd bracket, or an even
+  one, whose next group holds the bye but is not the last group still
+  falls back: the next bracket's C9 gate then depends on whether a window
+  player is tentatively matched below, which is a read of the matcher's
+  own tie-break.
+* **An odd bracket over the bye group whose own members include bye
+  candidates** falls back (the walk's per-edge completion test needs its
+  members to be non-candidates).
+* **A last bracket whose leftover cannot be a least-rank candidate**
+  (the walk finds no matching meeting that bound, or runs past its
+  budget) goes to the field graph as before.
+* **Round 9 at 1,001 players** spends 0.22 s of 0.31 s in the first
+  bracket, an existing odd-bracket shape whose pool question solves the
+  whole-field completability oracle from cold.
 
 ## The direct bracket (2026-09-28)
 

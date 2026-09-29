@@ -64,6 +64,31 @@ with the reference on every one of them.
 
 ## [Unreleased]
 
+- [Performance] **Odd fields: the brackets the bye comes out of are
+  answered directly too, every answer unchanged.** A 1,001-player round 2
+  took 31.9 s where 1,000 players took 0.05 s; it now takes 0.12 s, the
+  same pairing (Gacrux 4.6 s on that position). Three more shapes of the
+  direct bracket: the last bracket of an odd field, walked with the bye as
+  its floater (a bye candidate with the fewest unplayed games, as C5 and
+  C9 rank the one left over; in every mode); an odd bracket whose next
+  group is the last group and holds the bye, whose floaters are found
+  exactly and all at once as the players who can meet someone a maximum
+  matching of that group can leave for the bye (new
+  `Ainalrami.CardinalityMatching`, the Gallai-Edmonds exposable set); and
+  an even bracket of an odd field. Each is taken only where the next
+  bracket's C9 gate is decided without the tentative matching; anything
+  else falls back as before. And a bracket whose window is the whole
+  remaining field no longer sends a round back to the reference path over
+  the C9 gate its matcher was built with - it has no far edge. Details in
+  `docs/performance.md`.
+- [Verified] Against v0.33.0 on the differential corpus in the default
+  configuration: 447,152 rounds, 0 differences; in check mode (each direct
+  answer held to the field path on the same bracket; the check now covers
+  the new shapes and the next bracket's C9 gate) 44,325 rounds identical
+  to v0.33.0 and 33,367 new direct answers checked, 0 differences; 80
+  generated odd fields of 107-999 players over 9 rounds, 566 more checked
+  and all 720 rounds identical with the direct brackets switched off.
+
 - [Performance] **The pairing past Gacrux on every benchmark file, every
   answer unchanged.** Pairing work (a cold run minus start-up) on the
   files `docs/validation.md` compares the three engines on: 209 players
