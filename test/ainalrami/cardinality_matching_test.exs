@@ -49,6 +49,65 @@ defmodule Ainalrami.CardinalityMatchingTest do
     assert checked > 500
   end
 
+  # The completability oracle's use: a matching kept while vertices die,
+  # re-augmented from every exposed live vertex.
+  test "augmenting from each exposed vertex around dead ones reaches a maximum matching" do
+    rng = :rand.seed_s(:exsss, {17, 19, 23})
+
+    Enum.reduce(1..2000, rng, fn _, rng ->
+      {n, rng} = :rand.uniform_s(12, rng)
+      {density, rng} = :rand.uniform_s(9, rng)
+      {edges, rng} = random_edges(n, density, rng)
+      adj = adjacency(n, edges)
+
+      # A maximum matching of the whole graph, then some vertices die.
+      match = CardinalityMatching.maximum(adj)
+
+      {dead, rng} =
+        Enum.reduce(0..(n - 1)//1, {MapSet.new(), rng}, fn v, {dead, rng} ->
+          {roll, rng} = :rand.uniform_s(4, rng)
+          {if(roll == 1, do: MapSet.put(dead, v), else: dead), rng}
+        end)
+
+      match =
+        Enum.reduce(dead, match, fn v, match ->
+          case Map.pop(match, v) do
+            {nil, match} -> match
+            {u, match} -> Map.delete(match, u)
+          end
+        end)
+
+      live = Enum.reject(0..(n - 1)//1, &MapSet.member?(dead, &1))
+      live_edges = Enum.filter(edges, fn {i, j} -> i in live and j in live end)
+
+      match =
+        Enum.reduce(live, match, fn v, match ->
+          if is_map_key(match, v) do
+            match
+          else
+            case CardinalityMatching.augment_from(adj, match, v, dead) do
+              {:ok, match} ->
+                assert is_map_key(match, v)
+                match
+
+              :none ->
+                # Some maximum matching of the live graph leaves `v` exposed.
+                assert nu(List.delete(live, v), live_edges) == nu(live, live_edges)
+                match
+            end
+          end
+        end)
+
+      assert map_size(match) == 2 * nu(live, live_edges), "n=#{n} edges=#{inspect(edges)}"
+
+      assert Enum.all?(match, fn {v, u} ->
+               Map.fetch!(match, u) == v and {min(u, v), max(u, v)} in live_edges
+             end)
+
+      rng
+    end)
+  end
+
   defp random_edges(n, density, rng) do
     pairs = for i <- 0..(n - 1)//1, j <- (i + 1)..(n - 1)//1, do: {i, j}
 

@@ -79,11 +79,40 @@ defmodule Ainalrami.DirectBracketTest do
 
     # The odd field's shapes, each held to the field path's answer by the
     # check mode: the last bracket (the bye), an odd bracket over the bye
-    # group, an even bracket of an odd field.
-    for kind <- [:last, :odd_bye_group, :even_odd_field] do
+    # group, an even bracket of an odd field; and an odd bracket of an even
+    # field over the group on zero.
+    for kind <- [:last, :odd_bye_group, :even_odd_field, :odd_zero_group] do
       assert Map.get(stats, {:direct_field_checked, kind}, 0) > 0,
              "no #{kind} bracket was answered directly: #{inspect(stats)}"
     end
+  end
+
+  # The pruned walk (`Ainalrami.Pairing`'s "The pruned walk") takes over
+  # from a plain walk past its budget; with that budget at nothing, every
+  # walk is the pruned one, and each answer is still held to the stages'.
+  @tag timeout: 600_000
+  test "the pruned walk answers as the stages do" do
+    System.put_env("AINALRAMI_CERT", "force")
+    System.put_env("AINALRAMI_CERT_STATS", "1")
+
+    {rounds, stats} =
+      with_env(%{"AINALRAMI_DIRECT_PLAIN" => "0"}, fn ->
+        @axes
+        |> Enum.map(fn {label, seeds, range, env} ->
+          {label, Enum.take(seeds, 20), range, env}
+        end)
+        |> Enum.reduce({0, %{}}, fn {_label, seeds, range, env}, acc ->
+          with_env(env, fn ->
+            Enum.reduce(seeds, acc, fn seed, {rounds, stats} ->
+              {n, s} = play(seed, range)
+              {rounds + n, Map.merge(stats, s, fn _k, a, b -> a + b end)}
+            end)
+          end)
+        end)
+      end)
+
+    assert rounds > 500
+    assert Map.get(stats, :direct_pruned_ok, 0) > 0, "the pruned walk never answered"
   end
 
   defp play(seed, range) do

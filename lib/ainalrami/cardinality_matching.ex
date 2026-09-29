@@ -21,6 +21,15 @@ defmodule Ainalrami.CardinalityMatching do
   is answered, which is the one `Pairing` needs (a graph of odd order with
   a near-perfect matching); anything else is `:no`.
 
+  `augment_from/4` is the same search on the graph less a set of dead
+  vertices, for `Pairing`'s completability oracle: a matching kept across a
+  round's brackets, whose players leave the graph bracket by bracket. The
+  search's state is proportional to the tree it grows, not to the graph
+  (`base` read with each vertex its own base until contracted, a blossom
+  relabelling only the tree's vertices - no other vertex can have its base
+  in a blossom of the tree), so a search that finds a short path costs a
+  short path.
+
   Checked against brute force (every vertex removed in turn, the maximum
   matching recomputed by exhaustive search) in
   `test/ainalrami/cardinality_matching_test.exs`.
@@ -39,12 +48,26 @@ defmodule Ainalrami.CardinalityMatching do
       if is_map_key(match, v) do
         match
       else
-        case search(adj, n, match, v) do
+        case search(adj, match, v, MapSet.new()) do
           {:path, to, p} -> augment(to, p, match)
           {:none, _outer} -> match
         end
       end
     end)
+  end
+
+  @doc """
+  One augmenting search from the exposed vertex `root` of `match`, in the
+  graph `adj` less the vertices in `dead` (which `match` must not cover):
+  `{:ok, match}` with `root` matched, or `:none` when no augmenting path
+  starts at `root` - and then some maximum matching of that graph leaves
+  `root` exposed.
+  """
+  def augment_from(adj, match, root, dead) do
+    case search(adj, match, root, dead) do
+      {:path, to, p} -> {:ok, augment(to, p, match)}
+      {:none, _outer} -> :none
+    end
   end
 
   @doc """
@@ -57,7 +80,7 @@ defmodule Ainalrami.CardinalityMatching do
 
     case Enum.reject(0..(n - 1)//1, &is_map_key(match, &1)) do
       [u] ->
-        {:none, outer} = search(adj, n, match, u)
+        {:none, outer} = search(adj, match, u, MapSet.new())
         {:ok, outer}
 
       _ ->
@@ -78,20 +101,24 @@ defmodule Ainalrami.CardinalityMatching do
     end)
   end
 
-  # Edmonds' search from `root`: `{:path, exposed vertex, parents}` when an
-  # augmenting path exists, else `{:none, outer vertices}`.
-  defp search(adj, n, match, root) do
+  # Edmonds' search from `root`, never entering a vertex of `dead`:
+  # `{:path, exposed vertex, parents}` when an augmenting path exists, else
+  # `{:none, outer vertices}`. `base` holds only the vertices a blossom has
+  # relabelled (`base_of/2`).
+  defp search(adj, match, root, dead) do
     st = %{
-      base: Map.new(0..(n - 1)//1, &{&1, &1}),
+      base: %{},
       p: %{},
       used: MapSet.new([root]),
       match: match,
       root: root,
-      n: n
+      dead: dead
     }
 
     bfs(:queue.from_list([root]), adj, st)
   end
+
+  defp base_of(st, v), do: Map.get(st.base, v, v)
 
   defp bfs(queue, adj, st) do
     case :queue.out(queue) do
@@ -110,7 +137,8 @@ defmodule Ainalrami.CardinalityMatching do
 
   defp scan([to | rest], v, queue, st) do
     cond do
-      Map.fetch!(st.base, v) == Map.fetch!(st.base, to) or Map.get(st.match, v) == to ->
+      MapSet.member?(st.dead, to) or base_of(st, v) == base_of(st, to) or
+          Map.get(st.match, v) == to ->
         scan(rest, v, queue, st)
 
       to == st.root or
@@ -137,15 +165,18 @@ defmodule Ainalrami.CardinalityMatching do
 
   # An edge between two outer vertices of the tree closes an odd cycle:
   # every vertex whose base lies on it takes the cycle's base, and becomes
-  # outer.
+  # outer. Only a vertex of the tree can (an outer one, or an inner one with
+  # a parent link), and they are visited in index order.
   defp contract(v, to, queue, st) do
     cur = lca(v, to, st)
     {p, blossom} = mark_path(v, cur, to, st.p, MapSet.new(), st)
     {p, blossom} = mark_path(to, cur, v, p, blossom, st)
 
+    tree = st.used |> MapSet.union(MapSet.new(Map.keys(p))) |> Enum.sort()
+
     {base, used, queue} =
-      Enum.reduce(0..(st.n - 1)//1, {st.base, st.used, queue}, fn i, {base, used, queue} ->
-        if MapSet.member?(blossom, Map.fetch!(st.base, i)) do
+      Enum.reduce(tree, {st.base, st.used, queue}, fn i, {base, used, queue} ->
+        if MapSet.member?(blossom, base_of(st, i)) do
           base = Map.put(base, i, cur)
 
           if MapSet.member?(used, i),
@@ -162,7 +193,7 @@ defmodule Ainalrami.CardinalityMatching do
   defp lca(a, b, st), do: rise_b(b, rise_a(a, MapSet.new(), st), st)
 
   defp rise_a(a, seen, st) do
-    a = Map.fetch!(st.base, a)
+    a = base_of(st, a)
     seen = MapSet.put(seen, a)
 
     case Map.get(st.match, a) do
@@ -172,7 +203,7 @@ defmodule Ainalrami.CardinalityMatching do
   end
 
   defp rise_b(b, seen, st) do
-    b = Map.fetch!(st.base, b)
+    b = base_of(st, b)
 
     if MapSet.member?(seen, b),
       do: b,
@@ -180,13 +211,13 @@ defmodule Ainalrami.CardinalityMatching do
   end
 
   defp mark_path(v, b, children, p, blossom, st) do
-    if Map.fetch!(st.base, v) == b do
+    if base_of(st, v) == b do
       {p, blossom}
     else
       mv = Map.fetch!(st.match, v)
 
       blossom =
-        blossom |> MapSet.put(Map.fetch!(st.base, v)) |> MapSet.put(Map.fetch!(st.base, mv))
+        blossom |> MapSet.put(base_of(st, v)) |> MapSet.put(base_of(st, mv))
 
       p = Map.put(p, v, children)
       mark_path(Map.fetch!(p, mv), b, mv, p, blossom, st)
