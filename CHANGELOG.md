@@ -97,6 +97,45 @@ with the reference on every one of them.
   one (`AINALRAMI_DIRECT_PLAIN=0`, new; 29,843 walks checked); 60
   generated opens of 158-947 players over 9 rounds in check mode and with
   the direct brackets off, all 540 rounds identical.
+- [Feature] **Bye preferences - per player, must get / rather gets / must
+  not get / rather not the pairing-allocated bye (not a FIDE rule).**
+  `pair_next_round/2` and `explain_round/3` take `bye_preferences:
+  [{rank, preference} | {rank, preference, rounds}]`; new
+  `Ainalrami.ByePreference.pair/2` returns the pairs and an account - who
+  got the bye, who would have without the preferences, whether they
+  changed the round, and one outcome per preference with the reason when
+  it was not applied. "Must get" wins the bye whenever the rest can still
+  be paired under the absolute criteria and falls back to the plain round
+  otherwise; the soft ones sit where a `:strong` soft pair does - below
+  the absolute criteria, completion and the bye score, above C6-C21 - so
+  they never move the bye to a higher score or make a round unpairable;
+  "must not" is the bye exclusion. Conflicts are resolved and reported:
+  an exclusion beats a want, a hard want a soft avoid, soft want and soft
+  avoid cancel, two hard wants are decided by the FIDE criteria, and an
+  even field and an absent player are said. A "must get" for a player C2
+  rules out (a second pairing-allocated bye, or one after a forfeit win or
+  full-point bye) is not skipped: the round is refused with the new
+  `Ainalrami.ByePreference.RefusedError`, naming the player and the round
+  of their earlier bye. In "why not me", a player a preference kept from
+  the bye is `:bye_preference`, not `:organiser_exclusion`
+  (`bye_eligibility/2`'s new `:bye_preference_exclusions`). Everything is resolved
+  into bye exclusions, so the direct and certified shortcuts, proved
+  against the same eligibility, apply unchanged. See README "Organiser
+  deviations".
+- [Feature] **CLI: `--bye-want`, `--bye-want-soft`, `--bye-avoid`,
+  `--bye-avoid-soft`** with `-p` and `-x`, ranks separated by commas, each
+  optionally `@` rounds (`5,12@3-4+7`). stderr says the round is not a pure
+  FIDE pairing whenever one is given, and reports each preference's
+  outcome; a `--bye-want` C2 forbids exits 1 with the reason. Refused with
+  `-g` and `-c`.
+- [Verified] Bye preferences against the exhaustive bye reference: 5,000
+  generated tournaments, 26,425 rounds with random preferences (1,260 of
+  them refused for a second bye, each naming the right player and round), 0
+  disagreements. On 40 generated tournaments of 101-401 players (280
+  rounds), the direct-bracket and certified paths agree with the full path
+  and the check mode raises nothing (`tools/bye_pref_direct.exs`). Without
+  preferences, byte-identical to the baseline on the differential corpus:
+  447,152 rounds, 0 differing (see `docs/validation.md`).
 
 - [Performance] **Odd fields: the brackets the bye comes out of are
   answered directly too, every answer unchanged.** A 1,001-player round 2

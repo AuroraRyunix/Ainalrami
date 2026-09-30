@@ -882,6 +882,57 @@ diffed against the previous `main` build on 1,500 generated tournaments of
 4-24 players (8,593 rounds, forbidden pairs and `H` byes included):
 byte-identical, so every corpus figure above still stands.
 
+## Bye preferences (organiser deviation, 2026-09-30)
+
+`bye_preferences:` (`Ainalrami.ByePreference` - must get / rather gets /
+must not get / rather not the pairing-allocated bye) is not a FIDE rule
+either, and is checked against the same exhaustive reference.
+`test/ainalrami/bye_preference_validation_test.exs` plays whole generated
+tournaments (4-13 players, 3-9 rounds, requested byes, withdrawals,
+forfeits, sometimes forbidden pairs) paired WITH random preferences - one
+to four players per round, every setting, some for other rounds, some on a
+player not playing, and now and then two on one player - and on every round
+resolves the settings by the documented precedence itself and checks: that
+`[]` pairs as no option does and `pair_next_round/2` returns what
+`ByePreference.pair/2` does; that the round is legal under the reference's
+rules with the hard avoids as exclusions, and refused exactly when the
+plain round with those exclusions is; that an even field or a round with no
+preference that can act is the plain round; that a hard want gets the bye
+exactly when the reference finds a legal round giving it to one of the
+wanted players, and then on the lowest score such a round allows; that a
+soft want gets it exactly when the reference finds such a round ON the
+plain round's bye score, and a soft avoid is honoured exactly when the
+reference finds a round giving the bye to someone not avoided on that
+score; that the bye score never moves under a soft setting; and that the
+report's `moved` is exactly "the pairs differ from the plain round"; and that
+a round where a live hard want names a player C2 rules out is refused
+with `RefusedError` - and no other round is.
+
+**Seeds 1-5,000: 26,425 rounds - 3,386 with a hard want granted, 125 a
+hard want no legal round allows, 1,260 refused because a hard want asked
+for a second bye (each refusal naming exactly the right players and the
+round of their first disqualifying game), 1,201 a soft want granted and 773
+outranked, 197 a soft avoid honoured and 247 outranked, 12,045 even fields,
+1,858 refused as the plain round is, 5,458 with nothing that could act - 0
+disagreements.** The
+ordinary suite runs 120 seeds; `BYE_PREF_SEEDS=1-5000` reruns the range.
+
+The shortcuts. Every preference reaches the engine as bye exclusions, and
+the certified and direct-bracket shortcuts are proved against the same
+eligibility predicate the exclusions enter through, so none of them needed
+a gate of its own. `tools/bye_pref_direct.exs` is the empirical side:
+generated tournaments of 101-401 players, random preferences on every round,
+each round paired three times - default, `AINALRAMI_DIRECT=off`, and
+`AINALRAMI_DIRECT=check` (every direct answer held to the stages', raising
+on a difference) - with the certified shortcuts forced: 40 tournaments, 280 rounds (133 odd, 86 of them moved by a preference), the three identical on every round and no check-mode difference raised.
+
+Without preferences the engine runs the code it ran before: the
+differential corpus (`tools/perf_diff.exs`, the four standing sets, default
+configuration) against the standing baseline logs the direct-bracket work
+was held to: 447,152 rounds (early 1,980, large 5,497, flags 68,898, small
+370,777), 0 differing, 0 missing - pairs, explanations, perturbed-pairing
+judgements and alternatives alike.
+
 ## Not covered
 
 Stated so the claim's boundary is explicit:

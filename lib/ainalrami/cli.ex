@@ -25,7 +25,7 @@ defmodule Ainalrami.CLI do
   place that halts.
   """
 
-  alias Ainalrami.{Generator, Log, Pairing, TeamReplay, Trf, TypeCode}
+  alias Ainalrami.{ByePreference, Generator, Log, Pairing, TeamReplay, Trf, TypeCode}
 
   @doc false
   def main(argv), do: argv |> run() |> System.halt()
@@ -111,7 +111,8 @@ defmodule Ainalrami.CLI do
                    acceleration initial-colour initial-color force absent
                    ratings rating-range rating-top rating-step rating-sigma
                    results draw-rate full-bye-pct half-bye-pct zero-bye-pct
-                   forfeit-win-pct double-forfeit-pct odd-results-pct tie-breaks)
+                   forfeit-win-pct double-forfeit-pct odd-results-pct tie-breaks
+                   bye-want bye-want-soft bye-avoid bye-avoid-soft)
 
   defp split_flags(argv), do: Enum.split_with(argv, &String.starts_with?(&1, "-"))
 
@@ -326,13 +327,101 @@ defmodule Ainalrami.CLI do
   # tournament rather than reading one - so it's dispatched before the
   # missing-input check.
   defp dispatch(positional, flags) do
+    prefs = bye_preferences_option(flags)
+
     cond do
-      "-g" in flags -> generate(positional, flags)
-      positional == [] -> usage_error("missing input TRF file")
-      "-p" in flags -> pair_checked(hd(positional), tl(positional))
-      "-c" in flags -> check(hd(positional))
-      "-x" in flags or "--explain" in flags -> explain(hd(positional), flags)
-      true -> usage_error("missing mode flag: one of -p, -g, -c, -x")
+      prefs != [] and ("-g" in flags or "-c" in flags) ->
+        usage_error(
+          "the bye preferences (--bye-want, --bye-want-soft, --bye-avoid, " <>
+            "--bye-avoid-soft) apply to -p and -x only - -g and -c pair by the FIDE rules alone"
+        )
+
+      "-g" in flags ->
+        generate(positional, flags)
+
+      positional == [] ->
+        usage_error("missing input TRF file")
+
+      "-p" in flags ->
+        pair_checked(hd(positional), tl(positional), prefs)
+
+      "-c" in flags ->
+        check(hd(positional))
+
+      "-x" in flags or "--explain" in flags ->
+        explain(hd(positional), flags, prefs)
+
+      true ->
+        usage_error("missing mode flag: one of -p, -g, -c, -x")
+    end
+  end
+
+  # `--bye-want=5,12@3-4+7` and its three siblings: the organiser's bye
+  # preferences (`Ainalrami.ByePreference`, not a FIDE rule). Each flag
+  # takes starting ranks separated by commas, each optionally followed by
+  # `@` and the rounds it applies to - single rounds and ranges joined by
+  # `+` - and may be given more than once. Refused rather than skipped when
+  # malformed: a preference silently dropped pairs the round by other rules
+  # than the ones asked for.
+  @bye_preference_flags [
+    {"bye-want", :want_hard},
+    {"bye-want-soft", :want_soft},
+    {"bye-avoid", :avoid_hard},
+    {"bye-avoid-soft", :avoid_soft}
+  ]
+
+  defp bye_preferences_option(flags) do
+    for flag <- flags,
+        {name, pref} <- @bye_preference_flags,
+        String.starts_with?(flag, "--#{name}="),
+        item <- flag |> String.trim_leading("--#{name}=") |> String.split(",", trim: true) do
+      bye_preference_item(String.trim(item), name, pref)
+    end
+  end
+
+  defp bye_preference_item(item, name, pref) do
+    bad = fn ->
+      refuse(
+        "--#{name} takes starting ranks separated by commas, each optionally with " <>
+          "@ROUNDS (e.g. 5,12@3-4+7), not \"#{item}\""
+      )
+    end
+
+    case String.split(item, "@") do
+      [rank] ->
+        {positive_int(rank) || bad.(), pref}
+
+      [rank, rounds] ->
+        rounds = rounds |> String.split("+", trim: true) |> Enum.flat_map(&round_span(&1, bad))
+        if rounds == [], do: bad.(), else: {positive_int(rank) || bad.(), pref, rounds}
+
+      _ ->
+        bad.()
+    end
+  end
+
+  defp round_span(part, bad) do
+    case String.split(part, "-") do
+      [n] ->
+        [positive_int(n) || bad.()]
+
+      [a, b] ->
+        with a when is_integer(a) <- positive_int(a),
+             b when is_integer(b) and b >= a <- positive_int(b) do
+          Enum.to_list(a..b)
+        else
+          _ -> bad.()
+        end
+
+      _ ->
+        bad.()
+    end
+  end
+
+  defp positive_int(text) do
+    case Integer.parse(text) do
+      {n, ""} when n >= 1 -> n
+      _ -> nil
     end
   end
 
@@ -394,7 +483,7 @@ defmodule Ainalrami.CLI do
   # `./live.trf` and `live.trf` are the same file here as they are on disk.
   # A caller who genuinely wants to overwrite can write elsewhere and move it,
   # which at least leaves a moment where both files exist.
-  defp pair_checked(input_path, positional_rest) do
+  defp pair_checked(input_path, positional_rest, prefs) do
     case positional_rest do
       [output_path | _] ->
         if Path.expand(output_path) == Path.expand(input_path) do
@@ -403,15 +492,15 @@ defmodule Ainalrami.CLI do
               "-p writes a board list, not a tournament, so this would destroy it"
           )
         else
-          pair(input_path, positional_rest)
+          pair(input_path, positional_rest, prefs)
         end
 
       [] ->
-        pair(input_path, positional_rest)
+        pair(input_path, positional_rest, prefs)
     end
   end
 
-  defp pair(input_path, positional_rest) do
+  defp pair(input_path, positional_rest, prefs) do
     Log.step("Loading #{input_path}")
 
     with {:ok, text} <- read_input(input_path),
@@ -426,8 +515,8 @@ defmodule Ainalrami.CLI do
 
       report_extensions(parsed)
 
-      case pair_next_round(parsed.players, parsed.tournament) do
-        {:ok, pairs} ->
+      case pair_next_round(parsed.players, parsed.tournament, prefs) do
+        {:ok, pairs, _opts} ->
           write_pairs(pairs, positional_rest)
           0
 
@@ -456,7 +545,7 @@ defmodule Ainalrami.CLI do
   # genuinely did not separate anything; and the rung values are SUMS over
   # a bracket's edges, so they compare across answers only when the edge
   # counts match.
-  defp explain(input_path, flags) do
+  defp explain(input_path, flags, prefs) do
     Log.step("Loading #{input_path}")
 
     with {:ok, text} <- read_input(input_path),
@@ -466,9 +555,8 @@ defmodule Ainalrami.CLI do
       Log.detail("explaining round #{round_count + 1}")
       report_extensions(parsed)
 
-      case pair_next_round(parsed.players, parsed.tournament) do
-        {:ok, pairs} ->
-          opts = pairing_opts(parsed.tournament)
+      case pair_next_round(parsed.players, parsed.tournament, prefs) do
+        {:ok, pairs, opts} ->
           reports = Pairing.explain_round(parsed.players, pairs, opts)
 
           IO.write(render_cascade(reports))
@@ -699,11 +787,52 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
   # `Ainalrami.Pairing.NoValidPairingError`'s doc) rather than a crash. That
   # matches how JaVaFo itself reports it: an empty pairing, not a stack
   # trace.
-  defp pair_next_round(players, tournament) do
-    {:ok, Pairing.pair_next_round(players, pairing_opts(tournament))}
+  #
+  # With bye preferences the round is paired by `ByePreference.pair/2`, the
+  # departure from FIDE is announced on stderr, and what each preference did
+  # is reported; the options handed back are the resolved ones, so `-x`
+  # explains the round under the rules it was actually paired by.
+  defp pair_next_round(players, tournament, []) do
+    opts = pairing_opts(tournament)
+    {:ok, Pairing.pair_next_round(players, opts), opts}
   rescue
     e in Pairing.NoValidPairingError ->
       Log.error("no legal pairing exists for this round: #{Exception.message(e)}")
+      {:error, :halt}
+  end
+
+  defp pair_next_round(players, tournament, prefs) do
+    Log.warn(
+      "bye preferences are an organiser's rule, not FIDE's - this is not a pure FIDE " <>
+        "pairing, and a FIDE checker replaying the file will not reproduce a round they change"
+    )
+
+    opts = pairing_opts(tournament) ++ [bye_preferences: prefs]
+    {pairs, report} = ByePreference.pair(players, opts)
+
+    for {outcome, line} <- Enum.zip(report.outcomes, ByePreference.describe(report)) do
+      if outcome.outcome == :honoured,
+        do: Log.detail("bye preference: #{line}"),
+        else: Log.warn("bye preference: #{line}")
+    end
+
+    if report.moved do
+      Log.warn(
+        "the bye preferences changed this round: without them the bye goes to " <>
+          if(report.fide_bye, do: "##{report.fide_bye}", else: "nobody")
+      )
+    end
+
+    {:ok, pairs, Keyword.put_new(report.opts, :bye_passed_over, false)}
+  rescue
+    e in Pairing.NoValidPairingError ->
+      Log.error("no legal pairing exists for this round: #{Exception.message(e)}")
+      {:error, :halt}
+
+    # A "must get the bye" for a player C2 rules out: the round is not
+    # paired, and the message names the player and their earlier bye.
+    e in ByePreference.RefusedError ->
+      Log.error(Exception.message(e))
       {:error, :halt}
   end
 
@@ -1363,6 +1492,18 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
                    what it costs against the round that was paired
       --absent=N   With -x: N did not turn up - the least disruptive
                    legal fixes, each with who else moves and what it costs
+
+    Bye preferences (-p and -x; an organiser's rule, NOT FIDE - a round they
+    change is not a pure FIDE pairing, and a warning says so on stderr):
+      --bye-want=RANKS       must get the pairing-allocated bye, if any legal
+                             round gives it to them
+      --bye-want-soft=RANKS  rather gets it: decides among the players on the
+                             bye score, never lifts the bye to a higher score
+      --bye-avoid=RANKS      must not get it (a bye exclusion)
+      --bye-avoid-soft=RANKS rather not: someone else on the bye score takes
+                             it if anyone can
+      RANKS is starting ranks separated by commas, each optionally with the
+      rounds it applies to: --bye-want=5,12@3-4+7 (12 in rounds 3, 4 and 7)
       -h, --help     Show this help
           --version  Show the version number
 
