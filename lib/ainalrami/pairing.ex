@@ -8163,19 +8163,27 @@ defmodule Ainalrami.Pairing do
 
   With `pair_next_round/2`'s `:bye_exclusions` (not a FIDE rule), a listed
   player C.2 itself allows is `:organiser_exclusion`; one C.2 already rules
-  out keeps C.2's reason, since the exclusion changed nothing for them.
+  out keeps C.2's reason, since the exclusion changed nothing for them. A
+  player also listed in `:bye_preference_exclusions` - the exclusions
+  `Ainalrami.ByePreference` resolved another player's bye preference into,
+  which its report's `:opts` carry - is `:bye_preference` instead.
   """
   def bye_eligibility(players, opts \\ []) do
     previous = Process.get(@point_system_key)
     Process.put(@point_system_key, opts[:point_system] || Ainalrami.Trf.default_point_system())
     excluded = MapSet.new(opts[:bye_exclusions] || [])
+    by_preference = MapSet.new(opts[:bye_preference_exclusions] || [])
 
     try do
       Map.new(players, fn player ->
         reason =
           case bye_disqualification(player) do
             nil ->
-              if MapSet.member?(excluded, player.rank), do: :organiser_exclusion, else: nil
+              cond do
+                MapSet.member?(by_preference, player.rank) -> :bye_preference
+                MapSet.member?(excluded, player.rank) -> :organiser_exclusion
+                true -> nil
+              end
 
             c2 ->
               c2
@@ -8183,6 +8191,36 @@ defmodule Ainalrami.Pairing do
 
         {player.rank, reason}
       end)
+    after
+      if previous,
+        do: Process.put(@point_system_key, previous),
+        else: Process.delete(@point_system_key)
+    end
+  end
+
+  @doc false
+  # For each player C.2 rules out of the bye, the reason and the round of the
+  # game that does it (1-based, the earliest), as `%{rank => {reason,
+  # round}}` - `bye_eligibility/2`'s reasons with the round a message can
+  # name. For `Ainalrami.ByePreference`, which refuses a "must get the bye"
+  # for such a player.
+  def bye_disqualifications(players, opts \\ []) do
+    previous = Process.get(@point_system_key)
+    Process.put(@point_system_key, opts[:point_system] || Ainalrami.Trf.default_point_system())
+
+    try do
+      for player <- players,
+          found =
+            player.games
+            |> Enum.with_index(1)
+            |> Enum.find_value(fn {game, round} ->
+              case bye_disqualification(%{player | games: [game]}) do
+                nil -> nil
+                reason -> {reason, round}
+              end
+            end),
+          into: %{},
+          do: {player.rank, found}
     after
       if previous,
         do: Process.put(@point_system_key, previous),

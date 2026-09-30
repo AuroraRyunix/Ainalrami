@@ -65,6 +65,22 @@ defmodule Ainalrami.CLIByePreferencesTest do
              "#4 (must get the bye): not applied: the same player is also set to must not get the bye"
   end
 
+  test "must get it for a player who already had the bye: refused, and why" do
+    {stdout, stderr, code} = run([round_two_trf(), "-p", "--bye-want=3"])
+    assert code == 1
+    assert bye(stdout) == nil
+    assert stderr =~ "round 2 not paired"
+
+    assert stderr =~
+             "#3 must get the pairing-allocated bye but already had the pairing-allocated bye (round 1)"
+
+    assert stderr =~ "C2"
+
+    # "Rather gets it" for the same player is reported, and the round paired.
+    {stdout, _stderr, 0} = run([round_two_trf(), "-p", "--bye-want-soft=3"])
+    assert bye(stdout) == 5
+  end
+
   test "-x explains the round it paired, preferences resolved" do
     {stdout, stderr, 0} = run([round_two_trf(), "-x", "--bye-want-soft=4"])
     assert stderr =~ @warning

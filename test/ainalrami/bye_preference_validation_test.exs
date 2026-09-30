@@ -35,6 +35,7 @@ defmodule Ainalrami.ByePreferenceValidationTest do
   use ExUnit.Case, async: true
 
   alias Ainalrami.ByePreference
+  alias Ainalrami.ByePreference.RefusedError
   alias Ainalrami.Pairing
   alias Ainalrami.Test.ByeExclusionReference, as: Ref
 
@@ -67,7 +68,8 @@ defmodule Ainalrami.ByePreferenceValidationTest do
           :soft_avoid_moved,
           :soft_avoid_outranked,
           :even,
-          :refused
+          :refused,
+          :c2_refused
         ] do
       assert stats[key] > 0, "branch #{key} never ran"
     end
@@ -267,6 +269,71 @@ defmodule Ainalrami.ByePreferenceValidationTest do
         other -> fail(st, tag, {:option_differs, other})
       end
 
+    c2_want = second_bye_wants(prefs, round, active, c2_ok)
+
+    cond do
+      rem(length(active), 2) == 1 and c2_want != [] ->
+        check_refusal(st, tag, active, c2_want, got, plain)
+
+      match?({:error, %RefusedError{}}, got) ->
+        {nil, fail(st, tag, {:refused_without_cause, got})}
+
+      true ->
+        check_paired(st, tag, active, eff, ah, ctx, plain, got)
+    end
+  end
+
+  # A live "must get" for a player C2 rules out, on a round with a bye: the
+  # round is refused, naming each such player and the round of their first
+  # disqualifying game; the tournament goes on with the plain round.
+  defp check_refusal(st, tag, active, c2_want, got, plain) do
+    st = bump(st, :c2_refused)
+
+    expected =
+      for rank <- Enum.sort(c2_want) do
+        p = Enum.find(active, &(&1.rank == rank))
+        {rank, first_c2_round(p)}
+      end
+
+    st =
+      case got do
+        {:error, %RefusedError{players: players}} ->
+          if Enum.map(players, &{&1.rank, &1.round}) == expected,
+            do: st,
+            else: fail(st, tag, {:refusal_players, players, expected})
+
+        other ->
+          fail(st, tag, {:not_refused, other, expected})
+      end
+
+    {ok_pairs(plain), st}
+  end
+
+  defp first_c2_round(player) do
+    player.games
+    |> Enum.with_index(1)
+    |> Enum.find_value(fn {g, round} ->
+      if (is_nil(g.opponent_rank) and g.result in ~w(U +)) or g.result in ~w(+ F U), do: round
+    end)
+  end
+
+  defp second_bye_wants(prefs, round, active, c2_ok) do
+    active_ranks = MapSet.new(active, & &1.rank)
+
+    prefs
+    |> Enum.filter(fn
+      {_r, _k} -> true
+      {_r, _k, rounds} -> round in rounds
+    end)
+    |> Enum.group_by(&elem(&1, 0), &elem(&1, 1))
+    |> Enum.filter(fn {rank, kinds} ->
+      :want_hard in kinds and :avoid_hard not in kinds and MapSet.member?(active_ranks, rank) and
+        not MapSet.member?(c2_ok, rank)
+    end)
+    |> Enum.map(&elem(&1, 0))
+  end
+
+  defp check_paired(st, tag, active, eff, ah, ctx, plain, got) do
     case {plain, got} do
       {{:error, _}, {:error, _}} ->
         {nil, bump(st, :refused)}
@@ -365,6 +432,9 @@ defmodule Ainalrami.ByePreferenceValidationTest do
   rescue
     e -> {:error, e}
   end
+
+  defp ok_pairs({:ok, pairs}), do: pairs
+  defp ok_pairs(_other), do: nil
 
   defp holder(pairs), do: Enum.find_value(pairs, fn {w, b} -> if is_nil(b), do: w end)
 

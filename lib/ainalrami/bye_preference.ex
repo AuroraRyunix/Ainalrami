@@ -58,8 +58,14 @@ defmodule Ainalrami.ByePreference do
   settings only when no hard want decided the bye; soft wants before soft
   avoids.
 
-  Nothing is applied on an even field (there is no bye), for a player not
-  in the round, or for a player [C2] already rules out - each is reported.
+  Nothing is applied on an even field (there is no bye) or for a player not
+  in the round, and a "rather gets it" for a player [C2] already rules out
+  is not applied either - each is reported, and the round paired. A "must
+  get it" for a player [C2] rules out, on a round that has a bye, is
+  different: the round is REFUSED with `Ainalrami.ByePreference.RefusedError`,
+  naming the player and the round of their earlier bye (or forfeit win, or
+  full-point bye) - silently pairing without it would hide that the
+  organiser asked for a second pairing-allocated bye, which C2 forbids.
 
   ## What a caller gets
 
@@ -78,7 +84,10 @@ defmodule Ainalrami.ByePreference do
       under, and `:opts` - the options, with `:bye_preferences` resolved
       into those exclusions. Hand `:opts` to `explain_round/3` and the
       `Ainalrami.Alternatives` functions: they then judge the round under
-      the rules it was actually paired by.
+      the rules it was actually paired by. The players a preference (rather
+      than the organiser) kept from the bye are also listed there as
+      `:bye_preference_exclusions`, so "why not me" says `:bye_preference`
+      for them, not `:organiser_exclusion`.
     * `:outcomes` - one entry per preference that names a player, in rank
       order: `%{rank:, preference:, outcome:}` plus, for some outcomes, a
       detail. `outcome` is one of
@@ -88,7 +97,8 @@ defmodule Ainalrami.ByePreference do
         * `:not_in_round` - the player is not paired this round (absent,
           a requested bye, withdrawn);
         * `:ineligible` (`reason:` `:pairing_bye`, `:forfeit_win` or
-          `:full_point_bye`) - [C2] rules the player out of the bye;
+          `:full_point_bye`) - a "rather gets it" for a player [C2] rules
+          out of the bye;
         * `:conflict` (`with:` the setting that won) - the same player
           carries an opposite setting;
         * `:unpairable` - a hard want: no legal round gives them the bye;
@@ -132,6 +142,8 @@ defmodule Ainalrami.ByePreference do
   Raises `Ainalrami.Pairing.NoValidPairingError` exactly when the round
   cannot be paired under the absolute criteria and the organiser's hard
   exclusions - never because of a want or a soft setting, which fall back.
+  Raises `Ainalrami.ByePreference.RefusedError` for a "must get it" [C2]
+  rules out, on a round with a bye (see the moduledoc).
   """
   def pair(players, opts) do
     prefs = parse!(Keyword.get(opts, :bye_preferences, []))
@@ -141,6 +153,10 @@ defmodule Ainalrami.ByePreference do
 
     {hard_avoid, entries} = settings(prefs, round, base_opts, scores)
     base_opts = Keyword.put(base_opts, :bye_exclusions, hard_avoid)
+
+    if rem(map_size(scores), 2) == 1,
+      do: refuse_second_bye!(players, base_opts, entries, round)
+
     fide = Pairing.pair_next_round(players, base_opts)
     h0 = holder(fide)
 
@@ -167,6 +183,16 @@ defmodule Ainalrami.ByePreference do
           resolve(players, base_opts, fide, entries, scores, eligibility(players, base_opts))
           |> then(fn {pairs, extra, decided_by, outcomes} ->
             exclusions = Enum.sort(Enum.uniq(hard_avoid ++ extra))
+            by_preference = Enum.sort(Enum.uniq(extra) -- hard_avoid)
+
+            opts =
+              base_opts
+              |> Keyword.put(:bye_exclusions, exclusions)
+              |> then(fn o ->
+                if by_preference == [],
+                  do: o,
+                  else: Keyword.put(o, :bye_preference_exclusions, by_preference)
+              end)
 
             {pairs,
              %{
@@ -175,7 +201,7 @@ defmodule Ainalrami.ByePreference do
                  moved: Enum.sort(pairs) != Enum.sort(fide),
                  decided_by: if(Enum.sort(pairs) != Enum.sort(fide), do: decided_by),
                  exclusions: exclusions,
-                 opts: Keyword.put(base_opts, :bye_exclusions, exclusions),
+                 opts: opts,
                  outcomes: outcomes
              }}
           end)
@@ -270,6 +296,42 @@ defmodule Ainalrami.ByePreference do
   end
 
   defp strongest(prefs, order), do: Enum.find(order, &(&1 in prefs))
+
+  # A "must get the bye" C2 rules out, on a round that has a bye: the round
+  # is refused rather than paired without the wish (see `RefusedError`).
+  # Only a live want for a player in the round - one an exclusion overrules
+  # is reported as a conflict instead, and an even field has no bye.
+  defp refuse_second_bye!(players, opts, entries, round) do
+    wanted = for %{preference: :want_hard, status: :live, rank: r} <- entries, do: r
+
+    if wanted != [] do
+      c2 = Pairing.bye_disqualifications(players, Keyword.delete(opts, :bye_exclusions))
+
+      case for(
+             r <- Enum.sort(wanted),
+             {reason, at} = c2[r] || {nil, nil},
+             reason,
+             do: %{rank: r, reason: reason, round: at}
+           ) do
+        [] ->
+          :ok
+
+        refused ->
+          raise Ainalrami.ByePreference.RefusedError,
+            round: round,
+            players: refused,
+            message:
+              "round #{round} not paired: " <>
+                Enum.map_join(refused, "; ", fn p ->
+                  "##{p.rank} must get the pairing-allocated bye but " <>
+                    "#{Ainalrami.ByePreference.RefusedError.reason_words(p.reason)} " <>
+                    "(round #{p.round})"
+                end) <>
+                " - FIDE C.04.3 C2 allows no second pairing-allocated bye; " <>
+                "change or remove the bye preference"
+      end
+    end
+  end
 
   defp eligibility(players, opts) do
     Pairing.bye_eligibility(players, Keyword.delete(opts, :bye_exclusions))

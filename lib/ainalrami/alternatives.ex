@@ -321,7 +321,10 @@ defmodule Ainalrami.Alternatives do
   `%{rank:, outcome: :ineligible, reason: :pairing_bye | :forfeit_win |
   :full_point_bye}` and is not searched. A player the organiser excluded
   from the bye (`:bye_exclusions`, not a FIDE rule) whom C.2 itself allows
-  is `reason: :organiser_exclusion`.
+  is `reason: :organiser_exclusion`, or `reason: :bye_preference` when the
+  exclusion came from another player's bye preference
+  (`:bye_preference_exclusions`, as `Ainalrami.ByePreference.pair/2`'s
+  report puts it in `:opts`).
   """
   def bye_alternatives(players, pairs, opts \\ []) do
     case bye_holder(pairs) do

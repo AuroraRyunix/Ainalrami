@@ -828,6 +828,12 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
     e in Pairing.NoValidPairingError ->
       Log.error("no legal pairing exists for this round: #{Exception.message(e)}")
       {:error, :halt}
+
+    # A "must get the bye" for a player C2 rules out: the round is not
+    # paired, and the message names the player and their earlier bye.
+    e in ByePreference.RefusedError ->
+      Log.error(Exception.message(e))
+      {:error, :halt}
   end
 
   # Everything the engine needs that lives on the tournament rather than on

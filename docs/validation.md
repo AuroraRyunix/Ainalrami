@@ -904,12 +904,17 @@ soft want gets it exactly when the reference finds such a round ON the
 plain round's bye score, and a soft avoid is honoured exactly when the
 reference finds a round giving the bye to someone not avoided on that
 score; that the bye score never moves under a soft setting; and that the
-report's `moved` is exactly "the pairs differ from the plain round".
+report's `moved` is exactly "the pairs differ from the plain round"; and that
+a round where a live hard want names a player C2 rules out is refused
+with `RefusedError` - and no other round is.
 
-**Seeds 1-5,000: 26,421 rounds - 3,623 with a hard want granted, 142 a
-hard want no legal round allows, 1,275 a soft want granted and 864
-outranked, 209 a soft avoid honoured and 289 outranked, 12,045 even fields,
-2,004 refused, 6,112 with nothing that could act - 0 disagreements.** The
+**Seeds 1-5,000: 26,425 rounds - 3,386 with a hard want granted, 125 a
+hard want no legal round allows, 1,260 refused because a hard want asked
+for a second bye (each refusal naming exactly the right players and the
+round of their first disqualifying game), 1,201 a soft want granted and 773
+outranked, 197 a soft avoid honoured and 247 outranked, 12,045 even fields,
+1,858 refused as the plain round is, 5,458 with nothing that could act - 0
+disagreements.** The
 ordinary suite runs 120 seeds; `BYE_PREF_SEEDS=1-5000` reruns the range.
 
 The shortcuts. Every preference reaches the engine as bye exclusions, and

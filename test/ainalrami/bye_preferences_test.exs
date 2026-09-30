@@ -10,6 +10,7 @@ defmodule Ainalrami.ByePreferencesTest do
 
   alias Ainalrami.ByePreference
   alias Ainalrami.Pairing
+  alias Ainalrami.ByePreference.RefusedError
   alias Ainalrami.Pairing.NoValidPairingError
 
   describe "must get the bye (:want_hard)" do
@@ -155,11 +156,42 @@ defmodule Ainalrami.ByePreferencesTest do
       assert [%{outcome: :no_bye_this_round}] = report.outcomes
     end
 
-    test "must get it, having already had a pairing-allocated bye: C2 stands" do
+    test "must get it, having already had a pairing-allocated bye: the round is refused" do
       players = round_two_field()
-      {pairs, report} = ByePreference.pair(players, bye_preferences: [{3, :want_hard}])
+
+      error =
+        assert_raise RefusedError, fn ->
+          Pairing.pair_next_round(players, bye_preferences: [{3, :want_hard}])
+        end
+
+      assert error.round == 2
+      assert error.players == [%{rank: 3, reason: :pairing_bye, round: 1}]
+      assert error.message =~ "#3 must get the pairing-allocated bye"
+      assert error.message =~ "(round 1)"
+      assert error.message =~ "C2"
+
+      # Only for that case: "rather gets it" is reported and the round paired,
+      assert {pairs, report} = ByePreference.pair(players, bye_preferences: [{3, :want_soft}])
       assert pairs == Pairing.pair_next_round(players)
       assert [%{rank: 3, outcome: :ineligible, reason: :pairing_bye}] = report.outcomes
+
+      # and an exclusion that overrules the want leaves nothing to refuse.
+      assert {_pairs, report} =
+               ByePreference.pair(players,
+                 bye_exclusions: [3],
+                 bye_preferences: [{3, :want_hard}]
+               )
+
+      assert [%{rank: 3, outcome: :conflict}] = report.outcomes
+    end
+
+    test "must get it with a second bye, on an even field: nothing to refuse" do
+      # A sixth player who sat round one out: six in round two, no bye.
+      sixth = %{player(6) | games: [%{opponent_rank: nil, colour: nil, result: "Z"}]}
+      players = round_two_field() ++ [sixth]
+
+      assert {_pairs, report} = ByePreference.pair(players, bye_preferences: [{3, :want_hard}])
+      assert [%{rank: 3, outcome: :no_bye_this_round}] = report.outcomes
     end
 
     test "must get it and must not get it: the exclusion stands" do
@@ -219,6 +251,25 @@ defmodule Ainalrami.ByePreferencesTest do
     end
   end
 
+  describe "why not me" do
+    test "a player kept from the bye by another's preference is labelled so, not as the organiser's" do
+      players = round_two_field()
+
+      {pairs, report} =
+        ByePreference.pair(players, bye_exclusions: [1], bye_preferences: [{4, :want_hard}])
+
+      assert report.opts[:bye_preference_exclusions] == [2, 3, 5]
+      eligibility = Pairing.bye_eligibility(players, report.opts)
+      assert eligibility[1] == :organiser_exclusion
+      assert eligibility[2] == :bye_preference
+      assert eligibility[5] == :bye_preference
+      assert eligibility[3] == :pairing_bye
+
+      alternatives = Ainalrami.Alternatives.bye_alternatives(players, pairs, report.opts)
+      assert %{rank: 5, outcome: :ineligible, reason: :bye_preference} in alternatives.candidates
+    end
+  end
+
   describe "the option" do
     test "absent or empty: exactly the plain pairing" do
       players = round_two_field()
@@ -260,11 +311,11 @@ defmodule Ainalrami.ByePreferencesTest do
     test "describe/1 says what happened to each" do
       {_pairs, report} =
         ByePreference.pair(round_two_field(),
-          bye_preferences: [{4, :want_soft}, {3, :want_hard}]
+          bye_preferences: [{4, :want_soft}, {3, :want_soft}]
         )
 
       assert [three, four] = ByePreference.describe(report)
-      assert three =~ "#3 (must get the bye)" and three =~ "C2"
+      assert three =~ "#3 (rather gets the bye)" and three =~ "C2"
       assert four =~ "#4 (rather gets the bye): receives the pairing-allocated bye"
     end
   end

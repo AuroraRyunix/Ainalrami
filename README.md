@@ -342,7 +342,10 @@ ainalrami round5.trf -p --bye-want=12 --bye-avoid-soft=3,7@4-6+9
 
 Whenever one is given, stderr says the round is not a pure FIDE pairing,
 and each preference's outcome is reported (a preference that was not
-applied, and why, as a warning). They are refused with `-g` and `-c`,
+applied, and why, as a warning). A `--bye-want` for a player who already
+had the pairing-allocated bye (or a forfeit win or full-point bye, C2)
+refuses the round: exit 1, with an error naming the player and that round.
+They are refused with `-g` and `-c`,
 which pair by the FIDE rules alone, and no TRF line carries them: the
 engine reads non-FIDE options from flags and library options only.
 
@@ -505,8 +508,11 @@ without them, byte for byte.
   `bye_exclusions` entry) beats any want, a hard want beats a soft avoid, a
   soft want and a soft avoid cancel out. Across players: hard wants first
   (with several, the FIDE criteria choose among them), then soft wants, then
-  soft avoids. An even field, a player not in the round, and a player C2
-  rules out are skipped. Each case is an outcome in the report (`:honoured`,
+  soft avoids. An even field and a player not in the round are skipped, as
+  is a soft want for a player C2 rules out; a HARD want for a player C2
+  rules out (a second pairing-allocated bye) refuses the round with
+  `Ainalrami.ByePreference.RefusedError`, naming the player and the round
+  of their earlier bye. Each other case is an outcome in the report (`:honoured`,
   `:no_bye_this_round`, `:not_in_round`, `:ineligible`, `:conflict`,
   `:unpairable`, `:other_player`, `:outranked`), with `moved` (whether the
   preferences changed the round), `fide_bye` (who had it without them) and
@@ -514,6 +520,10 @@ without them, byte for byte.
   `explain_round/3` and `Ainalrami.Alternatives` must be given;
   `explain_context/3` refuses them unresolved). `explain_round/3` resolves
   them itself and puts the account on the bye's bracket as `bye_preference`.
+  A player a preference kept from the bye is `:bye_preference`, not
+  `:organiser_exclusion`, in `bye_eligibility/2` and "why not me"
+  (`Alternatives.bye_alternatives/3`), through `:bye_preference_exclusions`
+  in the resolved `opts`.
 
   Validated against the exhaustive bye reference: 5,000 generated
   tournaments with random preferences on every round, 0 disagreements on
