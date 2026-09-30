@@ -160,34 +160,30 @@ the harness was measuring nothing.
 Full methodology, per-axis detail and the reasoning behind each number:
 [docs/validation.md](docs/validation.md).
 
-**Speed**, re-measured 2026-08-21 on freshly generated fields, all three
-engines on the same input, best of three, cold process - and all three
-returning **identical boards** at every size. Discounting each engine's
-own start-up floor (6 ms for the C++ reference, 252 ms for the Python
-one, 604 ms for the BEAM), the pairing work is:
+**Speed**, re-measured 2026-09-28 on generated fields, all three engines
+on the same files, median of five cold runs - and all three returning
+**identical boards** on every file. Discounting each engine's own start-up
+floor (0.05 s for the C++ reference, 1.08 s for the Python one, 0.75 s for
+the BEAM), the pairing work is:
 
-| players | bbpPairings | Ainalrami | Gacrux |
+| file | bbpPairings | Gacrux | Ainalrami |
 |---|---|---|---|
-| 209 | 411 ms | **356 ms** | 335 ms |
-| 400 | 2,088 ms | **963 ms** | 1,094 ms |
-| 1,000 | 43,754 ms | **7,695 ms** | 7,669 ms |
+| 209 players, round 6 | 0.54 s | 0.24 s | **0.08 s** |
+| 400 players, round 6 | 2.76 s | 0.97 s | **0.11 s** |
+| 1,000 players, round 6 | 51.6 s | 6.39 s | **0.14 s** |
+| 600 players, round 2 | 8.24 s | 1.29 s | **0.07 s** |
+| 600 players, round 9 | 10.8 s | 2.55 s | **0.17 s** |
 
-**Those sizes are 209, 400 and 1,000 - one odd and two even, and the
-parity matters.** An odd field runs a whole-field bootstrap matching that
-an even one skips entirely, and on 2026-08-27 it was measured at **46.2% of
-a 1,001-player round**: 1,000 players takes 6.0 s and 1,001 takes 13.3 s.
-So the two large numbers above are the cheap half of the picture, and half
-of any real tournament is an odd field. See
-[docs/engineering-log.md](docs/engineering-log.md) under 2026-08-27.
-
-So **1.15x to 5.7x quicker than the C++ reference**, and **level with the
-Python one** - quicker at 400, within 0.3% at 1,000. At 209 players 63% of
-the BEAM's wall clock is VM start-up, which is why it trails end-to-end
-there and why that does not apply inside a host application already
-running. A
-bracket is solved on its own graph when that is provably the whole-field
-answer, and on the whole field otherwise; the full table, and how it got
-here from 90 s and 498 s, is in
+Most brackets are answered by walking Article 3's own order and proving
+the result is the one the full weighted-matching refinement would return,
+which is Gacrux's shortcut held to a proof; anything the proof does not
+cover is paired by the refinement as before, and the output is
+byte-identical to the engine without the shortcut. At 209 players the
+BEAM's start-up is most of a cold run, which is why bbpPairings still
+wins that one end to end; inside a host application already running, it
+does not apply. The full tables, the profile behind them and how the
+engine got here from 90 s and 498 s are in
+[docs/performance.md](docs/performance.md),
 [docs/validation.md](docs/validation.md) and
 [docs/engineering-log.md](docs/engineering-log.md).
 

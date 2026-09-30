@@ -64,6 +64,99 @@ with the reference on every one of them.
 
 ## [Unreleased]
 
+- [Performance] **The slow spots the direct bracket left, every answer
+  unchanged.** On the Gacrux benchmark's positions (in-VM, 2 cores) 600
+  players round 2 took 2.93 s where 400 and 1,000 players took 0.02 and
+  0.05 s; it now takes 0.028 s. Round 9: 1,000 players 1.18 s -> 0.065 s,
+  600 players 0.39 s -> 0.040 s, 1,001 players 0.31 s -> 0.029 s, 200
+  players 0.082 s -> 0.008 s; every row under 0.07 s. On 60 generated
+  opens of 158-947 players, rounds 2-9 took 132 s of pairing in all
+  (slowest round 21.7 s) and now take 7.6 s (slowest 88 ms). Six changes:
+  an odd bracket of an even field over the players on zero is answered
+  directly (their completion terms sum to the same over every perfect
+  matching); an odd bracket's floaters are found all at once as the
+  players who can meet one of the next group's exposable set, where a
+  weighted matching was solved per resident, and with an even next group
+  the rest of the field need only take the player left over, not any
+  player; a walk past its budget runs again pruned by Hall's condition and
+  by the states that already failed, which returns what the walk would
+  with no budget; the completability oracle is a maximum-cardinality
+  matching with a stand-in for the bye, kept across the round, where its
+  weighted form's first solve cost up to 0.22 s; a bracket none of whose
+  members can play each other (two leaders who have met) no longer goes
+  to the whole-field matcher; and the odd field's bye bootstrap shows its
+  certificate by maximum matchings where the greedy one fails, instead of
+  a complete-graph search. Anything unproven falls back as before. Details
+  in `docs/performance.md`.
+- [Verified] Against v0.33.0 on the differential corpus in the default
+  configuration: 447,152 rounds, 0 differences; in check mode 44,325
+  rounds identical to v0.33.0 with 20,631 new direct answers checked, and
+  410,485 oracle answers held to the weighted oracle, 63,265 floater pools
+  to per-resident matchings and 19,623 bye bootstraps to the search, 0
+  differences; the same 44,325 rounds identical with every walk the pruned
+  one (`AINALRAMI_DIRECT_PLAIN=0`, new; 29,843 walks checked); 60
+  generated opens of 158-947 players over 9 rounds in check mode and with
+  the direct brackets off, all 540 rounds identical.
+
+- [Performance] **Odd fields: the brackets the bye comes out of are
+  answered directly too, every answer unchanged.** A 1,001-player round 2
+  took 31.9 s where 1,000 players took 0.05 s; it now takes 0.12 s, the
+  same pairing (Gacrux 4.6 s on that position). Three more shapes of the
+  direct bracket: the last bracket of an odd field, walked with the bye as
+  its floater (a bye candidate with the fewest unplayed games, as C5 and
+  C9 rank the one left over; in every mode); an odd bracket whose next
+  group is the last group and holds the bye, whose floaters are found
+  exactly and all at once as the players who can meet someone a maximum
+  matching of that group can leave for the bye (new
+  `Ainalrami.CardinalityMatching`, the Gallai-Edmonds exposable set); and
+  an even bracket of an odd field. Each is taken only where the next
+  bracket's C9 gate is decided without the tentative matching; anything
+  else falls back as before. And a bracket whose window is the whole
+  remaining field no longer sends a round back to the reference path over
+  the C9 gate its matcher was built with - it has no far edge. Details in
+  `docs/performance.md`.
+- [Verified] Against v0.33.0 on the differential corpus in the default
+  configuration: 447,152 rounds, 0 differences; in check mode (each direct
+  answer held to the field path on the same bracket; the check now covers
+  the new shapes and the next bracket's C9 gate) 44,325 rounds identical
+  to v0.33.0 and 33,367 new direct answers checked, 0 differences; 80
+  generated odd fields of 107-999 players over 9 rounds, 566 more checked
+  and all 720 rounds identical with the direct brackets switched off.
+
+- [Performance] **The pairing past Gacrux on every benchmark file, every
+  answer unchanged.** Pairing work (a cold run minus start-up) on the
+  files `docs/validation.md` compares the three engines on: 209 players
+  0.32 s -> 0.08 s, 400 players 1.24 s -> 0.11 s, 1,000 players 7.17 s ->
+  0.14 s, a 600-player round 2 6.72 s -> 0.07 s and round 9 2.58 s -> 0.17
+  s - Gacrux 0.24, 0.97, 6.39, 1.29 and 2.55 s on the same files, so 3x
+  to 46x behind now where it was 1.25-5x ahead. From 400 players up this
+  engine is the fastest of the three cold as well; at 209 bbpPairings'
+  start-up still wins the cold total. How: most brackets are now answered
+  without the eight refinement stages, by walking Article 3's own order
+  (MDP partners, then S1 into S2) and accepting only a matching that meets
+  an upper bound on every ladder rung - which proves it is the stages'
+  answer - or, on a graph of up to 12 vertices, by listing every
+  maximum-weight matching and applying the stages' decisions to the list;
+  in certified mode also the round-2 brackets over players on zero and the
+  lone leaders on top of a round, which used to run on the whole-field
+  graph. Anything the proof does not cover goes to the stages as before.
+  `AINALRAMI_DIRECT=off` turns it off, `=check` holds every direct answer
+  to the stages' and raises on a difference. The completability oracle is
+  solved once instead of by every question before the first bracket.
+  Details in `docs/performance.md`.
+- [Verified] The direct brackets against v0.33.0 on the differential
+  corpus: 892,324 rounds (every set, in the default configuration and with certified mode forced), 0 differences; in check mode (each direct answer held to the stages
+  on the same bracket, certified mode forced) 44,325 rounds, 149,356 direct
+  answers, 0 differences; `mix test --timeout 300000` 811 of 811;
+  bbpPairings direction 1 on 1,000 tournaments of 4-40 players (8,402
+  rounds, 99,305 pairs) and 100 of 60-160 (800 rounds, 43,888 pairs),
+  100.00% and no colour disagreement on 138,816 boards; direction 2 on
+  595 bbpPairings-generated tournaments (5,930 rounds, 346,901 pairs), 0
+  composition and 0 colour mismatches.
+- [Change] `tools/perf_diff.exs`: `DIFF_CHUNK` runs a corpus in resumable
+  chunks, `DIFF_AXES` and `DIFF_LIMIT` narrow it, `DIFF_SUBSET=1` compares a
+  partial run against a full baseline.
+
 ## [0.34.0] - 2026-09-28
 
 - [Feature] **`Alternatives.float_alternative/5` - one floater's "why him

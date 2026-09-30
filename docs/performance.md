@@ -1,4 +1,593 @@
-# Performance: large fields (2026-09-28)
+# Performance
+
+Four passes, newest first: the slow spots the direct bracket left, the
+direct bracket on odd fields, the direct bracket itself, which took the
+pairing past Gacrux on every benchmark file, and the large-field pass
+before it.
+
+## The slow spots (2026-09-30)
+
+The Gacrux benchmark's positions had a few rows far off the rest: 600
+players round 2 took **2.9 s** where 400 and 1,000 players took 0.02 and
+0.05 s, and round 9 took **1.18 s** at 1,000 players and 0.39 s at 600.
+Each was one bracket that went to a matcher its answer did not need, or
+the completability oracle's matcher itself. Every row is now under 0.07 s
+with the same pairing, and every answer on the differential corpus is
+unchanged. On 60 generated opens of 158-947 players, rounds 2-9 went from
+132 s of pairing in all (worst round 21.7 s) to 7.6 s (worst 88 ms).
+
+### Where the time was
+
+In-VM `Pairing.pair_next_round/2`, `+S 2:2`, the per-bracket trace and the
+certified-mode counters, on the benchmark's positions:
+
+| position | in-VM | where |
+|---|---|---|
+| 600 players, round 2 | 2.93 s | the 0.5 bracket (202 players and one MDP) over the 199 on zero, on the field graph: 2.88 s |
+| 600 players, round 9 | 0.39 s | a 108-player bracket whose walk needed 30,709 checks against a budget of 3,968, so the stages on the local graph: 0.33 s |
+| 1,000 players, round 9 | 1.18 s | a 169-player bracket, 22,552 checks against 5,920: the stages, 1.02 s; the oracle's first solve, 62 ms; a 19-player odd bracket over a 4-player group with one player below, on the field graph, 28 ms |
+| 1,001 players, round 9 | 0.31 s | the oracle's first solve, 0.22 s |
+| 200 players, round 9 | 0.08 s | the oracle's re-solve after each bracket, 3-6 ms apiece |
+
+* **The 0.5 bracket of an even round 2.** Odd, over the players on zero:
+  on an even field those are bye candidates in the completion rung's
+  sense (`1 + !isByeCandidate(a) + !isByeCandidate(b)` with the bye score
+  at zero), so the local graph turned it away, and the field-graph odd
+  bracket required a window of non-candidates. At 400 and 1,000 players
+  the 1.0 group is even, so the 0.5 bracket is too, which is why only 600
+  was slow.
+* **Two walks past their budget.** The walk is depth-first and discards a
+  choice only on the per-edge test and the colour counts, so a conflict
+  near the end of S1 (two late S1 players with one S2 partner between
+  them) is walked again under every choice above it: 7,424 illegal pairs
+  and 12,315 colour-count failures in the 108-player bracket, almost all
+  in its last eight levels.
+* **The oracle.** A maximum-WEIGHT matching over the sparse field graph,
+  solved from cold once a round (0.05-0.22 s at 1,000 players, the odd
+  field the slowest) and re-solved after every accepted bracket.
+* **The 19-player odd bracket** has an even next group of 4 and one player
+  below it, so the floater's `q / 2` pairs leave one of the four to that
+  player; the pool required the rest of the field to take ANY of the four,
+  and it could take only some.
+
+The generated opens (the fuzz generator at 158-947 players, 3% requested
+byes, 2% forfeits, 1% withdrawals, 9 rounds) showed two more, every round
+over 0.3 s once the four above were gone:
+
+* **A bracket none of whose members can play each other** - the two
+  leaders of a late round who have met - went to the field graph: 2.6 s
+  at 926 players round 9, 1.0 s at 494.
+* **The odd field's bye bootstrap** (`bye_assignee_score/2`): where the
+  greedy certificate fails - a player left without a partner in field
+  order, or the top group split - the whole-field complete-graph search:
+  0.15-1.8 s.
+
+### What changed
+
+Six changes, each argued in the section comments of `Ainalrami.Pairing`
+and each held to the path it replaces in check mode:
+
+* **An odd bracket of an even field over the group on zero**
+  (`:odd_zero_group`, certified mode). The players on zero make the
+  completion rung's per-edge terms vary, but every optimum is a perfect
+  matching (the field is even and one exists: the walk's pairs, the
+  floater absorbed, the rest completed), and over perfect matchings those
+  terms sum to the same. The completion rung is the only rung that reads
+  bye candidacy there (C9 is off with no bye), so the odd bracket's
+  argument holds as it stands, with the bracket's own members still
+  required to be non-candidates (the walk's per-edge completion test).
+* **The odd bracket's pool, all at once, and its takers.** The residents
+  the next group `N` absorbs were found by a weighted matching of `N` plus
+  the resident, per resident - 202 matchings of a 200-vertex graph at 600
+  players round 2. They are the residents who can play some `G` in the
+  exposable set of `N` (when `q = |N|` is odd) or of `N` plus a stand-in
+  joined to the takers (when it is even) - one Gallai-Edmonds search
+  (`absorbed_pool/5`). The takers: with `q` even the floater's `q / 2`
+  pairs leave one of `N` to the rest of the field, and the argument needs
+  only that the one left over can be taken, not that every player of `N`
+  could be - each shown by the oracle, as before.
+* **The pruned walk.** A plain walk past its budget runs again with two
+  more ways to discard a subtree, both proofs that it holds no leaf:
+  Hall's condition on the rest (a maximum matching of the remaining S1
+  into the remaining S2 over legal, colour-compatible pairs, kept from
+  choice to choice by one augmenting search when a choice takes someone's
+  partner), and states that failed once (the S1 position, the S2 players
+  used and the two colour counts decide everything below them). It meets
+  its leaves in the plain walk's order, so it returns what the plain walk
+  would have returned with no budget. The per-edge ladder test is
+  remembered per walk. The two brackets: 2,138 and 1,620 checks.
+* **The oracle as a cardinality matching.** Every question it answers is
+  "is there a matching of the players left, leaving the bye (if any) on a
+  candidate", which is a perfect matching of the players plus, on an odd
+  count, a stand-in joined to every candidate. A maximum matching is kept
+  from question to question: the players taken out leave their partners
+  exposed, and an augmenting search from each
+  (`Ainalrami.CardinalityMatching.augment_from/4`, which grows only the
+  tree it needs - no per-search array over the graph, a blossom
+  relabelling only the tree) either matches it or shows some maximum
+  matching leaves it exposed. The weighted oracle's answers were the same
+  property of the same sparse graph; under `AINALRAMI_DIRECT=check` it
+  runs alongside and every answer is held to it.
+* **A bracket that cannot pair at all** (`:empty`, certified mode). The
+  field graph has no edge between two of its members (an edge is only ever
+  made for a legal, colour-compatible pair), so whatever the stages do the
+  field path pairs nobody, carries everyone forward in order and counts
+  every member as floating. The next bracket's C9 gate, the one reader of
+  the tentative partners, must be shut on its own terms; the round matcher
+  is left on the certified mode's terms, as the other field-graph shapes
+  leave it.
+* **The bye bootstrap by matchings.** Where the greedy certificate fails,
+  the certificate's existence - all but the leftover `L` paired over
+  compatible edges, `L` the last of the least `(ineligible, place)`, the
+  top group paired inside itself as far as its parity allows - is shown by
+  maximum matchings on sparse subgraphs: the top group less `L` and the
+  rest each perfectly matched, or, when the top group less `L` is odd,
+  a player its near-perfect matchings can leave over who can play one the
+  rest's can (both exposable sets). The answer is read off the bounds:
+  the bye score is `L`'s, and the single-downfloater flag holds exactly
+  when `L` is in the top group and the rest of that group is paired
+  inside it. What the sparse graphs miss goes to the search as before;
+  check mode holds every such answer to the search.
+
+### Results
+
+In-VM `Pairing.pair_next_round/2`, `+S 2:2`, medians of 5, the positions
+`/root/bench.exs` on the validation VM builds (the fuzz generator at seed
+`9,500,000 + players`, earlier rounds paired by this engine), the two
+builds run one after the other on the same idle machine (an i7-10700).
+Every pairing is the same in both.
+
+| position | before (0a844f7) | after |
+|---|---|---|
+| 200 players, round 2 | 0.008 s | 0.002 s |
+| 200 players, round 9 | 0.082 s | **0.008 s** |
+| 400 players, round 2 | 0.019 s | 0.006 s |
+| 400 players, round 9 | 0.041 s | 0.011 s |
+| 600 players, round 2 | 2.93 s | **0.028 s** |
+| 600 players, round 9 | 0.389 s | **0.040 s** |
+| 1,000 players, round 2 | 0.046 s | 0.017 s |
+| 1,000 players, round 9 | 1.18 s | **0.065 s** |
+| 1,001 players, round 2 | 0.125 s | 0.067 s |
+| 1,001 players, round 9 | 0.306 s | **0.029 s** |
+
+The generated opens (60 tournaments, seeds 1-60, 158-947 players, 27 of
+them odd; four at a time at `+S 4:4`; every round re-paired identically
+by both builds), rounds 2-9:
+
+| | before | after |
+|---|---|---|
+| pairing, all 480 rounds | 132.4 s | 7.6 s |
+| median round | 65 ms | 14 ms |
+| p95 | 791 ms | 32 ms |
+| slowest round | 21.7 s | 88 ms |
+
+### How it was checked
+
+Every check below ran on the committed engine.
+
+* **Differential against v0.33.0** (`tools/perf_diff.exs`, the baseline
+  logs of the passes below), default configuration: small 370,777 rounds,
+  flags 68,898, large 5,497, early 1,980 - **447,152 rounds, 0 differing,
+  0 missing** (89,665 + 16,964 + 477 + 60 of them with the alternatives
+  fingerprinted).
+* **Check mode** (`AINALRAMI_DIRECT=check`, certified mode forced, the
+  first 400 tournaments of every axis of the four sets): 44,325 rounds,
+  identical to v0.33.0 end to end, with **20,631 new direct answers
+  checked, 0 differences** - 3,244 odd brackets over the group on zero,
+  3,339 more odd brackets (54,155 against the previous pass's 50,816: the
+  takers), 13,959 brackets that cannot pair and 89 pruned walks - besides
+  63,265 pools held to per-resident matchings (a maximum matching per
+  resident, and the weighted `absorbed?/3` wherever the pool had its old
+  shape and the group is at most 100), **410,485 oracle answers held to
+  the weighted oracle** and **19,623 bye bootstraps held to the search**,
+  0 differences.
+* **Every walk the pruned one** (the same, with
+  `AINALRAMI_DIRECT_PLAIN=0`): the 29,843 walk answers of that run all
+  came from the pruned walk and were held to the stages, and the 44,325
+  rounds are again identical to v0.33.0.
+* **Generated large fields**: the 60 opens above, paired in check mode
+  (71 odd brackets over the group on zero, 22 more odd brackets, 7
+  brackets that cannot pair, 17 pruned walks, 11 bootstraps, 364 pools and
+  5,165 oracle answers checked, 0 differences), and again with
+  `AINALRAMI_DIRECT=off`: the 540 rounds identical, and identical to the
+  previous build's.
+* `mix test`: 814 tests, 0 failures; `direct_bracket_test.exs` requires
+  the zero group's shape, the bracket that cannot pair and a matched
+  bootstrap to have been checked, and runs a pass with every walk pruned;
+  `cardinality_matching_test.exs` checks `augment_from/4` against
+  exhaustive search on 2,000 random graphs with dead vertices.
+
+### What is left
+
+Over the default corpus the direct brackets still gave up on 198,962
+brackets whose local graph has no perfect matching (they go to the field
+graph; below 100 players, and above it where some pair is possible), 5,826
+whose floater the walk could not
+show to be the stages', 1,654 MDP choices whose remainder needs an
+exchange, 648 whose bounds no matching met, and 18 pruned walks past their
+budget. A bracket that must float more players than its parity - some
+pairs possible, not enough - is the shape still paid in full. On the
+generated opens the slowest rounds left are 54-88 ms: a matched bootstrap
+at 647 players, two pruned walks, a round 2 at 924 players, one such
+bracket at 254 players and one pruned walk past its budget.
+
+## The direct bracket on odd fields (2026-09-29)
+
+A 1,001-player round 2 took **31.9 s**, where 1,000 players took 0.05 s:
+two brackets of the odd field went to the whole-field matcher. It now
+takes **0.12 s**, with the same pairing, and every answer on the
+differential corpus is unchanged.
+
+### Where the time was
+
+The fuzz generator's position at 1,001 players (seed 9,501,001, the
+position the Gacrux benchmark on the validation VM pairs), round 2: the
+1.0 group (319) was already direct; the 0.5 bracket (364 residents and one
+MDP, window 683) took 26.6 s and the 0.0 group with its floater (319)
+5.3 s, both on the field graph (timed in-VM at `+S 4:4`).
+
+* **The 0.5 bracket.** Its next group is the 0.0 group, the bye
+  candidates, so the local graph turned it away (its members' completion
+  terms vary), and the field-graph direct bracket did too: it required a
+  window of non-candidates.
+* **The last group.** The bracket the bye comes out of has the C9 gate on,
+  which the field-graph direct bracket excluded by design.
+
+### What changed
+
+Three more shapes of the direct bracket, each argued in the section
+comments of `Ainalrami.Pairing` (`attempt_direct_field/7`,
+`attempt_direct_last/7`):
+
+* **The last bracket of an odd field** (every mode, since nothing is
+  paired after it). The bracket is the whole remaining graph, so once the
+  walk finds a matching of all members but one that leaves a bye
+  candidate over, every optimum is one; over those, the completion rung
+  and C9 are sums of per-vertex terms fixed by the one left over - a bye
+  candidate, then the least unplayed-game rank (C9: the assignee with the
+  fewest unplayed games) - and C7 keeps every MDP paired. So the walk runs
+  with the bye as its floater and the resident candidates of that least
+  rank as its pool, and skips the per-edge completion and C9 tests whose
+  sums the floater fixes. The stages read an unmatched member exactly as
+  one matched to the local graph's stand-in (not paired down, in the
+  remainder), which is the walk's model of an odd bracket's floater.
+* **An odd bracket over the bye group** (certified mode): every member
+  above the bye score, the next group the last one. The existing odd
+  bracket's argument goes through with "the rest completed" read as
+  "near-perfect, leaving a bye candidate over": a resident F meets the
+  completion and C8 bounds exactly when the group and F have `q / 2`
+  pairs covering F with a candidate left over, and every such F meets
+  them alike. That set is exact and found for all residents at once: F
+  qualifies when it can play some G that a maximum matching of the group
+  plus a stand-in joined to its candidates can leave exposed - the D of
+  the Gallai-Edmonds decomposition, one Edmonds search
+  (`Ainalrami.CardinalityMatching`, checked against exhaustive search on
+  3,000 random graphs) where the old per-floater question was a matching
+  per resident.
+* **An even bracket of an odd field** (certified mode), as on an even
+  field: the bracket perfectly matched inside, the rest shown completable
+  with a candidate over by the oracle, so C6 keeps it inside in every
+  optimum.
+
+On an odd field the next bracket's C9 gate reads the tentative partners
+of this bracket's window; the new shapes are taken only where that read
+is decided without them - the next group scores above the bye (the gate
+is shut), or it is the last group (every partner the window can have
+scores at least as much, so the gate reads true on both paths).
+
+And one abort that was needlessly conservative: after a field-graph direct
+bracket, a later bracket that would build the round matcher with a
+different C9 gate from the reference's sent the whole round back to the
+reference path. When that bracket's window is the whole remaining field
+there is no far edge for the gate to have scored - the reference's
+boundary sets every edge to the bracket's own weights - so it now goes on
+(`builder_gate_whole_window` in the counters: 21 times in the default
+corpus).
+
+### Results
+
+In-VM `Pairing.pair_next_round/2`, `+S 2:2`, medians of 3-7 runs, the
+two builds run alternately on the same idle machine (an i7-10700); the
+positions are the Gacrux benchmark's (`/root/bench.exs` on the validation
+VM: the fuzz generator at seed `9,500,000 + players`, earlier rounds paired
+by this engine). Every pairing is the same in both builds.
+
+| position | before (bbcd392) | after |
+|---|---|---|
+| 1,001 players, round 2 | 31.9 s | **0.12 s** |
+| 1,001 players, round 9 | 0.31-0.34 s | 0.31 s |
+| 1,000 players, round 2 | 0.049 s | 0.049 s |
+| 1,000 players, round 9 | 1.17 s | 1.17 s |
+
+Round 2 at 1,001 players is now its three brackets answered directly:
+65 ms for the 1.0 group (as before), 53 ms for the 0.5 bracket over the
+bye group (the pool search and the walk) and 2 ms for the last group.
+Gacrux takes 4.6 s on that position on the validation VM. Round 9's bye
+comes out of an even bracket over a one-player last group, which moves
+from the field graph (30 ms) to the direct bracket (2 ms); the rest of
+that round is unchanged. The even field is untouched.
+
+### How it was checked
+
+* **Differential against v0.33.0** (`tools/perf_diff.exs`, the baseline
+  logs of the passes below), default configuration: small 370,777 rounds,
+  flags 68,898, large 5,497, early 1,980 - **447,152 rounds, 0 differing,
+  0 missing** (89,665 + 16,964 + 477 + 60 of them with the alternatives
+  fingerprinted). Its pairing calls took the new shapes 145,909 times:
+  143,792 last brackets (every field size - this one needs no certified
+  mode), 925 odd brackets over the bye group, 1,192 even brackets of an
+  odd field; the relaxed builder gate went on 21 times.
+* **Check mode** (`AINALRAMI_DIRECT=check`, which now also holds the new
+  shapes to the field path on the same bracket from the same state -
+  pairs, who is carried, how many float, and for the field-graph shapes
+  the next bracket's C9 gate - and raises on any difference), certified
+  mode forced, the first 400 tournaments of every axis of the four sets:
+  44,325 rounds, identical to v0.33.0 end to end, with **33,367 new direct
+  answers checked, 0 differences** (14,418 last brackets, 6,905 odd
+  brackets over the bye group, 12,044 even brackets of an odd field),
+  besides 60,481 of the existing field-graph shapes.
+* **Generated odd fields**: 80 tournaments of 107-999 players (odd sizes
+  drawn from 101-1,001; 3% requested byes, 2% forfeits, 1% withdrawals),
+  9 rounds, paired in check mode - 566 new direct answers checked (250 last
+  brackets, 142 odd over the bye group, 174 even of an odd field), 0
+  differences - and again with `AINALRAMI_DIRECT=off`: the 720 rounds
+  identical.
+* `mix test`: 812 tests, 0 failures; `direct_bracket_test.exs` gains an
+  axis of 101-151-player fields and requires each new shape to have been
+  answered (and checked) at least once;
+  `cardinality_matching_test.exs` checks the exposable set against
+  exhaustive search on 3,000 random graphs.
+
+### What is left
+
+* **The bye group with a group below it.** An odd bracket, or an even
+  one, whose next group holds the bye but is not the last group still
+  falls back: the next bracket's C9 gate then depends on whether a window
+  player is tentatively matched below, which is a read of the matcher's
+  own tie-break.
+* **An odd bracket over the bye group whose own members include bye
+  candidates** falls back (the walk's per-edge completion test needs its
+  members to be non-candidates).
+* **A last bracket whose leftover cannot be a least-rank candidate**
+  (the walk finds no matching meeting that bound, or runs past its
+  budget) goes to the field graph as before.
+* **Round 9 at 1,001 players** spends 0.22 s of 0.31 s in the first
+  bracket, an existing odd-bracket shape whose pool question solves the
+  whole-field completability oracle from cold.
+
+## The direct bracket (2026-09-28)
+
+On the benchmark files `docs/validation.md` compares the three engines
+on, the pairing work - a cold run minus the engine's own start-up - is
+now **0.08 s at 209 players, 0.11 s at 400, 0.14 s at 1,000, and 0.07 s
+and 0.17 s for rounds 2 and 9 of a 600-player open**, from 0.32-7.2 s, and
+the output is byte-identical to v0.33.0's. Gacrux (Python + networkx) was
+faster than this engine on every file but a fresh round 1; it is now 3x
+slower at 209 players and 9-46x slower on the rest.
+
+### Results
+
+Cold process, start to finish, median of 5 runs (3 at 1,000 players; min
+within 0.03 s of the median everywhere): the same six files as
+`docs/validation.md`'s 2026-09-28 re-run (`Ainalrami.Generator`, seed
+`20260827 + players`; 5 rounds played and round 6 paired at 209, 400 and
+1,000; rounds 1, 2 and 9 at 600), every file's boards identical across all
+four programs, colours included (105/105, 200/200, 500/500, 300/300 x3).
+"Before" is perf-certify (v0.34.0 plus the certified shortcuts), which this
+builds on. An i7-10700 (8 cores, 16 threads) with one other job running
+throughout at ~15% of total CPU.
+
+| file | bbpPairings | Gacrux | before | after |
+|---|---|---|---|---|
+| 10 players (start-up floor) | **0.05 s** | 1.08 s | 0.75 s | 0.75 s |
+| 209, round 6 | **0.59 s** | 1.32 s | 1.07 s | 0.83 s |
+| 400, round 6 | 2.81 s | 2.05 s | 1.99 s | **0.86 s** |
+| 1,000, round 6 | 51.6 s | 7.47 s | 7.92 s | **0.89 s** |
+| 600, round 1 | 9.59 s | 2.22 s | 0.74 s | **0.74 s** |
+| 600, round 2 | 8.29 s | 2.37 s | 7.47 s | **0.82 s** |
+| 600, round 9 | 10.8 s | 3.63 s | 3.33 s | **0.92 s** |
+
+Pairing work, each program's own floor subtracted:
+
+| file | bbpPairings | Gacrux | before | after | after vs Gacrux |
+|---|---|---|---|---|---|
+| 209, round 6 | 0.54 s | 0.24 s | 0.32 s | **0.08 s** | 3.0x faster |
+| 400, round 6 | 2.76 s | 0.97 s | 1.24 s | **0.11 s** | 8.8x |
+| 1,000, round 6 | 51.6 s | 6.39 s | 7.17 s | **0.14 s** | 46x |
+| 600, round 1 | 9.54 s | 1.14 s | 0.00 s | **0.00 s** | - |
+| 600, round 2 | 8.24 s | 1.29 s | 6.72 s | **0.07 s** | 18x |
+| 600, round 9 | 10.8 s | 2.55 s | 2.58 s | **0.17 s** | 15x |
+
+Pinned to two schedulers (`ERL_FLAGS="+S 2:2"`, the production VPS; the
+pairing is single-threaded) the after column is 0.80, 0.83, 0.86, 0.72,
+0.78 and 0.89 s cold - the same within noise. What is left of a cold run
+is the BEAM's start-up and reading the file; a 1,000-player round is now
+cheaper to pair than to start the VM for. bbpPairings keeps the smallest
+cold total on the 209-player file, on start-up alone (0.05 s against
+0.75 s).
+
+### Where the time was
+
+Profiled on the six benchmark files (perf-certify, which this builds on,
+timed in-VM with the per-bracket trace and `:tprof`):
+
+| file | round | in-VM | where |
+|---|---|---|---|
+| 209 players | 6 | 0.30 s | two small top brackets on the whole-field graph 0.20 s, seven local brackets 0.10 s |
+| 400 players | 6 | 1.2 s | a 3-player top bracket on the whole field 0.63 s, local brackets 0.6 s |
+| 1,000 players | 6 | 7.2 s | local brackets 7.1 s: 213 players 2.8 s, 218 2.1 s, 172 1.4 s |
+| 600 players | 2 | 6.8 s | field brackets of 172 (4.1 s) and 214 (2.1 s), a local one of 214 (0.7 s) |
+| 600 players | 9 | 2.3 s | a 5-player top bracket on the whole field 1.5 s, local brackets 0.9 s |
+
+Inside a bracket the time was the eight refinement stages' matcher work:
+on the 213-player bracket, the initial solve ~0.6 s, stage 4's re-solve
+1.4 s (its dual shift refused), stage 8 0.7 s. `:tprof` put 70-80% of a
+round in `Ainalrami.WeightedMatching`.
+
+Gacrux, `cProfile` on the same files: its pairing is one `pair_bracket`
+per score group, and most brackets are answered by `simple_permute` - a
+depth-first walk of Article 3's transposition order that accepts the first
+candidate every pair of which is clean on C9-C21 and whose colour clashes
+meet a counting bound - with a networkx `min_weight_matching` only where
+that walk fails (4-11 small matchings a round on these files). Its time
+goes mostly to building the crosstable - one Python object per pair of
+players, 500,000 at 1,000 players (`list_edges`, 2.0 s of 7.1 s there) - and
+the "hamilton" completability pre-pass (1.3 s); `pair_bracket` itself is
+2.5 s at 1,000 players and 0.19 s at 600 players round 2. So Gacrux was
+not faster code: it did less matching - a walk per bracket where this
+engine ran eight stages of a general weighted matcher, on the whole field
+for the top brackets.
+
+### What changed
+
+The same idea, held to a proof: a bracket whose answer can be shown to
+be the stages' answer is answered without them. Three pieces, in
+`Ainalrami.Pairing`:
+
+* **The direct walk** ("the direct bracket"). For a bracket on the local
+  graph, the stages' answer is the first matching, in the order "each MDP's
+  partner in turn, then each S1 player's partner in turn", among the
+  matchings of maximum criteria weight `C*` - when one of those pairs every
+  MDP and pairs S1 into S2 with no exchange. The walk visits that order
+  depth first and accepts a matching only when it meets an upper bound on
+  every ladder rung at once - per-edge bests for C10, C11, C15, C17, C19
+  and C21; counting bounds for C12 and C13 from the members' colour
+  preferences; the floater's own downfloat bits for C14 and C16 - which
+  makes it a `C*`-optimum outright; every choice it discards breaks a
+  necessary condition of meeting those bounds. The derivation of each
+  bound, and why each stage returns what the walk returns, is the
+  section comment. It gives up (and the stages run as before) when a
+  choice for an MDP passes every necessary condition but its remainder
+  has no exchange-free answer, when it runs past a budget of `32n + 512`
+  edge checks, or on soft pairs and the experimental ladder switches.
+* **The small bracket.** A graph of at most 12 vertices has few enough
+  maximum-weight matchings to list, and the stages' decisions are then
+  filters over that list, applied in their order - stage 1 keeps an MDP
+  inside if some optimum does, stage 2 and stage 8 take the best-ranked
+  partner some optimum gives, stages 4-6 keep the exchange weights' optima
+  and exchange a player if some optimum does. Every value a stage reads
+  off the matching is checked to be the same across the optima left at
+  that point, and a read that is not ends the attempt. This covers the
+  small brackets the walk cannot, exchanges included.
+* **Brackets the local graph turned away** (`attempt_direct_field/7`,
+  certified mode only). An even bracket of an even field whose window
+  holds players on zero - round 2 of every large open - is its own local
+  problem once the rest of the field can be completed: with no bye, every
+  optimum of the field graph is perfect and C6 then keeps the bracket
+  inside. An odd bracket over a next group too small for the stand-in
+  (the lone leaders at the top of a round) is the direct walk over the
+  floaters the field below can absorb at the completion and C8 rungs'
+  bounds: shown by the completability oracle for the rest of the field
+  and a small exact matching on the next group plus the floater. Neither
+  leaves the round matcher the reference would carry, so a later field
+  bracket's reads are certified (the certified mode's own contract), and a
+  later bracket that would build the matcher with a different C9 gate
+  than the reference's sends the round back to the reference path.
+
+And one cost the direct brackets exposed: the completability oracle was
+solved from cold by every question asked of it before the first bracket
+was accepted - eight times for the 400-player file's first bracket. It
+is now solved once and kept; its answers are properties of its graph, not
+of the state it keeps.
+
+### How it was checked
+
+Every check below ran on the committed engine.
+
+#### Differential against v0.33.0: 892,324 rounds, 0 differences
+
+`tools/perf_diff.exs` (described under the large-field pass below), run
+on this tree and compared with the v0.33.0 logs of that pass, round by
+round - the pairing or refusal, `explain_round/3`, the perturbed pairing's
+explanation and `Alternatives.judge/4`, and on a sampled share of rounds
+every forced search `Alternatives` runs. Twice: in the default
+configuration, where the local-graph direct brackets run on every field
+size and the field-graph ones from 100 players up, and with
+`AINALRAMI_CERT=force`, which puts the field-graph ones on the small
+fields too.
+
+| set | default | `AINALRAMI_CERT=force` |
+|---|---|---|
+| small (8 axes, 4-40 players) | 370,777 rounds | 370,777 rounds |
+| flags (field graph only, strand repair, completion reading) | 68,898 | 68,898 |
+| large (60-600 players) | 5,497 | 5,497 |
+| early (100-600 players, opening rounds) | 1,980 | - |
+| | **447,152 rounds, 0 differing, 0 missing** | **445,172 rounds, 0 differing, 0 missing** |
+
+214,272 of those rounds also fingerprinted the alternatives. The pairing
+calls of the two runs (the alternatives' own forced pairings not counted)
+were answered directly 2,113,871 times.
+
+#### Each direct answer held to the stages' on the same bracket
+
+`AINALRAMI_DIRECT=check` pairs every bracket the direct brackets answer
+with the stages as well, from the same state, and raises on any
+difference. Run on the first 400 tournaments of every axis of the four
+sets (fewer where an axis has fewer), certified mode forced: 44,325
+rounds, 149,356 direct answers checked, 0 differences - and the same
+44,325 rounds identical to v0.33.0 end to end. `test/ainalrami/direct_bracket_test.exs`
+does the same on 243 generated tournaments of 4-180 players at every
+`mix test`, and also pairs every round with `AINALRAMI_DIRECT=off` and
+requires the two to agree.
+
+#### Against the references
+
+* **`mix test --timeout 300000`**: 811 tests, 0 failures (5 tags excluded
+  by default); `--only interop` 2 of 2.
+* **bbpPairings, direction 1** (`mix test --only bbppairings`): 1,000
+  tournaments of 4-40 players over 9 rounds (8,402 rounds, 99,305 pairs)
+  and 100 of 60-160 players over 8 rounds (800 rounds, 43,888 pairs) -
+  **100.00%, 0 refused, 0 illegal**, no disagreement about who is White on
+  138,816 boards.
+* **bbpPairings, direction 2** (`tools/bbp_generator_reverse.exs`, seeds
+  910001-910600): bbpPairings could not generate 5; on the other 595,
+  **5,930 rounds, 346,901 pairs, 0 composition mismatches**, 0 colour
+  mismatches on 309,481 shared boards.
+* The matcher (`Ainalrami.WeightedMatching`) is unchanged, so the
+  lockstep was not re-run.
+
+#### Reproducing
+
+    # the corpus, resumably, against a baseline's logs
+    DIFF_CHUNK=100 MIX_ENV=test mix run tools/perf_diff.exs corpus small OUT/new/small
+    MIX_ENV=test mix run tools/perf_diff.exs compare OUT/base/small OUT/new/small
+
+    # each direct answer against the stages, a slice of every axis
+    AINALRAMI_DIRECT=check AINALRAMI_CERT=force DIFF_LIMIT=400 DIFF_CHUNK=50 \
+      MIX_ENV=test mix run tools/perf_diff.exs corpus small OUT/check/small
+
+    # the benchmark files
+    ainalrami -g f.trf --seed=$((20260827 + N)) --players=N --rounds=5   # then 142 -> 9
+
+### What is left, and what was tried
+
+* **Where the direct brackets give up.** Over the check-mode run above,
+  the walk and the small bracket answered 149,356 brackets; the stages
+  still paired those with no perfect local matching (17,726 - they go to
+  the field graph as before), those whose floater the walk could not show
+  to be the stages' (1,405), MDP choices whose remainder needed an
+  exchange (319, plus 285 whose bounds no matching met) and 250 walks
+  past their budget. A large bracket that needs an exchange is the case
+  still paid in full.
+* **Odd fields.** An odd 1,001-player round 6 (seed 20261828), measured
+  once while the differential corpus was running: Gacrux 11.8 s cold,
+  perf-certify 10.7 s, this 2.2 s. Its first bracket asks the
+  completability oracle once per member of an even next group (18 there);
+  re-adding each member to one solved state instead of removing the rest
+  from scratch each time is the next saving.
+* **Not re-measured**: the explanation and the alternatives. Both call
+  the same pairing, so both inherit the speed-up; the click tables of
+  the large-field pass below are v0.34.0's.
+* **Tried and fixed before the first commit**: the C13 bound first
+  counted two absolute preferences for the same colour as a pair that
+  keeps C13, which only the final-round exception allows - an unreachable
+  bound, so the walk exhausted its budget on the large brackets of the
+  1,000-player file (never a wrong answer, since nothing below a met
+  bound is accepted). And the first cut of the field-graph odd brackets
+  solved the oracle from cold for every question: 0.43 s of a 0.56 s
+  round at 400 players.
+
+## The large-field pass (2026-09-28)
 
 A pass over the engine for fields of 150-600 players. A large field's
 whole round - pairing, explanation and alternatives - is now **2.5-2.8x
@@ -8,7 +597,7 @@ output is **byte-identical to v0.33.0**: the same pairings, the same
 rounds. This document says where the time was, what changed, why each
 change cannot move an answer, and how that was checked.
 
-## Results
+### Results
 
 Generated opens of 150, 300, 450 and 600 players (`tools/perf_bench.exs`:
 ratings falling with the starting rank, results drawn from FIDE's expected
@@ -26,7 +615,7 @@ itself is single-threaded, so it is the same on both; the alternatives
 run one forced search per scheduler and gain more the more cores there
 are.
 
-### The whole click
+#### The whole click
 
 At `+S 2:2`:
 
@@ -63,7 +652,7 @@ slower of the two):
 | 10 |  |  |  |  | 13.8 s | 3.84 s | 36.9 s | 12.6 s |
 | 11 |  |  |  |  | 67.7 s | 20.0 s | 115.4 s | 32.3 s |
 
-### Each part, `+S 2:2`
+#### Each part, `+S 2:2`
 
 The pairing:
 
@@ -92,7 +681,7 @@ The alternatives:
 | 450 | 22 | 10.3 s | 3.26 s | 65.4 s | 18.8 s | 157.2 s | 59.3 s | 3.1x |
 | 600 | 22 | 6.73 s | 2.57 s | 50.1 s | 16.3 s | 110.3 s | 29.7 s | 3.3x |
 
-### Each part, `+S 12:12`
+#### Each part, `+S 12:12`
 
 The pairing:
 
@@ -121,7 +710,7 @@ The alternatives:
 | 450 | 22 | 10.6 s | 1.86 s | 66.1 s | 9.56 s | 157.7 s | 25.1 s | 6.7x |
 | 600 | 22 | 6.68 s | 1.97 s | 54.5 s | 9.18 s | 111.0 s | 14.6 s | 6.4x |
 
-### The pairing by round, `+S 2:2`
+#### The pairing by round, `+S 2:2`
 
 | round | 150 before | after | 300 before | after | 450 before | after | 600 before | after |
 |---|---|---|---|---|---|---|---|---|
@@ -155,7 +744,7 @@ gate reads the tie they settle in the field below, so nothing here may
 pick a different optimum there. That is the next target (see "Tried and
 reverted").
 
-### OpenPairings, end to end
+#### OpenPairings, end to end
 
 OpenPairings' "Pair round" click (`PairingsEngine.Pairing.pair_next_round/2`)
 timed span by span on a development copy (SQLite, the dev database), with
@@ -198,7 +787,7 @@ the pin bump that follows it. The dominant remaining cost of a late
 round is still the alternatives, one forced re-pairing per candidate; on
 the 2-vCPU server they run two at a time.
 
-## Where the time was
+### Where the time was
 
 Measured on v0.33.0 (`tools/perf_bench.exs`,
 and OpenPairings' "Pair round" click instrumented span by span):
@@ -228,11 +817,11 @@ and OpenPairings' "Pair round" click instrumented span by span):
   matching over the complete graph of the field to find the bye score
   (100 ms of every 300-player explanation).
 
-## What changed, and why it cannot move an answer
+### What changed, and why it cannot move an answer
 
 Grouped by the argument that makes each one safe.
 
-### Same values, computed once
+#### Same values, computed once
 
 * **Per-round player facts** (`Pairing.with_round_facts/1`): who each
   player has met, whether they may take the bye, and how many games they
@@ -253,7 +842,7 @@ Grouped by the argument that makes each one safe.
 
 These are refactors: the same functions of the same inputs.
 
-### The same searches, side by side
+#### The same searches, side by side
 
 * **Alternatives run in parallel** (`Alternatives.attempts/1`), one
   forced search per scheduler. Each search is a complete pairing that
@@ -263,7 +852,7 @@ These are refactors: the same functions of the same inputs.
   a search that raises is re-raised in the caller exactly where the loop
   would have raised it. Tracing keeps the sequential order.
 
-### The matcher, held to v0.33.0 call by call
+#### The matcher, held to v0.33.0 call by call
 
 `Ainalrami.WeightedMatching` is shared by the individual and the team
 engines, and it breaks ties by the order edges are offered - so a faster
@@ -295,7 +884,7 @@ after every call. It detects a flipped tie-break in a single minimum
 (mutation-tested). Result: every call identical, state included, over
 46,000 sessions of the final matcher.
 
-### A certificate instead of a search: the bye bootstrap
+#### A certificate instead of a search: the bye bootstrap
 
 On an odd field the bye assignee's score came from a maximum-weight
 matching over the complete graph of the field. Its two outputs - the bye
@@ -308,7 +897,7 @@ that does is optimal and gives the same answer. Any field it cannot
 certify goes to the search exactly as before. Checked against the search
 on 19,142 bootstraps before the self-check was taken out.
 
-### A dual shift instead of a re-solve: stages 4, 7 and 8
+#### A dual shift instead of a re-solve: stages 4, 7 and 8
 
 The refinement stages rewrite weights and re-solve: stage 4 adds the
 exchange weights to every remainder pair, stage 7 takes them off again,
@@ -350,12 +939,12 @@ That is an argument, not a proof by construction like the lockstep; the
 differential corpus below is the check, and every one of its rounds that
 reaches a last bracket or a local bracket goes through these shifts.
 
-## How it was checked
+### How it was checked
 
 Every check below ran on the final engine (commit `eb23820`, the
 matcher unchanged since `b958b3e`), not on an intermediate one.
 
-### Differential against v0.33.0: 445,172 rounds, 0 differences
+#### Differential against v0.33.0: 445,172 rounds, 0 differences
 
 `tools/perf_diff.exs` plays generated tournaments forward
 (`Ainalrami.Test.FuzzTournament`, the generator every corpus in this
@@ -398,7 +987,7 @@ builds to v0.33.0 as well (12,882 + 12,820 rounds at 4-40, 1,080 at
 60-200), and 744 round-1 fields of 4-129 players with club soft pairs or
 forbidden pairs.
 
-### The matcher: lockstep with v0.33.0
+#### The matcher: lockstep with v0.33.0
 
 `tools/matching_lockstep.exs` on the final matcher: 46,000 random
 sessions (seeds 700,000-705,999 and 1,000,001-1,040,000) shaped like the
@@ -409,7 +998,7 @@ value and every observable field of the state equal to v0.33.0's after
 every call. Each intermediate matcher commit was held to the same test
 before it was committed (up to 30,000 sessions each).
 
-### Against the references
+#### Against the references
 
 * **`mix test --timeout 300000`**: 804 tests, 0 failures (5 tags
   excluded by default); `--only interop` (the 209-player real
@@ -439,7 +1028,7 @@ before it was committed (up to 30,000 sessions each).
   removed.
 
 
-## Tried and reverted
+### Tried and reverted
 
 * **A per-solve cache of row lists** in the settle loop, to avoid
   `:maps.to_list/1` per settle: 0.95-1.0x. Reverted.
@@ -455,7 +1044,7 @@ before it was committed (up to 30,000 sessions each).
   unique optimum for the stage solves; a two-table cross design in the
   matcher. Each would need an argument this pass could not make airtight.
 
-## Reproducing
+### Reproducing
 
     # bench, this tree against v0.33.0 in one VM, alternately
     ELIXIR_ERL_OPTIONS="+S 2:2" PERF_REF=v0.33.0 mix run tools/perf_bench.exs

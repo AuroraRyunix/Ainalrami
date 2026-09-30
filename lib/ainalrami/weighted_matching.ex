@@ -462,6 +462,267 @@ defmodule Ainalrami.WeightedMatching do
   end
 
   @doc """
+  Every vertex's dual with the duals of the blossoms containing it folded
+  in: `y[v] + sum(z[B] / 2 : B contains v)`, on the doubled scale.
+
+  In this module a blossom's dual is kept apart from its vertices'
+  (`dissolve_one/3` hands each vertex `z[B] / 2` when `B` goes), so an edge
+  inside a blossom reads `y[u] + y[v] - w2` below zero by the blossom duals
+  around it. Folded like this, every edge is feasible on vertex duals
+  alone; an edge of the matching that leaves a blossom through its base is
+  over-covered by that blossom's half, which is why this is a starting
+  point for `Ainalrami.MatchCertificate.certify/5` and not a certificate.
+  """
+  def vertex_duals(state) do
+    tops = state.in_blossom |> Map.values() |> Enum.uniq()
+
+    Enum.reduce(tops, %{}, fn b, acc -> fold_duals(state, b, 0, acc) end)
+  end
+
+  defp fold_duals(state, b, above, acc) do
+    case Map.get(state.children, b) do
+      nil ->
+        Map.put(acc, b, Map.fetch!(state.dual, b) + above)
+
+      children ->
+        here = above + div(Map.get(state.dual, b, 0), 2)
+        Enum.reduce(children, acc, fn c, acc -> fold_duals(state, c, here, acc) end)
+    end
+  end
+
+  @doc """
+  Replace the search state by a certified one: `mate` as the matching,
+  `dual` (on the doubled scale) as the vertex duals, no blossoms, and every
+  per-solve cache empty. Vertices `dual` does not mention get 0.
+
+  The caller vouches, by `Ainalrami.MatchCertificate.check/5`, that `dual`
+  is feasible on every edge, tight on every edge of `mate`, non-negative,
+  and that at most one exposed vertex with an edge has a non-zero dual.
+  That is a valid state for everything this module does next: `solve/1`
+  resumes from any dual-feasible state whose matched edges are tight (the
+  resumed solves after `set_weight/4` rely on exactly that), and
+  `shift_and_set/3` and `finalize_pair/3` check what they need themselves.
+  """
+  def install(state, mate, dual) do
+    n = state.n
+    vertices = 0..(n - 1)//1
+
+    %{
+      state
+      | dual: Map.new(vertices, fn v -> {v, Map.get(dual, v, 0)} end),
+        mate: mate,
+        blossom_match: mate,
+        in_blossom: Map.new(vertices, &{&1, &1}),
+        base: Map.new(vertices, &{&1, &1}),
+        children: %{},
+        vertices_of: %{},
+        parent_of: %{},
+        connectors: %{},
+        label: %{},
+        tops: [],
+        label_edge: %{},
+        best_outer: %{},
+        cross: cross_empty(),
+        shift_outer: 0,
+        shift_cross: 0,
+        min_outer: nil,
+        roots: MapSet.new(),
+        root_min: %{}
+    }
+  end
+
+  @doc """
+  The same state for every weight multiplied by `k`: weights, every dual
+  (vertex and blossom) and the ceiling scaled, the structure unchanged. A
+  valid state stays valid - feasibility, tight matched edges and tight
+  blossom cycles are all linear - so a search resumed from it after a few
+  small `set_weight/4` perturbations finds an optimum of the scaled,
+  perturbed weights. `Ainalrami.Pairing` asks exactly that to learn how
+  far a quantity can move among the optima of the unscaled weights.
+  """
+  def scale(state, k) when is_integer(k) and k >= 1 do
+    %{
+      state
+      | weight:
+          Map.new(state.weight, fn {u, row} ->
+            {u, Map.new(row, fn {v, w2} -> {v, k * w2} end)}
+          end),
+        dual: Map.new(state.dual, fn {v, y} -> {v, k * y} end),
+        max_w: k * state.max_w
+    }
+  end
+
+  @doc """
+  A solved state's dual solution in the form
+  `Ainalrami.MatchCertificate.certify/5` takes with its `:family` option:
+  `{hint, family}`, the vertex duals and every vertex's chain of enclosing
+  blossoms (outermost first, with running sums of their duals).
+
+  One change of form, when exactly one vertex with edges is unmatched: the
+  top-level blossom around it (if any) is left out of the family and its
+  dual moved onto its vertices, half each - the same numbers, now read as
+  the certificate's `xi` on the odd set of every vertex with edges. That
+  set contains the blossom, so every edge inside the blossom keeps the
+  blossom's dual; an edge outside it gains it, which the certificate's
+  search takes back off the vertices outside (their dual must stay at or
+  above `xi` for that, and the check refuses otherwise).
+  """
+  def certificate_hint(state) do
+    live = for {v, row} <- state.weight, map_size(row) > 0, do: v
+    exposed = Enum.reject(live, &is_map_key(state.mate, &1))
+
+    top =
+      case exposed do
+        [x] ->
+          b = Map.fetch!(state.in_blossom, x)
+          if Map.has_key?(state.children, b), do: b
+
+        _ ->
+          nil
+      end
+
+    z_top = if top, do: Map.get(state.dual, top, 0), else: 0
+
+    Enum.reduce(live, {%{}, %{}}, fn v, {hint, family} ->
+      chain = blossom_chain(state, v, [])
+
+      {in_top?, chain} =
+        if top != nil and chain != [] and hd(chain) == top,
+          do: {true, tl(chain)},
+          else: {false, chain}
+
+      y = Map.fetch!(state.dual, v) + if(in_top?, do: div(z_top, 2), else: 0)
+
+      family =
+        case chain do
+          [] ->
+            family
+
+          _ ->
+            {with_sums, _} =
+              Enum.map_reduce(chain, 0, fn b, sum ->
+                sum = sum + Map.get(state.dual, b, 0)
+                {{b, sum}, sum}
+              end)
+
+            Map.put(family, v, with_sums)
+        end
+
+      {Map.put(hint, v, y), family}
+    end)
+  end
+
+  # The blossoms enclosing `v`, outermost first.
+  defp blossom_chain(state, v, acc) do
+    case Map.get(state.parent_of, v) do
+      nil -> acc
+      b -> blossom_chain(state, b, [b | acc])
+    end
+  end
+
+  @doc """
+  What a state's duals say about EVERY maximum-weight matching, for
+  `possible_partners/3`.
+
+  A state produced by this module's own operations holds an optimal dual
+  solution for its weights: vertex duals `y`, blossom duals `z` (keyed by
+  blossom id in `state.dual`), every edge's reduced cost
+  `y[u] + y[v] + sum(z[B] : B contains u and v) - w2(u, v)` non-negative and
+  zero on the matching, and every exposed vertex at dual 0 - or, after
+  `install/3`, the one exposed vertex at a dual `xi` no other vertex is
+  below, which is the same thing with a dual `2 * xi` on the odd set of all
+  vertices that have edges (see `Ainalrami.MatchCertificate`). Either way,
+  complementary slackness holds between that dual and EVERY optimal
+  matching: each of its edges has reduced cost zero, and each vertex whose
+  dual exceeds `xi` is covered.
+
+  Returns the context `possible_partners/3` reads (`xi`, and each nested
+  vertex's chain of enclosing blossoms), or `:invalid` when the exposed
+  vertices' duals do not have that shape - which a state from `solve/1`,
+  `shift_and_set/3`, `finalize_pair/3` or `install/3` never is, and a
+  prepared state awaiting a solve always is.
+  """
+  def dual_context(state) do
+    live = for {v, row} <- state.weight, map_size(row) > 0, do: v
+    exposed = Enum.reject(live, &is_map_key(state.mate, &1))
+
+    xi =
+      case exposed do
+        [x] -> Map.fetch!(state.dual, x)
+        _ -> 0
+      end
+
+    valid? =
+      xi >= 0 and Enum.all?(exposed, &(Map.fetch!(state.dual, &1) == xi)) and
+        Enum.all?(live, &(Map.fetch!(state.dual, &1) >= xi)) and
+        Enum.all?(state.children, fn {b, _} -> Map.get(state.dual, b, 0) >= 0 end) and
+        Enum.all?(state.mate, fn {u, v} -> Map.get(state.mate, v) == u end)
+
+    if valid? do
+      anc =
+        for {v, _} <- state.parent_of, v < state.n, into: %{} do
+          {v, ancestors(state, v, [])}
+        end
+
+      %{xi: xi, anc: anc}
+    else
+      :invalid
+    end
+  end
+
+  # The blossoms enclosing `v`, outermost first, each with the sum of the
+  # blossom duals from the outermost down to it.
+  defp ancestors(state, v, acc) do
+    case Map.get(state.parent_of, v) do
+      nil ->
+        {chain, _} =
+          Enum.map_reduce(acc, 0, fn b, sum ->
+            sum = sum + Map.get(state.dual, b, 0)
+            {{b, sum}, sum}
+          end)
+
+        chain
+
+      b ->
+        ancestors(state, b, [b | acc])
+    end
+  end
+
+  # The sum of the duals of every blossom holding both `u` and `v`: the
+  # running sum at their innermost common blossom.
+  defp common_z(anc, u, v) do
+    case {Map.get(anc, u), Map.get(anc, v)} do
+      {nil, _} -> 0
+      {_, nil} -> 0
+      {cu, cv} -> common_prefix(cu, cv, 0)
+    end
+  end
+
+  defp common_prefix([{b, s} | cu], [{b, _} | cv], _), do: common_prefix(cu, cv, s)
+  defp common_prefix(_, _, s), do: s
+
+  @doc """
+  The partners `v` can have in a maximum-weight matching: every neighbour
+  joined to it by an edge of reduced cost zero, and whether it can be left
+  exposed (its dual is at `xi`). A superset of the truth - see
+  `dual_context/1` - so a property every candidate shares is a property of
+  every optimum.
+  """
+  def possible_partners(state, ctx, v) do
+    yv = Map.fetch!(state.dual, v)
+    anc = ctx.anc
+
+    tight =
+      state.weight
+      |> Map.get(v, %{})
+      |> Enum.reduce([], fn {u, w2}, acc ->
+        if yv + Map.fetch!(state.dual, u) + common_z(anc, v, u) == w2, do: [u | acc], else: acc
+      end)
+
+    {tight, yv == ctx.xi}
+  end
+
+  @doc """
   The weight of the edge `{u, v}` as the caller gave it (to `new/3` or
   `set_weight/4`), or 0 when there is no edge.
   """
