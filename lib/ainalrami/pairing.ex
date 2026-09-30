@@ -197,6 +197,13 @@ defmodule Ainalrami.Pairing do
   @direct_budget_key :ainalrami_direct_budget
   # The pruned walk's failed states (see "The pruned walk").
   @direct_memo_key :ainalrami_direct_memo
+  # Rows of a dense compatible graph built as an augmenting search reaches
+  # them (`memo_row/3`): the bye bootstrap's, and the completability
+  # oracle's for the round (see `oracle_dense/2`).
+  @dense_rows_key :ainalrami_dense_rows
+  # Set when `oracle_dense/2` answered a question the sparse oracle could
+  # not, so check mode can hold that bracket to the field path.
+  @oracle_dense_key :ainalrami_oracle_dense
   # `direct_edge/5`'s answers for the walk in progress.
   @direct_edge_key :ainalrami_direct_edge
   # The C9 gate of the bracket that built the round matcher, and - after a
@@ -749,6 +756,8 @@ defmodule Ainalrami.Pairing do
     Process.delete(@bye_score_key)
     Process.delete(@round_matcher_key)
     Process.delete(@oracle_key)
+    Process.delete(@dense_rows_key)
+    Process.delete(@oracle_dense_key)
     Process.delete(@dirty_key)
     Process.delete(@first_single_bye_key)
     clear_env_flags()
@@ -1591,6 +1600,8 @@ defmodule Ainalrami.Pairing do
       Process.delete(@bye_score_key)
       Process.delete(@round_matcher_key)
       Process.delete(@oracle_key)
+      Process.delete(@dense_rows_key)
+      Process.delete(@oracle_dense_key)
       Process.delete(@dirty_key)
       Process.delete(@first_single_bye_key)
       Process.delete(@cert_key)
@@ -3090,12 +3101,17 @@ defmodule Ainalrami.Pairing do
           check_direct!(result, local_stages(combined, m, sgb, nsgb, wsgb, ctx, single_bye?))
         end
 
-        accept_local(result, ctx, :direct)
+        accept_local(result, ctx, :direct, fn -> {combined, m, sgb, nsgb, wsgb, single_bye?} end)
 
       :no ->
         case local_stages(combined, m, sgb, nsgb, wsgb, ctx, single_bye?) do
-          {:ok, result} -> accept_local(result, ctx, :local)
-          :field -> :field
+          {:ok, result} ->
+            accept_local(result, ctx, :local, fn ->
+              {combined, m, sgb, nsgb, wsgb, single_bye?}
+            end)
+
+          :field ->
+            :field
         end
     end
   end
@@ -3111,7 +3127,8 @@ defmodule Ainalrami.Pairing do
     end
   end
 
-  defp accept_local({pairs, _, _, _} = result, ctx, path) do
+  # `bracket` gives the bracket's arguments back, for check mode.
+  defp accept_local({pairs, _, _, _} = result, ctx, path, bracket) do
     # Condition (b): with this bracket's finalised players gone, the rest
     # -- the floater included, on an odd bracket -- can still be paired.
     positions =
@@ -3119,8 +3136,23 @@ defmodule Ainalrami.Pairing do
         [Map.fetch!(ctx.field_index, w), Map.fetch!(ctx.field_index, b)]
       end)
 
+    Process.delete(@oracle_dense_key)
+
     case oracle_completable?(Process.get(@oracle_key), positions) do
       {:ok, oracle} ->
+        # Condition (b) shown only by the whole compatible graph
+        # (`oracle_dense/2`): check mode holds the bracket to the field path
+        # from the same state as well.
+        if Process.delete(@oracle_dense_key) do
+          cert_count(:local_dense)
+
+          if env_flag(@env_direct_key, "AINALRAMI_DIRECT") == "check" do
+            {combined, m, sgb, nsgb, wsgb, single_bye?} = bracket.()
+            check_direct_field!(result, combined, m, sgb, nsgb, wsgb, ctx, single_bye?)
+            cert_count(:local_dense_checked)
+          end
+        end
+
         # The bracket is out of the field for good, for the oracle and
         # for the field matcher alike: the next field-graph bracket
         # rebuilds its matcher from the players that remain.
@@ -3218,12 +3250,24 @@ defmodule Ainalrami.Pairing do
       if round_matcher == nil, do: single_bye?, else: Process.get(@builder_c9_key, true)
 
     arr = List.to_tuple(combined)
+    Process.delete(@oracle_dense_key)
 
     with true <- Process.get(@cert_key) == true and not single_bye? and not far_c9,
          true <- direct_allowed?(sgb, nsgb),
          {:ok, pool, kind} <- direct_field_pool(arr, sgb, nsgb, wsgb, ctx),
          {:ok, {pairs, _, _, _} = result} <-
-           direct_bracket(combined, m, sgb, nsgb, wsgb, ctx, single_bye?, pool),
+           direct_bracket(
+             combined,
+             m,
+             sgb,
+             nsgb,
+             wsgb,
+             ctx,
+             single_bye?,
+             pool,
+             false,
+             kind == :odd
+           ),
          positions =
            Enum.flat_map(pairs, fn {w, b} ->
              [Map.fetch!(ctx.field_index, w), Map.fetch!(ctx.field_index, b)]
@@ -3235,6 +3279,7 @@ defmodule Ainalrami.Pairing do
       end
 
       cert_count({:direct_field, kind})
+      if Process.delete(@oracle_dense_key), do: cert_count({:direct_field_dense, kind})
       Process.put(@oracle_key, oracle)
       Process.put(@round_matcher_key, {nil, field_index, field_size})
       Process.put(@virtual_builder_key, false)
@@ -4003,8 +4048,27 @@ defmodule Ainalrami.Pairing do
   @direct_budget_per_member 32
   @direct_pruned_budget_per_member 128
   @direct_small_max 12
+  # Where the walk gives up on a bracket this small, the small bracket's list
+  # is still cheap once it is bounded (`direct_small_after_walk/10`).
+  @direct_small_fallback_max 16
+  @small_fallback_nodes 200_000
+  @small_nodes_key :ainalrami_small_nodes
 
-  defp direct_bracket(combined, m, sgb, nsgb, wsgb, ctx, single_bye?, pool \\ nil, last? \\ false) do
+  # `stuck?`: an MDP with no partner in the bracket may be the one floated
+  # (`direct_small/11`), on an odd bracket of the field graph over a next
+  # group of non-candidates.
+  defp direct_bracket(
+         combined,
+         m,
+         sgb,
+         nsgb,
+         wsgb,
+         ctx,
+         single_bye?,
+         pool \\ nil,
+         last? \\ false,
+         stuck? \\ false
+       ) do
     if direct_allowed?(sgb, nsgb) do
       Process.put(@direct_budget_key, plain_budget(nsgb))
 
@@ -4014,19 +4078,28 @@ defmodule Ainalrami.Pairing do
 
         if wl <= @direct_small_max do
           weights = small_weights(arr, m, sgb, nsgb, wsgb, ctx, single_bye?, pool, last?)
-          {:ok, direct_small(arr, weights, wl, m, sgb, nsgb, wsgb, ctx, pool)}
+          {:ok, direct_small(arr, weights, wl, m, sgb, nsgb, wsgb, ctx, pool, :all, stuck?)}
         else
           try do
-            direct_walk(arr, m, sgb, nsgb, wsgb, ctx, single_bye?, pool, last?, false)
+            try do
+              direct_walk(arr, m, sgb, nsgb, wsgb, ctx, single_bye?, pool, last?, false)
+            catch
+              # The same walk again, pruned (see "The pruned walk" below): it
+              # visits the same choices in the same order less the subtrees
+              # shown to hold no complete answer, so it ends as the plain walk
+              # would have with no budget at all.
+              :throw, {:direct_abort, :budget} ->
+                cert_count(:direct_pruned)
+                Process.put(@direct_budget_key, @direct_pruned_budget_per_member * nsgb + 2048)
+                direct_walk(arr, m, sgb, nsgb, wsgb, ctx, single_bye?, pool, last?, true)
+            end
           catch
-            # The same walk again, pruned (see "The pruned walk" below): it
-            # visits the same choices in the same order less the subtrees
-            # shown to hold no complete answer, so it ends as the plain walk
-            # would have with no budget at all.
-            :throw, {:direct_abort, :budget} ->
-              cert_count(:direct_pruned)
-              Process.put(@direct_budget_key, @direct_pruned_budget_per_member * nsgb + 2048)
-              direct_walk(arr, m, sgb, nsgb, wsgb, ctx, single_bye?, pool, last?, true)
+            :throw, {:direct_abort, reason} when wl <= @direct_small_fallback_max ->
+              direct_small_after_walk(reason, arr, wl, m, sgb, nsgb, wsgb, ctx, single_bye?, {
+                pool,
+                last?,
+                stuck?
+              })
           end
         end
       catch
@@ -4624,7 +4697,7 @@ defmodule Ainalrami.Pairing do
   # graph those of `attempt_direct_field/7`'s argument. `@direct_small_max`
   # is where the list stops being cheap.
 
-  defp direct_small(arr, weights, wl, m, sgb, nsgb, wsgb, ctx, pool) do
+  defp direct_small(arr, weights, wl, m, sgb, nsgb, wsgb, ctx, pool, listing, stuck?) do
     adj =
       List.to_tuple(
         for i <- 0..(wl - 1)//1 do
@@ -4632,7 +4705,15 @@ defmodule Ainalrami.Pairing do
         end
       )
 
-    case enumerate_optima(Bitwise.bsl(1, wl) - 1, adj, [], 0, {nil, []}) do
+    full = Bitwise.bsl(1, wl) - 1
+
+    optima =
+      case listing do
+        :all -> enumerate_optima(full, adj, [], 0, {nil, []})
+        :bounded -> enumerate_bounded(full, adj, heaviest_edges(weights, wl), [], 0, {nil, []})
+      end
+
+    case optima do
       {nil, _} ->
         throw({:direct_abort, :no_perfect})
 
@@ -4642,9 +4723,15 @@ defmodule Ainalrami.Pairing do
         partner = for i <- 0..(nsgb - 1)//1, p = elem(chosen, i), p < nsgb, into: %{}, do: {i, p}
         floater = Enum.find(0..(nsgb - 1)//1, &(not is_map_key(partner, &1)))
 
+        stuck_mdp? =
+          stuck? and floater != nil and floater < sgb and stuck_member?(adj, floater, nsgb)
+
         if floater != nil and
-             (elem(chosen, floater) != nsgb or (pool != nil and floater not in pool)),
+             (elem(chosen, floater) != nsgb or
+                (pool != nil and floater not in pool and not stuck_mdp?)),
            do: throw({:direct_abort, :floater})
+
+        if stuck_mdp?, do: cert_count(:direct_small_stuck_mdp)
 
         if map_size(partner) + if(floater, do: 1, else: 0) != nsgb,
           do: throw({:direct_abort, :shape})
@@ -4653,6 +4740,69 @@ defmodule Ainalrami.Pairing do
         cert_count(:direct_small_ok)
         direct_result(%{arr: arr, nsgb: nsgb}, %{pairs: pairs}, m, wsgb)
     end
+  end
+
+  # The small bracket where the walk gave up on a bracket of 13-16 vertices -
+  # one that needs an exchange, most often. The list is the same list, so its
+  # answer is the stages' on the same argument as above (`direct_small/11`),
+  # and a read it cannot settle ends it as before; only the listing is
+  # bounded (`enumerate_bounded/6`), which leaves out partial matchings that
+  # cannot reach the heaviest weight and so cannot change the list of optima,
+  # and it stops after `@small_fallback_nodes` steps (then the stages run, as
+  # they would have). A 13-player bracket over one MDP at the top of a
+  # 401-player round 9 went to the field graph for 1.1 s. The walk's own
+  # reason is counted as before, and a list that settles nothing as
+  # `:small_fallback`.
+  defp direct_small_after_walk(reason, arr, wl, m, sgb, nsgb, wsgb, ctx, single_bye?, {
+         pool,
+         last?,
+         stuck?
+       }) do
+    if small_fallback?() do
+      cert_count({:direct_abort, reason})
+      weights = small_weights(arr, m, sgb, nsgb, wsgb, ctx, single_bye?, pool, last?)
+
+      Process.put(@small_nodes_key, @small_fallback_nodes)
+
+      result =
+        try do
+          direct_small(arr, weights, wl, m, sgb, nsgb, wsgb, ctx, pool, :bounded, stuck?)
+        catch
+          :throw, {:direct_abort, _} -> throw({:direct_abort, :small_fallback})
+        after
+          Process.delete(@small_nodes_key)
+        end
+
+      cert_count(:direct_small_fallback)
+      {:ok, result}
+    else
+      throw({:direct_abort, reason})
+    end
+  end
+
+  defp small_fallback?, do: env_flag(@env_direct_key, "AINALRAMI_DIRECT") != "off"
+
+  # An MDP with no edge to another member of the bracket (it has met them
+  # all, or cannot take a colour any of them can give). Every perfect
+  # matching of the small graph then puts it on the stand-in - its one edge,
+  # whose weight is therefore the same over the whole list - and the rest of
+  # the bracket perfectly matched. On the field graph the same holds of
+  # every optimum once the rest of the field, the MDP in it, completes (the
+  # oracle's question after the walk, as for any floater): the completion
+  # rung is then at its bound with the rest of the bracket paired inside,
+  # and C6 asks for exactly that, since the MDP can be paired inside by no
+  # matching at all. What the field below does with it is the same for every
+  # candidate, so the bracket's answer is the list's, the MDP carried. At
+  # round 9 of a 600-player open a leader who had met both players of the
+  # group below took the round's first bracket to the field graph for 2 s.
+  defp stuck_member?(adj, v, nsgb) do
+    not Enum.any?(0..(nsgb - 1)//1, fn i ->
+      cond do
+        i == v -> false
+        i < v -> Enum.any?(elem(adj, i), &(elem(&1, 0) == v))
+        true -> Enum.any?(elem(adj, v), &(elem(&1, 0) == i))
+      end
+    end)
   end
 
   # Every perfect matching of the graph on the vertices in `mask`, keeping
@@ -4675,6 +4825,58 @@ defmodule Ainalrami.Pairing do
       if Bitwise.band(rest, bit_v) != 0,
         do: enumerate_optima(Bitwise.bxor(rest, bit_v), adj, [{u, v} | pairs], w + wv, acc),
         else: acc
+    end)
+  end
+
+  # `enumerate_optima/5` less the partial matchings that cannot reach the
+  # heaviest weight found so far: a perfect matching of the vertices left
+  # weighs at most half the sum of their heaviest edges (`top`, doubled
+  # below to stay in integers), and a branch whose bound falls short of the
+  # best cannot hold an optimum. Ties are kept, so the optima listed are
+  # exactly `enumerate_optima/5`'s.
+  defp enumerate_bounded(0, _adj, _top, pairs, w, acc),
+    do: enumerate_optima(0, nil, pairs, w, acc)
+
+  defp enumerate_bounded(mask, adj, top, pairs, w, {best, _} = acc) do
+    case Process.get(@small_nodes_key) do
+      left when left > 0 -> Process.put(@small_nodes_key, left - 1)
+      _ -> throw({:direct_abort, :small_nodes})
+    end
+
+    if best != nil and 2 * w + mask_top(mask, top, 0, 0) < 2 * best do
+      acc
+    else
+      u = lowest_bit(mask, 0)
+      rest = Bitwise.bxor(mask, Bitwise.bsl(1, u))
+
+      Enum.reduce(elem(adj, u), acc, fn {v, wv}, acc ->
+        bit_v = Bitwise.bsl(1, v)
+
+        if Bitwise.band(rest, bit_v) != 0,
+          do:
+            enumerate_bounded(Bitwise.bxor(rest, bit_v), adj, top, [{u, v} | pairs], w + wv, acc),
+          else: acc
+      end)
+    end
+  end
+
+  defp mask_top(0, _top, _i, sum), do: sum
+
+  defp mask_top(mask, top, i, sum) do
+    sum = if Bitwise.band(mask, 1) == 1, do: sum + elem(top, i), else: sum
+    mask_top(Bitwise.bsr(mask, 1), top, i + 1, sum)
+  end
+
+  # Each vertex's heaviest edge weight (0 with none).
+  defp heaviest_edges(weights, wl) do
+    Enum.reduce(weights, :erlang.make_tuple(wl, 0), fn {{i, j}, w}, top ->
+      if i < wl and j < wl and w != 0 do
+        top
+        |> put_elem(i, max(elem(top, i), w))
+        |> put_elem(j, max(elem(top, j), w))
+      else
+        top
+      end
     end)
   end
 
@@ -4806,7 +5008,7 @@ defmodule Ainalrami.Pairing do
     hd(optima)
   end
 
-  # The graph `direct_small/9` lists the optima of: the local graph's, or on
+  # The graph `direct_small/11` lists the optima of: the local graph's, or on
   # the field graph (`attempt_direct_field/7`) the bracket with a stand-in
   # whose edge is the float every floater of the pool scores in full, and
   # any other member one C8 unit less - so an optimum that floats one of them
@@ -5913,7 +6115,12 @@ defmodule Ainalrami.Pairing do
       live: n,
       gone: MapSet.new(),
       match: nil,
-      ref: ref
+      ref: ref,
+      # For `oracle_dense/2`: the field, who may take the bye, and a name
+      # for the rows it builds.
+      field: arr,
+      candidates: MapSet.new(for i <- 0..(n - 1)//1, candidate?.(i), do: i),
+      id: make_ref()
     }
   end
 
@@ -5936,30 +6143,175 @@ defmodule Ainalrami.Pairing do
   # part) is matched. `{:ok, oracle}` carries the state with the bracket
   # gone, to keep if the bracket is accepted.
   defp oracle_completable?(oracle, positions) do
-    answer =
+    {answer, half} =
       case oracle_settle(oracle, positions, true) do
-        {:ok, settled} -> {:ok, settled}
-        {:short, _} -> :no
+        {:ok, settled} -> {{:ok, settled}, nil}
+        {:short, half} -> {:no, half}
       end
 
-    case oracle.ref do
-      nil ->
-        answer
+    # The sparse graph's answer, held to the weighted oracle on the same
+    # graph in check mode.
+    answer =
+      case oracle.ref do
+        nil ->
+          answer
 
-      ref ->
-        reference = weighted_completable?(ref, positions)
-        cert_count(:oracle_checked)
+        ref ->
+          reference = weighted_completable?(ref, positions)
+          cert_count(:oracle_checked)
 
-        if match?({:ok, _}, answer) != match?({:ok, _}, reference) do
-          raise "completability oracle differs from the weighted one on #{inspect(positions)}: " <>
-                  "#{inspect(match?({:ok, _}, answer))}"
+          if match?({:ok, _}, answer) != match?({:ok, _}, reference) do
+            raise "completability oracle differs from the weighted one on #{inspect(positions)}: " <>
+                    "#{inspect(match?({:ok, _}, answer))}"
+          end
+
+          case {answer, reference} do
+            {{:ok, settled}, {:ok, ref}} -> {:ok, %{settled | ref: ref}}
+            _ -> :no
+          end
+      end
+
+    case answer do
+      :no when half != nil ->
+        case oracle_dense(half, oracle.ref && weighted_remove(oracle.ref, positions)) do
+          {:ok, settled} ->
+            Process.put(@oracle_dense_key, true)
+            {:ok, settled}
+
+          :no ->
+            :no
         end
 
-        case {answer, reference} do
-          {{:ok, settled}, {:ok, ref}} -> {:ok, %{settled | ref: ref}}
-          _ -> :no
+      answer ->
+        answer
+    end
+  end
+
+  # Where the sparse graph misses a matching: the whole compatible graph.
+  #
+  # The sparse graph keeps each player's first `@oracle_degree` compatible
+  # players below them, and in a final round - where two players with the
+  # same absolute colour preference cannot meet, so a stretch of the field
+  # can hold more of one colour than its neighbourhood can take - a matching
+  # of the field can need partners further apart than that. The sparse "no"
+  # then sent a 127-player bracket to the field graph: 8 s at 1,000 players
+  # round 9, where the whole graph had a perfect matching of the rest.
+  #
+  # This grows the sparse search's matching (every pair of it compatible)
+  # by augmenting searches over every compatible pair - the test
+  # `build_oracle/3` makes, `legal_pair?/2` and `colour_compatible?/2` with
+  # the better-placed player first - plus the bye's stand-in joined to every
+  # candidate. The rows are built only as a search reaches them and kept for
+  # the round's oracle. The answer is exact: a search from an exposed player
+  # that finds no augmenting path shows that some maximum matching of the
+  # whole graph leaves them exposed, so no perfect one exists, which is the
+  # field graph's own "no". And a "yes" is a matching of the graph the field
+  # path pairs on, so condition (b) holds as it holds for a sparse "yes".
+  # Later sparse searches run on the sparse graph plus this matching's
+  # pairs, still a subgraph of the whole one.
+  #
+  # `AINALRAMI_DIRECT=off` switches it off with the direct brackets.
+  defp oracle_dense(half, ref) do
+    x = half.x
+
+    cond do
+      env_flag(@env_direct_key, "AINALRAMI_DIRECT") == "off" ->
+        :no
+
+      # An odd number of players and no bye: no perfect matching, exactly.
+      x == nil and rem(half.live, 2) == 1 ->
+        :no
+
+      true ->
+        dead =
+          if x != nil and rem(half.live, 2) == 0, do: MapSet.put(half.gone, x), else: half.gone
+
+        row = &oracle_row(half, &1)
+
+        result =
+          Enum.reduce_while(0..(tuple_size(half.adj) - 1)//1, half.match, fn v, match ->
+            if MapSet.member?(dead, v) or is_map_key(match, v) do
+              {:cont, match}
+            else
+              case CardinalityMatching.augment_from(row, match, v, dead) do
+                {:ok, match} -> {:cont, match}
+                :none -> {:halt, :none}
+              end
+            end
+          end)
+
+        case result do
+          :none ->
+            :no
+
+          match ->
+            settled = %{half | match: match, ref: ref}
+            if ref != nil, do: check_oracle_match!(settled, dead)
+            cert_count(:oracle_dense)
+            {:ok, settled}
         end
     end
+  end
+
+  # A row of the whole compatible graph of the oracle's field (vertex `x`,
+  # the bye's stand-in, joined to the candidates), kept for the round.
+  defp oracle_row(oracle, v) do
+    rows =
+      case Process.get(@dense_rows_key) do
+        {id, rows} when id == oracle.id -> rows
+        _ -> %{}
+      end
+
+    case rows do
+      %{^v => row} ->
+        row
+
+      _ ->
+        row = dense_oracle_row(oracle, v)
+        Process.put(@dense_rows_key, {oracle.id, Map.put(rows, v, row)})
+        row
+    end
+  end
+
+  defp dense_oracle_row(%{x: x} = oracle, v) when v == x, do: Enum.sort(oracle.candidates)
+
+  defp dense_oracle_row(oracle, v) do
+    arr = oracle.field
+    p = elem(arr, v)
+
+    row =
+      for q <- 0..(tuple_size(arr) - 1)//1,
+          q != v,
+          {a, b} = if(v < q, do: {p, elem(arr, q)}, else: {elem(arr, q), p}),
+          legal_pair?(a, b) and colour_compatible?(a, b),
+          do: q
+
+    if oracle.x != nil and MapSet.member?(oracle.candidates, v), do: row ++ [oracle.x], else: row
+  end
+
+  # Check mode: the dense answer's matching covers everyone left, and every
+  # pair of it is one the field graph has an edge for.
+  defp check_oracle_match!(oracle, dead) do
+    arr = oracle.field
+
+    Enum.each(0..(tuple_size(oracle.adj) - 1)//1, fn v ->
+      u = Map.get(oracle.match, v)
+
+      ok? =
+        cond do
+          MapSet.member?(dead, v) -> true
+          u == nil or MapSet.member?(dead, u) -> false
+          v == oracle.x -> MapSet.member?(oracle.candidates, u)
+          u == oracle.x -> MapSet.member?(oracle.candidates, v)
+          true -> compatible_positions?(arr, min(u, v), max(u, v))
+        end
+
+      if not ok?, do: raise("dense completability oracle left #{v} without a compatible partner")
+    end)
+  end
+
+  defp compatible_positions?(arr, i, j) do
+    legal_pair?(elem(arr, i), elem(arr, j)) and colour_compatible?(elem(arr, i), elem(arr, j))
   end
 
   # `positions` leave the field, and the matching is re-augmented around
@@ -7977,23 +8329,34 @@ defmodule Ainalrami.Pairing do
       searched_bootstrap(arr, n, blocked, ranks, prefs, vertex, top, half_const, tie_unit)
     end
 
+    # Check mode holds every answer not exhibited pair by pair to the search.
+    checked = fn result, counter ->
+      if env_flag(@env_direct_key, "AINALRAMI_DIRECT") == "check" do
+        cert_count(:bootstrap_checked)
+
+        if result != search.() do
+          raise "bootstrap certificate differs from the search: #{inspect(result)}"
+        end
+      end
+
+      cert_count(counter)
+      result
+    end
+
     case certain_bootstrap(arr, n, blocked, ranks, prefs, vertex, top) do
       {:ok, result} ->
         result
 
+      {:leftover, result} ->
+        checked.(result, :bootstrap_leftover)
+
       :search ->
         case matched_bootstrap(n, blocked, ranks, prefs, arr, vertex, top) do
           {:ok, result} ->
-            if env_flag(@env_direct_key, "AINALRAMI_DIRECT") == "check" do
-              cert_count(:bootstrap_checked)
+            checked.(result, :bootstrap_matched)
 
-              if result != search.() do
-                raise "bootstrap certificate differs from the search: #{inspect(result)}"
-              end
-            end
-
-            cert_count(:bootstrap_matched)
-            result
+          {:leftover, result} ->
+            checked.(result, :bootstrap_leftover)
 
           :search ->
             search.()
@@ -8061,14 +8424,21 @@ defmodule Ainalrami.Pairing do
       bound = div(top_players - elem(top, leftover), 2)
       internal = Enum.count(pairs, fn {i, j} -> elem(top, i) == 1 and elem(top, j) == 1 end)
 
-      if internal == bound do
-        matching =
-          Enum.reduce(pairs, %{}, fn {i, j}, m -> m |> Map.put(i, j) |> Map.put(j, i) end)
+      cond do
+        internal == bound ->
+          matching =
+            Enum.reduce(pairs, %{}, fn {i, j}, m -> m |> Map.put(i, j) |> Map.put(j, i) end)
 
-        score = elem(arr, leftover).points
-        {:ok, {score, first_single_bye?(arr, n, matching, score)}}
-      else
-        :search
+          score = elem(arr, leftover).points
+          {:ok, {score, first_single_bye?(arr, n, matching, score)}}
+
+        # A leftover below the top group decides both answers alone (see
+        # `leftover_bootstrap/5`), and the pairs are its certificate.
+        elem(top, leftover) == 0 and leftover_bootstrap?() ->
+          {:leftover, {elem(arr, leftover).points, false}}
+
+        true ->
+          :search
       end
     else
       :none -> :search
@@ -8126,11 +8496,109 @@ defmodule Ainalrami.Pairing do
         end
       end
 
-    if ok? do
-      score = elem(arr, leftover).points
-      {:ok, {score, elem(top, leftover) == 1 and rem(length(upper), 2) == 0}}
+    cond do
+      ok? ->
+        score = elem(arr, leftover).points
+        {:ok, {score, elem(top, leftover) == 1 and rem(length(upper), 2) == 0}}
+
+      elem(top, leftover) == 0 and leftover_bootstrap?() ->
+        leftover_bootstrap(leftover, compatible?, arr, upper, rest)
+
+      true ->
+        :search
+    end
+  end
+
+  # The certificate with the leftover below the top group. `first_single_bye?/4`
+  # is then false whatever the matching (the bye score is below the top
+  # score), so of the three things the optimum is ranked by, only the first
+  # two are read: all but one paired over compatible edges, and the
+  # leftover's `vertex` term as small as the field allows. `L` has the least
+  # term in the field, so once the field less `L` is shown perfectly matched
+  # over compatible edges, every optimum leaves over a player with `L`'s
+  # term - `L`'s eligibility and place, hence `L`'s score - and the answer is
+  # `{score(L), false}`, however few pairs the top group can keep inside it.
+  # That is the shape that went to the search: the two leaders of a late
+  # round who have met, the top group split in every matching (3.9 s at
+  # 1,001 players round 9).
+  #
+  # The field less `L` is asked of the sparse subgraph first and, where that
+  # misses, of the whole compatible graph: the sparse maximum matching is
+  # grown by augmenting searches over every compatible pair
+  # (`dense_perfect?/3`), which is exact - a search that finds no path shows
+  # some maximum matching leaves its root exposed - so what it misses the
+  # search would not find either, and it goes to the search as before.
+  defp leftover_bootstrap(leftover, compatible?, arr, upper, rest) do
+    others = Enum.sort(upper ++ rest)
+
+    if dense_perfect?(others, compatible?) do
+      {:leftover, {elem(arr, leftover).points, false}}
     else
       :search
+    end
+  end
+
+  # The leftover certificate is new with this pass; `AINALRAMI_DIRECT=off`
+  # switches it off with the direct brackets, so a run can be held to the
+  # engine without it end to end.
+  defp leftover_bootstrap?, do: env_flag(@env_direct_key, "AINALRAMI_DIRECT") != "off"
+
+  # Whether `set` (field positions, ascending) is perfectly matched over
+  # `compatible?`: the sparse subgraph's maximum matching, grown where it
+  # leaves anyone exposed by an augmenting search over the whole graph, its
+  # rows built only as the search reaches them.
+  defp dense_perfect?(set, compatible?) do
+    {members, adj} = sparse_adjacency(set, compatible?)
+    size = tuple_size(members)
+    match = CardinalityMatching.maximum(adj)
+
+    if map_size(match) == size do
+      true
+    else
+      key = {@dense_rows_key, :bootstrap}
+
+      row = fn a ->
+        memo_row(key, a, fn ->
+          i = elem(members, a)
+
+          for b <- 0..(size - 1)//1,
+              b != a,
+              j = elem(members, b),
+              compatible?.(min(i, j), max(i, j)),
+              do: b
+        end)
+      end
+
+      try do
+        Enum.reduce_while(0..(size - 1)//1, match, fn v, match ->
+          if is_map_key(match, v) do
+            {:cont, match}
+          else
+            case CardinalityMatching.augment_from(row, match, v, MapSet.new()) do
+              {:ok, match} -> {:cont, match}
+              :none -> {:halt, :none}
+            end
+          end
+        end) != :none
+      after
+        Process.delete(key)
+      end
+    end
+  end
+
+  # A row of a dense graph, built on first use and kept under `key` (a map
+  # of rows) for as long as the caller keeps the key.
+  defp memo_row(key, a, build) do
+    rows = Process.get(key, %{})
+
+    case rows do
+      %{^a => row} ->
+        row
+
+      _ ->
+        row = build.()
+        Process.put(key, Map.put(rows, a, row))
+        row
     end
   end
 

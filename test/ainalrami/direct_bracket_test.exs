@@ -90,6 +90,21 @@ defmodule Ainalrami.DirectBracketTest do
     # The odd field's bye bootstrap shown by maximum matchings where the
     # greedy pairing could not, held to the search.
     assert Map.get(stats, :bootstrap_checked, 0) > 0, "no bootstrap was certified by matchings"
+
+    # The slow tail's shapes, each checked where it answers: a bootstrap
+    # whose leftover is below the top group (held to the search), the whole
+    # compatible graph answering what the sparse oracle missed (its matching
+    # checked pair by pair), the small bracket after the walk gave up and an
+    # MDP with no partner in its bracket (both held to the stages or the
+    # field path).
+    for key <- [
+          :bootstrap_leftover,
+          :oracle_dense,
+          :direct_small_fallback,
+          :direct_small_stuck_mdp
+        ] do
+      assert Map.get(stats, key, 0) > 0, "#{key} never answered: #{inspect(stats)}"
+    end
   end
 
   # The pruned walk (`Ainalrami.Pairing`'s "The pruned walk") takes over

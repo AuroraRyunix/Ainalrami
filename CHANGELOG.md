@@ -64,6 +64,38 @@ with the reference on every one of them.
 
 ## [Unreleased]
 
+- [Performance] **The slow tail of the last round, every answer
+  unchanged.** A timing study of 3,000 random positions (100-1,001 players,
+  rounds 2, 5 and 9, one core) had 11 above 0.5 s, all in round 9 of a
+  nine-round event; the slowest took 8.26 s at 1,000 players, where the
+  median is 0.049 s. On one core of an i7-10700 the 30 slowest took 22.5 s
+  in all (the worst 5.2 s) and now take 4.2 s (the worst 1.04 s), the same
+  pairing; 100 others drawn at random are unchanged (median 13.3 -> 12.4
+  ms). Five changes: the odd field's bye bootstrap no longer goes to the
+  whole-field search when its leftover is below the top group (the flag it
+  returns is then false whatever the top group does, so a perfect matching
+  of the rest settles it - the two leaders of a last round who had met sent
+  it there, 1.8 s at 1,001 players); where the completability oracle's
+  sparse graph misses a matching, the whole compatible graph is searched
+  before the bracket goes to the field graph (in a last round, where two
+  players due the same colour cannot meet, a 127-player bracket paid 5.2
+  s); blossoms in the cardinality matcher's search are merged by group
+  instead of re-sorting the search tree (most of a 0.2 s round at 1,001
+  players); an MDP who can play nobody in its bracket is floated by the
+  small bracket instead of sending the bracket to the field graph; and a
+  bracket of 13-16 whose walk gives up is listed by the small bracket,
+  bounded, before the stages run. Anything unproven falls back as before.
+  Details in `docs/performance.md`.
+- [Verified] Against v0.33.0 on the differential corpus in the default
+  configuration: 447,152 rounds, 0 differences; in check mode 44,325
+  rounds identical to v0.33.0 with 14,668 new answers checked (11,847
+  leftover bootstraps held to the search, 1,582 dense oracle answers
+  checked pair by pair and the brackets they admitted held to the field
+  path, 353 small brackets after the walk and 886 MDPs with no partner held
+  to the stages or the field path), 0 differences; 40 generated fields of
+  411-993 players over 9 rounds in check mode, with the direct brackets
+  switched off and on the previous build, all 360 rounds identical.
+
 - [Performance] **The slow spots the direct bracket left, every answer
   unchanged.** On the Gacrux benchmark's positions (in-VM, 2 cores) 600
   players round 2 took 2.93 s where 400 and 1,000 players took 0.02 and
