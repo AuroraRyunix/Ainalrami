@@ -2868,14 +2868,18 @@ defmodule Ainalrami.Pairing do
 
       false ->
         with :no <- attempt_direct_last(combined, m, sgb, nsgb, wsgb, ctx, single_bye?),
-             :no <- attempt_direct_field(combined, m, sgb, nsgb, wsgb, ctx, single_bye?) do
+             :no <- attempt_direct_field(combined, m, sgb, nsgb, wsgb, ctx, single_bye?),
+             :no <- attempt_direct_empty(combined, m, sgb, nsgb, wsgb, ctx, single_bye?) do
           {:field, attempt_field(combined, m, sgb, nsgb, wsgb, ctx, single_bye?)}
         else
           {:ok, result} -> {:direct, result}
         end
 
       _ ->
-        {:field, attempt_field(combined, m, sgb, nsgb, wsgb, ctx, single_bye?)}
+        case attempt_direct_empty(combined, m, sgb, nsgb, wsgb, ctx, single_bye?) do
+          {:ok, result} -> {:direct, result}
+          :no -> {:field, attempt_field(combined, m, sgb, nsgb, wsgb, ctx, single_bye?)}
+        end
     end
   end
 
@@ -3182,6 +3186,57 @@ defmodule Ainalrami.Pairing do
 
       cert_count({:direct_field, kind})
       Process.put(@oracle_key, oracle)
+      Process.put(@round_matcher_key, {nil, field_index, field_size})
+      Process.put(@virtual_builder_key, false)
+      if nsgb < m, do: taint!()
+      {:ok, result}
+    else
+      _ -> :no
+    end
+  end
+
+  # A bracket none of whose members can play each other - the two leaders
+  # of a late round who have met, a group of two or three who all have.
+  # The field graph has no edge between two of them (an edge is only ever
+  # made for a legal, colour-compatible pair, `bracket_edge_weight/8`), so
+  # no matching pairs two of them, and `collect_bracket/1` finalises a pair
+  # only with both ends in the bracket: whatever the stages do, the field
+  # path pairs nobody, carries everyone forward in order and counts every
+  # member as floating. What it would also leave is the round matcher and
+  # the tentative partners' scores; the scores are read only by the next
+  # bracket's C9 gate, so the gate must be shut on its own terms
+  # (`c9_gate_live?/4`), and the matcher is the certified mode's, on the
+  # same terms as `attempt_direct_field/7` (C9 off here and on the far
+  # edges, a later builder gate held to the reference's). At round 9 of a
+  # 926-player field the two leaders who had met sent the round's first
+  # bracket to the field graph for 2.6 s.
+  defp attempt_direct_empty(combined, m, sgb, nsgb, wsgb, ctx, single_bye?) do
+    {round_matcher, field_index, field_size} = Process.get(@round_matcher_key)
+
+    far_c9 =
+      if round_matcher == nil, do: single_bye?, else: Process.get(@builder_c9_key, true)
+
+    with true <- Process.get(@cert_key) == true and not single_bye? and not far_c9,
+         true <- direct_allowed?(0, nsgb),
+         false <- c9_gate_live?(combined, nsgb, wsgb, ctx),
+         arr = List.to_tuple(combined),
+         false <-
+           Enum.any?(0..(nsgb - 2)//1, fn i ->
+             a = elem(arr, i)
+
+             Enum.any?((i + 1)..(nsgb - 1)//1, fn j ->
+               b = elem(arr, j)
+               legal_pair?(a, b) and colour_compatible?(a, b)
+             end)
+           end) do
+      result = {[], combined, nsgb, Enum.map(Enum.take(combined, min(wsgb, m)), & &1.points)}
+
+      if env_flag(@env_direct_key, "AINALRAMI_DIRECT") == "check" do
+        check_direct_field!(result, combined, m, sgb, nsgb, wsgb, ctx, single_bye?)
+        cert_count({:direct_field_checked, :empty})
+      end
+
+      cert_count({:direct_field, :empty})
       Process.put(@round_matcher_key, {nil, field_index, field_size})
       Process.put(@virtual_builder_key, false)
       if nsgb < m, do: taint!()
@@ -7868,12 +7923,31 @@ defmodule Ainalrami.Pairing do
     # field - see `tie_unit` above.
     top = field |> Enum.map(&bit(&1.points >= top_score)) |> List.to_tuple()
 
+    search = fn ->
+      searched_bootstrap(arr, n, blocked, ranks, prefs, vertex, top, half_const, tie_unit)
+    end
+
     case certain_bootstrap(arr, n, blocked, ranks, prefs, vertex, top) do
       {:ok, result} ->
         result
 
       :search ->
-        searched_bootstrap(arr, n, blocked, ranks, prefs, vertex, top, half_const, tie_unit)
+        case matched_bootstrap(n, blocked, ranks, prefs, arr, vertex, top) do
+          {:ok, result} ->
+            if env_flag(@env_direct_key, "AINALRAMI_DIRECT") == "check" do
+              cert_count(:bootstrap_checked)
+
+              if result != search.() do
+                raise "bootstrap certificate differs from the search: #{inspect(result)}"
+              end
+            end
+
+            cert_count(:bootstrap_matched)
+            result
+
+          :search ->
+            search.()
+        end
     end
   end
 
@@ -7948,6 +8022,111 @@ defmodule Ainalrami.Pairing do
       end
     else
       :none -> :search
+    end
+  end
+
+  # The same certificate where the greedy pairing cannot give one: its
+  # existence shown by maximum matchings instead of exhibited pair by pair.
+  #
+  # With `L` the leftover `certain_bootstrap/7` picks (the last with the
+  # least `vertex` term), `U` the top group less `L` and `R` everyone else
+  # less `L`, a matching of all but `L` over compatible edges with `T` at
+  # its bound `div(|U|, 2)` exists exactly when
+  #
+  #   * `|U|` even: `U` and `R` are each perfectly matched (the bound pairs
+  #     all of `U` inside it, so nothing crosses);
+  #   * `|U|` odd: some `t` of `U` is left over by a near-perfect matching of
+  #     `U` and plays some `r` that a near-perfect matching of `R` leaves
+  #     over (then `U - t`, `R - r` and `(t, r)` make one), i.e. `t` and `r`
+  #     in the exposable sets (`Ainalrami.CardinalityMatching.exposable/1`).
+  #
+  # Both are asked of a sparse subgraph (each player's first
+  # `@oracle_degree` compatible later players in the set), which is sound
+  # the way the oracle's is: what it finds is real, and what it misses goes
+  # to the search. The answer is then read off the three bounds rather than
+  # off a matching: the bye score is `L`'s, and `first_single_bye?/4` holds
+  # exactly when `L` is in the top group and `U` is paired wholly inside it
+  # (`|U|` even) - every optimum agrees, as above. Check mode holds it to the
+  # search.
+  defp matched_bootstrap(n, blocked, ranks, prefs, arr, vertex, top) do
+    least = vertex |> Tuple.to_list() |> Enum.min()
+    leftover = Enum.max(for i <- 0..(n - 1)//1, elem(vertex, i) == least, do: i)
+
+    compatible? = fn i, j ->
+      not is_map_key(elem(blocked, i), elem(ranks, j)) and
+        colours_pairable?(arr, elem(prefs, i), elem(prefs, j), i, j)
+    end
+
+    {upper, rest} =
+      0..(n - 1)//1
+      |> Enum.reject(&(&1 == leftover))
+      |> Enum.split_with(&(elem(top, &1) == 1))
+
+    ok? =
+      if rem(length(upper), 2) == 0 do
+        sparse_perfect?(upper, compatible?) and sparse_perfect?(rest, compatible?)
+      else
+        with {:ok, d_upper} <- sparse_exposable(upper, compatible?),
+             {:ok, d_rest} <- sparse_exposable(rest, compatible?) do
+          Enum.any?(d_upper, fn t ->
+            Enum.any?(d_rest, fn r -> compatible?.(min(t, r), max(t, r)) end)
+          end)
+        else
+          :no -> false
+        end
+      end
+
+    if ok? do
+      score = elem(arr, leftover).points
+      {:ok, {score, elem(top, leftover) == 1 and rem(length(upper), 2) == 0}}
+    else
+      :search
+    end
+  end
+
+  # The sparse subgraph on `set` (field positions, ascending): each one
+  # joined to its first `@oracle_degree` compatible later members, as
+  # neighbour lists over indices into `set`.
+  defp sparse_adjacency(set, compatible?) do
+    members = List.to_tuple(set)
+    size = tuple_size(members)
+
+    rows =
+      Enum.reduce(0..(size - 1)//1, %{}, fn a, acc ->
+        i = elem(members, a)
+
+        {partners, _} =
+          Enum.reduce_while((a + 1)..(size - 1)//1, {[], 0}, fn b, {partners, taken} ->
+            cond do
+              taken >= @oracle_degree -> {:halt, {partners, taken}}
+              compatible?.(i, elem(members, b)) -> {:cont, {[b | partners], taken + 1}}
+              true -> {:cont, {partners, taken}}
+            end
+          end)
+
+        Enum.reduce(partners, acc, fn b, acc ->
+          acc |> Map.update(a, [b], &[b | &1]) |> Map.update(b, [a], &[a | &1])
+        end)
+      end)
+
+    {members, List.to_tuple(for v <- 0..(size - 1)//1, do: rows |> Map.get(v, []) |> Enum.sort())}
+  end
+
+  defp sparse_perfect?([], _compatible?), do: true
+
+  defp sparse_perfect?(set, compatible?) do
+    {members, adj} = sparse_adjacency(set, compatible?)
+    map_size(CardinalityMatching.maximum(adj)) == tuple_size(members)
+  end
+
+  # The field positions of `set` some near-perfect matching of its sparse
+  # subgraph leaves over, or `:no`.
+  defp sparse_exposable(set, compatible?) do
+    {members, adj} = sparse_adjacency(set, compatible?)
+
+    case CardinalityMatching.exposable(adj) do
+      {:ok, outer} -> {:ok, Enum.map(outer, &elem(members, &1))}
+      :no -> :no
     end
   end
 

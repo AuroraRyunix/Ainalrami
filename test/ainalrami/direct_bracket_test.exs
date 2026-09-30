@@ -79,12 +79,17 @@ defmodule Ainalrami.DirectBracketTest do
 
     # The odd field's shapes, each held to the field path's answer by the
     # check mode: the last bracket (the bye), an odd bracket over the bye
-    # group, an even bracket of an odd field; and an odd bracket of an even
-    # field over the group on zero.
-    for kind <- [:last, :odd_bye_group, :even_odd_field, :odd_zero_group] do
+    # group, an even bracket of an odd field; an odd bracket of an even
+    # field over the group on zero; and a bracket none of whose members can
+    # play each other.
+    for kind <- [:last, :odd_bye_group, :even_odd_field, :odd_zero_group, :empty] do
       assert Map.get(stats, {:direct_field_checked, kind}, 0) > 0,
              "no #{kind} bracket was answered directly: #{inspect(stats)}"
     end
+
+    # The odd field's bye bootstrap shown by maximum matchings where the
+    # greedy pairing could not, held to the search.
+    assert Map.get(stats, :bootstrap_checked, 0) > 0, "no bootstrap was certified by matchings"
   end
 
   # The pruned walk (`Ainalrami.Pairing`'s "The pruned walk") takes over
