@@ -324,6 +324,28 @@ that cannot be replayed, with the standings (if checked) in order.
 The two modes are each other's test: `-g` output fed to `-c` checks clean
 by construction.
 
+**Bye preferences** (`-p` and `-x`; an organiser's wish, NOT a FIDE rule -
+see *Organiser deviations* below). Four flags, each taking starting ranks
+separated by commas, each optionally followed by `@` and the rounds it
+applies to (single rounds and ranges joined by `+`), and each repeatable:
+
+| flag | the player ... |
+|---|---|
+| `--bye-want=RANKS` | must get the pairing-allocated bye, if a legal round gives it to them |
+| `--bye-want-soft=RANKS` | rather gets it: decides among the players on the bye score |
+| `--bye-avoid=RANKS` | must not get it - the bye exclusion |
+| `--bye-avoid-soft=RANKS` | rather not: someone else on the bye score takes it if anyone can |
+
+```bash
+ainalrami round5.trf -p --bye-want=12 --bye-avoid-soft=3,7@4-6+9
+```
+
+Whenever one is given, stderr says the round is not a pure FIDE pairing,
+and each preference's outcome is reported (a preference that was not
+applied, and why, as a warning). They are refused with `-g` and `-c`,
+which pair by the FIDE rules alone, and no TRF line carries them: the
+engine reads non-FIDE options from flags and library options only.
+
 ### Verbose by default
 
 Unlike JaVaFo, which prints almost nothing beyond the result, Ainalrami
@@ -413,8 +435,8 @@ and national-rating records are not read.
 
 ## Organiser deviations (not FIDE)
 
-Two options change the pairing in ways the Dutch system does not allow. A
-round paired with either is not a Dutch-system round in the homologation
+Three options change the pairing in ways the Dutch system does not allow. A
+round paired with any of them is not a Dutch-system round in the homologation
 sense, and a FIDE checker replaying the file will not reproduce it - no TRF
 line records them. Without them the engine runs exactly the code it runs
 without them, byte for byte.
@@ -452,6 +474,55 @@ without them, byte for byte.
   refusal and its override, and the passed-over account; and with no
   exclusion the engine's pairings and explanations are identical to the
   previous release's on 8,593 generated rounds. See `docs/validation.md`.
+
+- **Bye preferences** - `bye_preferences: [{rank, preference} |
+  {rank, preference, rounds}]` on `pair_next_round/2` and `explain_round/3`,
+  resolved by `Ainalrami.ByePreference.pair/2`, which also returns an
+  account of what each did. `preference` is `:want_hard` (must get the
+  bye, if the rest can still be paired under the absolute criteria),
+  `:want_soft` (rather gets it), `:avoid_hard` (must not - exactly a bye
+  exclusion, refusal and override included) or `:avoid_soft` (rather not);
+  `rounds` a list of round numbers, or `:all`.
+
+  **Where the soft ones sit.** Where a `:strong` soft pair does: below the
+  ladder's top rung - the absolute criteria, the round's completion, and
+  the bye's own rules (C2; C4/C5, the bye to the lowest score that lets the
+  rest be paired) - and above every quality criterion, C6-C21 (C9 included)
+  and the ordering rule. They never move the bye to a higher score group,
+  never give it to a player C2 rules out, and never make a round
+  unpairable. There is no `:weak` position: below C21 there is practically
+  never a choice of bye holder left.
+
+  **How.** Every setting becomes bye exclusions, so the rule that decides
+  who may take the bye stays `eligible_for_bye?/1` - which the certified
+  and direct-bracket shortcuts are proved against. A want pairs the round
+  with every other active player excluded; a soft want keeps that round
+  only if its bye holder has the bye score of the round without it; a soft
+  avoid excludes the holder while the holder is someone to avoid and keeps
+  the last round still on that score.
+
+  **Precedence and conflicts.** Per player: a hard avoid (including a
+  `bye_exclusions` entry) beats any want, a hard want beats a soft avoid, a
+  soft want and a soft avoid cancel out. Across players: hard wants first
+  (with several, the FIDE criteria choose among them), then soft wants, then
+  soft avoids. An even field, a player not in the round, and a player C2
+  rules out are skipped. Each case is an outcome in the report (`:honoured`,
+  `:no_bye_this_round`, `:not_in_round`, `:ineligible`, `:conflict`,
+  `:unpairable`, `:other_player`, `:outranked`), with `moved` (whether the
+  preferences changed the round), `fide_bye` (who had it without them) and
+  `opts` (the options with the preferences resolved - what
+  `explain_round/3` and `Ainalrami.Alternatives` must be given;
+  `explain_context/3` refuses them unresolved). `explain_round/3` resolves
+  them itself and puts the account on the bye's bracket as `bye_preference`.
+
+  Validated against the exhaustive bye reference: 5,000 generated
+  tournaments with random preferences on every round, 0 disagreements on
+  pairability, legality, who gets the bye and on which score, for each
+  setting and each conflict (`test/ainalrami/bye_preference_validation_test.exs`);
+  the direct-bracket and certified paths agree with the full path on large
+  fields (`tools/bye_pref_direct.exs`); and without preferences the engine
+  is byte-identical to before on the differential corpus. See
+  `docs/validation.md`.
 
 ## What is not settled
 

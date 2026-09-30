@@ -64,6 +64,38 @@ with the reference on every one of them.
 
 ## [Unreleased]
 
+- [Feature] **Bye preferences - per player, must get / rather gets / must
+  not get / rather not the pairing-allocated bye (not a FIDE rule).**
+  `pair_next_round/2` and `explain_round/3` take `bye_preferences:
+  [{rank, preference} | {rank, preference, rounds}]`; new
+  `Ainalrami.ByePreference.pair/2` returns the pairs and an account - who
+  got the bye, who would have without the preferences, whether they
+  changed the round, and one outcome per preference with the reason when
+  it was not applied. "Must get" wins the bye whenever the rest can still
+  be paired under the absolute criteria and falls back to the plain round
+  otherwise; the soft ones sit where a `:strong` soft pair does - below
+  the absolute criteria, completion and the bye score, above C6-C21 - so
+  they never move the bye to a higher score or make a round unpairable;
+  "must not" is the bye exclusion. Conflicts are resolved and reported:
+  an exclusion beats a want, a hard want a soft avoid, soft want and soft
+  avoid cancel, two hard wants are decided by the FIDE criteria, and an
+  even field, an absent player and C2 are said. Everything is resolved
+  into bye exclusions, so the direct and certified shortcuts, proved
+  against the same eligibility, apply unchanged. See README "Organiser
+  deviations".
+- [Feature] **CLI: `--bye-want`, `--bye-want-soft`, `--bye-avoid`,
+  `--bye-avoid-soft`** with `-p` and `-x`, ranks separated by commas, each
+  optionally `@` rounds (`5,12@3-4+7`). stderr says the round is not a pure
+  FIDE pairing whenever one is given, and reports each preference's
+  outcome; refused with `-g` and `-c`.
+- [Verified] Bye preferences against the exhaustive bye reference: 5,000
+  generated tournaments, 26,421 rounds with random preferences, 0
+  disagreements. On 40 generated tournaments of 101-401 players (280
+  rounds), the direct-bracket and certified paths agree with the full path
+  and the check mode raises nothing (`tools/bye_pref_direct.exs`). Without
+  preferences, byte-identical to the baseline on the differential corpus:
+  447,152 rounds, 0 differing (see `docs/validation.md`).
+
 - [Performance] **Odd fields: the brackets the bye comes out of are
   answered directly too, every answer unchanged.** A 1,001-player round 2
   took 31.9 s where 1,000 players took 0.05 s; it now takes 0.12 s, the
