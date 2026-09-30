@@ -64,6 +64,40 @@ with the reference on every one of them.
 
 ## [Unreleased]
 
+- [Performance] **The slow spots the direct bracket left, every answer
+  unchanged.** On the Gacrux benchmark's positions (in-VM, 2 cores) 600
+  players round 2 took 2.93 s where 400 and 1,000 players took 0.02 and
+  0.05 s; it now takes 0.028 s. Round 9: 1,000 players 1.18 s -> 0.065 s,
+  600 players 0.39 s -> 0.040 s, 1,001 players 0.31 s -> 0.029 s, 200
+  players 0.082 s -> 0.008 s; every row under 0.07 s. On 60 generated
+  opens of 158-947 players, rounds 2-9 took 132 s of pairing in all
+  (slowest round 21.7 s) and now take 7.6 s (slowest 88 ms). Six changes:
+  an odd bracket of an even field over the players on zero is answered
+  directly (their completion terms sum to the same over every perfect
+  matching); an odd bracket's floaters are found all at once as the
+  players who can meet one of the next group's exposable set, where a
+  weighted matching was solved per resident, and with an even next group
+  the rest of the field need only take the player left over, not any
+  player; a walk past its budget runs again pruned by Hall's condition and
+  by the states that already failed, which returns what the walk would
+  with no budget; the completability oracle is a maximum-cardinality
+  matching with a stand-in for the bye, kept across the round, where its
+  weighted form's first solve cost up to 0.22 s; a bracket none of whose
+  members can play each other (two leaders who have met) no longer goes
+  to the whole-field matcher; and the odd field's bye bootstrap shows its
+  certificate by maximum matchings where the greedy one fails, instead of
+  a complete-graph search. Anything unproven falls back as before. Details
+  in `docs/performance.md`.
+- [Verified] Against v0.33.0 on the differential corpus in the default
+  configuration: 447,152 rounds, 0 differences; in check mode 44,325
+  rounds identical to v0.33.0 with 20,631 new direct answers checked, and
+  410,485 oracle answers held to the weighted oracle, 63,265 floater pools
+  to per-resident matchings and 19,623 bye bootstraps to the search, 0
+  differences; the same 44,325 rounds identical with every walk the pruned
+  one (`AINALRAMI_DIRECT_PLAIN=0`, new; 29,843 walks checked); 60
+  generated opens of 158-947 players over 9 rounds in check mode and with
+  the direct brackets off, all 540 rounds identical.
+
 - [Performance] **Odd fields: the brackets the bye comes out of are
   answered directly too, every answer unchanged.** A 1,001-player round 2
   took 31.9 s where 1,000 players took 0.05 s; it now takes 0.12 s, the
