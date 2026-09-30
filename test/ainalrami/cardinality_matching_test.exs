@@ -108,6 +108,116 @@ defmodule Ainalrami.CardinalityMatchingTest do
     end)
   end
 
+  # Larger graphs than exhaustive search can take, where blossoms nest
+  # (the groups `contract/4` merges): the size against the weighted matcher
+  # with every weight equal, and the search over a neighbour FUNCTION - the
+  # dense oracle's form - against the same search over the tuple.
+  test "maximum matchings of larger graphs agree with the weighted matcher" do
+    rng = :rand.seed_s(:exsss, {29, 31, 37})
+
+    Enum.reduce(1..300, rng, fn _, rng ->
+      {k, rng} = :rand.uniform_s(120, rng)
+      n = k + 20
+      {degree, rng} = :rand.uniform_s(6, rng)
+      {edges, rng} = random_sparse_edges(n, degree + 1, rng)
+      adj = adjacency(n, edges)
+
+      match = CardinalityMatching.maximum(adj)
+      weighted = Ainalrami.WeightedMatching.solve(n, Enum.map(edges, fn {i, j} -> {i, j, 1} end))
+      assert map_size(match) == map_size(weighted), "n=#{n} edges=#{inspect(edges)}"
+
+      assert Enum.all?(match, fn {v, u} ->
+               Map.fetch!(match, u) == v and {min(u, v), max(u, v)} in edges
+             end)
+
+      # From the greedy start alone, every exposed vertex searched over the
+      # function form, as the dense oracle searches.
+      row = fn v -> elem(adj, v) end
+
+      grown =
+        Enum.reduce(0..(n - 1)//1, %{}, fn v, m ->
+          if is_map_key(m, v) do
+            m
+          else
+            case CardinalityMatching.augment_from(row, m, v, MapSet.new()) do
+              {:ok, m} -> m
+              :none -> m
+            end
+          end
+        end)
+
+      assert map_size(grown) == map_size(match)
+      rng
+    end)
+  end
+
+  # A matching whose pairs lie outside `adj` is searched as `adj` plus those
+  # pairs: the sparse oracle after the dense one has grown its matching.
+  test "a search over a subgraph keeps pairs of the matching outside it" do
+    rng = :rand.seed_s(:exsss, {41, 43, 47})
+
+    Enum.reduce(1..300, rng, fn _, rng ->
+      {k, rng} = :rand.uniform_s(60, rng)
+      n = k + 10
+      {edges, rng} = random_sparse_edges(n, 6, rng)
+      dense = adjacency(n, edges)
+
+      {sparse_edges, rng} =
+        Enum.reduce(edges, {[], rng}, fn e, {acc, rng} ->
+          {roll, rng} = :rand.uniform_s(3, rng)
+          {if(roll == 1, do: acc, else: [e | acc]), rng}
+        end)
+
+      sparse = adjacency(n, sparse_edges)
+
+      match = CardinalityMatching.maximum(dense)
+
+      {dead, rng} =
+        Enum.reduce(0..(n - 1)//1, {MapSet.new(), rng}, fn v, {dead, rng} ->
+          {roll, rng} = :rand.uniform_s(5, rng)
+          {if(roll == 1, do: MapSet.put(dead, v), else: dead), rng}
+        end)
+
+      match =
+        Enum.reduce(dead, match, fn v, match ->
+          case Map.pop(match, v) do
+            {nil, match} -> match
+            {u, match} -> Map.delete(match, u)
+          end
+        end)
+
+      match =
+        Enum.reduce(0..(n - 1)//1, match, fn v, match ->
+          if MapSet.member?(dead, v) or is_map_key(match, v) do
+            match
+          else
+            case CardinalityMatching.augment_from(sparse, match, v, dead) do
+              {:ok, match} -> match
+              :none -> match
+            end
+          end
+        end)
+
+      assert Enum.all?(match, fn {v, u} ->
+               Map.fetch!(match, u) == v and {min(u, v), max(u, v)} in edges and
+                 not MapSet.member?(dead, v)
+             end)
+
+      rng
+    end)
+  end
+
+  defp random_sparse_edges(n, degree, rng) do
+    Enum.reduce(0..(n - 1)//1, {MapSet.new(), rng}, fn i, {acc, rng} ->
+      Enum.reduce(1..degree//1, {acc, rng}, fn _, {acc, rng} ->
+        {j, rng} = :rand.uniform_s(n, rng)
+        j = j - 1
+        if j == i, do: {acc, rng}, else: {MapSet.put(acc, {min(i, j), max(i, j)}), rng}
+      end)
+    end)
+    |> then(fn {set, rng} -> {Enum.sort(set), rng} end)
+  end
+
   defp random_edges(n, density, rng) do
     pairs = for i <- 0..(n - 1)//1, j <- (i + 1)..(n - 1)//1, do: {i, j}
 
