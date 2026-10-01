@@ -77,6 +77,8 @@ defmodule Ainalrami.WeightedMatching do
   doubles them itself.
   """
 
+  alias Ainalrami.WeightedMatching.Profile
+
   @doc """
   Maximum-weight matching over vertices `0..n-1`.
 
@@ -149,6 +151,20 @@ defmodule Ainalrami.WeightedMatching do
   which such a caller does not supply.
   """
   def new(n, edges, opts \\ []) do
+    if Profile.on?() do
+      t0 = System.monotonic_time(:microsecond)
+      state = new_state(n, edges, opts)
+      us = System.monotonic_time(:microsecond) - t0
+      site = Profile.site()
+      Profile.record(:new, site, n, us, profile_info(state))
+      Profile.capture({:new, site, n, edges, opts})
+      state
+    else
+      new_state(n, edges, opts)
+    end
+  end
+
+  defp new_state(n, edges, opts) do
     # `:gcd` overrides the reduction. A persistent caller whose LATER
     # weights may not share the initial edges' common factor passes
     # `gcd: 1` and forgoes the bignum saving rather than risk
@@ -187,6 +203,38 @@ defmodule Ainalrami.WeightedMatching do
   `{state, matching}`; the state carries the solution forward.
   """
   def solve(state) do
+    if Profile.on?() do
+      Process.put(:wm_stages, 0)
+      Process.put(:wm_grow_total, 0)
+      Process.put(:wm_expanded, 0)
+      t0 = System.monotonic_time(:microsecond)
+      {solved, _} = result = solve_state(state)
+      us = System.monotonic_time(:microsecond) - t0
+
+      info =
+        Map.merge(profile_info(solved), %{
+          stages: Process.get(:wm_stages),
+          grow: Process.get(:wm_grow_total),
+          formed: solved.next_blossom_id - state.next_blossom_id,
+          expanded: Process.get(:wm_expanded)
+        })
+
+      site = Profile.site()
+      Profile.record(:solve, site, state.n, us, info)
+      Profile.capture({:solve, site, state})
+      result
+    else
+      solve_state(state)
+    end
+  end
+
+  defp profile_info(state) do
+    edges = Enum.reduce(state.weight, 0, fn {_, row}, acc -> acc + map_size(row) end)
+    bits = if state.max_w > 0, do: length(Integer.digits(state.max_w, 2)), else: 0
+    %{edges: div(edges, 2), bits: bits}
+  end
+
+  defp solve_state(state) do
     # Caches are carried stage to stage WITHIN a solve (`carry_caches/2`)
     # and never across one: a `set_weight/4` in between changed weights the
     # cached resistances were computed from. Cleared here so the first stage
@@ -1310,7 +1358,11 @@ defmodule Ainalrami.WeightedMatching do
   defp augment_until_done(_state, 0), do: raise("WeightedMatching: exceeded stage budget")
 
   defp augment_until_done(state, budget) do
-    case augment_once(state) do
+    result = augment_once(state)
+    Process.put(:wm_stages, Process.get(:wm_stages, 0) + 1)
+    Process.put(:wm_grow_total, Process.get(:wm_grow_total, 0) + Process.get(:wm_grow_steps, 0))
+
+    case result do
       {:ok, state} -> augment_until_done(state, budget - 1)
       {:done, state} -> state
     end
@@ -1586,6 +1638,7 @@ defmodule Ainalrami.WeightedMatching do
         # existing. Its vertices were inner and so held no cache entries;
         # the children that come out `:free` need them computed now.
         expanded = blossom_vertices(state, inner_blossom_id)
+        Process.put(:wm_expanded, Process.get(:wm_expanded, 0) + 1)
 
         {:cont, refresh_caches(expand_blossom(state, inner_blossom_id), expanded)}
         |> continue_growing()
@@ -2996,6 +3049,13 @@ defmodule Ainalrami.WeightedMatching do
     raise "WeightedMatching: exceeded #{what} step budget " <>
             "(#{walk_budget(state)} steps, n=#{state.n})"
   end
+
+  @doc false
+  # Tooling hook, not API: a state captured from an earlier build of this
+  # module (`Ainalrami.WeightedMatching.Profile`'s capture), in the form
+  # this one reads. Only the per-solve caches can differ, and `solve/1`
+  # rebuilds those on entry.
+  def __upgrade__(state), do: state
 
   @doc false
   # Test hook, not API. The two walks above are only reachable through a
