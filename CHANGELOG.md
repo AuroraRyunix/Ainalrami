@@ -64,6 +64,31 @@ with the reference on every one of them.
 
 ## [Unreleased]
 
+## [0.35.0] - 2026-10-01
+
+- [Verified] **A timing study of all three engines on 3,000 random
+  positions, and the speed write-up redone from it.** The fuzz generator
+  at 100-1,001 players (ten sizes, odd and even), rounds 2, 5 and 9, 100
+  seeds each; every engine single-threaded on one 80-vCPU VM, 32 positions
+  at a time (this engine in-process at `+S 1`, second of two calls;
+  bbpPairings and Gacrux as processes, wall time minus a start-up
+  baseline); identical pairings from all three on all 3,000. On commit
+  030bd28, before the slow tail below: medians 20 ms, 1.25 s and 2.55 s
+  over all 3,000, and at 1,000 players 48 ms, 8.0 s and 45 s; worst 8.26 s,
+  328 s and 78 s. README's speed section and `docs/performance.md` now
+  give method, median / p90 / worst per size and round, and the notes -
+  one position per row is noisy, Gacrux's round 2 on even fields is its
+  slow spot, this engine's worst case was the last round. The single-file
+  tables of earlier passes stay as before-and-after records, marked as
+  not the comparison to quote. New `tools/timing_study.exs`; the raw data
+  is `docs/timing-study-2026-09-30.csv`.
+- [Verified] **Against Gacrux alone, 3.2 million rounds.** On the same VM,
+  030bd28 over 373,500 nine-round tournaments of 4-1,000 players:
+  3,219,728 rounds and 119,064,367 boards compared, 0 disagreements, 0
+  Gacrux breaches of Article 5.2.5. Gacrux's Error 510 on 25,761 rounds
+  and 5 Gacrux crashes are on its side and kept out of the rate. See
+  `docs/validation.md`.
+
 - [Performance] **The slow tail of the last round, every answer
   unchanged.** A timing study of 3,000 random positions (100-1,001 players,
   rounds 2, 5 and 9, one core) had 11 above 0.5 s, all in round 9 of a
@@ -215,6 +240,10 @@ with the reference on every one of them.
   to the stages' and raises on a difference. The completability oracle is
   solved once instead of by every question before the first bracket.
   Details in `docs/performance.md`.
+
+  > **SUPERSEDED as a comparison in this release.** The "3x to 46x" is
+  > one file per row; the timing study above, over 3,000 positions, is the
+  > comparison to quote. The before-and-after on those files stands.
 - [Verified] The direct brackets against v0.33.0 on the differential
   corpus: 892,324 rounds (every set, in the default configuration and with certified mode forced), 0 differences; in check mode (each direct answer held to the stages
   on the same bracket, certified mode forced) 44,325 rounds, 149,356 direct

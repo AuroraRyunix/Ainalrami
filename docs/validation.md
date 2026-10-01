@@ -16,6 +16,7 @@ every known difference.
 |---|---|---|---|---|
 | Individual pairings (C.04.3), our generator | bbpPairings 6.0.0 | 2,536,328,265 pairings, 217,470,056 rounds, 6 corpora | 2 disagreements, both a bbpPairings [C2] defect | [The corpora](#the-corpora) |
 | Individual pairings, three engines | bbpPairings and Gacrux | 649,207 rounds | agrees with bbpPairings on every round; never the odd one out | [The three-way run](#the-three-way-run-2026-08-27) |
+| Individual pairings, Gacrux alone (030bd28) | Gacrux | 373,500 tournaments, 3,219,728 rounds, 119,064,367 boards | 0 disagreements | [Against Gacrux alone](#against-gacrux-alone-32-million-rounds-2026-09-30) |
 | Individual pairings, bbpPairings' generator (Q33 direction 2) | bbpPairings' own `-g` tournaments, checked here | 50,045 tournaments, 499,816 rounds, 28,964,816 pairings | 0 composition, 0 colour disagreements | [Pairings (Q33)](#pairings-vcl4thp-q33-both-directions) |
 | Team Swiss whole rounds (C.04.6), 4-10 teams | brute-force reference written from the regulation | seeds 1-250,000,000, 1,032,949,115 rounds | 0 failures, 0 errors | [Team Swiss pairings](#team-swiss-pairings-c046) |
 | Team Swiss whole rounds, 11-80 teams | exact engine-independent reference | 2,000 seeds, 11,980 rounds | agrees; one 3.6 candidate-budget disagreement found and fixed (0.30.0) | [team-proof-large-fields.md](team-proof-large-fields.md) |
@@ -1372,6 +1373,12 @@ absolute number here is lower than there.
 | 600, round 2 | 8.24 s | 1.29 s | 6.72 s | **0.07 s** |
 | 600, round 9 | 10.8 s | 2.55 s | 2.58 s | **0.17 s** |
 
+> **SUPERSEDED as a comparison (2026-09-30).** The ratios below are one
+> file per row, and one position can land on a shape slow for one engine
+> only. The comparison to quote is the timing study's medians over 3,000
+> positions ([performance.md](performance.md#the-timing-study-2026-09-30));
+> the boards-identical result on these files stands.
+
 **Read honestly: ahead of Gacrux now, on every file.** 3.0x at 209
 players, 8.8x at 400, 46x at 1,000, 18x on the one-round-of-history shape
 that was 5x behind, 15x on the late round. Against bbpPairings the pairing
@@ -1393,6 +1400,31 @@ The files and scripts: `Ainalrami.Generator` with
 `XXR` disagrees with the rounds it holds); Gacrux
 invoked as `pairingchecker.py -i FILE -o OUT -p -dT -m dutch`, bbpPairings
 as `--dutch FILE -p OUT`, this engine as its escript's `FILE -p OUT`.
+
+### Against Gacrux alone, 3.2 million rounds (2026-09-30)
+
+On the 80-vCPU VM of the timing study, engine commit 030bd28 (the slow
+spots pass) against Gacrux only, the `gacrux_only` harness
+(`test/ainalrami/gacrux_only_test.exs`) over nine-round tournaments in
+five size bands, seeds from 9,000,001 / 9,100,001 / 9,200,001 / 9,300,001
+/ 9,400,001:
+
+| players | tournaments | rounds identical / compared | boards, same colours / shared |
+|---|---|---|---|
+| 500-1,000 | 3,500 | 31,500 / 31,500 | 11,835,963 / 11,835,963 |
+| 300-500 | 15,000 | 135,000 / 135,000 | 26,975,088 / 26,975,088 |
+| 150-250 | 35,000 | 315,000 / 315,000 | 31,414,014 / 31,414,014 |
+| 40-120 | 70,000 | 630,000 / 630,000 | 25,023,582 / 25,023,582 |
+| 4-40 | 250,000 | 2,108,228 / 2,108,228 | 23,815,720 / 23,815,720 |
+| **total** | **373,500** | **3,219,728 / 3,219,728** | **119,064,367 / 119,064,367** |
+
+0 rounds for review, 0 colour reviews, 0 rounds where Gacrux breaks
+Article 5.2.5. Everything else was on Gacrux's side: 25,761 rounds at 4-40
+players where it returned Error 510 (an exception escaping the checker;
+counted, dumped and kept out of every rate since 0.11.0) and 5 Gacrux
+crashes, which the harness reports as test failures. A two-way run against
+one reference; it adds coverage at large field sizes, where the three-way
+run is thin, not a third opinion.
 
 ## Pairings (VCL4THP Q33), both directions
 

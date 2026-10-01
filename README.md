@@ -33,6 +33,7 @@ the engine now conforms. Both are documented rather than hidden - see
 |---|---|---|---|---|
 | Individual pairings (C.04.3) | bbpPairings 6.0.0, on this engine's generated tournaments | 2,536,328,265 pairings, 217,470,056 rounds | 2 disagreements, both a bbpPairings defect | [below](#where-it-stands) |
 | Individual pairings, three engines | bbpPairings and Gacrux | 649,207 rounds | never the odd one out | [validation](docs/validation.md#the-three-way-run-2026-08-27) |
+| Individual pairings, Gacrux alone | Gacrux, on the timing study's VM | 3,219,728 rounds, 119,064,367 boards | 0 disagreements | [validation](docs/validation.md#against-gacrux-alone-32-million-rounds-2026-09-30) |
 | Individual pairings, the other way | bbpPairings' own generator, checked here | 50,045 tournaments, 28,964,816 pairings | 0 disagreements, colours included | [validation](docs/validation.md#pairings-vcl4thp-q33-both-directions) |
 | Team Swiss (C.04.6), 4-10 teams | brute-force reference written from the regulation | 1,032,949,115 rounds (seeds 1-250,000,000) | 0 failures | [validation](docs/validation.md#team-swiss-pairings-c046) |
 | Team Swiss, 11-80 teams | exact engine-independent reference | 11,980 rounds | agrees (one budget defect found, fixed in 0.30.0) | [large fields](docs/team-proof-large-fields.md) |
@@ -160,31 +161,62 @@ the harness was measuring nothing.
 Full methodology, per-axis detail and the reasoning behind each number:
 [docs/validation.md](docs/validation.md).
 
-**Speed**, re-measured 2026-09-28 on generated fields, all three engines
-on the same files, median of five cold runs - and all three returning
-**identical boards** on every file. Discounting each engine's own start-up
-floor (0.05 s for the C++ reference, 1.08 s for the Python one, 0.75 s for
-the BEAM), the pairing work is:
+**Speed**, measured 2026-09-30 on 3,000 random positions: the fuzz
+generator at 100-1,001 players (ten sizes, odd and even), rounds 2, 5 and
+9 of a nine-round event, 100 seeds per size and round. Each engine ran
+single-threaded on the same 80-vCPU VM, 32 positions at a time: this
+engine in-process on one scheduler (`+S 1`), timed on the second of two
+calls; bbpPairings (C++, built from source) and Gacrux (Python) as
+processes, wall time minus a start-up baseline. **All three returned the
+identical pairing on all 3,000 positions.** The engine measured is commit
+030bd28, before the slow-tail fix in 0.35.0 (below). Median / p90 / worst
+of the 300 positions at each size:
 
-| file | bbpPairings | Gacrux | Ainalrami |
+| players | Ainalrami (030bd28) | Gacrux | bbpPairings |
 |---|---|---|---|
-| 209 players, round 6 | 0.54 s | 0.24 s | **0.08 s** |
-| 400 players, round 6 | 2.76 s | 0.97 s | **0.11 s** |
-| 1,000 players, round 6 | 51.6 s | 6.39 s | **0.14 s** |
-| 600 players, round 2 | 8.24 s | 1.29 s | **0.07 s** |
-| 600 players, round 9 | 10.8 s | 2.55 s | **0.17 s** |
+| 100 | 6.8 ms / 20 ms / 0.13 s | 0.12 s / 0.38 s / 0.64 s | 39 ms / 66 ms / 79 ms |
+| 101 | 6.0 ms / 23 ms / 0.12 s | 88 ms / 0.19 s / 0.31 s | 54 ms / 87 ms / 0.11 s |
+| 200 | 10 ms / 23 ms / 0.26 s | 0.32 s / 2.10 s / 3.54 s | 0.29 s / 0.34 s / 0.42 s |
+| 201 | 11 ms / 28 ms / 0.41 s | 0.27 s / 0.44 s / 1.23 s | 0.39 s / 0.45 s / 0.53 s |
+| 400 | 17 ms / 30 ms / 0.75 s | 1.22 s / 16 s / 22 s | 2.36 s / 2.56 s / 2.76 s |
+| 401 | 18 ms / 40 ms / 1.25 s | 1.09 s / 1.57 s / 2.69 s | 3.31 s / 3.64 s / 4.06 s |
+| 600 | 28 ms / 49 ms / 3.52 s | 2.76 s / 52 s / 68 s | 8.64 s / 9.28 s / 11 s |
+| 601 | 30 ms / 53 ms / 0.99 s | 2.33 s / 3.47 s / 8.05 s | 12 s / 13 s / 14 s |
+| 1,000 | 48 ms / 0.12 s / 8.26 s | 8.02 s / 242 s / 328 s | 45 s / 51 s / 59 s |
+| 1,001 | 50 ms / 0.13 s / 3.77 s | 6.72 s / 9.88 s / 30 s | 60 s / 72 s / 78 s |
 
-Most brackets are answered by walking Article 3's own order and proving
-the result is the one the full weighted-matching refinement would return,
-which is Gacrux's shortcut held to a proof; anything the proof does not
-cover is paired by the refinement as before, and the output is
-byte-identical to the engine without the shortcut. At 209 players the
-BEAM's start-up is most of a cold run, which is why bbpPairings still
-wins that one end to end; inside a host application already running, it
-does not apply. The full tables, the profile behind them and how the
-engine got here from 90 s and 498 s are in
-[docs/performance.md](docs/performance.md),
-[docs/validation.md](docs/validation.md) and
+Over all 3,000: medians 20 ms, 1.25 s and 2.55 s. Per position, Gacrux
+took a median 63 times as long as this engine and bbpPairings 141 times;
+this engine was the slower on 36 positions against Gacrux and 17 against
+bbpPairings, all but one at 100-101 players, where the external engines'
+figures are within the start-up subtraction's noise or a few tens of
+milliseconds apart. This engine's figure excludes reading the file; the
+others' include it.
+
+Read with three notes. **A single position is noisy:** a size's worst is
+about 170x its median for this engine and up to 41x for Gacrux, which is why
+earlier one-file-per-row tables (and the "46x" quoted from one of them)
+are not the comparison to quote. **Gacrux's round 2 on even fields is
+its weak spot:** the median at 1,000 players round 2 is 109 s against
+4.7 s at 1,001, and its p90 at 600 players round 2 is 60 s against a
+median of 1.75 s. **This engine's worst case was the last round:** all
+11 positions above 0.5 s were round 9, the worst 8.26 s at 1,000 players.
+0.35.0 addresses that tail; on one core of an i7-10700 the 30 slowest
+positions of the study went from 22.5 s in all to 4.2 s (the worst from
+5.24 s to 1.04 s), the same pairings, while ordinary positions are
+unchanged (median ~12 ms). The study itself has not been re-run on 0.35.0.
+
+The answers were checked alongside: on the same VM, 030bd28 against
+Gacrux over 373,500 nine-round tournaments of 4-1,000 players, 3,219,728
+rounds and 119,064,367 boards, 0 disagreements (Gacrux's own Error 510 on
+25,761 rounds and 5 Gacrux crashes are kept out of the rate); and 0.35.0
+against 0.33.0 on the differential corpus, 447,152 rounds identical. Most
+brackets are answered by walking Article 3's own order and proving the
+result is the one the full weighted-matching refinement would return;
+anything the proof does not cover is paired by the refinement. Method,
+the per-round table, the raw data and the earlier passes:
+[docs/performance.md](docs/performance.md#the-timing-study-2026-09-30);
+how the engine got here from 90 s and 498 s:
 [docs/engineering-log.md](docs/engineering-log.md).
 
 ## Install

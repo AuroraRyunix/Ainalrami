@@ -1,9 +1,183 @@
 # Performance
 
-Five passes, newest first: the slow tail of the last round, the slow
-spots the direct bracket left, the direct bracket on odd fields, the direct
-bracket itself, which took the pairing past Gacrux on every benchmark file,
-and the large-field pass before it.
+First the timing study, which measures all three engines on 3,000 random
+positions and is the figure to quote. Then five passes, newest first: the
+slow tail of the last round, the slow spots the direct bracket left, the
+direct bracket on odd fields, the direct bracket itself, which took the
+pairing past Gacrux on every benchmark file, and the large-field pass
+before it. The passes measure single benchmark positions, one per row;
+read their tables as before-and-after on those positions, not as a
+comparison of engines.
+
+## The timing study (2026-09-30)
+
+The earlier passes below were each measured on a handful of benchmark
+files, one position per row. This one measures the three engines on 3,000
+random positions, so a row is a distribution rather than one position,
+and states its method in full. It measured engine commit **030bd28** (the
+slow spots pass, before the slow tail below); the slow tail's before and
+after on the study's 30 slowest positions follows the tables.
+
+### Method
+
+* **Positions.** The fuzz generator (`Ainalrami.Test.FuzzTournament`) at
+  100, 101, 200, 201, 400, 401, 600, 601, 1,000 and 1,001 players, rounds
+  2, 5 and 9 of a nine-round event, 100 seeds each (seed `8,000,000 +
+  10,000 x s + players`, s = 1..100): 3,000 positions. The earlier rounds
+  are paired by this engine with the generator's simulated results,
+  withdrawals and requested byes, and the position is written as a TRF16
+  file for the other two.
+* **Ainalrami** (030bd28): `Pairing.pair_next_round/2` in-process on a
+  BEAM started with one scheduler (`+S 1`), timed on the second of two
+  calls on the same position (the first loads code). No start-up and no
+  file reading are in the figure.
+* **bbpPairings** (C++, built from source on the VM),
+  `--dutch in.trf -p out.txt`, and **Gacrux** (TieBreakServer's
+  `pairingchecker.py -i in.trf -o out.txt -p -dT -m dutch`, Python): wall
+  time of the process minus a start-up baseline, the median of five runs of
+  each on a 4-player round-1 file. Both are single-threaded. Their figure
+  includes reading the file and writing the pairing, which Ainalrami's does
+  not; the baseline subtraction carries some noise, and 26 Gacrux figures
+  at 100-101 players came out below zero (by up to 55 ms; shown as 0).
+  Differences under about 50 ms for the two external engines are within
+  that noise.
+* **Machine.** An 80-vCPU cloud VM, 32 positions at a time (each worker
+  runs one position through all three engines in turn), 2026-09-30
+  13:38-14:26 UTC. The same positions run 1.5-2x faster on one core of an
+  i7-10700 (see the slow tail's results), so read the absolute figures as
+  this VM's and the comparison as the point.
+* **Answers.** All three engines gave the identical pairing on all 3,000
+  positions; no Gacrux run timed out (900 s cap) or reported an error.
+
+The script is `tools/timing_study.exs` (usage in its header); every
+position's line is in
+[`timing-study-2026-09-30.csv`](timing-study-2026-09-30.csv) - `n,round,
+seed`, the three times in seconds, whether Gacrux's and bbpPairings'
+pairing equals this engine's, and Gacrux's exit status.
+
+### Results
+
+Milliseconds; median / p90 / worst of the 100 positions in each row (p90
+is the 90th of 100 by nearest rank).
+
+| players | round | Ainalrami (030bd28) | Gacrux | bbpPairings |
+|---|---|---|---|---|
+| 100 | 2 | 2.7 / 4.7 / 12 | 291 / 444 / 637 | 34 / 58 / 79 |
+| 100 | 5 | 7.9 / 19 / 111 | 82 / 130 / 543 | 41 / 70 / 76 |
+| 100 | 9 | 12 / 42 / 128 | 149 / 241 / 322 | 39 / 66 / 75 |
+| 101 | 2 | 3.4 / 5.5 / 6.1 | 24 / 64 / 131 | 44 / 78 / 83 |
+| 101 | 5 | 6.6 / 15 / 38 | 89 / 138 / 174 | 54 / 89 / 110 |
+| 101 | 9 | 16 / 38 / 125 | 162 / 225 / 310 | 55 / 91 / 106 |
+| 200 | 2 | 6.6 / 8.7 / 14 | 236 / 2,723 / 3,538 | 230 / 271 / 313 |
+| 200 | 5 | 13 / 24 / 104 | 286 / 352 / 443 | 302 / 354 / 423 |
+| 200 | 9 | 14 / 29 / 262 | 380 / 515 / 939 | 294 / 352 / 385 |
+| 201 | 2 | 7.8 / 13 / 41 | 194 / 249 / 314 | 282 / 338 / 379 |
+| 201 | 5 | 12 / 21 / 112 | 267 / 363 / 1,233 | 395 / 456 / 485 |
+| 201 | 9 | 16 / 64 / 414 | 407 / 530 / 1,231 | 416 / 468 / 531 |
+| 400 | 2 | 17 / 31 / 41 | 6,718 / 17,718 / 22,356 | 2,201 / 2,409 / 2,549 |
+| 400 | 5 | 15 / 23 / 41 | 1,099 / 1,215 / 1,683 | 2,477 / 2,624 / 2,754 |
+| 400 | 9 | 20 / 32 / 751 | 1,461 / 1,683 / 2,545 | 2,346 / 2,506 / 2,758 |
+| 401 | 2 | 21 / 37 / 42 | 800 / 922 / 979 | 2,940 / 3,307 / 3,680 |
+| 401 | 5 | 15 / 24 / 53 | 1,092 / 1,256 / 1,542 | 3,316 / 3,606 / 4,062 |
+| 401 | 9 | 24 / 70 / 1,251 | 1,489 / 1,690 / 2,690 | 3,466 / 3,722 / 4,062 |
+| 600 | 2 | 26 / 50 / 71 | 1,752 / 60,265 / 68,018 | 8,718 / 9,836 / 10,995 |
+| 600 | 5 | 23 / 31 / 121 | 2,489 / 2,646 / 10,782 | 8,750 / 9,300 / 9,571 |
+| 600 | 9 | 32 / 52 / 3,523 | 3,257 / 3,688 / 5,238 | 8,467 / 8,972 / 9,205 |
+| 601 | 2 | 28 / 53 / 77 | 1,752 / 2,082 / 2,219 | 10,472 / 13,307 / 14,486 |
+| 601 | 5 | 26 / 34 / 63 | 2,329 / 2,691 / 8,047 | 11,846 / 13,003 / 13,668 |
+| 601 | 9 | 35 / 65 / 990 | 3,347 / 3,603 / 6,253 | 12,594 / 13,175 / 14,047 |
+| 1,000 | 2 | 75 / 131 / 308 | 109,090 / 266,035 / 327,796 | 49,561 / 54,927 / 58,530 |
+| 1,000 | 5 | 43 / 62 / 109 | 6,847 / 7,568 / 8,376 | 42,327 / 43,601 / 44,686 |
+| 1,000 | 9 | 49 / 84 / 8,261 | 9,284 / 10,282 / 16,724 | 46,781 / 49,778 / 51,372 |
+| 1,001 | 2 | 36 / 131 / 201 | 4,730 / 5,650 / 5,887 | 58,253 / 71,137 / 73,117 |
+| 1,001 | 5 | 44 / 74 / 272 | 6,716 / 7,365 / 29,672 | 57,111 / 60,460 / 66,762 |
+| 1,001 | 9 | 55 / 299 / 3,770 | 9,521 / 10,393 / 19,170 | 70,436 / 72,926 / 78,214 |
+
+Over all 3,000 positions:
+
+| | Ainalrami (030bd28) | Gacrux | bbpPairings |
+|---|---|---|---|
+| median | 20 ms | 1.25 s | 2.55 s |
+| p90 | 56 ms | 8.9 s | 54 s |
+| p99 | 0.29 s | 242 s | 72 s |
+| worst | 8.26 s | 328 s | 78 s |
+| above 0.5 s | 11 | 1,879 | 1,804 |
+| all 3,000, in all | 122 s | 22,396 s | 40,620 s |
+
+Per position, Gacrux's time over Ainalrami's has a median of 63 and a
+10th percentile of 9.7; bbpPairings' a median of 141 and a 10th percentile
+of 7.1. Ainalrami was the slower on 36 positions against Gacrux - 35 at 100-101
+players, 26 of them round-2 positions where Gacrux's figure is below
+zero, inside the start-up noise, and one 600-player round 9 - and on 17
+against bbpPairings, all at 100-101 players and 16 of them round 9 (42-128
+ms against bbpPairings' 35-92 ms).
+
+What the table says, and what it does not:
+
+* **One position per row is noisy.** A row's worst is up to 167x its
+  median for Ainalrami (10 of 30 rows at 10x or more, nine of them round 9)
+  and up to 39x for Gacrux (600 and 200 players round 2), against at most
+  2.3x for bbpPairings, so a table of single positions -
+  which is what every earlier pass here and in `validation.md` reported -
+  can land on a slow shape for one engine and not the others. That is why
+  the old 600-player round-2 row looked out of line: on 0a844f7 that one
+  position took this engine 2.93 s where 400 and 1,000 players took 0.02
+  and 0.05 s (the slow spots, below), and on the VM's own benchmark
+  position Gacrux took 48.3 s at 600 players round 2 where its median over
+  100 positions is 1.75 s. The "3x to 46x" figures of the direct bracket
+  pass came from one file per row and are superseded by the medians here.
+* **Gacrux has large round-2 outliers on even fields.** At 400 and 1,000
+  players round 2 its median is already slow (6.7 s and 109 s, against
+  0.8 s and 4.7 s for 401 and 1,001), and at 200 and 600 players its p90
+  is 12x and 34x its median. The odd fields do not show it. Round 2 of an
+  even field puts half the field on zero in one large bracket; whatever
+  sends Gacrux there is on its side, and its answers were still the same.
+* **Ainalrami's worst case is the last round.** 11 positions above 0.5 s,
+  every one round 9; the worst 8.26 s at 1,000 players, where that row's
+  median is 49 ms. Those are the slow tail, addressed below on the same
+  positions. The study has not been re-run on the release that carries
+  that fix; the before and after below are from one core of an i7-10700.
+* **bbpPairings** has the tightest spread of the three (worst within 1.4x
+  of the median on every row from 200 players up) and grows fastest with the field: ~40 ms at
+  100 players, ~2.3-3.5 s at 400, 42-70 s at 1,000.
+
+### The slow tail, before and after
+
+The 30 slowest positions of the study, re-run on one core of an i7-10700
+(`+S 1:1`, median of 5 after one warm call) on 030bd28 and on the slow tail
+pass (v0.35.0), same pairing on every one (the full table and the causes
+are in [the slow tail](#the-slow-tail-2026-09-30)):
+
+| | 030bd28 | v0.35.0 |
+|---|---|---|
+| the 30, in all | 22.5 s | 4.2 s |
+| slowest | 5.24 s | 1.04 s |
+| median of the 30 | 0.261 s | 0.049 s |
+| 100 other positions at random, median / p90 / slowest | 13.3 / 33.1 / 80 ms | 12.4 / 33.3 / 65 ms |
+
+The 8.26 s position of the study (1,000 players, round 9, seed 8,971,000)
+is 5.24 s on the i7 before and 0.031 s after. The slowest that remains is
+a 600-player round 9 at 1.04 s, a top bracket that must float more players
+than its parity; eight of the 30 are unchanged ([what is
+left](#what-is-left)). Positions outside the tail are unchanged.
+
+### Validation alongside the study
+
+* **Against Gacrux on the same VM**, 2026-09-30, engine 030bd28, the
+  `gacrux_only` harness over nine-round tournaments in five size bands -
+  3,500 tournaments of 500-1,000 players, 15,000 of 300-500, 35,000 of
+  150-250, 70,000 of 40-120 and 250,000 of 4-40 (373,500 tournaments):
+  **3,219,728 rounds compared, 3,219,728 identical; 119,064,367 boards
+  with a colour on both sides, 119,064,367 the same colour; 0
+  disagreements, 0 rounds where Gacrux breaks Article 5.2.5.** Every
+  difference the harness saw was on Gacrux's side: 25,761 rounds at 4-40
+  players where Gacrux returned its Error 510 (an exception escaping the
+  checker; counted, dumped and kept out of every rate, as since 0.11.0)
+  and 5 Gacrux crashes, which the harness reports as test failures.
+* **Against v0.33.0** (the release before), the differential corpus:
+  447,152 rounds identical in the default configuration and 44,325 in
+  check mode with every new answer held to the path it replaces - see the
+  slow tail's [How it was checked](#how-it-was-checked).
 
 ## The slow tail (2026-09-30)
 
@@ -598,6 +772,12 @@ and 0.17 s for rounds 2 and 9 of a 600-player open**, from 0.32-7.2 s, and
 the output is byte-identical to v0.33.0's. Gacrux (Python + networkx) was
 faster than this engine on every file but a fresh round 1; it is now 3x
 slower at 209 players and 9-46x slower on the rest.
+
+> **SUPERSEDED as a comparison (2026-09-30).** The 3x and 9-46x are
+> single files, one position each, and a single position can land on a
+> shape that is slow for one engine and not another. The comparison to
+> quote is [the timing study](#the-timing-study-2026-09-30)'s medians over
+> 100 positions per row. The before-and-after on these files stands.
 
 ### Results
 
