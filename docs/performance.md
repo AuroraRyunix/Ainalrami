@@ -1,8 +1,9 @@
 # Performance
 
 First the timing study, which measures all three engines on 3,000 random
-positions and is the figure to quote. Then five passes, newest first: the
-slow tail of the last round, the slow spots the direct bracket left, the
+positions and is the figure to quote. Then six passes, newest first: the
+weighted matcher itself (the blossom fallback), the slow tail of the last
+round, the slow spots the direct bracket left, the
 direct bracket on odd fields, the direct bracket itself, which took the
 pairing past Gacrux on every benchmark file, and the large-field pass
 before it. The passes measure single benchmark positions, one per row;
@@ -178,6 +179,212 @@ left](#what-is-left)). Positions outside the tail are unchanged.
   447,152 rounds identical in the default configuration and 44,325 in
   check mode with every new answer held to the path it replaces - see the
   slow tail's [How it was checked](#how-it-was-checked).
+
+## The blossom fallback (2026-10-01)
+
+`Ainalrami.WeightedMatching` - the primal-dual weighted matcher a bracket
+falls back to when no shortcut answers it, and the one the explanation
+and every forced search of the alternatives run on - is **1.24-1.32x
+faster per call** on the differential corpus and the slow tail, with every
+call held to the previous release's matcher: the same matching, and the
+same duals, blossoms and matches left for the next call. Where the matcher
+is most of the work the whole run follows - the corpus slices below spend
+11-14% less in all, the 30 slowest positions of the timing study 11% - and
+where it is not, the typical position, nothing moves: the matcher was 6%
+of the timing study's positions, and they are unchanged.
+
+### Where the time was
+
+`AINALRAMI_WM_PROFILE=1` (new: `Ainalrami.WeightedMatching.Profile`,
+`tools/matching_profile.exs`) times every `new/3` and `solve/1` and
+attributes it to its caller and the context it ran in. One scheduler, the
+engine before this pass (5bd5195, v0.35.0's matcher):
+
+| where | measured | in the matcher | its largest share |
+|---|---|---|---|
+| small set, 30 tournaments per axis | 70.5 s | 34.9 s (49.5%) | the alternatives' forced searches on the field graph, 124,343 solves of 12-40 vertices: 23.0 s |
+| flags set, 30 per axis | 48.2 s | 27.8 s (57.6%) | the same, 62,950 solves: 19.5 s |
+| large set, 6 per axis | 189 s | 95.4 s (50.4%) | the alternatives' field graphs of 300-780 vertices 27.4 s; local brackets of 50-200, 17.3 s; the pairing's field graph, 17.2 s |
+| early set, 4 per axis | 32.9 s | 19.6 s (59.4%) | the explanation's re-pairing on the field graph, 9.9 s |
+| the study's 30 slowest positions | 4.84 s | 2.18 s (45.0%) | the field graph of 400-1,001 vertices: solves 0.80 s, building it 0.72 s; local brackets of ~89 vertices, 0.54 s |
+| the study's first 10 seeds (300 positions) | 6.04 s | 0.35 s (5.8%) | - |
+
+Every solve the pairing makes runs on weights of 120-680 bits - the packed
+criteria, whose spread is nearly their full width - in a few stages and
+tens to a hundred grow steps. Inside a solve (the captured calls below,
+timed phase by phase): about 40% was walking a vertex's adjacency row as
+it becomes outer (`settle_outer_vertex/2`), 30-40% the starts of stages
+(labels, carrying the caches, the root table), 12-20% blossom formation and
+the cross table, a few percent each the dual steps and the minima. On the
+BEAM side the walks were the cost: an `Enum.reduce/3` over a map is
+`:maps.fold/3` plus two closure calls per element, and those folds alone
+were a fifth to a quarter of the matcher's time.
+
+### What changed
+
+Nothing about the algorithm: the same steps on the same values, in the same
+order wherever an order decides anything. Each change is argued in the
+comments of `Ainalrami.WeightedMatching`.
+
+* **Rows walked as lists.** The row walks (a vertex becoming outer,
+  re-deriving a vertex's best edge, the root table, the cross-table merge,
+  the resumed greedy start) take `:maps.to_list/1` of the row and recurse
+  over it. Where the order matters - of two equal-resistance edges to one
+  blossom the first offered is kept - it is the order `Enum.reduce/3` used:
+  both are `erts_internal:map_next/3` from the same start (also checked on
+  20,000 maps of 1-3,000 keys, built and edited, before relying on it, and
+  by the replay and the lockstep below). Every other walk keeps a least or
+  greatest element under a total order and may take any order.
+* **Fewer lookups per neighbour.** A vertex that is its own top-level
+  blossom is a key of the label map, so its blossom and its label are one
+  match on that map, and `in_blossom` is read only for a vertex inside a
+  non-trivial blossom (held to `in_blossom` on every walk of the replayed
+  calls before the check was taken out); sets are map keys instead of
+  `MapSet`s; the root table keeps each root's constant `dual + shift`
+  beside it.
+* **Work in proportion to what changed.** A stage start re-derives only
+  the labels that can change (a `:free` blossom is matched and stays so); a
+  dual step walks the forest (`state.forest`) instead of every top-level
+  blossom; the sorted list of top-level blossoms (`state.tops`), patched at
+  every structural event for a reader that no longer needed it, is gone;
+  an outer-outer event walks the two tree paths once instead of twice.
+* **The root table built the cheaper way.** At a solve's first stage the
+  table was always built by every non-root deriving its own entry - the
+  test meant to choose was true for any number of roots - a lookup per
+  root for every vertex of the graph. It now compares that with the roots
+  offering along their rows. Both build the same table.
+* **Quadratic list indexing.** Blossom expansion, dissolution, resolution
+  and connector recording read the cycle by index with `Enum.at/2`; they
+  use a tuple, or walk the lists in step.
+* **The greedy start** of `new/3` takes half of a row's heaviest weight
+  (`:lists.max/1`) instead of halving every weight, and with the default
+  duals, on the symmetric adjacency `new/3` builds, finds the tight edges
+  by comparison - `w(u, v) = 2 y_v` and `y_u = y_v` - instead of a bignum
+  sum per edge.
+
+### Results
+
+**The matcher, call by call.** 15,842 calls captured from the four corpus
+sets, the timing study and its slow tail (`AINALRAMI_WM_CAPTURE`),
+replayed through v0.35.0's matcher and this one
+(`tools/matching_replay.exs`, one scheduler, the least of the runs): 12.9
+s -> 9.8 s (**1.32x**), every call the same matching and the same state.
+By site: the pairing's field graph of 257-1,024 vertices 1.41-1.46x,
+building it (`new/3`) 1.3-1.5x, the explanation's field graph 1.35x, the
+alternatives' small field graphs 1.24x, local brackets 1.19-1.22x.
+
+**Blossom time by call site** (the profile above, both builds side by
+side, one scheduler each):
+
+| where | in the matcher, before | after | | everything, before | after |
+|---|---|---|---|---|---|
+| small set | 34.9 s | 26.4 s | 1.32x | 70.5 s | 62.7 s |
+| flags set | 27.8 s | 21.2 s | 1.31x | 48.2 s | 41.9 s |
+| large set | 95.4 s | 77.1 s | 1.24x | 189 s | 168 s |
+| early set | 19.6 s | 15.7 s | 1.25x | 32.9 s | 28.4 s |
+| the 30 slowest positions | 2.18 s | 1.71 s | 1.28x | 4.84 s | 4.44 s |
+
+The largest sites: the alternatives' field graphs of 12-40 vertices 23.0
+-> 17.7 s (small set); their field graphs of ~540 vertices 19.2 -> 16.3 s
+and the local brackets of ~85 vertices 8.3 -> 7.1 s (large set); the slow
+tail's 1,000-player field graph 0.55 -> 0.47 s, and building it 0.51 ->
+0.28 s.
+
+**Whole positions** (`Pairing.pair_next_round/2` at `+S 1:1`, the two
+builds side by side on the same saved positions, every pairing the same):
+
+| | before | after |
+|---|---|---|
+| the study's 3,000 positions, median / p90 / worst (median of 3 runs) | 12.4 / 35.5 / 1,244 ms | 12.5 / 35.1 / 1,054 ms |
+| the 3,000 in all | 58.2 s | 57.2 s |
+| the 30 slowest, in all (median of 5 runs) | 4.58 s | 4.09 s |
+| the 30 slowest: median / worst | 52 / 1,153 ms | 53 / 973 ms |
+
+A typical position spends ~6% of its time in the matcher, so it does not
+move (per-position ratio: median 1.00, 10th-90th percentile 0.91-1.11,
+the runs' spread). The positions that move are the ones the matcher was
+most of: 600 players round 9 1.15 -> 0.97 s, the 400-player round 9 sent
+back to the reference path 0.57 -> 0.46 s, the 1,001-player odd bracket
+whose rest cannot complete 0.22 -> 0.16 s.
+
+### How it was checked
+
+Every check below ran on the committed matcher.
+
+* **Lockstep with v0.35.0** (`tools/matching_lockstep.exs`,
+  `LOCKSTEP_REF=7932e41`), extended for this pass: graphs of up to 400
+  vertices (`LOCKSTEP_LARGE=1`, dense and sparse); a `:wide` shape at the
+  engine's widths (six criteria in 24-110-bit bands, 150-700-bit weights,
+  few distinct values, so optima tie); one-shot `solve/2` on a quarter of
+  the sessions; and what the engine reads off a solved state -
+  `dual_context/1` and `possible_partners/3`, `certificate_hint/1`,
+  `vertex_duals/1` - and `scale/2`. After every call: the same return value
+  and the same duals, matches, blossom structure, connectors and weights.
+  20,000 sessions of 2-128 vertices (441,031 calls) and 5,000 of 2-400
+  (1,636 of them above 128 vertices; 90,258 calls): **every call
+  identical**. With one tie-break flipped (`<=` to `<` in
+  `cross_gather/6`) it failed 8 of the first 50 sessions.
+* **The replay** above: 15,842 real calls, **0 differing**.
+* **Differential against v0.33.0** (`tools/perf_diff.exs`, the baseline
+  logs of the passes below), default configuration: small 370,777 rounds,
+  flags 68,898, large 5,497, early 1,980 - **447,152 rounds, 0 differing,
+  0 missing** (89,665 + 16,964 + 477 + 60 of them with the alternatives
+  fingerprinted). No solve reached the new raise in `grow_with_delta/6`,
+  here or in check mode.
+* **Check mode** (`AINALRAMI_DIRECT=check`, certified mode forced, the
+  first 400 tournaments of every axis of the four sets): 44,325 rounds,
+  identical to v0.33.0 end to end, with every shortcut's answer held to
+  the path it replaces and **0 differences** - 115,491 field-graph
+  brackets, 194,432 walk and small-bracket answers, 411,578 oracle
+  answers, 63,265 pools and 31,055 bye bootstraps (the oracle and pool
+  counts the slow tail's run reported, to the unit). Its 247,638 dual
+  shifts (stages
+  4, 7 and 8) are the matcher's `shift_and_set/3` on every bracket.
+* `mix test`: 859 tests, 0 failures.
+
+### Tried and left out
+
+* **A lazy root table** - re-derive an entry only when a stage start reads
+  it, with an epoch per root so that a vertex leaving the root set and
+  coming back cannot pass an old key for its current one. Exact, and no
+  faster: nearly every entry the eager table re-derives is read at the next
+  stage start.
+* **Building the adjacency by a stable sort** instead of two map updates
+  per edge: slower on the dense field graphs (`:lists.keysort/2` over
+  350,000 half-edges at 600 players), so `adjacency_of/1` is as it was.
+* **Smaller weights.** The weights are 120-680 bits with nearly that
+  spread. The one transformation that keeps every step of the search the
+  same is dividing by a common factor, which the matchers that outlive a
+  bracket give up (`gcd: 1`) because later weights need not share it;
+  compressing the bands or offsetting the weights changes the deltas, and
+  with them which of several equal edges becomes tight first.
+* **Warm-starting duals** from another solve, **sparsifying** edges no
+  optimum uses, **a better initial matching**: each changes the path the
+  search takes - which optimum it returns when several tie, and the duals
+  and blossoms the next call inherits - so none was attempted.
+* **A priority queue for the dual step's minima**: the minima were 3-5% of
+  a solve; a heap's upkeep on every offer would cost more.
+* **A larger heap** (`+hms 4000000`): within 7% on five of the slowest
+  positions; not the engine's to set for its caller's process.
+* **The small-bracket thresholds** (`@direct_small_max` 12,
+  `@direct_small_fallback_max` 16). The matcher's remaining small local
+  solves come from brackets the direct path excludes by design (soft
+  pairs, `AINALRAMI_NOFAST`), which moving them would not reach. Left as
+  they are, as is the field size above which the certified shortcuts run.
+
+### Reproducing
+
+    # where the matcher's time goes, by call site (one scheduler)
+    DIFF_LIMIT=30 MIX_ENV=test elixir --erl "+S 1" -S mix run tools/matching_profile.exs corpus small OUT
+    MIX_ENV=test elixir --erl "+S 1" -S mix run tools/matching_profile.exs positions 1:10
+
+    # capture the calls, and replay them through v0.35.0's matcher
+    AINALRAMI_WM_CAPTURE=calls.bin MIX_ENV=test mix run tools/matching_profile.exs positions 1:3
+    REPLAY_FILES=calls.bin REPLAY_REF=7932e41 MIX_ENV=test mix run tools/matching_replay.exs
+
+    # lockstep with v0.35.0, small and large graphs
+    LOCKSTEP_SESSIONS=20000 LOCKSTEP_REF=7932e41 MIX_ENV=test mix run tools/matching_lockstep.exs
+    LOCKSTEP_LARGE=1 LOCKSTEP_SESSIONS=5000 LOCKSTEP_REF=7932e41 MIX_ENV=test mix run tools/matching_lockstep.exs
 
 ## The slow tail (2026-09-30)
 

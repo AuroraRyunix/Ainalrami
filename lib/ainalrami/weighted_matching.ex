@@ -310,27 +310,16 @@ defmodule Ainalrami.WeightedMatching do
       _ ->
         {dual, bm} =
           Enum.reduce(fresh, {state.dual, state.blossom_match}, fn v, {dual, bm} ->
-            row = Map.get(state.weight, v, %{})
-
-            yv =
-              Enum.reduce(row, 0, fn {u, w2}, acc ->
-                need = w2 - Map.fetch!(dual, u)
-                if need > acc, do: need, else: acc
-              end)
-
+            # Both walks of the row keep a maximum or a least vertex, so the
+            # row's order does not matter.
+            row = :maps.to_list(Map.get(state.weight, v, %{}))
+            yv = feasible_dual(row, dual, 0)
             dual = Map.put(dual, v, yv)
 
             if Map.has_key?(bm, v) do
               {dual, bm}
             else
-              partner =
-                Enum.reduce(row, nil, fn {u, w2}, best ->
-                  if yv + Map.fetch!(dual, u) == w2 and
-                       Map.fetch!(state.in_blossom, u) == u and
-                       not Map.has_key?(bm, u) and (best == nil or u < best),
-                     do: u,
-                     else: best
-                end)
+              partner = resume_partner(row, yv, dual, state.in_blossom, bm, nil)
 
               case partner do
                 nil -> {dual, bm}
@@ -341,6 +330,25 @@ defmodule Ainalrami.WeightedMatching do
 
         %{state | dual: dual, blossom_match: bm}
     end
+  end
+
+  # `max(2w - y_u)` over the row, and 0.
+  defp feasible_dual([], _dual, acc), do: acc
+
+  defp feasible_dual([{u, w2} | rest], dual, acc) do
+    need = w2 - :erlang.map_get(u, dual)
+    feasible_dual(rest, dual, if(need > acc, do: need, else: acc))
+  end
+
+  # The lowest-indexed neighbour on a tight edge that is its own top-level
+  # blossom and exposed.
+  defp resume_partner([], _yv, _dual, _ib, _bm, best), do: best
+
+  defp resume_partner([{u, w2} | rest], yv, dual, ib, bm, best) do
+    if (best == nil or u < best) and not is_map_key(bm, u) and :erlang.map_get(u, ib) == u and
+         yv + :erlang.map_get(u, dual) == w2,
+       do: resume_partner(rest, yv, dual, ib, bm, u),
+       else: resume_partner(rest, yv, dual, ib, bm, best)
   end
 
   # bbpPairings' `computeMatching()` prologue (graph.cpp:793-845): "Make
@@ -367,7 +375,7 @@ defmodule Ainalrami.WeightedMatching do
   # "Every exposed blossom" is not "every exposed TOP-LEVEL blossom", and
   # the difference is the whole of `descend_to_adjustable/3`. The -2 has to
   # come from a blossom that HAS 2 to give, and a top-level one need not:
-  # `form_blossom/3` creates a blossom at dual 0, and it only gains
+  # `form_blossom/5` creates a blossom at dual 0, and it only gains
   # `2 * delta` while it is labelled `:outer`, so one formed around a tree
   # root whose stage ends on an immediately-following delta-0 augmentation
   # finishes the solve matched and still at 0. `set_weight/4` then prepares
@@ -394,7 +402,7 @@ defmodule Ainalrami.WeightedMatching do
     # falling back to `in_blossom` here costs one walk and changes nothing.
     top =
       if map_size(state.label) == 0,
-        do: state.in_blossom |> Map.values() |> Enum.uniq(),
+        do: :lists.usort(Map.values(state.in_blossom)),
         else: top_blossoms(state)
 
     Enum.reduce(top, state, fn b, state ->
@@ -600,14 +608,14 @@ defmodule Ainalrami.WeightedMatching do
         parent_of: %{},
         connectors: %{},
         label: %{},
-        tops: [],
+        forest: %{},
         label_edge: %{},
         best_outer: %{},
         cross: cross_empty(),
         shift_outer: 0,
         shift_cross: 0,
         min_outer: nil,
-        roots: MapSet.new(),
+        roots: %{},
         root_min: %{}
     }
   end
@@ -1044,6 +1052,9 @@ defmodule Ainalrami.WeightedMatching do
     # Every vertex of `b` absorbs the blossom's dual. `blossom_vertices/2`
     # is read BEFORE the structure changes.
     all_vertices = blossom_vertices(state, b)
+    # Positional reads of the cycle by index: a tuple, where `Enum.at/2` on
+    # the list was a walk per read (quadratic in the cycle's length).
+    rotated_t = List.to_tuple(rotated)
 
     dual =
       Enum.reduce(all_vertices, state.dual, fn x, d -> Map.update!(d, x, &(&1 + half_dual)) end)
@@ -1065,11 +1076,11 @@ defmodule Ainalrami.WeightedMatching do
               {base_v, partner}
 
             rem(i, 2) == 1 ->
-              {out_a, in_b} = connector(state, child, Enum.at(rotated, i + 1))
+              {out_a, in_b} = connector(state, child, elem(rotated_t, i + 1))
               {out_a, in_b}
 
             true ->
-              {out_a, in_b} = connector(state, Enum.at(rotated, i - 1), child)
+              {out_a, in_b} = connector(state, elem(rotated_t, i - 1), child)
               {in_b, out_a}
           end
 
@@ -1093,7 +1104,6 @@ defmodule Ainalrami.WeightedMatching do
         vertices_of: Map.delete(state.vertices_of, b),
         blossom_match: Map.delete(state.blossom_match, b),
         label: Map.delete(state.label, b),
-        tops: tops_split(state.tops, b, children),
         label_edge: Map.delete(state.label_edge, b)
     }
   end
@@ -1189,7 +1199,7 @@ defmodule Ainalrami.WeightedMatching do
           end)
         end
 
-    {dual, blossom_match} = greedy_start(n, weights, duals)
+    {dual, blossom_match} = greedy_start(n, weights, duals, adjacency == nil)
 
     state = %{
       n: n,
@@ -1238,11 +1248,13 @@ defmodule Ainalrami.WeightedMatching do
       # anything past the trivial one-edge case.
       blossom_match: blossom_match,
       # Connector vertex pair for every cyclically-adjacent pair of
-      # children ever formed - see `form_blossom/3`'s doc.
+      # children ever formed - see `form_blossom/5`'s doc.
       connectors: %{},
       # Per TOP-LEVEL blossom only.
       label: %{},
-      tops: [],
+      # The top-level blossoms labelled `:outer` or `:inner`, with that
+      # label: the part of `label` a dual step moves (`apply_delta/2`).
+      forest: %{},
       # {labeling_vertex, labeled_vertex}: the edge that connected this
       # INNER blossom to its OUTER parent when the tree grew into it.
       label_edge: %{},
@@ -1253,7 +1265,7 @@ defmodule Ainalrami.WeightedMatching do
       shift_cross: 0,
       min_outer: nil,
       # The root-edge table - see its own section.
-      roots: MapSet.new(),
+      roots: %{},
       root_min: %{},
       next_blossom_id: n
     }
@@ -1327,15 +1339,29 @@ defmodule Ainalrami.WeightedMatching do
   # matching returned may differ from the cold search's -- which was
   # itself decided by map internals, not by anything canonical -- and the
   # corpus is the arbiter of whether that matters.
-  defp greedy_start(n, weights, given) do
+  #
+  # `symmetric?` says the weights came from `adjacency_of/1`, where every
+  # edge sits in both its endpoints' rows at one weight. With the default
+  # duals that makes tightness a pair of comparisons: `y_v` is half of v's
+  # heaviest edge and `y_u` half of u's, each at least half of any `w(u,
+  # v)`, so `y_v + y_u == w(u, v)` exactly when `w(u, v)` is the heaviest
+  # edge of both, i.e. `w(u, v) == 2 y_v` and `y_u == y_v` - no bignum sum
+  # per edge. Given duals, or a caller's adjacency, take the sum.
+  defp greedy_start(n, weights, given, symmetric?) do
     dual =
       case given do
         nil ->
+          # Half the heaviest edge: `div(max(w2), 2)` is `max(div(w2, 2))`,
+          # `div/2` being monotone, and an empty or non-positive row gives 0
+          # as the fold from 0 did.
           Map.new(0..(n - 1)//1, fn v ->
-            {v,
-             weights
-             |> Map.get(v, %{})
-             |> Enum.reduce(0, fn {_u, w2}, best -> max(best, div(w2, 2)) end)}
+            case weights do
+              %{^v => row} when map_size(row) > 0 ->
+                {v, max(0, div(:lists.max(:maps.values(row)), 2))}
+
+              _ ->
+                {v, 0}
+            end
           end)
 
         given ->
@@ -1352,31 +1378,53 @@ defmodule Ainalrami.WeightedMatching do
 
     if given != nil, do: check_duals!(weights, dual_t)
 
+    fast? = symmetric? and given == nil
+
     blossom_match =
       Enum.reduce(0..(n - 1)//1, %{}, fn v, bm ->
         yv = elem(dual_t, v)
 
-        if Map.has_key?(bm, v) do
-          bm
-        else
-          partner =
-            weights
-            |> Map.get(v, %{})
-            |> Enum.reduce(nil, fn {u, w2}, best ->
-              if yv + elem(dual_t, u) == w2 and not Map.has_key?(bm, u) and
-                   (best == nil or u < best),
-                 do: u,
-                 else: best
-            end)
+        partner =
+          case {bm, weights} do
+            {%{^v => _}, _} ->
+              nil
 
-          case partner do
-            nil -> bm
-            u -> bm |> Map.put(v, u) |> Map.put(u, v)
+            {_, %{^v => row}} when fast? ->
+              tight_partner_fast(:maps.to_list(row), 2 * yv, yv, dual_t, bm, nil)
+
+            {_, %{^v => row}} ->
+              tight_partner(:maps.to_list(row), yv, dual_t, bm, nil)
+
+            _ ->
+              nil
           end
+
+        case partner do
+          nil -> bm
+          u -> bm |> Map.put(v, u) |> Map.put(u, v)
         end
       end)
 
     {dual, blossom_match}
+  end
+
+  # The lowest-indexed exposed neighbour on a tight edge (the least of a
+  # set: the row's order does not matter).
+  defp tight_partner([], _yv, _dual_t, _bm, best), do: best
+
+  defp tight_partner([{u, w2} | rest], yv, dual_t, bm, best) do
+    if (best == nil or u < best) and not is_map_key(bm, u) and yv + elem(dual_t, u) == w2,
+      do: tight_partner(rest, yv, dual_t, bm, u),
+      else: tight_partner(rest, yv, dual_t, bm, best)
+  end
+
+  defp tight_partner_fast([], _top, _yv, _dual_t, _bm, best), do: best
+
+  defp tight_partner_fast([{u, w2} | rest], top, yv, dual_t, bm, best) do
+    if w2 == top and (best == nil or u < best) and not is_map_key(bm, u) and
+         elem(dual_t, u) == yv,
+       do: tight_partner_fast(rest, top, yv, dual_t, bm, u),
+       else: tight_partner_fast(rest, top, yv, dual_t, bm, best)
   end
 
   # `duals[u] + duals[v] >= 2 * w(u, v)` on every edge -- the precondition
@@ -1448,25 +1496,39 @@ defmodule Ainalrami.WeightedMatching do
 
   defp init_labels(state) do
     # The set of top-level blossoms is exactly the previous stage's label
-    # KEYS: `form_blossom/3` and `expand_blossom/2` keep that key set
+    # KEYS: `form_blossom/5` and `expand_blossom/2` keep that key set
     # current, so it survives the boundary even though the label VALUES do
     # not. Re-deriving it from `in_blossom` -- as this used to, with a
     # `Map.values |> Enum.uniq` over every vertex -- was a full O(V) walk
     # per stage for information already in hand. The very first stage has
     # no labels yet and falls back to `in_blossom`.
-    top =
-      if map_size(state.label) == 0,
-        do: state.in_blossom |> Map.values() |> Enum.uniq(),
-        else: Map.keys(state.label)
+    #
+    # A blossom labelled `:free` at the end of a stage is matched - every
+    # writer of the label gives `:free` only to a matched blossom
+    # (`init_labels/1` itself, the other arc of `expand_blossom/2`) - and
+    # stays matched, since an augmentation only walks the forest and a
+    # zero blossom; so its label at the next stage is `:free` again, and
+    # only the rest (the forest, the zero blossoms) are re-derived. Same
+    # labels, from one pass that reads three maps only for those.
+    bm = state.blossom_match
+    base = state.base
+    dual = state.dual
+
+    relabel = fn b ->
+      cond do
+        is_map_key(bm, b) -> :free
+        :erlang.map_get(:erlang.map_get(b, base), dual) > 0 -> :outer
+        true -> :zero
+      end
+    end
 
     label =
-      Enum.reduce(top, %{}, fn b, acc ->
-        cond do
-          matched?(state, b) -> Map.put(acc, b, :free)
-          dual_of(state, base_vertex(state, b)) > 0 -> Map.put(acc, b, :outer)
-          true -> Map.put(acc, b, :zero)
-        end
-      end)
+      if map_size(state.label) == 0 do
+        top = :lists.usort(Map.values(state.in_blossom))
+        :maps.from_list(for b <- top, do: {b, relabel.(b)})
+      else
+        :maps.map(fn b, l -> if l == :free, do: :free, else: relabel.(b) end, state.label)
+      end
 
     # A new stage relabels everything at once, which is the one moment the
     # outer set can SHRINK. The delta-scan caches are rebuilt from scratch at
@@ -1475,7 +1537,12 @@ defmodule Ainalrami.WeightedMatching do
     # the whole reason maintaining them incrementally within a stage is
     # sound; see the "delta-scan caches" section.
     carry_caches(
-      %{state | label: label, label_edge: %{}, tops: Enum.sort(top)},
+      %{
+        state
+        | label: label,
+          forest: :maps.filter(fn _b, l -> l == :outer end, label),
+          label_edge: %{}
+      },
       state.label
     )
   end
@@ -1489,13 +1556,12 @@ defmodule Ainalrami.WeightedMatching do
   # consumer an order that is a property of the runtime rather than of the
   # graph.
   #
-  # Most consumers do not care: `apply_delta/2`, `even_up_exposed_duals/1`
-  # and `resolve_all_matching/1` are order-independent folds - each visits
-  # every blossom and the edits commute. The one that does is
-  # `min_inner_blossom_dual/1`, which takes `Enum.min_by/2` over the inner
-  # blossoms' duals - and `Enum.min_by/2` returns the FIRST minimum. With
-  # the list sorted, an equal-dual tie there resolves to the lowest blossom
-  # id; without it, to whichever the map happened to yield.
+  # Its consumers do not care: `even_up_exposed_duals/1` and
+  # `resolve_all_matching/1` are order-independent folds - each visits
+  # every blossom and the edits commute. (`min_inner_blossom_dual/1`, which
+  # once took the FIRST least dual over this list, now takes the least
+  # `{dual, id}`, the same tie-break without the list; `apply_delta/2`
+  # walks the label map directly.)
   #
   # The caches are no longer in that group. `best_outer` and the cross
   # table are keyed by vertex and blossom pair and do their own canonical
@@ -1513,36 +1579,21 @@ defmodule Ainalrami.WeightedMatching do
   # engine's determinism should rest on.
   defp top_blossoms(state) do
     # The label map's keys ARE the top-level blossoms: `init_labels/1`
-    # populates it for every one at a stage boundary, `form_blossom/3` adds
-    # the new blossom and removes its children, `expand_blossom/2` does the
-    # reverse. Reading it is O(top-level count); deriving the same set from
-    # `in_blossom` -- as this used to -- was O(V) per call plus a sort, and
-    # this is called four thousand times per solve on a 209-player field.
+    # populates it for every one at a stage boundary, `form_blossom/5` adds
+    # the new blossom and removes its children, `expand_blossom/2` and
+    # `dissolve_one/3` do the reverse. Deriving the same set from
+    # `in_blossom` -- as this once did -- was O(V) per call.
     #
-    # Still SORTED, for the reason the comment above gives:
-    # `min_inner_blossom_dual/1` takes the first minimum, and Erlang's map
-    # order is not stable across the 32-key flatmap-to-hashmap transition.
-    #
-    # And CACHED: `state.tops` is that sorted list, rebuilt by `init_labels/1`
-    # once per stage and patched in place by the four structural events
-    # (`tops_formed/3`, `tops_split/3`). Sorting the keys on every call was
-    # two to three sorts per delta step -- 0.8 s of a 400-player round.
-    state.tops
+    # This was once called on every delta step, and so kept as a sorted
+    # list patched at every structural event (`state.tops`). Nothing on a
+    # delta step reads it any more - `apply_delta/2` walks the label map,
+    # `min_inner_blossom_dual/1` the blossoms, each with its own
+    # order-independent rule - and its readers left, `resolve_all_matching/1`
+    # (once a solve) and `even_up_exposed_duals/1` (only with labels, which
+    # it never has), are order-independent folds, so the list is sorted
+    # here, once per call, rather than kept.
+    state.label |> Map.keys() |> Enum.sort()
   end
-
-  # `new_id` replaces `children` at the top level. Ids are allocated in
-  # increasing order, so the new one belongs at the end.
-  defp tops_formed(tops, children, new_id), do: (tops -- children) ++ [new_id]
-
-  # `children` replace `b` at the top level (expansion, dissolution).
-  defp tops_split(tops, b, children) do
-    merge_sorted(List.delete(tops, b), Enum.sort(children))
-  end
-
-  defp merge_sorted([], ys), do: ys
-  defp merge_sorted(xs, []), do: xs
-  defp merge_sorted([x | xs], [y | _] = ys) when x <= y, do: [x | merge_sorted(xs, ys)]
-  defp merge_sorted(xs, [y | ys]), do: [y | merge_sorted(xs, ys)]
 
   defp matched?(state, b), do: Map.has_key?(state.blossom_match, b)
   defp base_vertex(state, b), do: Map.fetch!(state.base, b)
@@ -1594,10 +1645,33 @@ defmodule Ainalrami.WeightedMatching do
     end
   end
 
+  # The least `{biased dual, vertex}` over the outer blossoms' vertices -
+  # what offering each in turn to an empty minimum reaches - written into
+  # the state once.
   defp recompute_min_outer(state, outer_blossoms) do
-    outer_blossoms
-    |> Enum.flat_map(&blossom_vertices(state, &1))
-    |> Enum.reduce(%{state | min_outer: nil}, &offer_min_outer(&2, &1))
+    duals = state.dual
+    shift = state.shift_outer
+
+    least =
+      Enum.reduce(outer_blossoms, nil, fn b, acc ->
+        least_outer_dual(blossom_vertices(state, b), duals, shift, acc)
+      end)
+
+    %{state | min_outer: least}
+  end
+
+  defp least_outer_dual([], _duals, _shift, acc), do: acc
+
+  defp least_outer_dual([v | rest], duals, shift, acc) do
+    biased = :erlang.map_get(v, duals) + shift
+
+    acc =
+      case acc do
+        {b0, v0} when b0 < biased or (b0 == biased and v0 < v) -> acc
+        _ -> {biased, v}
+      end
+
+    least_outer_dual(rest, duals, shift, acc)
   end
 
   # ------------------------------------------------------- the main loop
@@ -1652,20 +1726,21 @@ defmodule Ainalrami.WeightedMatching do
     if candidates == [] or is_nil(min_outer) do
       {:done, state}
     else
-      grow_with_delta(state, min_outer, min_free_outer, free_outer_vertex, min_outer_outer,
-        outer_pair: outer_pair,
-        min_inner_blossom: min_inner_blossom,
-        inner_blossom_id: inner_blossom_id,
-        delta: Enum.min(candidates)
+      # The rest of the step as one tuple: a keyword list here was four
+      # `Access` lookups on every delta step.
+      grow_with_delta(
+        state,
+        min_outer,
+        min_free_outer,
+        free_outer_vertex,
+        min_outer_outer,
+        {outer_pair, min_inner_blossom, inner_blossom_id, Enum.min(candidates)}
       )
     end
   end
 
-  defp grow_with_delta(state, min_outer, min_free_outer, free_outer_vertex, min_outer_outer, opts) do
-    outer_pair = opts[:outer_pair]
-    min_inner_blossom = opts[:min_inner_blossom]
-    inner_blossom_id = opts[:inner_blossom_id]
-    delta = opts[:delta]
+  defp grow_with_delta(state, min_outer, min_free_outer, free_outer_vertex, min_outer_outer, step) do
+    {outer_pair, min_inner_blossom, inner_blossom_id, delta} = step
 
     state = apply_delta(state, delta)
 
@@ -1751,6 +1826,7 @@ defmodule Ainalrami.WeightedMatching do
       state = %{
         state
         | label: state.label |> Map.put(v_blossom, :inner) |> Map.put(matched_blossom, :outer),
+          forest: state.forest |> Map.put(v_blossom, :inner) |> Map.put(matched_blossom, :outer),
           label_edge: Map.put(state.label_edge, v_blossom, {outer_partner, v})
       }
 
@@ -1767,14 +1843,19 @@ defmodule Ainalrami.WeightedMatching do
   defp handle_outer_outer_tight(state, {v0, v1}) do
     b0 = Map.fetch!(state.in_blossom, v0)
     b1 = Map.fetch!(state.in_blossom, v1)
+    # Both ends are outer, so each one's walk to its root is
+    # `blossom_ids_to_root/2` (its tree root is the last id) - walked once
+    # here and handed to `form_blossom/5`, which needs the same two paths.
+    ids0 = blossom_ids_to_root(state, b0)
+    ids1 = blossom_ids_to_root(state, b1)
 
-    if tree_root(state, b0) == tree_root(state, b1) do
+    if List.last(ids0) == List.last(ids1) do
       # Formation is the one event that INVALIDATES rather than extends: an
       # edge between two vertices now inside the same blossom has stopped
       # being a cross edge, and any inner child has just become outer. Both
       # are covered by recomputing every vertex of the new blossom.
       # Which children were INNER before formation is knowable only now,
-      # before `form_blossom/3` relabels everything: their vertices have no
+      # before `form_blossom/5` relabels everything: their vertices have no
       # cache entries and made no offers, so they need the full treatment.
       # The OUTER children's vertices already hold valid entries and have
       # already offered themselves; formation can only INVALIDATE one of
@@ -1785,7 +1866,7 @@ defmodule Ainalrami.WeightedMatching do
       # for the LABEL_INNER children, and a min over existing tables for the
       # rest. Re-settling every vertex of every new blossom -- as this did --
       # was 479,000 row walks per 209-player round, 78% of it.
-      {state, children, formerly_inner} = form_blossom(state, v0, v1)
+      {state, children, formerly_inner} = form_blossom(state, v0, v1, ids0, ids1)
       new_b = Map.fetch!(state.in_blossom, v0)
       {:grow, refresh_after_formation(state, new_b, children, formerly_inner)}
     else
@@ -1795,7 +1876,9 @@ defmodule Ainalrami.WeightedMatching do
     end
   end
 
-  # The tree root reachable from blossom `b` by walking upward.
+  # (The tree root reachable from an outer blossom is the last id of its
+  # `blossom_ids_to_root/2` walk; `handle_outer_outer_tight/2` compares the
+  # two ends' roots that way. The walk's shape, in full:)
   #
   # This is the one place the earlier version of this port was
   # structurally wrong, not just off by a constant: an OUTER blossom
@@ -1814,12 +1897,6 @@ defmodule Ainalrami.WeightedMatching do
   # `labelingVertex`, four fields read in that order each step): from a
   # matched OUTER blossom, follow base -> its mate -> the mate's INNER
   # blossom -> that blossom's OWN label edge -> continue from there.
-  defp tree_root(state, b) do
-    case Map.get(state.label, b) do
-      label when label in [:outer, :inner] -> List.last(blossom_ids_to_root(state, b))
-      _ -> nil
-    end
-  end
 
   ## ------------------------------------------------- delta-scan caches
   #
@@ -1901,28 +1978,33 @@ defmodule Ainalrami.WeightedMatching do
     if map_size(prev_label) == 0 do
       rebuild_caches(state)
     else
-      outer_blossoms = for {b, :outer} <- state.label, into: MapSet.new(), do: b
-      state = recompute_min_outer(state, outer_blossoms)
+      # A set as `%{blossom => true}`: membership is a map match.
+      outer_list = for {b, :outer} <- state.label, do: b
+      outer_blossoms = Map.from_keys(outer_list, true)
+      state = recompute_min_outer(state, outer_list)
       cross = cross_retain(state.cross, outer_blossoms)
 
       in_blossom = state.in_blossom
-      outer_vertex? = fn v -> MapSet.member?(outer_blossoms, Map.fetch!(in_blossom, v)) end
+      labels = state.label
 
       kept =
-        state.best_outer
-        |> Enum.filter(fn {v, {_r, partner}} ->
-          outer_vertex?.(partner) and not outer_vertex?.(v)
-        end)
-        |> Map.new()
+        :maps.filter(
+          fn v, {_r, partner} ->
+            label_of(partner, labels, in_blossom) == :outer and
+              label_of(v, labels, in_blossom) != :outer
+          end,
+          state.best_outer
+        )
 
-      outer_vertices = Enum.flat_map(outer_blossoms, &blossom_vertices(state, &1))
+      outer_vertices = Enum.flat_map(outer_list, &blossom_vertices(state, &1))
       state = %{state | cross: cross, best_outer: kept} |> carry_roots(outer_vertices)
 
       needing =
-        state.label
-        |> Enum.filter(fn {_b, l} -> l in [:free, :zero] end)
-        |> Enum.flat_map(fn {b, _} -> blossom_vertices(state, b) end)
-        |> Enum.reject(&Map.has_key?(kept, &1))
+        for {b, l} <- state.label,
+            l == :free or l == :zero,
+            v <- blossom_vertices(state, b),
+            not is_map_key(kept, v),
+            do: v
 
       # The needing vertices' entries come straight off `root_min`, which is
       # exactly their least-resistance edge to the outer set - see
@@ -1935,7 +2017,7 @@ defmodule Ainalrami.WeightedMatching do
       best_outer =
         Enum.reduce(needing, state.best_outer, fn v, bo ->
           case state.root_min do
-            %{^v => {key, x}} -> Map.put(bo, v, {key + Map.fetch!(duals, v), x})
+            %{^v => {key, x}} -> Map.put(bo, v, {key + :erlang.map_get(v, duals), x})
             _ -> bo
           end
         end)
@@ -1988,24 +2070,32 @@ defmodule Ainalrami.WeightedMatching do
   # weights the keys were computed from.
 
   # The root table at a later stage start. `roots` is the new root set.
+  #
+  # The root set is a map from each root to its constant `dual[x] +
+  # shift_outer`: membership is a map match where a `MapSet` was a call
+  # into `:sets` per test, and the constant comes with it rather than from
+  # a dual lookup and an addition per key. Nothing here depends on the
+  # order a set or a row is visited in - each re-derivation and each offer
+  # keeps the least `{key, x}` - so the walks take whatever order is
+  # cheapest.
   defp carry_roots(state, roots) do
-    root_set = MapSet.new(roots)
-    arrived = Enum.reject(roots, &MapSet.member?(state.roots, &1))
-    left = MapSet.difference(state.roots, root_set)
+    root_set = root_constants(state, roots)
+    old = state.roots
+    arrived = Enum.reject(roots, &is_map_key(old, &1))
+    left = Map.drop(old, roots)
     root_min = Map.drop(state.root_min, arrived)
 
     # Re-derived: the vertices that are no longer roots, and every non-root
     # whose least root was one of them. A re-derivation sees the whole
     # current root set, arrivals included.
     rescan =
-      if MapSet.size(left) == 0 do
+      if map_size(left) == 0 do
         []
       else
-        MapSet.to_list(left) ++
-          for({u, {_key, x}} <- root_min, MapSet.member?(left, x), do: u)
+        Map.keys(left) ++ for({u, {_key, x}} <- root_min, is_map_key(left, x), do: u)
       end
 
-    roots_list = MapSet.to_list(root_set)
+    roots_list = :maps.to_list(root_set)
 
     root_min =
       Enum.reduce(rescan, root_min, fn u, rm ->
@@ -2015,7 +2105,11 @@ defmodule Ainalrami.WeightedMatching do
         end
       end)
 
-    root_min = Enum.reduce(arrived, root_min, &root_offers(state, &2, &1, root_set))
+    root_min =
+      Enum.reduce(arrived, root_min, fn x, rm ->
+        root_offers(state, rm, {x, :erlang.map_get(x, root_set)}, root_set)
+      end)
+
     %{state | root_min: root_min, roots: root_set}
   end
 
@@ -2023,13 +2117,29 @@ defmodule Ainalrami.WeightedMatching do
   # vertex is a root. Whichever side is cheaper does the walking - the
   # roots offering along their rows, or each non-root deriving its own.
   defp build_roots(state, roots) do
-    root_set = MapSet.new(roots)
-    roots_list = MapSet.to_list(root_set)
+    root_set = root_constants(state, roots)
+    roots_list = :maps.to_list(root_set)
     r = length(roots_list)
-    non_roots = for v <- 0..(state.n - 1)//1, not MapSet.member?(root_set, v), do: v
+    non_roots = for v <- 0..(state.n - 1)//1, not is_map_key(root_set, v), do: v
+
+    # The two walks build the same table, so the choice is cost alone:
+    # every non-root deriving its own (at most `r` lookups each), or every
+    # root offering along its row. This compared `(n - r) * min(r, n)` with
+    # `r * n`, which is true for any `r > 0`, so the non-roots always
+    # derived - a lookup per root for every vertex of the graph, where the
+    # few roots of a resumed solve have far fewer edges between them.
+    weight = state.weight
+
+    push =
+      Enum.reduce(roots_list, 0, fn {x, _}, acc ->
+        case weight do
+          %{^x => row} -> acc + map_size(row)
+          _ -> acc
+        end
+      end)
 
     root_min =
-      if length(non_roots) * min(r, state.n) < r * state.n do
+      if length(non_roots) * r < push do
         Enum.reduce(non_roots, %{}, fn u, rm ->
           case least_root(state, u, root_set, roots_list) do
             nil -> rm
@@ -2043,27 +2153,37 @@ defmodule Ainalrami.WeightedMatching do
     %{state | root_min: root_min, roots: root_set}
   end
 
+  defp root_constants(state, roots) do
+    duals = state.dual
+    shift = state.shift_outer
+    :maps.from_list(for x <- roots, do: {x, :erlang.map_get(x, duals) + shift})
+  end
+
   # Root `x` offers itself to every non-root neighbour.
-  defp root_offers(state, root_min, x, roots) do
-    case Map.get(state.weight, x) do
-      nil ->
+  defp root_offers(state, root_min, {x, dx}, roots) do
+    case state.weight do
+      %{^x => row} ->
+        offer_roots(:maps.to_list(row), x, dx, roots, root_min)
+
+      _ ->
         root_min
+    end
+  end
 
-      row ->
-        dx = Map.fetch!(state.dual, x) + state.shift_outer
+  defp offer_roots([], _x, _dx, _roots, rm), do: rm
 
-        Enum.reduce(row, root_min, fn {u, w}, rm ->
-          if MapSet.member?(roots, u) do
-            rm
-          else
-            key = dx - w
+  defp offer_roots([{u, w} | rest], x, dx, roots, rm) do
+    case roots do
+      %{^u => _} ->
+        offer_roots(rest, x, dx, roots, rm)
 
-            case rm do
-              %{^u => {k0, x0}} when {k0, x0} <= {key, x} -> rm
-              _ -> Map.put(rm, u, {key, x})
-            end
-          end
-        end)
+      _ ->
+        key = dx - w
+
+        case rm do
+          %{^u => {k0, x0}} when {k0, x0} <= {key, x} -> offer_roots(rest, x, dx, roots, rm)
+          _ -> offer_roots(rest, x, dx, roots, Map.put(rm, u, {key, x}))
+        end
     end
   end
 
@@ -2072,32 +2192,38 @@ defmodule Ainalrami.WeightedMatching do
   # one up in the row, whichever is shorter. The least of a set does not
   # depend on the order it is visited in.
   defp least_root(state, u, roots, roots_list) do
-    case Map.get(state.weight, u) do
-      nil ->
+    case state.weight do
+      %{^u => row} ->
+        if map_size(roots) < map_size(row),
+          do: least_root_by_roots(roots_list, row, nil),
+          else: least_root_by_row(:maps.to_list(row), roots, nil)
+
+      _ ->
         nil
-
-      row ->
-        duals = state.dual
-        shift = state.shift_outer
-
-        consider = fn x, w, best ->
-          candidate = {Map.fetch!(duals, x) + shift - w, x}
-          if best == nil or candidate < best, do: candidate, else: best
-        end
-
-        if MapSet.size(roots) < map_size(row) do
-          Enum.reduce(roots_list, nil, fn x, best ->
-            case row do
-              %{^x => w} -> consider.(x, w, best)
-              _ -> best
-            end
-          end)
-        else
-          Enum.reduce(row, nil, fn {x, w}, best ->
-            if MapSet.member?(roots, x), do: consider.(x, w, best), else: best
-          end)
-        end
     end
+  end
+
+  defp least_root_by_roots([], _row, best), do: best
+
+  defp least_root_by_roots([{x, c} | rest], row, best) do
+    case row do
+      %{^x => w} -> least_root_by_roots(rest, row, lower_root(x, c - w, best))
+      _ -> least_root_by_roots(rest, row, best)
+    end
+  end
+
+  defp least_root_by_row([], _roots, best), do: best
+
+  defp least_root_by_row([{x, w} | rest], roots, best) do
+    case roots do
+      %{^x => c} -> least_root_by_row(rest, roots, lower_root(x, c - w, best))
+      _ -> least_root_by_row(rest, roots, best)
+    end
+  end
+
+  defp lower_root(x, key, best) do
+    candidate = {key, x}
+    if best == nil or candidate < best, do: candidate, else: best
   end
 
   # Every vertex's entry, from nothing: O(|outer| x V), at the first stage
@@ -2158,7 +2284,7 @@ defmodule Ainalrami.WeightedMatching do
   #     status is what it depends on. Nothing to offer: it is not outer.
   #
   # Same maps as before, reached with roughly a third of the row visits.
-  # After `form_blossom/3`: the new blossom `b` is outer, built from
+  # After `form_blossom/5`: the new blossom `b` is outer, built from
   # `children`, of which the `formerly_inner` vertices had no presence in
   # any cache. This is bbpPairings' `initializeFromChildren`.
   #
@@ -2178,7 +2304,7 @@ defmodule Ainalrami.WeightedMatching do
     state = cross_merge(state, b, children)
 
     Enum.reduce(blossom_vertices(state, b), state, fn v, state ->
-      if MapSet.member?(formerly_inner, v),
+      if is_map_key(formerly_inner, v),
         do: settle_outer_vertex(state, v),
         else: %{state | best_outer: Map.delete(state.best_outer, v)}
     end)
@@ -2241,23 +2367,92 @@ defmodule Ainalrami.WeightedMatching do
         # `own` is `blossom`'s row as the walk started.
         own = cross_row(cross, blossom)
 
+        #
+        # The row is walked as `:maps.to_list/1` gives it, which is the order
+        # `Enum.reduce/3` on the map (`:maps.fold/3`) visits it in - both are
+        # `erts_internal:map_next/3` from the same start - and that order
+        # matters here: of two equal-resistance edges to one blossom the
+        # first offered is kept. A plain recursion over the list is a third
+        # of the cost of the fold and its two closures per neighbour.
         {updates, best_outer} =
-          Enum.reduce(row, {%{}, best_outer}, fn {u, w}, {up, bo} ->
-            ub = Map.fetch!(in_blossom, u)
-
-            case Map.get(labels, ub) do
-              :outer when ub != blossom ->
-                {cross_gather(up, own, ub, dv_cross + Map.fetch!(duals, u) - w, v, u), bo}
-
-              label when label in [:free, :zero] ->
-                {up, offer(bo, u, dv_outer + Map.fetch!(duals, u) - w, v)}
-
-              _ ->
-                {up, bo}
-            end
-          end)
+          settle_walk(
+            :maps.to_list(row),
+            in_blossom,
+            labels,
+            duals,
+            blossom,
+            own,
+            dv_cross,
+            dv_outer,
+            v,
+            %{},
+            best_outer
+          )
 
         %{state | cross: cross_apply(cross, blossom, updates), best_outer: best_outer}
+    end
+  end
+
+  defp settle_walk([], _ib, _labels, _duals, _blossom, _own, _dvc, _dvo, _v, up, bo), do: {up, bo}
+
+  defp settle_walk([{u, w} | rest], ib, labels, duals, blossom, own, dvc, dvo, v, up, bo) do
+    # `u`'s top-level blossom and its label in one match when `u` is its own
+    # top-level blossom (see `top_of/3`), through `in_blossom` otherwise.
+    {ub, label} =
+      case labels do
+        %{^u => label} ->
+          {u, label}
+
+        _ ->
+          ub = :erlang.map_get(u, ib)
+
+          case labels do
+            %{^ub => label} -> {ub, label}
+            _ -> {ub, nil}
+          end
+      end
+
+    cond do
+      label == :outer and ub != blossom ->
+        up = cross_gather(up, own, ub, dvc + :erlang.map_get(u, duals) - w, v, u)
+        settle_walk(rest, ib, labels, duals, blossom, own, dvc, dvo, v, up, bo)
+
+      label == :free or label == :zero ->
+        bo = offer(bo, u, dvo + :erlang.map_get(u, duals) - w, v)
+        settle_walk(rest, ib, labels, duals, blossom, own, dvc, dvo, v, up, bo)
+
+      true ->
+        settle_walk(rest, ib, labels, duals, blossom, own, dvc, dvo, v, up, bo)
+    end
+  end
+
+  # The top-level blossom holding vertex `u`. The label map's keys are
+  # exactly the top-level blossoms (`top_blossoms/1`), and a vertex id among
+  # them is a trivial blossom - the vertex itself - which is what most
+  # vertices are: one map match on the label map that the walk reads
+  # anyway, and `in_blossom` only for a vertex inside a non-trivial one.
+  # (Checked against `in_blossom` on every walk of the replayed corpus
+  # before the check was taken out.)
+  defp top_of(u, labels, ib) do
+    case labels do
+      %{^u => _} -> u
+      _ -> :erlang.map_get(u, ib)
+    end
+  end
+
+  # The label of the top-level blossom holding vertex `u`, or nil.
+  defp label_of(u, labels, ib) do
+    case labels do
+      %{^u => label} ->
+        label
+
+      _ ->
+        ub = :erlang.map_get(u, ib)
+
+        case labels do
+          %{^ub => label} -> label
+          _ -> nil
+        end
     end
   end
 
@@ -2281,26 +2476,37 @@ defmodule Ainalrami.WeightedMatching do
 
   defp scan_row(_state, _v, nil, _blossom, _kind), do: nil
 
+  # Ties on resistance break on the lower vertex id, so the winner is a
+  # property of the graph rather than of `row`'s map order - the same
+  # `{r, v}` rule the cross table uses (see `lower_min/2`) - and the walk
+  # may take the row in any order.
   defp scan_row(state, v, row, blossom, kind) do
-    dual_v = Map.fetch!(state.dual, v)
+    scan_walk(
+      :maps.to_list(row),
+      state.in_blossom,
+      state.label,
+      state.dual,
+      :erlang.map_get(v, state.dual),
+      kind == :outer,
+      blossom,
+      nil
+    )
+  end
 
-    Enum.reduce(row, nil, fn {u, w}, best ->
-      u_blossom = Map.fetch!(state.in_blossom, u)
+  defp scan_walk([], _ib, _labels, _duals, _dual_v, _any?, _blossom, best), do: best
 
-      keep? =
-        Map.get(state.label, u_blossom) == :outer and
-          (kind == :outer or u_blossom != blossom)
+  defp scan_walk([{u, w} | rest], ib, labels, duals, dual_v, any?, blossom, best) do
+    u_blossom = top_of(u, labels, ib)
 
-      if keep? do
-        r = dual_v + Map.fetch!(state.dual, u) - w
-        # Ties on resistance break on the lower vertex id, so the winner is
-        # a property of the graph rather than of `row`'s map order - the
-        # same `{r, v}` rule the cross table uses (see `lower_min/2`).
-        if best == nil or {r, u} < best, do: {r, u}, else: best
-      else
-        best
-      end
-    end)
+    case labels do
+      %{^u_blossom => :outer} when any? or u_blossom != blossom ->
+        r = dual_v + :erlang.map_get(u, duals) - w
+        best = if best == nil or {r, u} < best, do: {r, u}, else: best
+        scan_walk(rest, ib, labels, duals, dual_v, any?, blossom, best)
+
+      _ ->
+        scan_walk(rest, ib, labels, duals, dual_v, any?, blossom, best)
+    end
   end
 
   # An equal-resistance offer replaces the incumbent only when it names a
@@ -2345,19 +2551,26 @@ defmodule Ainalrami.WeightedMatching do
   # and zero vertices that have any edge to an outer one. Was a rescan of
   # every (non-outer, outer) pair on every delta step.
   defp min_free_or_zero_to_outer(state) do
-    state.best_outer
-    # The fold is over a plain map, so "first seen wins" would make the
+    # The walk is over a plain map, so "first seen wins" would make the
     # answer an artefact of Erlang's map order. Ties break on the lower
     # vertex id instead: canonical, and stable across OTP releases and
-    # across the 32-key flatmap/hashmap boundary.
-    |> Enum.reduce({nil, nil}, fn {v, {r, _u}}, {best, best_v} = acc ->
-      if best == nil or {r, v} < {best, best_v}, do: {r, v}, else: acc
-    end)
-    |> case do
-      {nil, _} -> {nil, nil}
+    # across the 32-key flatmap/hashmap boundary - and the walk may take the
+    # entries in any order.
+    case least_best_outer(:maps.to_list(state.best_outer), nil, nil) do
+      nil -> {nil, nil}
       {r, v} -> {unbiased(r, state.shift_outer), v}
     end
   end
+
+  defp least_best_outer([], nil, _v), do: nil
+  defp least_best_outer([], r, v), do: {r, v}
+  defp least_best_outer([{v, {r, _u}} | rest], nil, _), do: least_best_outer(rest, r, v)
+
+  defp least_best_outer([{v, {r, _u}} | rest], best_r, best_v)
+       when r < best_r or (r == best_r and v < best_v),
+       do: least_best_outer(rest, r, v)
+
+  defp least_best_outer([_ | rest], best_r, best_v), do: least_best_outer(rest, best_r, best_v)
 
   # The partner achieving that minimum, which the cache already recorded.
   defp min_outer_edge(state, v) do
@@ -2370,7 +2583,7 @@ defmodule Ainalrami.WeightedMatching do
   # The flat vertex list of a blossom.
   #
   # `state.vertices_of` caches it for every NON-TRIVIAL blossom, maintained
-  # at the three places the structure changes: `form_blossom/3` sets the new
+  # at the three places the structure changes: `form_blossom/5` sets the new
   # blossom's list to the concatenation of its children's; `expand_blossom/2`
   # and `dissolve_one/3` delete the parent's entry (the children's are still
   # there, since they were non-trivial blossoms or bare vertices before).
@@ -2522,17 +2735,28 @@ defmodule Ainalrami.WeightedMatching do
     # (For a fixed `a`, the least `{r, lo, hi}` is the entry with the least
     # `{r, partner}`: equal `r` puts the pair with the smaller partner first
     # whether that partner sits below `a` or above it.)
-    {rows, mins, least} =
-      Enum.reduce(updates, {rows, mins, nil}, fn {b, {r, va, vb}}, {rows, mins, least} ->
-        rows = Map.update(rows, b, %{a => {r, vb, va}}, &Map.put(&1, a, {r, vb, va}))
-        mins = offer_min(mins, b, {r, a})
-        least = if least == nil, do: {r, b}, else: lower_min(least, {r, b})
-        {rows, mins, least}
-      end)
+    {rows, mins, least} = mirror_updates(:maps.to_list(updates), a, rows, mins, nil)
 
     {r, b} = least
     {lo, hi} = if a < b, do: {a, b}, else: {b, a}
     {rows, offer_min(mins, a, least), lower_best(best, {r, lo, hi})}
+  end
+
+  # Each update's mirror entry in its partner's row, the partner's minimum,
+  # and the least update - all per-partner edits or a minimum, so the order
+  # the updates are taken in does not matter.
+  defp mirror_updates([], _a, rows, mins, least), do: {rows, mins, least}
+
+  defp mirror_updates([{b, {r, va, vb}} | rest], a, rows, mins, least) do
+    rows =
+      case rows do
+        %{^b => row} -> Map.put(rows, b, Map.put(row, a, {r, vb, va}))
+        _ -> Map.put(rows, b, %{a => {r, vb, va}})
+      end
+
+    mins = offer_min(mins, b, {r, a})
+    least = if least == nil, do: {r, b}, else: lower_min(least, {r, b})
+    mirror_updates(rest, a, rows, mins, least)
   end
 
   # Write the row minimum only when it changes; a `Map.update` that puts
@@ -2578,11 +2802,13 @@ defmodule Ainalrami.WeightedMatching do
 
   defp least_entry([_ | rest], best_r, best_b), do: least_entry(rest, best_r, best_b)
 
-  defp cross_best(mins) do
-    Enum.reduce(mins, nil, fn {a, {r, b}}, acc ->
-      {lo, hi} = if a < b, do: {a, b}, else: {b, a}
-      lower_best(acc, {r, lo, hi})
-    end)
+  defp cross_best(mins), do: best_of_mins(:maps.to_list(mins), nil)
+
+  defp best_of_mins([], acc), do: acc
+
+  defp best_of_mins([{a, {r, b}} | rest], acc) do
+    {lo, hi} = if a < b, do: {a, b}, else: {b, a}
+    best_of_mins(rest, lower_best(acc, {r, lo, hi}))
   end
 
   # The new blossom `new_b` has absorbed `children`, all of which were
@@ -2602,19 +2828,19 @@ defmodule Ainalrami.WeightedMatching do
   # Children that were INNER had no entries; the caller walks their
   # vertices with `settle_outer_vertex/2`.
   defp cross_merge(state, new_b, children) do
-    child_set = MapSet.new(children)
+    child_set = Map.from_keys(children, true)
     {rows, mins, _best} = state.cross
 
-    # The merged row: every child's entries to outsiders, best per outsider.
+    # The merged row: every child's entries to outsiders, best per outsider,
+    # the first of equal resistances kept - so the children are taken in
+    # cycle order and each row in `Enum.reduce/3`'s order, which
+    # `:maps.to_list/1` gives (see `settle_outer_vertex/2`).
     new_row =
       Enum.reduce(children, %{}, fn c, acc ->
-        Enum.reduce(Map.get(rows, c, %{}), acc, fn {k, {r, vc, vk}}, acc ->
-          cond do
-            MapSet.member?(child_set, k) -> acc
-            match?(%{^k => {old, _, _}} when old <= r, acc) -> acc
-            true -> Map.put(acc, k, {r, vc, vk})
-          end
-        end)
+        case rows do
+          %{^c => row} -> merge_row(:maps.to_list(row), child_set, acc)
+          _ -> acc
+        end
       end)
 
     rows = Map.drop(rows, children)
@@ -2623,24 +2849,7 @@ defmodule Ainalrami.WeightedMatching do
     # Each outsider loses its entries for the children and gains one for
     # `new_b`; its row minimum is recomputed only if it pointed at a child
     # or the new entry beats it.
-    {rows, mins} =
-      Enum.reduce(new_row, {rows, mins}, fn {k, {r, vc, vk}}, {rows, mins} ->
-        row = rows |> Map.fetch!(k) |> Map.drop(children) |> Map.put(new_b, {r, vk, vc})
-        rows = Map.put(rows, k, row)
-
-        mins =
-          case Map.get(mins, k) do
-            {_, p} = old ->
-              if MapSet.member?(child_set, p),
-                do: Map.put(mins, k, row_min(row)),
-                else: Map.put(mins, k, lower_min(old, {r, new_b}))
-
-            nil ->
-              Map.put(mins, k, row_min(row))
-          end
-
-        {rows, mins}
-      end)
+    {rows, mins} = rekey_outsiders(:maps.to_list(new_row), new_b, children, child_set, rows, mins)
 
     {rows, mins} =
       if map_size(new_row) == 0,
@@ -2648,6 +2857,40 @@ defmodule Ainalrami.WeightedMatching do
         else: {Map.put(rows, new_b, new_row), Map.put(mins, new_b, row_min(new_row))}
 
     %{state | cross: {rows, mins, cross_best(mins)}}
+  end
+
+  defp merge_row([], _child_set, acc), do: acc
+
+  defp merge_row([{k, {r, _, _} = entry} | rest], child_set, acc) do
+    cond do
+      is_map_key(child_set, k) -> merge_row(rest, child_set, acc)
+      match?(%{^k => {old, _, _}} when old <= r, acc) -> merge_row(rest, child_set, acc)
+      true -> merge_row(rest, child_set, Map.put(acc, k, entry))
+    end
+  end
+
+  # Per outsider `k` of the merged row: its entries for the children become
+  # one for `new_b`, and its minimum is recomputed only if it pointed at a
+  # child or the new entry beats it. Each outsider's edits are its own, so
+  # the order does not matter.
+  defp rekey_outsiders([], _new_b, _children, _child_set, rows, mins), do: {rows, mins}
+
+  defp rekey_outsiders([{k, {r, vc, vk}} | rest], new_b, children, child_set, rows, mins) do
+    row = rows |> Map.fetch!(k) |> Map.drop(children) |> Map.put(new_b, {r, vk, vc})
+    rows = Map.put(rows, k, row)
+
+    mins =
+      case Map.get(mins, k) do
+        {_, p} = old ->
+          if is_map_key(child_set, p),
+            do: Map.put(mins, k, row_min(row)),
+            else: Map.put(mins, k, lower_min(old, {r, new_b}))
+
+        nil ->
+          Map.put(mins, k, row_min(row))
+      end
+
+    rekey_outsiders(rest, new_b, children, child_set, rows, mins)
   end
 
   # Drop every entry of the blossoms that are no longer outer -- the
@@ -2673,39 +2916,58 @@ defmodule Ainalrami.WeightedMatching do
   # `row_min/1` breaks ties in (`{r, partner}`) is a total order on the
   # entries, so "the least entry" names one entry.
   defp cross_retain({rows, mins, _best}, outer_blossoms) do
-    left = for {b, _} <- rows, not MapSet.member?(outer_blossoms, b), do: b
-    left_set = MapSet.new(left)
+    left = for {b, _} <- rows, not is_map_key(outer_blossoms, b), do: b
+    left_set = Map.from_keys(left, true)
 
     # Surviving row -> the leaving blossoms it holds entries for.
     removals =
       Enum.reduce(left, %{}, fn b, acc ->
-        Enum.reduce(Map.fetch!(rows, b), acc, fn {k, _}, acc ->
-          if MapSet.member?(left_set, k),
-            do: acc,
-            else: Map.update(acc, k, [b], &[b | &1])
-        end)
+        gather_removals(:maps.to_list(:erlang.map_get(b, rows)), b, left_set, acc)
       end)
 
-    {rows, mins} =
-      Enum.reduce(removals, {rows, mins}, fn {k, gone}, {rows, mins} ->
-        row = Map.drop(Map.fetch!(rows, k), gone)
-        rows = Map.put(rows, k, row)
-
-        mins =
-          case Map.get(mins, k) do
-            {_, p} ->
-              if MapSet.member?(left_set, p), do: Map.put(mins, k, row_min(row)), else: mins
-
-            _ ->
-              mins
-          end
-
-        {rows, mins}
-      end)
+    {rows, mins} = apply_removals(:maps.to_list(removals), left_set, rows, mins)
 
     rows = Map.drop(rows, left)
     mins = mins |> Map.drop(left) |> Map.reject(fn {_, m} -> m == nil end)
     {rows, mins, cross_best(mins)}
+  end
+
+  # Surviving row -> the leaving blossoms it holds entries for. Which order
+  # each list comes out in does not matter: it is only dropped.
+  defp gather_removals([], _b, _left_set, acc), do: acc
+
+  defp gather_removals([{k, _} | rest], b, left_set, acc) do
+    case left_set do
+      %{^k => _} ->
+        gather_removals(rest, b, left_set, acc)
+
+      _ ->
+        acc =
+          case acc do
+            %{^k => gone} -> Map.put(acc, k, [b | gone])
+            _ -> Map.put(acc, k, [b])
+          end
+
+        gather_removals(rest, b, left_set, acc)
+    end
+  end
+
+  # Each surviving row loses its entries for the leaving blossoms, and its
+  # minimum is recomputed once if it pointed at one - per row, so in any
+  # order.
+  defp apply_removals([], _left_set, rows, mins), do: {rows, mins}
+
+  defp apply_removals([{k, gone} | rest], left_set, rows, mins) do
+    row = Map.drop(:erlang.map_get(k, rows), gone)
+    rows = Map.put(rows, k, row)
+
+    mins =
+      case mins do
+        %{^k => {_, p}} when is_map_key(left_set, p) -> Map.put(mins, k, row_min(row))
+        _ -> mins
+      end
+
+    apply_removals(rest, left_set, rows, mins)
   end
 
   # The least-resistance outer-outer edge overall, straight off the running
@@ -2737,17 +2999,28 @@ defmodule Ainalrami.WeightedMatching do
     labels = state.label
     duals = state.dual
 
-    Enum.reduce(state.children, nil, fn {b, _}, best ->
-      if Map.get(labels, b) == :inner do
-        candidate = {Map.fetch!(duals, b), b}
-        if best == nil or candidate < best, do: candidate, else: best
-      else
-        best
-      end
-    end)
-    |> case do
+    case least_inner(:maps.keys(state.children), labels, duals, nil) do
       nil -> {nil, nil}
       best -> best
+    end
+  end
+
+  defp least_inner([], _labels, _duals, best), do: best
+
+  defp least_inner([b | rest], labels, duals, best) do
+    case labels do
+      %{^b => :inner} ->
+        candidate = {:erlang.map_get(b, duals), b}
+
+        least_inner(
+          rest,
+          labels,
+          duals,
+          if(best == nil or candidate < best, do: candidate, else: best)
+        )
+
+      _ ->
+        least_inner(rest, labels, duals, best)
     end
   end
 
@@ -2755,30 +3028,42 @@ defmodule Ainalrami.WeightedMatching do
 
   defp apply_delta(state, 0), do: state
 
+  # Every outer blossom's vertices down by `delta` and its own dual up by
+  # twice that, every inner one the other way. The edits are to disjoint
+  # keys, so the order the blossoms are visited in does not matter; the
+  # walk is over `state.forest`, the outer and inner top-level blossoms,
+  # kept beside the label map by every writer of a label within a stage
+  # (`init_labels/1`, the growth, `form_blossom/5`, `expand_blossom/2`) -
+  # where walking every top-level blossom's label, as this did, made each
+  # delta step O(V) on a forest of a few blossoms.
   defp apply_delta(state, delta) do
-    Enum.reduce(top_blossoms(state), state, fn b, state ->
-      case Map.get(state.label, b) do
-        :outer -> update_blossom_duals(state, b, -delta)
-        :inner -> update_blossom_duals(state, b, delta)
-        _ -> state
-      end
-    end)
-    |> shift_caches(delta)
+    dual = shift_forest(:maps.to_list(state.forest), state, delta, state.dual)
+    shift_caches(%{state | dual: dual}, delta)
   end
 
-  defp update_blossom_duals(state, b, delta) do
-    vs = blossom_vertices(state, b)
-    dual = Enum.reduce(vs, state.dual, fn v, d -> Map.update!(d, v, &(&1 + delta)) end)
+  defp shift_forest([], _state, _delta, dual), do: dual
 
-    dual =
-      if Map.has_key?(state.children, b) do
-        Map.update!(dual, b, &(&1 - 2 * delta))
-      else
-        dual
-      end
+  defp shift_forest([{b, :outer} | rest], state, delta, dual),
+    do: shift_forest(rest, state, delta, shift_blossom(state, b, -delta, dual))
 
-    %{state | dual: dual}
+  defp shift_forest([{b, :inner} | rest], state, delta, dual),
+    do: shift_forest(rest, state, delta, shift_blossom(state, b, delta, dual))
+
+  defp shift_forest([_ | rest], state, delta, dual), do: shift_forest(rest, state, delta, dual)
+
+  defp shift_blossom(state, b, delta, dual) do
+    dual = shift_vertices(blossom_vertices(state, b), delta, dual)
+
+    case state.children do
+      %{^b => _} -> Map.put(dual, b, :erlang.map_get(b, dual) - 2 * delta)
+      _ -> dual
+    end
   end
+
+  defp shift_vertices([], _delta, dual), do: dual
+
+  defp shift_vertices([v | rest], delta, dual),
+    do: shift_vertices(rest, delta, Map.put(dual, v, :erlang.map_get(v, dual) + delta))
 
   # ------------------------------------------------------- augmentation
 
@@ -2899,8 +3184,8 @@ defmodule Ainalrami.WeightedMatching do
     base_v = base_vertex(state, b)
     base_child = Enum.find(children, &(base_v in blossom_vertices(state, &1)))
     base_idx = Enum.find_index(children, &(&1 == base_child))
-    rotated = Enum.drop(children, base_idx) ++ Enum.take(children, base_idx)
-    n = length(rotated)
+    rotated = List.to_tuple(Enum.drop(children, base_idx) ++ Enum.take(children, base_idx))
+    n = tuple_size(rotated)
 
     # The base child's OWN base is `base_v` itself (possibly deep inside
     # it, if base_child is non-trivial) - set explicitly before
@@ -2919,8 +3204,8 @@ defmodule Ainalrami.WeightedMatching do
   defp pair_children(state, _rotated, i, n) when i >= n, do: state
 
   defp pair_children(state, rotated, i, n) do
-    child_a = Enum.at(rotated, i)
-    child_b = Enum.at(rotated, i + 1)
+    child_a = elem(rotated, i)
+    child_b = elem(rotated, i + 1)
     {out_a, in_b} = connector(state, child_a, child_b)
 
     state = %{state | base: Map.put(state.base, child_a, out_a)}
@@ -2951,11 +3236,9 @@ defmodule Ainalrami.WeightedMatching do
   # connectors - each blossom but the last contributes an (entry, exit)
   # pair, and the vertex the walk continues on is exactly the next
   # blossom's own entry, by construction of the walk itself.
-  defp form_blossom(state, v0, v1) do
+  defp form_blossom(state, v0, v1, ids0, ids1) do
     b0 = Map.fetch!(state.in_blossom, v0)
     b1 = Map.fetch!(state.in_blossom, v1)
-    ids0 = blossom_ids_to_root(state, b0)
-    ids1 = blossom_ids_to_root(state, b1)
     common = find_common_ancestor(ids0, ids1)
 
     ids0_before = Enum.take_while(ids0, &(&1 != common))
@@ -2974,7 +3257,7 @@ defmodule Ainalrami.WeightedMatching do
       cycle
       |> Enum.filter(&(Map.get(state.label, &1) == :inner))
       |> Enum.flat_map(&blossom_vertices(state, &1))
-      |> MapSet.new()
+      |> Map.from_keys(true)
 
     # `add_connectors/3` needs each id list in the SAME direction its own
     # `flat` was actually walked - `path_to_target/4` always walks UP
@@ -3035,7 +3318,7 @@ defmodule Ainalrami.WeightedMatching do
         # this the stale child entries were harmless only because
         # `top_blossoms/1` was derived from `in_blossom` instead.
         label: Enum.reduce(cycle, Map.put(state.label, new_id, :outer), &Map.delete(&2, &1)),
-        tops: tops_formed(state.tops, cycle, new_id),
+        forest: state.forest |> Map.drop(cycle) |> Map.put(new_id, :outer),
         next_blossom_id: new_id + 1
     }
     |> then(&{&1, cycle, formerly_inner})
@@ -3044,23 +3327,26 @@ defmodule Ainalrami.WeightedMatching do
   # Records the connector between every CONSECUTIVE pair of blossoms in
   # `ids` (both directions), reading the vertex pairs straight off
   # `flat`, which `path_to_target/4` built alongside the same walk.
-  defp add_connectors(connectors, ids, flat) do
-    ids
-    |> Enum.with_index()
-    |> Enum.reduce(connectors, fn {id, i}, acc ->
-      if i + 1 < length(ids) do
-        next_id = Enum.at(ids, i + 1)
-        out_v = Enum.at(flat, 2 * i + 1)
-        in_v = Enum.at(flat, 2 * i + 2)
-
-        acc
-        |> Map.put({id, next_id}, {out_v, in_v})
-        |> Map.put({next_id, id}, {in_v, out_v})
-      else
-        acc
+  #
+  # Pair i joins `ids[i]` to `ids[i + 1]` through `flat[2i + 1]` and
+  # `flat[2i + 2]`: walked in step, two vertices of `flat` per id, where
+  # indexing both lists with `Enum.at/2` (and `length/1` per step) was
+  # quadratic in the path.
+  defp add_connectors(connectors, [id, next_id | ids], [_entry | flat]) do
+    {out_v, in_v, rest} =
+      case flat do
+        [out_v, in_v | rest] -> {out_v, in_v, rest}
+        [out_v] -> {out_v, nil, []}
+        [] -> {nil, nil, []}
       end
-    end)
+
+    connectors
+    |> Map.put({id, next_id}, {out_v, in_v})
+    |> Map.put({next_id, id}, {in_v, out_v})
+    |> add_connectors([next_id | ids], [in_v | rest])
   end
+
+  defp add_connectors(connectors, _ids, _flat), do: connectors
 
   # Flat vertex-level walk from `entry_vertex` (in blossom `b`) up to and
   # INCLUDING the entry into `target` - the same chain
@@ -3115,7 +3401,8 @@ defmodule Ainalrami.WeightedMatching do
   # module (`Ainalrami.WeightedMatching.Profile`'s capture), in the form
   # this one reads. Only the per-solve caches can differ, and `solve/1`
   # rebuilds those on entry.
-  def __upgrade__(state), do: state
+  def __upgrade__(state),
+    do: state |> Map.put(:roots, %{}) |> Map.put(:forest, %{}) |> Map.delete(:tops)
 
   @doc false
   # Test hook, not API. The two walks above are only reachable through a
@@ -3141,10 +3428,10 @@ defmodule Ainalrami.WeightedMatching do
   # next one up without recording the INNER blossom it passed through to
   # get there.
   #
-  # That skip was invisible to `tree_root/2` (skipping intermediate
+  # That skip was invisible to the tree-root comparison (skipping intermediate
   # blossoms never changes where a walk eventually TERMINATES, so which
   # root two searches share is unaffected). It was NOT invisible to
-  # `form_blossom/3`, which uses this same chain to build the new
+  # `form_blossom/5`, which uses this same chain to build the new
   # blossom's actual cycle: a bare triangle graph (`n=3`, all three
   # edges present) produced a two-child cycle `[0, 2]`, silently missing
   # blossom 1 - a blossom the whole method's correctness DEPENDS on
@@ -3175,8 +3462,8 @@ defmodule Ainalrami.WeightedMatching do
   end
 
   defp find_common_ancestor(path0, path1) do
-    set1 = MapSet.new(path1)
-    Enum.find(path0, &MapSet.member?(set1, &1))
+    set1 = Map.from_keys(path1, true)
+    Enum.find(path0, &is_map_key(set1, &1))
   end
 
   # Dissolve blossom `b` (its dual variable just hit zero) back into its
@@ -3226,14 +3513,15 @@ defmodule Ainalrami.WeightedMatching do
     n = length(rotated)
     connect_idx = Enum.find_index(rotated, &(&1 == connect_child))
     connect_forward = rem(connect_idx, 2) == 0
+    rotated_t = List.to_tuple(rotated)
 
     state =
       rotated
       |> Enum.with_index()
       |> Enum.reduce(state, fn {child, i}, state ->
         links_to_next = rem(i, 2) == 1
-        next_child = Enum.at(rotated, rem(i + 1, n))
-        prev_child = Enum.at(rotated, rem(i - 1 + n, n))
+        next_child = elem(rotated_t, rem(i + 1, n))
+        prev_child = elem(rotated_t, rem(i - 1 + n, n))
         neighbor = if links_to_next, do: next_child, else: prev_child
 
         free? =
@@ -3279,7 +3567,9 @@ defmodule Ainalrami.WeightedMatching do
           | in_blossom: in_blossom,
             base: Map.put(state.base, child, base_v),
             blossom_match: put_or_delete(state.blossom_match, child, base_match_v),
-            label: Map.put(state.label, child, label)
+            label: Map.put(state.label, child, label),
+            forest:
+              if(label == :free, do: state.forest, else: Map.put(state.forest, child, label))
         }
 
         if label_edge do
@@ -3292,10 +3582,13 @@ defmodule Ainalrami.WeightedMatching do
     %{
       state
       | children: Map.delete(state.children, b),
-        parent_of: Map.new(state.parent_of |> Enum.reject(fn {_c, p} -> p == b end)),
+        # The entries naming `b` are exactly its children's (set when `b`
+        # was formed, and blossom ids are never reused): dropped by key, not
+        # by a walk of every nested blossom's entry.
+        parent_of: Map.drop(state.parent_of, children),
         vertices_of: Map.delete(state.vertices_of, b),
         label: Map.delete(state.label, b),
-        tops: tops_split(state.tops, b, children),
+        forest: Map.delete(state.forest, b),
         label_edge: Map.delete(state.label_edge, b),
         dual: Map.delete(state.dual, b)
     }

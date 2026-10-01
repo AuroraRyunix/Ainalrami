@@ -64,6 +64,58 @@ with the reference on every one of them.
 
 ## [Unreleased]
 
+- [Performance] **The weighted matcher, 1.24-1.32x faster per call,
+  every call unchanged.** `Ainalrami.WeightedMatching` - the matcher a
+  bracket falls back to, and the one the explanation and the
+  alternatives' forced searches run on - was about half the time of the
+  differential corpus and 45% of the timing study's 30 slowest positions.
+  Its row walks now recurse over `:maps.to_list/1` (the order
+  `Enum.reduce/3` visits a map in, where the first of equal offers wins)
+  instead of folding the map through two closures per neighbour; a vertex
+  that is its own blossom costs one lookup instead of two; a stage start
+  re-derives only the labels that can change, and a dual step walks the
+  forest instead of every blossom; the root table is built by whichever
+  side is cheaper (a test meant to choose was always true); quadratic
+  `Enum.at/2` indexing in blossom expansion, dissolution and resolution is
+  gone; the greedy start compares instead of adding. On 15,842 calls
+  captured from the corpus and the timing study, replayed through
+  v0.35.0's matcher and this one: 12.9 s -> 9.8 s, every call the same
+  matching and the same duals and blossoms. On the corpus slices the
+  matcher's share fell 1.24-1.32x and the whole run 11-14%; the study's 30
+  slowest positions 4.58 -> 4.09 s (the worst 1.15 -> 0.97 s); typical
+  positions, where the matcher is ~6% of the time, are unchanged. Held to
+  v0.35.0 call by call by `tools/matching_lockstep.exs`, extended to graphs
+  of up to 400 vertices, the engine's 150-700-bit weights and the reads
+  the engine makes of a solved state (25,000 sessions, 531,289 calls, all
+  identical), and the differential corpus is unchanged (447,152 rounds
+  identical to v0.33.0, and 44,325 in check mode). New, env-gated:
+  `AINALRAMI_WM_PROFILE=1` profiles the matcher by call site
+  (`tools/matching_profile.exs`) and `AINALRAMI_WM_CAPTURE` records its
+  calls for `tools/matching_replay.exs`. See `docs/performance.md`, "The
+  blossom fallback".
+- [Change] **A dual step that makes nothing tight raises.** The matcher's
+  "numerically shouldn't happen" branch ended the solve with the matching
+  as it stood - it was once reached by a solve that "succeeded" with ten
+  vertices exposed. It now raises with the four minima, the step and a
+  summary of the state, like the stage and step budgets; the full corpus
+  and check mode never reach it.
+- [Fix] **`WeightedMatching.new/3`'s `:gcd` option is the scale the weights
+  are stored on.** The weights were divided by their own gcd whatever
+  `:gcd` said, while the state recorded the supplied value (weights 12 and
+  24 with `gcd: 2` were stored divided by 12 and read back on a scale of
+  2). They are now divided by the recorded gcd; a supplied gcd that does
+  not divide every weight, or one above 1 with `:duals` or `:adjacency`,
+  is refused, and `shift_and_set/3` refuses a weight off the scale instead
+  of truncating it. Every caller in the engine passes `gcd: 1` or none, so
+  no pairing changes.
+- [Change] **The matcher's documentation matches its code**: `new/3`'s
+  account of a weight change (only the modified endpoint is prepared),
+  `shift_and_set/3`'s (a vertex inside a blossom is refused, not
+  dissolved), the moduledoc's claim that the matching does not depend on
+  the search's tie order (it does, which is why every tie-break is
+  canonical and held by the lockstep), and the cache sections, which
+  described structures and functions that no longer exist.
+
 ## [0.35.0] - 2026-10-01
 
 - [Verified] **A timing study of all three engines on 3,000 random

@@ -2,6 +2,7 @@
 #
 #   mix run tools/matching_lockstep.exs            # 2,000 random sessions
 #   LOCKSTEP_SESSIONS=20000 LOCKSTEP_REF=v0.33.0 mix run tools/matching_lockstep.exs
+#   LOCKSTEP_LARGE=1 ...                           # graphs of up to 400 vertices
 #
 # `tools/matching_baseline.exs` and `tools/matching_incremental.exs` check
 # that `Ainalrami.WeightedMatching` finds A maximum-weight matching. That
@@ -23,10 +24,19 @@
 # call can observe is.
 #
 # Sessions are shaped like the engine's: packed bignum weights with a
-# nearness term (the round matcher), small plain weights with heavy ties
-# (the oracle, the team matcher), complete graphs with per-vertex duals
-# (the bye bootstrap), and batches of edits that prepare one vertex, a
-# row, or everything at once (stage 4 on the field graph).
+# nearness term (the round matcher), the same at the engine's own widths -
+# six criteria bands packed into 150-700-bit weights with few distinct
+# values (`:wide`) - small plain weights with heavy ties (the oracle, the
+# team matcher), complete graphs with per-vertex duals (the bye bootstrap),
+# and batches of edits that prepare one vertex, a row, or everything at
+# once (stage 4 on the field graph). Each session also reads what the
+# engine reads off a solved state - `dual_context/1` and
+# `possible_partners/3`, `certificate_hint/1`, `vertex_duals/1` - and
+# sometimes scales it (`scale/2`), and one in four starts with a one-shot
+# `solve/2` of its graph, compared as well.
+#
+# `LOCKSTEP_LARGE=1` draws the vertex count up to 400 (sparse above 100),
+# for the graphs the round matcher and the local brackets solve.
 
 ref = System.get_env("LOCKSTEP_REF", "v0.33.0")
 sessions = String.to_integer(System.get_env("LOCKSTEP_SESSIONS", "2000"))
@@ -80,17 +90,31 @@ defmodule Lockstep do
 
   def run(seed) do
     :rand.seed(:exsss, {seed, seed * 7919, seed * 104_729})
-    n = Enum.random([2, 3, 4, 5, 6, 8, 11, 16, 24, 40, 65, 90])
-    shape = Enum.random([:packed, :plain, :ties, :complete])
+
+    n =
+      if System.get_env("LOCKSTEP_LARGE") == "1",
+        do: Enum.random([2, 3, 5, 8, 13, 24, 40, 65, 90, 120, 160, 200, 260, 330, 400]),
+        else: Enum.random([2, 3, 4, 5, 6, 8, 11, 16, 24, 40, 65, 90])
+
+    shape = Enum.random([:packed, :wide, :plain, :ties, :complete])
+    shape = if shape == :complete and n > 120, do: :wide, else: shape
     {edges, opts, draw} = graph(shape, n)
+
+    if shape != :complete and :rand.uniform(4) == 1 do
+      plain = Enum.map(edges, fn {i, j, w} -> {i, j, w} end)
+      check!({seed, :solve2}, New.solve(n, plain), Ref.solve(n, plain))
+    end
 
     a = New.new(n, edges, opts)
     b = Ref.new(n, edges, opts)
     same_state!({seed, :new}, a, b)
 
-    steps = Enum.random(4..40)
+    steps = if n > 120, do: Enum.random(4..16), else: Enum.random(4..40)
+
+    Process.put(:lockstep_calls, 0)
 
     Enum.reduce(1..steps, {a, b}, fn step, {a, b} ->
+      Process.put(:lockstep_calls, Process.get(:lockstep_calls) + 1)
       where = {seed, shape, n, step}
 
       case op(n) do
@@ -133,7 +157,9 @@ defmodule Lockstep do
           shifts = Map.new(vs, &{&1, 2 * Enum.random(0..3)})
 
           edges =
-            for u <- vs, v <- Enum.take_random(0..(n - 1)//1, 2), u != v,
+            for u <- vs,
+                v <- Enum.take_random(0..(n - 1)//1, 2),
+                u != v,
                 do: {min(u, v), max(u, v), draw.() * a.gcd}
 
           ra = New.shift_and_set(a, shifts, edges)
@@ -148,14 +174,42 @@ defmodule Lockstep do
         :read ->
           v = Enum.random(0..(n - 1)//1)
           u = Enum.random(0..(n - 1)//1)
-          check!({where, :neighbours}, Enum.sort(New.neighbours(a, v)), Enum.sort(Ref.neighbours(b, v)))
+
+          check!(
+            {where, :neighbours},
+            Enum.sort(New.neighbours(a, v)),
+            Enum.sort(Ref.neighbours(b, v))
+          )
+
           check!({where, :edge_weight}, New.edge_weight(a, v, u), Ref.edge_weight(b, v, u))
           check!({where, :mate_of}, New.mate_of(a, v), Ref.mate_of(b, v))
+          check!({where, :vertex_duals}, New.vertex_duals(a), Ref.vertex_duals(b))
+          check!({where, :certificate_hint}, New.certificate_hint(a), Ref.certificate_hint(b))
+
+          ca = New.dual_context(a)
+          cb = Ref.dual_context(b)
+          check!({where, :dual_context}, ca, cb)
+
+          if ca != :invalid do
+            check!(
+              {where, :possible_partners},
+              New.possible_partners(a, ca, v),
+              Ref.possible_partners(b, cb, v)
+            )
+          end
+
+          {a, b}
+
+        :scale ->
+          k = Enum.random(2..5)
+          a = New.scale(a, k)
+          b = Ref.scale(b, k)
+          same_state!({where, :scale}, a, b)
           {a, b}
       end
     end)
 
-    :ok
+    {:ok, n, shape, Process.get(:lockstep_calls)}
   end
 
   defp op(n) do
@@ -167,6 +221,7 @@ defmodule Lockstep do
       14 -> if n <= 40, do: {:edit, :all}, else: {:edit, :few}
       x when x <= 17 -> :finalize
       18 -> :shift
+      19 -> if :rand.uniform(4) == 1, do: :scale, else: :read
       _ -> :read
     end
   end
@@ -179,7 +234,7 @@ defmodule Lockstep do
     band = Integer.pow(n + 1, 12) * 64
     p = n * n + 1
     base = fn -> :rand.uniform(4) * band + :rand.uniform(6) end
-    density = Enum.random([35, 70, 100])
+    density = if n > 100, do: Enum.random([3, 8, 15, 50]), else: Enum.random([35, 70, 100])
 
     edges =
       for i <- 0..(n - 2)//1, j <- (i + 1)..(n - 1)//1, :rand.uniform(100) <= density do
@@ -195,19 +250,54 @@ defmodule Lockstep do
     {edges, [max_weight: ceiling, gcd: 1], draw}
   end
 
-  defp graph(:plain, n) do
-    density = Enum.random([30, 60, 100])
+  defp graph(:wide, n) do
+    # The engine's widths: six criteria packed into bands of 24-110 bits
+    # each, a few values per criterion (so many edges share a weight and
+    # optima tie), times a nearness scale, plus the nearness term.
+    bits = Enum.random([24, 40, 64, 110])
+    span = Integer.pow(2, bits)
+    p = n * n + 1
+
+    base = fn ->
+      Enum.reduce(1..6, 0, fn _, acc -> acc * span + Enum.random([0, 1, 1, 2, 3]) end) + 1
+    end
+
+    density = if n > 100, do: Enum.random([3, 8, 15, 50]), else: Enum.random([30, 70, 100])
 
     edges =
-      for i <- 0..(n - 2)//1, j <- (i + 1)..(n - 1)//1, :rand.uniform(100) <= density,
+      for i <- 0..(n - 2)//1, j <- (i + 1)..(n - 1)//1, :rand.uniform(100) <= density do
+        {i, j, base.() * p + n - abs(j - i - div(n, 2))}
+      end
+
+    ceiling = 8 * Integer.pow(span, 6) * p + p
+
+    draw = fn ->
+      if :rand.uniform(5) == 1, do: 0, else: base.() * p + :rand.uniform(n)
+    end
+
+    {edges, [max_weight: ceiling, gcd: 1], draw}
+  end
+
+  defp graph(:plain, n) do
+    density = if n > 100, do: Enum.random([3, 8, 15, 50]), else: Enum.random([30, 60, 100])
+
+    edges =
+      for i <- 0..(n - 2)//1,
+          j <- (i + 1)..(n - 1)//1,
+          :rand.uniform(100) <= density,
           do: {i, j, :rand.uniform(50)}
 
-    {edges, [max_weight: 60, gcd: 1], fn -> if :rand.uniform(5) == 1, do: 0, else: :rand.uniform(50) end}
+    {edges, [max_weight: 60, gcd: 1],
+     fn -> if :rand.uniform(5) == 1, do: 0, else: :rand.uniform(50) end}
   end
 
   defp graph(:ties, n) do
+    density = if n > 100, do: Enum.random([3, 8, 15, 50]), else: 70
+
     edges =
-      for i <- 0..(n - 2)//1, j <- (i + 1)..(n - 1)//1, :rand.uniform(100) <= 70,
+      for i <- 0..(n - 2)//1,
+          j <- (i + 1)..(n - 1)//1,
+          :rand.uniform(100) <= density,
           do: {i, j, Enum.random([10, 10, 10, 12])}
 
     {edges, [max_weight: 20, gcd: 1], fn -> Enum.random([0, 10, 10, 12]) end}
@@ -242,7 +332,9 @@ defmodule Lockstep do
   end
 
   defp changes(:all, n, draw, gcd) do
-    for u <- 0..(n - 2)//1, v <- (u + 1)..(n - 1)//1, :rand.uniform(3) == 1,
+    for u <- 0..(n - 2)//1,
+        v <- (u + 1)..(n - 1)//1,
+        :rand.uniform(3) == 1,
         do: {u, v, scale(draw.(), gcd)}
   end
 
@@ -261,7 +353,7 @@ end
 
 started = System.monotonic_time(:millisecond)
 
-failures =
+results =
   seed_from..(seed_from + sessions - 1)
   |> Task.async_stream(
     fn seed ->
@@ -274,10 +366,31 @@ failures =
     max_concurrency: System.schedulers_online(),
     timeout: :infinity
   )
-  |> Enum.flat_map(fn
-    {:ok, :ok} -> []
-    {:ok, failure} -> [failure]
+  |> Enum.map(fn {:ok, r} -> r end)
+
+failures = Enum.reject(results, &match?({:ok, _, _, _}, &1))
+passed = for {:ok, n, shape, calls} <- results, do: {n, shape, calls}
+
+by_size =
+  passed
+  |> Enum.group_by(fn {n, _, _} ->
+    cond do
+      n <= 16 -> "2-16"
+      n <= 64 -> "17-64"
+      n <= 128 -> "65-128"
+      true -> "129-400"
+    end
   end)
+  |> Enum.map(fn {k, v} -> {k, length(v)} end)
+  |> Enum.sort()
+
+IO.puts("sessions by vertex count: #{inspect(by_size)}")
+
+IO.puts(
+  "sessions by shape: #{inspect(passed |> Enum.frequencies_by(&elem(&1, 1)) |> Enum.sort())}"
+)
+
+IO.puts("calls compared: #{passed |> Enum.map(&elem(&1, 2)) |> Enum.sum()}")
 
 secs = (System.monotonic_time(:millisecond) - started) / 1000
 IO.puts("#{sessions} sessions against #{ref} in #{Float.round(secs, 1)} s")
