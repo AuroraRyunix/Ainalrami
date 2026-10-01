@@ -34,12 +34,19 @@ defmodule Ainalrami.WeightedMatching do
   remaining walks are over one blossom or one label class rather than over
   every vertex pair.
 
-  **This changes which minimum is found when several tie, and 86% of delta
-  steps have a tied minimum.** That is safe here, and was measured before
-  the caches were written rather than assumed: inverting the tie-break of
-  the old scans left the engine agreeing with bbpPairings on 1358/1358
-  rounds. The matching this module returns is determined by the weights,
-  not by the order the search happens to visit equal-slack edges in.
+  **That changed which minimum was found when several tie, and 86% of
+  delta steps have a tied minimum.** It was measured before the caches
+  were written rather than assumed: inverting the tie-break of the old
+  scans left the engine agreeing with bbpPairings on 1358/1358 rounds.
+  That is evidence that the PAIRING rarely depends on it, not that the
+  matching does: when several maximum-weight matchings exist, which one
+  this module returns - and the duals and blossoms it leaves for the next
+  solve - is decided by the order the search meets equal-resistance
+  edges. Every tie-break here is therefore a fixed, canonical rule
+  (`{resistance, vertex}` orders, "first offered wins" in a fixed walk
+  order, sorted blossom ids), and a change to this module must keep each
+  one exactly: `tools/matching_lockstep.exs` holds it to a previous
+  release call by call.
 
   ## The four dual-adjustment cases
 
@@ -114,21 +121,23 @@ defmodule Ainalrami.WeightedMatching do
 
   This is exactly what bbpPairings' `Computer` does, and the algorithm is
   its `setEdgeWeight` / `prepareVertexForWeightAdjustments`: when an
-  edge's weight changes, the two endpoints are unmatched, every blossom
-  containing them is dissolved back to trivial, and their duals are reset
-  to the initial maximum. Every other vertex keeps its match, its dual and
-  its blossom structure. That state is still a valid starting point for
-  the primal-dual search -- the invariants the algorithm maintains (dual
-  feasibility, complementary slackness on matched edges) hold on the
-  untouched part, and the touched vertices are exactly as they were at
-  the start of a fresh solve -- so `solve/1` reaches the same optimum.
+  edge's weight changes, its MODIFIED endpoint (`u` in `set_weight/4`) is
+  unmatched, every blossom containing it is dissolved back to trivial, and
+  its dual is reset to the initial maximum; the other endpoint keeps its
+  match, dual and blossoms (it is left exposed only if it was matched to
+  `u`), as does every other vertex. That state is still a valid starting
+  point for the primal-dual search -- the invariants the algorithm
+  maintains (dual feasibility, complementary slackness on matched edges)
+  hold on the untouched part, and the prepared vertex is exactly as it was
+  at the start of a fresh solve -- so `solve/1` reaches an optimum of the
+  new weights. See `set_weight/4` for why one side is enough.
 
       state = WeightedMatching.new(n, edges)
       {state, matching} = WeightedMatching.solve(state)
       state = WeightedMatching.set_weight(state, u, v, new_w)
       {state, matching} = WeightedMatching.solve(state)
 
-  `solve/2` is `new/2` followed by one `solve/1`, and remains the API for
+  `solve/2` is `new/3` followed by one `solve/1`, and remains the API for
   one-shot callers and for the tests.
 
   Options: `:max_weight` (the ceiling every later weight must stay under,
@@ -170,16 +179,38 @@ defmodule Ainalrami.WeightedMatching do
     # `gcd: 1` and forgoes the bignum saving rather than risk
     # `set_weight/4` refusing a weight that is not on the initial scale.
     # `:duals` -- see `greedy_start/3` -- are on the doubled scale the
-    # matcher compares against, so they are not reduced; a caller giving
-    # them gets no reduction either.
+    # matcher compares against, so they are not reduced, and neither is a
+    # ready-made `:adjacency`; a caller giving either gets no reduction.
+    #
+    # The weights are divided by the gcd the state RECORDS, which every
+    # later conversion (`set_weight/4`, `shift_and_set/3`, `edge_weight/3`,
+    # `neighbours/2`) reads. They used to be divided by their own gcd
+    # whatever `:gcd` said, so `gcd: 2` over weights 12 and 24 stored them
+    # divided by 12 and read them back on a scale of 2. A supplied gcd that
+    # does not divide every positive weight is refused, as `set_weight/4`
+    # refuses such a weight later.
     gcd =
-      case {Keyword.get(opts, :gcd), Keyword.get(opts, :duals)} do
-        {nil, nil} -> gcd_of(edges)
-        {nil, _} -> 1
-        {g, _} when is_integer(g) and g >= 1 -> g
+      case {Keyword.get(opts, :gcd), Keyword.get(opts, :duals), Keyword.get(opts, :adjacency)} do
+        {nil, nil, nil} ->
+          gcd_of(edges)
+
+        {nil, _, _} ->
+          1
+
+        {1, _, _} ->
+          1
+
+        {g, nil, nil} when is_integer(g) and g > 1 ->
+          check_divides!(edges, g)
+          g
+
+        {g, _, _} when is_integer(g) and g > 1 ->
+          raise ArgumentError,
+                "new/3: gcd: #{g} cannot be combined with :duals or :adjacency, " <>
+                  "which are on the unreduced scale"
       end
 
-    edges = if gcd > 1, do: reduce_weights(edges), else: edges
+    edges = if gcd > 1, do: divide_weights(edges, gcd), else: edges
 
     # The initial dual, and the ceiling every later weight must stay under
     # -- bbpPairings fixes `aboveMaxEdgeWeight` at construction and asserts
@@ -322,10 +353,10 @@ defmodule Ainalrami.WeightedMatching do
   # touching the partner's dual, and an EXPOSED vertex with an odd dual
   # breaks the arithmetic: the four-way minimum halves the outer-outer and
   # inner-blossom candidates, every tightness event is missed by one, and
-  # `grow_with_delta/6` falls through to its "numerically shouldn't happen"
-  # branch and stops early. Measured: three odd duals at entry, and a
-  # twelve-vertex solve that stopped after one augmentation with ten
-  # exposed vertices left.
+  # `grow_with_delta/6` reaches its "nothing became tight" branch. That
+  # branch used to stop the solve early - measured: three odd duals at
+  # entry, and a twelve-vertex solve that stopped after one augmentation
+  # with ten exposed vertices left - and now raises (`no_event!/6`).
   #
   # The fix is theirs exactly: every exposed blossom whose base dual is odd
   # gets +1 on each of its vertices, and -2 on its own blossom dual if it
@@ -334,7 +365,7 @@ defmodule Ainalrami.WeightedMatching do
   # `solve/2` is unaffected.
   #
   # "Every exposed blossom" is not "every exposed TOP-LEVEL blossom", and
-  # the difference is the whole of `descend_to_adjustable/2`. The -2 has to
+  # the difference is the whole of `descend_to_adjustable/3`. The -2 has to
   # come from a blossom that HAS 2 to give, and a top-level one need not:
   # `form_blossom/3` creates a blossom at dual 0, and it only gains
   # `2 * delta` while it is labelled `:outer`, so one formed around a tree
@@ -440,12 +471,15 @@ defmodule Ainalrami.WeightedMatching do
   Re-weight edges WITHOUT preparing anyone, by moving duals instead.
 
   `shifts` is `%{vertex => delta}` (on the doubled scale; even); `edges` is
-  `[{u, v, w}]` on the caller's scale. The result is a valid state -- every
-  touched edge feasible, every matched touched edge tight, every touched
-  vertex a trivial top-level blossom (dissolved first if it was not), duals
-  non-negative -- or `:error`, in which case the caller falls back to
-  `set_weight/4`. Nothing is unmatched, so a `solve/1` after a successful
-  call finds the matching already optimal when it was optimal before.
+  `[{u, v, w}]` on the caller's scale (a multiple of the state's gcd, or
+  it raises). The result is `{:ok, state}` with every touched edge
+  feasible, every matched edge at a shifted vertex and every matched
+  touched edge tight, and the shifted duals non-negative -- or `:error`,
+  in which case the caller falls back to `set_weight/4`. `:error` also
+  covers a touched vertex inside a non-trivial blossom: such a vertex is
+  refused, not dissolved (see the comment in the body). Nothing is
+  unmatched, so a `solve/1` after a successful call finds the matching
+  already optimal when it was optimal before.
 
   This exists for one caller: the refinement stage that rewrites every
   remainder pair's weight at once (`Ainalrami.Pairing`'s stage 4). Done
@@ -476,8 +510,7 @@ defmodule Ainalrami.WeightedMatching do
 
       state =
         Enum.reduce(edges, %{state | dual: dual}, fn {u, v, w}, acc ->
-          w2 = if w <= 0, do: 0, else: 2 * div(w, acc.gcd)
-          put_weight(acc, u, v, w2)
+          put_weight(acc, u, v, on_scale!(acc, w, "shift_and_set"))
         end)
 
       # Every matched edge at a shifted vertex must still be tight, whether
@@ -819,25 +852,7 @@ defmodule Ainalrami.WeightedMatching do
   the caller's weights have changed shape and a fresh `new/3` is needed.
   """
   def set_weight(state, u, v, w) when u != v do
-    w2 =
-      cond do
-        w <= 0 ->
-          0
-
-        rem(w, state.gcd) != 0 ->
-          raise ArgumentError,
-                "set_weight: #{w} is not on the scale this matcher was built at " <>
-                  "(gcd #{state.gcd}); build a fresh state"
-
-        true ->
-          2 * div(w, state.gcd)
-      end
-
-    if w2 > state.max_w do
-      raise ArgumentError,
-            "set_weight: weight exceeds the initial dual this matcher was built with; " <>
-              "build a fresh state"
-    end
+    w2 = doubled!(state, w, "set_weight")
 
     state
     |> prepare_vertex(u)
@@ -894,8 +909,42 @@ defmodule Ainalrami.WeightedMatching do
     end
   end
 
+  # A caller's weight on the doubled, reduced scale the state stores - zero
+  # for no edge - refused when it is not a multiple of the state's gcd
+  # (`shift_and_set/3` used to truncate such a weight silently) or, for
+  # `set_weight/4`, exceeds the ceiling the duals are reset to: both mean
+  # the caller's weights have changed shape and a fresh `new/3` is needed.
+  # `shift_and_set/3` resets no dual, and checks the feasibility it needs
+  # itself.
+  defp on_scale!(state, w, who) do
+    cond do
+      w <= 0 ->
+        0
+
+      rem(w, state.gcd) != 0 ->
+        raise ArgumentError,
+              "#{who}: #{w} is not on the scale this matcher was built at " <>
+                "(gcd #{state.gcd}); build a fresh state"
+
+      true ->
+        2 * div(w, state.gcd)
+    end
+  end
+
+  defp doubled!(state, w, who) do
+    w2 = on_scale!(state, w, who)
+
+    if w2 > state.max_w do
+      raise ArgumentError,
+            "#{who}: weight exceeds the initial dual this matcher was built with; " <>
+              "build a fresh state"
+    end
+
+    w2
+  end
+
   # Zero every edge `keep_v` has except the one to `keep`, both directions
-  # -- `state.weight` is kept symmetric by `put_weight/3`, so the far side
+  # -- `state.weight` is kept symmetric by `put_weight/4`, so the far side
   # of each dropped edge needs its own entry removed too.
   defp drop_other_edges(weight, keep_v, keep) do
     row = Map.get(weight, keep_v, %{})
@@ -1073,7 +1122,9 @@ defmodule Ainalrami.WeightedMatching do
     |> max(1)
   end
 
-  # Divide every weight by the greatest common divisor of all of them.
+  # Divide every weight by the greatest common divisor of all of them
+  # (`gcd_of/1`, or the one the caller supplied and `check_divides!/2`
+  # confirmed).
   #
   # This is worth far more than it looks. `Ainalrami.Pairing` packs
   # C1-C21 into a single integer by giving each criterion its own band, and
@@ -1087,33 +1138,33 @@ defmodule Ainalrami.WeightedMatching do
   # Exact, not an approximation. Every matching's total scales by exactly
   # 1/g, so the argmax is unchanged, and `solve/2` returns the pairs rather
   # than any weight, so no caller can observe the scale at all. Doubling
-  # happens afterwards in `build_state/2`, so the invariant that keeps dual
+  # happens afterwards in `adjacency_of/1`, so the invariant that keeps dual
   # variables integral through the algorithm's halvings still holds.
   #
   # Costs one pass of Euclid over the edge list, against millions of
   # bignum operations saved.
-  defp reduce_weights(edges) do
-    gcd =
-      Enum.reduce(edges, 0, fn {_i, _j, w}, acc ->
-        if w > 0, do: Integer.gcd(acc, w), else: acc
-      end)
+  defp divide_weights(edges, gcd) do
+    Enum.map(edges, fn
+      {i, j, w} when w > 0 -> {i, j, div(w, gcd)}
+      edge -> edge
+    end)
+  end
 
-    if gcd > 1 do
-      Enum.map(edges, fn
-        {i, j, w} when w > 0 -> {i, j, div(w, gcd)}
-        edge -> edge
-      end)
-    else
-      edges
-    end
+  defp check_divides!(edges, g) do
+    Enum.each(edges, fn {i, j, w} ->
+      if w > 0 and rem(w, g) != 0 do
+        raise ArgumentError,
+              "new/3: gcd: #{g} does not divide the weight #{w} of edge {#{i}, #{j}}"
+      end
+    end)
   end
 
   defp build_state(n, edges, ceiling, duals, adjacency) do
-    # Adjacency, not a flat `{u, v} => w` map. `resistance/3` is the
-    # innermost operation in the whole algorithm -- the delta scans call it
-    # once per vertex pair, every step -- and a tuple key means allocating
-    # and hashing a two-tuple on each of those. Nesting lets the scans
-    # fetch one vertex's row once and then do plain single-key lookups
+    # Adjacency, not a flat `{u, v} => w` map. A resistance (`dual[u] +
+    # dual[v] - w`) is the innermost operation in the whole algorithm --
+    # every row walk computes one per neighbour -- and a tuple key means
+    # allocating and hashing a two-tuple on each of those. Nesting lets a
+    # walk fetch one vertex's row once and then do plain single-key lookups
     # against it.
     #
     # A caller that hands the finished structure over as `:adjacency` skips
@@ -1418,10 +1469,11 @@ defmodule Ainalrami.WeightedMatching do
       end)
 
     # A new stage relabels everything at once, which is the one moment the
-    # outer set can SHRINK. The delta-scan caches are rebuilt from scratch
-    # here rather than repaired, and that is the whole reason maintaining
-    # them incrementally elsewhere is sound - see the "delta-scan caches"
-    # section. O(V^2), once per stage, against O(V) stages.
+    # outer set can SHRINK. The delta-scan caches are rebuilt from scratch at
+    # a solve's first stage and filtered down to the new outer set at every
+    # later one (`carry_caches/2`), never repaired across a shrink - that is
+    # the whole reason maintaining them incrementally within a stage is
+    # sound; see the "delta-scan caches" section.
     carry_caches(
       %{state | label: label, label_edge: %{}, tops: Enum.sort(top)},
       state.label
@@ -1447,9 +1499,11 @@ defmodule Ainalrami.WeightedMatching do
   #
   # The caches are no longer in that group. `best_outer` and the cross
   # table are keyed by vertex and blossom pair and do their own canonical
-  # tie-break on `{r, v}` / `{r, a, b}` (`scan_row/5`, `offer/4`,
-  # `min_free_or_zero_to_outer/1`, `cross_offer/6`), so they no longer
-  # inherit any order from here.
+  # tie-break on `{r, v}` / `{r, partner}` / `{r, a, b}` (`scan_row/5`,
+  # `offer/4`, `min_free_or_zero_to_outer/1`, `lower_min/2`), so they no
+  # longer inherit any order from here - except the vertex pair a cross
+  # entry names, where the first offered of equal resistances wins
+  # (`cross_gather/6`), in the order rows are walked.
   #
   # Blossom ids are integers (vertices are `0..n-1`, blossoms are allocated
   # above that), so sorting gives a total order that is stable, cheap, and
@@ -1568,9 +1622,9 @@ defmodule Ainalrami.WeightedMatching do
 
     # The smallest resistance from ANY free-or-zero vertex to an OUTER
     # one, tracked alongside which vertex achieves it - bbpPairings'
-    # `minInnerOuterEdgeResistance`. Rescanned each iteration (see
-    # moduledoc); still only O(n^2) per call and there are O(n) calls per
-    # stage, which is fine at bracket scale.
+    # `minInnerOuterEdgeResistance`. Read off the `best_outer` cache (see
+    # the "delta-scan caches" section) rather than by a scan of vertex
+    # pairs; the outer-outer minimum is the cross table's running best.
     {min_free_outer, free_outer_vertex} = min_free_or_zero_to_outer(state)
     {min_outer_outer, outer_pair} = min_outer_outer(state)
     {min_inner_blossom, inner_blossom_id} = min_inner_blossom_dual(state)
@@ -1644,19 +1698,38 @@ defmodule Ainalrami.WeightedMatching do
         |> continue_growing()
 
       true ->
-        # Numerically shouldn't happen - one of the four must hit zero -
-        # but guards against an infinite loop from a rounding slip rather
-        # than hanging.
-        {:done, state}
+        # One of the four must hit zero: `delta` IS the least of them. None
+        # does only when a halved candidate was odd before halving - an
+        # outer-outer resistance or an inner blossom dual that the doubled
+        # scale should have kept even - and that is a broken invariant, not
+        # a slow instance. This used to return `{:done, state}`, which ended
+        # the solve with the matching as it stood: `even_up_exposed_duals/1`'s
+        # comment records the one time it was reached, a twelve-vertex solve
+        # that "succeeded" with ten vertices exposed. Raised, like the stage
+        # and step budgets and `take_two/2`, so it cannot pass for an answer.
+        no_event!(state, delta, min_outer, min_free_outer, min_outer_outer, min_inner_blossom)
     end
     |> case do
       {:ok, _state} = result -> result
       {:grow, state} -> grow(state)
-      {:done, _state} = result -> result
     end
   end
 
   defp continue_growing({:cont, state}), do: {:grow, state}
+
+  # The four minima as `grow/1` read them (before the dual update), the
+  # step taken, and enough of the state to place the failure.
+  defp no_event!(state, delta, min_outer, min_free_outer, min_outer_outer, min_inner_blossom) do
+    labels = state.label |> Map.values() |> Enum.frequencies()
+    exposed = Enum.count(state.label, fn {b, _} -> not matched?(state, b) end)
+
+    raise "WeightedMatching: a dual step of #{delta} made nothing tight " <>
+            "(min outer dual #{inspect(min_outer)}, min free/zero-outer resistance " <>
+            "#{inspect(min_free_outer)}, min outer-outer resistance #{inspect(min_outer_outer)}, " <>
+            "min inner blossom dual #{inspect(min_inner_blossom)}); n=#{state.n}, " <>
+            "top-level blossoms by label #{inspect(labels)}, #{exposed} exposed, " <>
+            "#{map_size(state.children)} non-trivial blossoms"
+  end
 
   defp handle_free_outer_tight(state, v) do
     outer_partner = min_outer_edge(state, v)
@@ -1758,14 +1831,15 @@ defmodule Ainalrami.WeightedMatching do
   # them as a deliberate trade for a smaller translation. These are them,
   # in the form this port can carry.
   #
-  # Two maps, both keyed by VERTEX rather than by blossom, which is what
-  # makes blossom formation cheap to handle:
+  # Two caches:
   #
   #   * `best_outer[v]`, for v labelled `:free` or `:zero` - the
   #     least-resistance edge from v to any outer vertex, as
   #     `{resistance, outer_vertex}`.
-  #   * `best_cross[v]`, for v labelled `:outer` - the least-resistance
-  #     edge from v to an outer vertex in a DIFFERENT top-level blossom.
+  #   * the cross table, for every pair of OUTER top-level blossoms - the
+  #     least-resistance edge between them (its own section below; it was
+  #     once a per-vertex `best_cross[v]`, which blossom formation
+  #     invalidated wholesale).
   #
   # Nothing is stored for an `:inner` vertex. It would never be read, and
   # storing it would go stale: `shift_caches/2` moves every entry by the
@@ -1900,7 +1974,7 @@ defmodule Ainalrami.WeightedMatching do
   #     non-root neighbours;
   #   * a root that has left (its tree augmented) is a non-root now and
   #     gets an entry, and so does every non-root whose least root it was:
-  #     each one re-derives its least root by `least_root/3`, over whichever
+  #     each one re-derives its least root by `least_root/4`, over whichever
   #     is shorter, its row or the root set.
   #
   # Early in a cold solve nearly every vertex is a root, so there is almost
@@ -2026,7 +2100,8 @@ defmodule Ainalrami.WeightedMatching do
     end
   end
 
-  # Every vertex's entry, from nothing. O(V^2), and run once per stage.
+  # Every vertex's entry, from nothing: O(|outer| x V), at the first stage
+  # of every solve (later stages carry the caches, `carry_caches/2`).
   defp rebuild_caches(state) do
     state = %{
       state
@@ -2068,7 +2143,8 @@ defmodule Ainalrami.WeightedMatching do
   # adjacency row, and half of them for nothing: a vertex that has just
   # become INNER is neither a cache subject nor a candidate for anyone, so
   # offering it walked two hundred neighbours to hit `_ -> state` every
-  # time. `offer_vertex/2` was 62% of a solve, from 35,000 calls.
+  # time. That walk (`offer_vertex/2`, since removed) was 62% of a solve,
+  # from 35,000 calls.
   #
   # Now:
   #
@@ -2219,7 +2295,7 @@ defmodule Ainalrami.WeightedMatching do
         r = dual_v + Map.fetch!(state.dual, u) - w
         # Ties on resistance break on the lower vertex id, so the winner is
         # a property of the graph rather than of `row`'s map order - the
-        # same `{r, v}` rule the cross table uses (see `cross_offer/6`).
+        # same `{r, v}` rule the cross table uses (see `lower_min/2`).
         if best == nil or {r, u} < best, do: {r, u}, else: best
       else
         best
@@ -2345,30 +2421,24 @@ defmodule Ainalrami.WeightedMatching do
   # the table, so nothing is lost when the best one becomes internal.
   #
   # Maintained at:
-  #   * `rebuild_cross/1`      -- stage start, from the outer set, by walking
-  #   * `cross_add_blossom/2`  -- a blossom has just become outer: walk its
-  #                               vertices once, fill its row and everyone
-  #                               else's entry for it
-  #   * `cross_merge/3`        -- formation: merge children's rows, O(B^2)
-  #   * `cross_remove/2`       -- a blossom stops being outer or stops
-  #                               existing: drop its row and every entry
-  #                               pointing at it
+  #   * `rebuild_caches/1`     -- a solve's first stage: every outer
+  #                               vertex's row walked by
+  #                               `settle_outer_vertex/2`
+  #   * `settle_outer_vertex/2` -- a vertex has just become outer: one walk
+  #                               of its row offers every edge to another
+  #                               outer blossom (`cross_gather/6`,
+  #                               `cross_apply/3`)
+  #   * `cross_merge/3`        -- formation: merge children's rows
+  #   * `cross_retain/2`       -- a later stage's start: drop every row and
+  #                               entry of a blossom no longer outer
   #
   # Stored resistances carry `shift_cross` bias exactly as before, so the
-  # dual shift stays O(1).
-
-  # One flat map, `{lo, hi} => {stored_r, v_lo, v_hi}` with `lo < hi`, plus
-  # a running minimum `cross_best :: {stored_r, key} | nil` kept alongside
-  # it -- bbpPairings' `minOuterOuterEdgeResistance`. An offer that wins
-  # updates both in O(1); `min_outer_outer/1` reads the minimum instead of
-  # scanning the table, which at stage start holds ~|outer|^2 entries and
-  # was scanned on every one of ~27,000 delta steps a round -- 20% of it.
-  #
-  # The minimum can only go STALE in one way: `cross_merge/3` drops or
-  # re-keys entries, so it recomputes the minimum from the merged table.
-  # Within a stage nothing else removes an entry. (A tuple key was measured
-  # against a packed integer key and made no difference; the cost of a
-  # losing offer is the lookup itself, not the key.)
+  # dual shift stays O(1). The running minimum over the whole table
+  # (bbpPairings' `minOuterOuterEdgeResistance`) is kept with it, so
+  # `min_outer_outer/1` reads it instead of scanning the table - which at a
+  # stage start holds ~|outer|^2 entries and was scanned on every one of
+  # ~27,000 delta steps a round, 20% of it. (It was once one flat map keyed
+  # `{lo, hi}`; the row layout below replaced it.)
   ## ------------------------------------------------------ the cross table
   #
   # bbpPairings' `minOuterEdges`: for every pair of OUTER top-level
@@ -2774,23 +2844,13 @@ defmodule Ainalrami.WeightedMatching do
   defp put_or_delete(map, k, nil), do: Map.delete(map, k)
   defp put_or_delete(map, k, v), do: Map.put(map, k, v)
 
-  # Resolves the alternating matching WITHIN the (possibly nested)
-  # blossom containing `entry`, from `entry` to `exit_v` - both vertices
-  # of the SAME top-level blossom.
+  # The vertex-level matching, from the blossom-level one.
   #
-  # Looks up `b` via `in_blossom[entry]`, which is why this must ONLY
-  # ever be called with entry/exit_v that are genuinely within the
-  # TOP-level blossom - never as a way to "descend into a specific
-  # child", since `in_blossom` always resolves back to the SAME top-level
-  # id regardless of nesting depth. `resolve_nontrivial/4` and
-  # `pair_remaining/5` both already know exactly which CHILD they need to
-  # descend into at each step, and must call `resolve_within/4` (below)
-  # directly with that child rather than this function - calling this
-  # one instead, as an earlier version did in the `exit_idx == 0` case,
-  # re-derives the SAME top-level blossom via `in_blossom` and recurses
-  # into itself forever. Found by tracing the bare-triangle case, which
-  # hung silently with no crash and no further trace output right after
-  # blossom formation succeeded.
+  # (An earlier version resolved it per entry/exit pair, from the top-level
+  # blossom `in_blossom` names, which recursed into itself for ever on a
+  # bare triangle; nothing here looks a blossom up through `in_blossom` -
+  # each step descends into the CHILD it names.)
+  #
   # Run once, after `augment_until_done/1` has finished cascading every
   # blossom's base to its final value - the direct analogue of
   # bbpPairings' separate `putVerticesInMatchingOrder` pass
@@ -2884,7 +2944,7 @@ defmodule Ainalrami.WeightedMatching do
   # Contract the odd cycle closed by the tight edge (v0, v1) - both
   # OUTER, both in the same tree - into one new blossom, labelled OUTER.
   #
-  # Building `cycle` needed a second pass beyond `blossom_path_to_root`
+  # Building `cycle` needed a second pass beyond `blossom_ids_to_root/2`
   # once `augment_to_source` needed real connector VERTICES, not just the
   # blossom-id chain: `path_to_target/4` walks the same chain but returns
   # the actual vertex sequence, from which consecutive pairs ARE the
@@ -2916,7 +2976,7 @@ defmodule Ainalrami.WeightedMatching do
       |> Enum.flat_map(&blossom_vertices(state, &1))
       |> MapSet.new()
 
-    # `add_connectors/2` needs each id list in the SAME direction its own
+    # `add_connectors/3` needs each id list in the SAME direction its own
     # `flat` was actually walked - `path_to_target/4` always walks UP
     # (b -> ... -> common), so that direction is `ids0_before ++
     # [common]` and `ids1_before ++ [common]`, never reversed. An earlier
@@ -3004,11 +3064,11 @@ defmodule Ainalrami.WeightedMatching do
 
   # Flat vertex-level walk from `entry_vertex` (in blossom `b`) up to and
   # INCLUDING the entry into `target` - the same chain
-  # `blossom_path_to_root/2` walks at blossom-id granularity, but
+  # `blossom_ids_to_root/2` walks at blossom-id granularity, but
   # returning the actual connecting VERTICES (two per blossom passed
   # through: how the walk entered it, and how it leaves), which is what
-  # `add_connectors/2` and `resolve_internal/3` both need and
-  # `blossom_path_to_root/2` alone cannot provide.
+  # `add_connectors/3` needs and `blossom_ids_to_root/2` alone cannot
+  # provide.
   defp path_to_target(state, b, entry_vertex, target),
     do: path_to_target(state, b, entry_vertex, target, walk_budget(state))
 
@@ -3068,6 +3128,12 @@ defmodule Ainalrami.WeightedMatching do
 
   def __walk_for_test__(:path_to_target, state, {b, entry_vertex, target}),
     do: path_to_target(state, b, entry_vertex, target)
+
+  # The stages of `solve/1` WITHOUT its prologue (`greedy_resume/1`,
+  # `even_up_exposed_duals/1`), so a test can hand the search a state the
+  # prologue would have repaired - odd exposed duals - and see
+  # `grow_with_delta/6` refuse it.
+  def __walk_for_test__(:stages, state, _), do: augment_until_done(%{state | label: %{}})
 
   # Full path from `b` up to (and including) its tree root, WITHOUT
   # skipping any blossom along the way - unlike an earlier version of

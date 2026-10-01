@@ -215,6 +215,68 @@ defmodule Ainalrami.WeightedMatchingTest do
   # cyclic - but a cycle would spin for ever with no output, which is
   # exactly how the blossom-resolution bug in this file's history
   # presented. The budget turns that into a raise.
+  describe "invariant failures raise" do
+    # Two exposed vertices whose duals sum to an odd amount over their
+    # edge: the outer-outer resistance is 3, so the step is `div(3, 2) = 1`,
+    # which leaves it at 1 and every other candidate short of zero too.
+    # `solve/1`'s prologue evens such duals up first; the stages alone must
+    # refuse the state rather than end the solve with both left exposed.
+    test "a dual step that makes nothing tight raises instead of stopping the solve" do
+      state = WeightedMatching.new(2, [{0, 1, 5}], duals: %{0 => 7, 1 => 6})
+
+      assert_raise RuntimeError, ~r/made nothing tight/, fn ->
+        WeightedMatching.__walk_for_test__(:stages, state, nil)
+      end
+
+      # The same state through the whole of `solve/1` is evened up and
+      # matched.
+      assert {_, %{0 => 1, 1 => 0}} = WeightedMatching.solve(state)
+    end
+  end
+
+  describe "the :gcd option" do
+    test "the weights are reduced by the gcd the state records" do
+      state = WeightedMatching.new(3, [{0, 1, 12}, {1, 2, 24}], gcd: 2)
+
+      assert state.gcd == 2
+      assert WeightedMatching.edge_weight(state, 0, 1) == 12
+      assert WeightedMatching.edge_weight(state, 1, 2) == 24
+      assert Enum.sort(WeightedMatching.neighbours(state, 1)) == [{0, 12}, {2, 24}]
+
+      # A later weight on that scale is accepted and read back as given.
+      state = WeightedMatching.set_weight(state, 0, 2, 14)
+      assert WeightedMatching.edge_weight(state, 0, 2) == 14
+      assert {_, %{1 => 2, 2 => 1}} = WeightedMatching.solve(state)
+    end
+
+    test "the default reduces by the weights' own gcd, and reads them back" do
+      state = WeightedMatching.new(3, [{0, 1, 12}, {1, 2, 24}])
+
+      assert state.gcd == 12
+      assert WeightedMatching.edge_weight(state, 1, 2) == 24
+    end
+
+    test "a supplied gcd that does not divide every weight is refused" do
+      assert_raise ArgumentError, ~r/gcd: 5 does not divide the weight 12/, fn ->
+        WeightedMatching.new(3, [{0, 1, 10}, {1, 2, 12}], gcd: 5)
+      end
+    end
+
+    test "a supplied gcd above 1 is refused with duals or a ready adjacency" do
+      assert_raise ArgumentError, ~r/cannot be combined/, fn ->
+        WeightedMatching.new(2, [{0, 1, 4}], gcd: 2, duals: %{0 => 4, 1 => 4})
+      end
+    end
+
+    test "shift_and_set/3 refuses a weight off the scale instead of truncating it" do
+      state = WeightedMatching.new(2, [{0, 1, 12}], gcd: 4)
+
+      assert_raise ArgumentError, ~r/not on the scale/, fn ->
+        WeightedMatching.shift_and_set(state, %{}, [{0, 1, 10}])
+      end
+    end
+  end
+
   describe "tree-walk step budgets" do
     test "blossom_ids_to_root/2 raises rather than looping on a cyclic label_edge" do
       # Two INNER blossoms whose labelling edges point at each other.
