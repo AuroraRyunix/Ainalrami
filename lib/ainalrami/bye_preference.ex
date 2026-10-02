@@ -144,8 +144,17 @@ defmodule Ainalrami.ByePreference do
   exclusions - never because of a want or a soft setting, which fall back.
   Raises `Ainalrami.ByePreference.RefusedError` for a "must get it" [C2]
   rules out, on a round with a bye (see the moduledoc).
+
+  `pair` is the function every round is paired by, with the preferences
+  already resolved into `:bye_exclusions` - `Ainalrami.Pairing.pair_next_round/2`
+  by default, and `Ainalrami.Pairing.pair_later_round/2` when that is the
+  entry point the preferences reached the engine through, so the rounds
+  tried here take the same path as the one they are compared against.
   """
-  def pair(players, opts) do
+  def pair(players, opts, pair \\ &Pairing.pair_next_round/2) do
+    # The roster and the other options, as every pairing entry point checks
+    # them, before the scores and the round are read off the roster.
+    Pairing.check_input!(players, opts)
     prefs = parse!(Keyword.get(opts, :bye_preferences, []))
     base_opts = Keyword.delete(opts, :bye_preferences)
     round = Ainalrami.Trf.rounds_played(players) + 1
@@ -157,7 +166,7 @@ defmodule Ainalrami.ByePreference do
     if rem(map_size(scores), 2) == 1,
       do: refuse_second_bye!(players, base_opts, entries, round)
 
-    fide = Pairing.pair_next_round(players, base_opts)
+    fide = pair.(players, base_opts)
     h0 = holder(fide)
 
     report = %{
@@ -180,7 +189,15 @@ defmodule Ainalrami.ByePreference do
           {fide, %{report | outcomes: Enum.map(entries, &outcome(&1, :no_bye_this_round))}}
 
         true ->
-          resolve(players, base_opts, fide, entries, scores, eligibility(players, base_opts))
+          resolve(
+            players,
+            base_opts,
+            fide,
+            entries,
+            scores,
+            eligibility(players, base_opts),
+            pair
+          )
           |> then(fn {pairs, extra, decided_by, outcomes} ->
             exclusions = Enum.sort(Enum.uniq(hard_avoid ++ extra))
             by_preference = Enum.sort(Enum.uniq(extra) -- hard_avoid)
@@ -340,7 +357,7 @@ defmodule Ainalrami.ByePreference do
   # ------------------------------------------------------------ resolution
 
   # `{pairs, extra_exclusions, decided_by, outcomes}`.
-  defp resolve(players, opts, fide, entries, scores, eligibility) do
+  defp resolve(players, opts, fide, entries, scores, eligibility, pair) do
     {live, settled} = Enum.split_with(entries, &(&1.status == :live))
 
     {live, ineligible} =
@@ -353,7 +370,7 @@ defmodule Ainalrami.ByePreference do
         Enum.map(ineligible, &outcome(&1, {:ineligible, eligibility[&1.rank]}))
 
     ranks = fn pref -> for %{preference: ^pref, rank: r} <- live, do: r end
-    ctx = %{players: players, opts: opts, scores: scores, fide: fide}
+    ctx = %{players: players, opts: opts, scores: scores, fide: fide, pair: pair}
 
     {pairs, extra, decided_by, live_outcomes} =
       case want(ctx, ranks.(:want_hard), fide) do
@@ -434,7 +451,7 @@ defmodule Ainalrami.ByePreference do
 
   defp try_pair(ctx, extra) do
     excluded = Enum.uniq((ctx.opts[:bye_exclusions] || []) ++ extra)
-    {:ok, Pairing.pair_next_round(ctx.players, Keyword.put(ctx.opts, :bye_exclusions, excluded))}
+    {:ok, ctx.pair.(ctx.players, Keyword.put(ctx.opts, :bye_exclusions, excluded))}
   rescue
     NoValidPairingError -> :error
   end

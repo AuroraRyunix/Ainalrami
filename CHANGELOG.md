@@ -64,6 +64,74 @@ with the reference on every one of them.
 
 ## [Unreleased]
 
+- [Fix] **`WeightedMatching.shift_and_set/3` checks every edge a shift
+  moves, not only the ones it was handed.** Lowering a vertex's dual lowers
+  the slack of every edge at that vertex; only the listed edges and the
+  matched edge were checked, so a caller that lowered a dual and did not
+  list every edge at it got `{:ok, state}` for a state that was not dual
+  feasible, and the solve after it returned a matching that was not
+  maximum (constructed: edges 0-1 = 10, 0-2 = 8; lower 0's dual by 16 and
+  set 0-1 to 2 - accepted, and the matching stayed 0-1, weight 2 against
+  8). Every edge at a lowered vertex is now checked, and the call returns
+  `:error`; shifts must be even integers on vertices of the graph and
+  edges must join two distinct vertices, or it raises. No pairing
+  changes: the engine's stage-4 shifts are never negative (the exchange
+  addend only grows), and stages 7 and 8 already listed every edge of a
+  lowered vertex themselves - so no shift in the engine was ever
+  infeasible, and the differential corpus is unchanged.
+- [Fix] **A pairing handed to `explain_round/3` is checked before it is
+  explained.** The partner map was built from whatever it was given and
+  read with `Map.get/2`, so a player left out of the pairing was explained
+  as a player given the bye, a rank listed twice kept only its last
+  partner, and a rank the round does not have was scored against nobody.
+  Now every player active this round must appear exactly once, no other
+  rank may appear, nobody may be paired with themselves, and the pairing
+  must give exactly the byes the round has (one on an odd field, none on an
+  even one); anything else raises `ArgumentError` saying which.
+  `explain_context/3` and `explain_pairs/2` (and so every
+  `Ainalrami.Alternatives` question) apply the same check.
+- [Change] **One entry contract for every public pairing call.**
+  `pair_later_round/2` was a second, hand-kept copy of the option handling
+  and had drifted: `:soft_pairs` and `:bye_preferences` were accepted and
+  silently ignored. It now goes through the same wrapper as
+  `pair_next_round/2` - same validation, same options, bye preferences
+  resolved through `ByePreference.pair/3` on the same path - and differs
+  only in never taking the round-one shortcut. Every entry point
+  (`pair_next_round/2`, `pair_later_round/2`, `explain_round/3`,
+  `explain_context/3`, `explain_pairs/2`) now stamps its process state
+  inside the `try` whose `after` clears it, and one list of round-scoped
+  keys is cleared by all of them: a raise in setup (the initial-colour
+  inference, say) used to leave `expected_rounds` and the point system
+  behind for the next tournament in the process, and the explain path and
+  the pairing path each cleared a different subset of the keys.
+- [Fix] **Input is validated once, before any path is chosen.** The
+  duplicate-starting-rank check lived in `global_context/1`, which
+  `pair_round_one/1`'s shortcut never reaches, so a round one with two
+  players on one rank was paired (two vertices, one rank) while the same
+  roster a round later was refused. Every entry point - including
+  `pair_round_one/1`, `bye_eligibility/2` and `ByePreference.pair/3` - now
+  checks the roster (a list of players with an integer rank, numeric
+  points and a games list; ranks distinct over the whole roster, absent
+  players included) and the options before doing anything else.
+  `pair_round_one/1` also refuses a field somebody has played in.
+- [Fix] **Options that fell through a catch-all are refused.**
+  `soft_position` was `:weak` or, for anything else, `:strong` - so
+  `"weak"` or a misspelling became the strongest setting; it now takes
+  `:strong`, `:weak` or nil. The same rule now applies to every option
+  that was read through a catch-all or a default: `initial_colour`
+  (anything but `"w"` was Black, so `"W"`, `"white"` and `:white` paired
+  the draw the other way round) takes `"w"`, `"b"` or nil;
+  `bye_passed_over` (anything but `false` meant true) a boolean;
+  `expected_rounds` an integer; `point_system` a map with the six numeric
+  values; `forbidden_pairs` and `soft_pairs` lists of rank groups;
+  `bye_exclusions` and `bye_preference_exclusions` lists of ranks. Keys
+  the engine does not read are still left alone. With valid options every
+  pairing is byte-identical.
+- [Fix] **`Generator.generate/1`'s `initial_colour: "white"` pairs White.**
+  It was only lowercased, so "white" reached the engine as "white" - read
+  as Black - while the file recorded `152 W`. It now takes w/W/white or
+  b/B/black, as the `152` writer does, and refuses anything else.
+
 - [Performance] **The weighted matcher, 1.24-1.32x faster per call,
   every call unchanged.** `Ainalrami.WeightedMatching` - the matcher a
   bracket falls back to, and the one the explanation and the

@@ -14,8 +14,9 @@ for how the engine was verified see [validation.md](validation.md).
       │
       ▼
   Ainalrami.Pairing ──────── the Dutch system itself
-      │                       • pair_round_one/1
-      │                       • pair_later_round/1 → global_cascade/2
+      │                       • pair_next_round/2 (validates, resolves options)
+      │                         ├ round one: pair_round_one/1's split
+      │                         └ otherwise: global_cascade/2
       │
       ├──► Ainalrami.Matching ────────── bitmask DP, small brackets
       └──► Ainalrami.WeightedMatching ── Galil/Micali/Gabow, whole field
@@ -70,9 +71,23 @@ Two things here are load-bearing beyond ordinary parsing:
 ### `Ainalrami.Pairing`
 
 The bulk of the engine. Round one is its own path (`pair_round_one/1`);
-everything after goes through `pair_later_round/1` into `global_cascade/2`,
-a stage-for-stage port of bbpPairings' bracket algorithm - eight matchings
-per bracket, not one.
+everything after goes into `global_cascade/2`, a stage-for-stage port of
+bbpPairings' bracket algorithm - eight matchings per bracket, not one.
+
+**One entry contract.** Every public entry point - `pair_next_round/2`,
+`pair_later_round/2` (the cascade even on round one), `pair_round_one/1`,
+`explain_round/3`, `bye_eligibility/2` and `Ainalrami.ByePreference.pair/3`
+- validates the roster and the options once, BEFORE a path is chosen, and
+the two pairing entries share one option-resolving wrapper; see
+`pair_next_round/2`'s "Input". Every key the engine stamps into the process
+dictionary is stamped inside a `try` whose `after` clears one list of
+round-scoped keys, so a call that raises leaves nothing for the next
+tournament in the process to read. A pairing handed to `explain_round/3`
+is checked against the round's active players before it is scored: a
+player left out is refused, not read as a bye. (2026-10-02; before that,
+`pair_later_round/2` was a second copy of the option handling that ignored
+soft pairs and bye preferences, round one skipped the duplicate-rank
+check, and setup stamped state before the `try`.)
 
 **There is no second pairing path.** The per-bracket cascade that used to
 back this up was deleted once it stopped being reached at all, as was the

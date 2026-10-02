@@ -1538,8 +1538,10 @@ local graph by moving dual variables instead
 
 `shift_and_set/3` checks the optimality conditions on everything the
 shift touches - every dual non-negative, every matched edge tight, every
-written edge feasible (and every edge of a vertex whose dual went down)
-- and refuses otherwise, in which case the stage re-solves as before. So
+written edge feasible, and every edge of a vertex whose dual went down
+(since 2026-10-02 the matcher checks those itself, listed or not; before,
+it trusted the caller to list them, which the engine always did and a
+direct caller need not have) - and refuses otherwise, in which case the stage re-solves as before. So
 the matcher always holds an optimum; the question is whether it could be
 a different optimum from the re-solve's, and whether that could show.
 What stages 5-8 read from the matching is whether a player is paired

@@ -275,6 +275,82 @@ defmodule Ainalrami.WeightedMatchingTest do
         WeightedMatching.shift_and_set(state, %{}, [{0, 1, 10}])
       end
     end
+
+    test "set_weight/4 refuses a weight off the scale or over the ceiling" do
+      state = WeightedMatching.new(3, [{0, 1, 12}, {1, 2, 24}], gcd: 4, max_weight: 24)
+
+      assert_raise ArgumentError, ~r/not on the scale/, fn ->
+        WeightedMatching.set_weight(state, 0, 2, 10)
+      end
+
+      assert_raise ArgumentError, ~r/exceeds the initial dual/, fn ->
+        WeightedMatching.set_weight(state, 0, 2, 28)
+      end
+
+      # On the scale and under the ceiling, it is read back as given.
+      assert state |> WeightedMatching.set_weight(0, 2, 20) |> WeightedMatching.edge_weight(2, 0) ==
+               20
+    end
+  end
+
+  describe "shift_and_set/3" do
+    # A shift moves the slack of EVERY edge at the shifted vertex. This one
+    # lowers vertex 0's dual so that its listed matched edge (0, 1) stays
+    # tight at its new, smaller weight - and leaves the UNLISTED edge
+    # (0, 2) with a negative slack. Until 2026-10-02 only listed edges were
+    # checked: the call returned `{:ok, state}`, the solve after it found
+    # nothing to do, and the matching came back as 0-1 (weight 2) where 0-2
+    # (weight 8) is the maximum.
+    test "refuses a lowered dual that leaves an unlisted edge infeasible" do
+      {state, %{0 => 1}} =
+        3
+        |> WeightedMatching.new([{0, 1, 10}, {0, 2, 8}], gcd: 1, max_weight: 10)
+        |> WeightedMatching.solve()
+
+      assert %{0 => 16, 1 => 4, 2 => 0} = state.dual
+      assert WeightedMatching.shift_and_set(state, %{0 => -16}, [{0, 1, 2}]) == :error
+
+      # The fallback the contract names reaches the real optimum.
+      {_, matching} = state |> WeightedMatching.set_weight(0, 1, 2) |> WeightedMatching.solve()
+      assert matching == %{0 => 2, 2 => 0}
+    end
+
+    test "accepts a lowered dual exactly while every edge at the vertex stays feasible" do
+      {state, _} =
+        3
+        |> WeightedMatching.new([{0, 1, 10}, {0, 2, 4}], gcd: 1, max_weight: 10)
+        |> WeightedMatching.solve()
+
+      assert %{0 => 10, 1 => 10, 2 => 0} = state.dual
+
+      # 10 - 2 + 0 = 8 = 2 * 4 on the unlisted edge, which is feasible; and
+      # 8 + 10 = 18 = 2 * 9 keeps the matched one tight.
+      assert {:ok, shifted} = WeightedMatching.shift_and_set(state, %{0 => -2}, [{0, 1, 9}])
+      assert {_, %{0 => 1, 1 => 0}} = WeightedMatching.solve(shifted)
+
+      # Two more down and the unlisted edge is at 6 < 8.
+      assert WeightedMatching.shift_and_set(state, %{0 => -4}, [{0, 1, 8}]) == :error
+    end
+
+    test "refuses arguments outside its contract loudly" do
+      state = WeightedMatching.new(3, [{0, 1, 10}, {0, 2, 8}], gcd: 1, max_weight: 10)
+
+      assert_raise ArgumentError, ~r/even integer/, fn ->
+        WeightedMatching.shift_and_set(state, %{0 => 3}, [])
+      end
+
+      assert_raise ArgumentError, ~r/even integer/, fn ->
+        WeightedMatching.shift_and_set(state, %{7 => 2}, [])
+      end
+
+      assert_raise ArgumentError, ~r/two distinct vertices/, fn ->
+        WeightedMatching.shift_and_set(state, %{}, [{1, 1, 4}])
+      end
+
+      assert_raise ArgumentError, ~r/two distinct vertices/, fn ->
+        WeightedMatching.shift_and_set(state, %{}, [{0, 3, 4}])
+      end
+    end
   end
 
   describe "tree-walk step budgets" do

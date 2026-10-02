@@ -280,20 +280,57 @@ defmodule Ainalrami.Pairing do
   also returns an account of what each preference did; this returns its
   pairs. Absent or `[]`, the engine runs exactly the code it ran before the
   option existed.
+
+  ## Input
+
+  Checked once, before any path is chosen - the same checks for this,
+  `pair_later_round/2`, `pair_round_one/1`, `explain_round/3` and
+  `bye_eligibility/2` - and refused with an `ArgumentError` naming what is
+  wrong:
+
+    * `players` - a list of maps, each with an integer `:rank`, a numeric
+      `:points` and a `:games` list whose entries carry `:opponent_rank`
+      (an integer, or nil); starting ranks distinct over the WHOLE roster,
+      players sitting the round out included.
+    * `opts` - a keyword list. `:expected_rounds` an integer or nil;
+      `:initial_colour` exactly `"w"`, `"b"` or nil; `:point_system` nil
+      or a map with numeric `:win`, `:draw`, `:loss`,
+      `:pairing_allocated_bye`, `:forfeit_loss` and `:zero_point_bye`;
+      `:forbidden_pairs` and `:soft_pairs` lists of groups (a list of
+      ranks, or `{ranks, first_round, last_round}`); `:soft_position`
+      `:strong`, `:weak` or nil (= `:strong`); `:bye_exclusions` a list of
+      ranks; `:bye_passed_over` a boolean. Keys this engine does not read
+      are left alone.
+
+  Each refused value used to be read as some OTHER value without a word -
+  `initial_colour: "W"` as Black, `soft_position: "weak"` as `:strong` -
+  or to fail far from the option that caused it.
   """
-  def pair_next_round(players, opts \\ []) do
+  def pair_next_round(players, opts \\ []), do: pair_entry(players, opts, :auto)
+
+  # The one entry every public pairing call goes through: the input checked
+  # once, before any path is chosen (`validate_input!/2`), then the bye
+  # preferences resolved - with `path` handed to `ByePreference.pair/3` so
+  # the rounds it tries are paired by the same entry point - and only then
+  # the round itself. `:auto` lets a round nobody has played in take
+  # `pair_round_one/1`'s shortcut; `:later` is `pair_later_round/2`'s
+  # contract, the bracket cascade whatever the round.
+  defp pair_entry(players, opts, path) do
+    validate_input!(players, opts)
+
     if Ainalrami.ByePreference.active?(opts) do
-      players |> Ainalrami.ByePreference.pair(opts) |> elem(0)
+      pair = if path == :later, do: &pair_later_round/2, else: &pair_next_round/2
+      players |> Ainalrami.ByePreference.pair(opts, pair) |> elem(0)
     else
-      pair_without_preferences(players, opts)
+      pair_without_preferences(players, opts, path)
     end
   end
 
-  defp pair_without_preferences(players, opts) do
-    do_pair_next_round(players, opts)
+  defp pair_without_preferences(players, opts, path) do
+    do_pair_next_round(players, opts, path)
   rescue
     e in Ainalrami.Pairing.NoValidPairingError ->
-      reraise diagnose_exclusions(e, players, opts), __STACKTRACE__
+      reraise diagnose_exclusions(e, players, opts, path), __STACKTRACE__
   end
 
   # Tells "impossible" apart from "impossible because of the organiser's
@@ -304,14 +341,14 @@ defmodule Ainalrami.Pairing do
   # exclusion is enough, since the round just computed is then legal.
   #
   # Costs a second pairing, but only on a round that has already failed.
-  defp diagnose_exclusions(%{reason: :no_legal_pairing} = e, players, opts) do
+  defp diagnose_exclusions(%{reason: :no_legal_pairing} = e, players, opts, path) do
     excluded = active_excluded(players, opts[:bye_exclusions])
 
     if excluded == [] do
       e
     else
       try do
-        pairs = do_pair_next_round(players, Keyword.delete(opts, :bye_exclusions))
+        pairs = do_pair_next_round(players, Keyword.delete(opts, :bye_exclusions), path)
         holder = Enum.find_value(pairs, fn {w, b} -> if is_nil(b), do: w end)
 
         if holder in excluded do
@@ -333,7 +370,7 @@ defmodule Ainalrami.Pairing do
     end
   end
 
-  defp diagnose_exclusions(e, _players, _opts), do: e
+  defp diagnose_exclusions(e, _players, _opts, _path), do: e
 
   defp active_excluded(players, ranks) do
     played = rounds_played(players)
@@ -372,23 +409,28 @@ defmodule Ainalrami.Pairing do
     raise ArgumentError, ":bye_exclusions must be a list of starting ranks, got #{inspect(other)}"
   end
 
-  defp do_pair_next_round(players, opts) do
-    # The tournament's total round count, when the caller knows it (a
-    # TRF's `XXR`/`142`). Only one rule needs it - the final-round
-    # exception in `colour_compatible?/2` - so it is optional rather than
-    # a required argument, and stashed rather than threaded through the
-    # cascade, matching how the search budget is already carried.
-    Process.put(@expected_rounds_key, opts[:expected_rounds])
-
-    Process.put(
-      @initial_colour_key,
-      opts[:initial_colour] || infer_initial_colour(players) || "w"
-    )
-
-    Process.put(@point_system_key, opts[:point_system] || Ainalrami.Trf.default_point_system())
-    stamp_env_flags()
-
+  # Every key this function stamps is stamped INSIDE the `try`, so its
+  # `after` runs whatever raises - the initial-colour inference reads every
+  # game, and an option that only fails once it is used (a forbidden group
+  # of the wrong shape) used to raise between the first stamps and the
+  # `try`, leaving them for the next call in the process to read.
+  defp do_pair_next_round(players, opts, path) do
     try do
+      # The tournament's total round count, when the caller knows it (a
+      # TRF's `XXR`/`142`). Only one rule needs it - the final-round
+      # exception in `colour_compatible?/2` - so it is optional rather than
+      # a required argument, and stashed rather than threaded through the
+      # cascade, matching how the search budget is already carried.
+      Process.put(@expected_rounds_key, opts[:expected_rounds])
+
+      Process.put(
+        @initial_colour_key,
+        opts[:initial_colour] || infer_initial_colour(players) || "w"
+      )
+
+      Process.put(@point_system_key, opts[:point_system] || Ainalrami.Trf.default_point_system())
+      stamp_env_flags()
+
       played = rounds_played(players)
 
       # After `played`, not before: a `260` group is confined to a range of
@@ -410,27 +452,65 @@ defmodule Ainalrami.Pairing do
       # from round 1 on. So when either is in play, so does this. A bye
       # exclusion likewise: the shortcut hands the bye to the lowest-ranked
       # player without asking whether they may have it.
-      if Enum.all?(active, &(&1.games == [])) and is_nil(Process.get(@forbidden_key)) and
+      #
+      # `pair_later_round/2` asks for the cascade whatever the round, and
+      # gets it.
+      if path == :auto and Enum.all?(active, &(&1.games == [])) and
+           is_nil(Process.get(@forbidden_key)) and
            is_nil(Process.get(@soft_key)) and is_nil(Process.get(@bye_excluded_key)) and
            not Enum.any?(active, &(acceleration_at(&1, played) != 0.0)) do
-        pair_round_one(active)
+        round_one(active)
       else
         # The FULL roster, not just the active players - float direction
         # has to look up opponents' scores, and an opponent may be one of
         # the players sitting this round out.
-        pair_later_round(players)
+        do_pair_later_round(players)
       end
     after
-      Process.delete(@expected_rounds_key)
-      Process.delete(@initial_colour_key)
-      Process.delete(@parity_number_key)
-      Process.delete(@point_system_key)
-      Process.delete(@played_key)
-      Process.delete(@forbidden_key)
-      Process.delete(@soft_key)
-      Process.delete(@bye_excluded_key)
-      clear_env_flags()
+      clear_round_state()
     end
+  end
+
+  # Every process-dictionary key the pairing and explanation paths stamp,
+  # whatever stamped it. One list and one clearing function, run by every
+  # public entry point's `after`, rather than one hand-kept subset per entry
+  # point: the subsets drifted (the explain path cleared the oracle and the
+  # round matcher, the pairing path cleared the certified-mode keys, neither
+  # cleared both), and a key missed by one `after` is read by the next
+  # tournament paired in the same process. `@cert_stats_key` is not here on
+  # purpose: it accumulates across rounds for the benchmarks and is taken
+  # with `take_cert_stats/0`.
+  @round_state_keys [
+    @expected_rounds_key,
+    @initial_colour_key,
+    @parity_number_key,
+    @point_system_key,
+    @played_key,
+    @forbidden_key,
+    @soft_key,
+    @bye_excluded_key,
+    @bye_score_key,
+    @first_single_bye_key,
+    @round_matcher_key,
+    @dirty_key,
+    @cert_key,
+    @taint_key,
+    @cert_memo_key,
+    @oracle_key,
+    @dense_rows_key,
+    {@dense_rows_key, :bootstrap},
+    @oracle_dense_key,
+    @direct_budget_key,
+    @direct_memo_key,
+    @direct_edge_key,
+    @builder_c9_key,
+    @virtual_builder_key,
+    :ainalrami_small_nodes
+  ]
+
+  defp clear_round_state do
+    Enum.each(@round_state_keys, &Process.delete/1)
+    clear_env_flags()
   end
 
   # `resolveForbiddenPairs` (`tournament.cpp:100-116`): each group is
@@ -483,6 +563,14 @@ defmodule Ainalrami.Pairing do
   `players`, including one produced by a different engine. The brackets a
   pairing implies are reconstructed from it: score groups top-down, with
   each bracket's unpaired members carried into the next as its MDPs.
+
+  "Complete" is checked, not assumed: every player active this round
+  appears exactly once, no other rank appears, nobody is paired with
+  themselves, and the pairing gives exactly the pairing-allocated byes the
+  round has (one on an odd field, none on an even one, as `{rank, nil}`).
+  Anything else raises `ArgumentError` - a player left out is NOT read as
+  a player given the bye. The players and options are checked as
+  `pair_next_round/2` checks them (see "Input" there).
 
   Returns one map per bracket. Two halves, and the difference matters:
 
@@ -557,6 +645,12 @@ defmodule Ainalrami.Pairing do
   option no bracket carries the key.
   """
   def explain_round(players, pairs, opts \\ []) do
+    # Before the organiser-exclusion chain, which re-pairs the round and
+    # reads the bye holder off `pairs`. The rest of the pairing's shape is
+    # `partner_map!/2`'s to check.
+    validate_input!(players, opts)
+    if not is_list(pairs), do: bad_pairing!("a pairing is a list of pairs, got #{inspect(pairs)}")
+
     if Ainalrami.ByePreference.active?(opts) do
       explain_with_preferences(players, pairs, opts)
     else
@@ -610,10 +704,19 @@ defmodule Ainalrami.Pairing do
   # `explain_pairs/2` can stamp them again: the halves each clean up after
   # themselves, as `explain_round/3` always has.
   #
-  # `pairs`, when given, is only walked - at the point where the undivided
-  # function built its partner map - so that a malformed pairing is refused
-  # at the same moment, relative to everything else that can raise here, as
-  # it always was. The context itself never depends on it.
+  # `pairs`, when given, is checked against the round's active players
+  # (`partner_map!/2`: every active player exactly once, no rank the round
+  # does not have, nobody paired with themselves, and exactly the byes the
+  # round has - one on an odd field, none on an even one) at the point
+  # where the undivided function built its partner map. The context itself
+  # never depends on it. `explain_pairs/2` holds every pairing it scores to
+  # the same check, so a pairing that leaves a player out is refused rather
+  # than read as giving that player the bye: in the partner map an explicit
+  # bye is a `nil` partner, and a player with no entry cannot occur.
+  #
+  # The players and the options are validated as `pair_next_round/2`
+  # validates them, and every key is stamped inside the `try`, so a raise
+  # anywhere here leaves no state behind.
   def explain_context(players, opts, pairs \\ :none) do
     # Unresolved bye preferences would be judged as absent here - and by
     # every forced search `Ainalrami.Alternatives` runs on this context -
@@ -624,24 +727,25 @@ defmodule Ainalrami.Pairing do
               "Ainalrami.ByePreference.pair/2's report instead"
     end
 
-    Process.put(@expected_rounds_key, opts[:expected_rounds])
-
-    Process.put(
-      @initial_colour_key,
-      opts[:initial_colour] || infer_initial_colour(players) || "w"
-    )
-
-    # Stamped for the same reason `pair_next_round/2` stamps it, and missing
-    # until 2026-08-26. Every score-dependent rule reads the point system
-    # through `game_points/1` and `point_system/0`, so without this they
-    # all fell back to 1/=/0 - while this function's whole job is to explain
-    # what the PAIRING did. The CLI builds one keyword list and hands it to
-    # both, so `openpair file.trf -x` on a file carrying `BB*` lines paired
-    # under the file's system and explained under the default one.
-    Process.put(@point_system_key, opts[:point_system] || Ainalrami.Trf.default_point_system())
-    stamp_env_flags()
-
     try do
+      validate_input!(players, opts)
+      Process.put(@expected_rounds_key, opts[:expected_rounds])
+
+      Process.put(
+        @initial_colour_key,
+        opts[:initial_colour] || infer_initial_colour(players) || "w"
+      )
+
+      # Stamped for the same reason `pair_next_round/2` stamps it, and missing
+      # until 2026-08-26. Every score-dependent rule reads the point system
+      # through `game_points/1` and `point_system/0`, so without this they
+      # all fell back to 1/=/0 - while this function's whole job is to explain
+      # what the PAIRING did. The CLI builds one keyword list and hands it to
+      # both, so `openpair file.trf -x` on a file carrying `BB*` lines paired
+      # under the file's system and explained under the default one.
+      Process.put(@point_system_key, opts[:point_system] || Ainalrami.Trf.default_point_system())
+      stamp_env_flags()
+
       played = rounds_played(players)
       Process.put(@played_key, played)
       Process.put(@forbidden_key, forbidden_map(opts[:forbidden_pairs], played + 1))
@@ -687,7 +791,7 @@ defmodule Ainalrami.Pairing do
       Process.put(@bye_score_key, bye_score)
       Process.put(@first_single_bye_key, first_single_bye?)
 
-      if pairs != :none, do: partner_map(pairs)
+      if pairs != :none, do: partner_map!(pairs, field)
       ctx = global_context(field)
 
       %{
@@ -714,18 +818,18 @@ defmodule Ainalrami.Pairing do
           )
       }
     after
-      clear_explain_keys()
+      clear_round_state()
     end
   end
 
   @doc false
   # The pairs-dependent half of `explain_round/3` - see `explain_context/2`.
+  # `pairs` is checked against the context's field by `partner_map!/2`.
   def explain_pairs(%{field: field, ctx: ctx, groups: groups, points: points} = context, pairs) do
-    Enum.each(context.stamps, fn {key, value} -> Process.put(key, value) end)
-    stamp_env_flags()
-
     try do
-      partner = partner_map(pairs)
+      Enum.each(context.stamps, fn {key, value} -> Process.put(key, value) end)
+      stamp_env_flags()
+      partner = partner_map!(pairs, field)
 
       groups
       |> Enum.with_index()
@@ -740,27 +844,8 @@ defmodule Ainalrami.Pairing do
       |> elem(0)
       |> Enum.reverse()
     after
-      clear_explain_keys()
+      clear_round_state()
     end
-  end
-
-  defp clear_explain_keys do
-    Process.delete(@expected_rounds_key)
-    Process.delete(@initial_colour_key)
-    Process.delete(@parity_number_key)
-    Process.delete(@point_system_key)
-    Process.delete(@played_key)
-    Process.delete(@forbidden_key)
-    Process.delete(@soft_key)
-    Process.delete(@bye_excluded_key)
-    Process.delete(@bye_score_key)
-    Process.delete(@round_matcher_key)
-    Process.delete(@oracle_key)
-    Process.delete(@dense_rows_key)
-    Process.delete(@oracle_dense_key)
-    Process.delete(@dirty_key)
-    Process.delete(@first_single_bye_key)
-    clear_env_flags()
   end
 
   # The same shape as `bracket_loop/6`'s own gate (dutch.cpp:1608-1643),
@@ -788,7 +873,14 @@ defmodule Ainalrami.Pairing do
   # and then the chain simply stops where it got to.
   defp bye_passed_over(players, pairs, opts) do
     excluded = active_excluded(players, opts[:bye_exclusions])
-    holder = Enum.find_value(pairs, fn {w, b} -> if is_nil(b), do: w end)
+
+    # Runs before `partner_map!/2` has looked at `pairs`, so an entry of
+    # the wrong shape is skipped here and refused there, with its reason.
+    holder =
+      Enum.find_value(pairs, fn
+        {w, nil} -> w
+        _ -> nil
+      end)
 
     if excluded == [] or is_nil(holder) or opts[:bye_passed_over] == false do
       nil
@@ -799,7 +891,13 @@ defmodule Ainalrami.Pairing do
   end
 
   defp passed_over_chain(players, opts, excluded, passed) do
-    pairs = do_pair_next_round(players, Keyword.put(opts, :bye_exclusions, Enum.reverse(passed)))
+    pairs =
+      do_pair_next_round(
+        players,
+        Keyword.put(opts, :bye_exclusions, Enum.reverse(passed)),
+        :auto
+      )
+
     holder = Enum.find_value(pairs, fn {w, b} -> if is_nil(b), do: w end)
 
     if MapSet.member?(excluded, holder) and holder not in passed do
@@ -837,12 +935,87 @@ defmodule Ainalrami.Pairing do
       end)
   end
 
-  defp partner_map(pairs) do
-    Enum.reduce(pairs, %{}, fn
-      {w, nil}, acc -> Map.put(acc, w, nil)
-      {w, b}, acc -> acc |> Map.put(w, b) |> Map.put(b, w)
-    end)
+  # The supplied pairing as `%{rank => partner rank | nil}`, `nil` meaning
+  # an EXPLICIT pairing-allocated bye - checked against `field`, the round's
+  # active players, before anything is scored from it.
+  #
+  # Until 2026-10-02 the map was built from whatever it was given, and every
+  # reader asks it `Map.get(partner, rank)`: a player missing from the
+  # pairing came back `nil`, exactly as a player given the bye, so a round
+  # with a board left out was explained as a round with an extra bye. A rank
+  # listed twice kept its LAST partner and silently dropped the first, and a
+  # rank the round does not have was scored against nobody. Each of those is
+  # a report about a round that does not exist, so each is refused here
+  # instead: every active player exactly once, only active ranks, nobody
+  # against themselves, and exactly the byes the round has - one on an odd
+  # field, none on an even one, which with full coverage is also the most
+  # it can hold.
+  defp partner_map!(pairs, field) when is_list(pairs) do
+    active = MapSet.new(field, & &1.rank)
+
+    {partner, byes} =
+      Enum.reduce(pairs, {%{}, 0}, fn pair, {acc, byes} ->
+        case pair do
+          {w, nil} ->
+            {put_partner!(acc, w, nil, active, pair), byes + 1}
+
+          {w, b} when w == b ->
+            bad_pairing!("#{inspect(w)} is paired with themselves")
+
+          {w, b} ->
+            acc = put_partner!(acc, w, b, active, pair)
+            {put_partner!(acc, b, w, active, pair), byes}
+
+          other ->
+            bad_pairing!(
+              "each entry is {white_rank, black_rank} or {rank, nil} for the bye, " <>
+                "got #{inspect(other)}"
+            )
+        end
+      end)
+
+    case Enum.reject(field, &Map.has_key?(partner, &1.rank)) do
+      [] ->
+        :ok
+
+      missing ->
+        bad_pairing!(
+          "active player(s) #{Enum.map_join(missing, ", ", & &1.rank)} are not in it " <>
+            "(a bye is {rank, nil}, not an absence)"
+        )
+    end
+
+    allowed = rem(MapSet.size(active), 2)
+
+    if byes != allowed do
+      bad_pairing!(
+        "it gives #{byes} pairing-allocated bye(s) where this round of " <>
+          "#{MapSet.size(active)} active player(s) has #{allowed}"
+      )
+    end
+
+    partner
   end
+
+  defp partner_map!(other, _field),
+    do: bad_pairing!("a pairing is a list of pairs, got #{inspect(other)}")
+
+  defp put_partner!(acc, rank, partner, active, pair) do
+    cond do
+      not MapSet.member?(active, rank) ->
+        bad_pairing!(
+          "#{inspect(pair)} names #{inspect(rank)}, who is not an active player this round"
+        )
+
+      Map.has_key?(acc, rank) ->
+        bad_pairing!("rank #{rank} appears more than once")
+
+      true ->
+        Map.put(acc, rank, partner)
+    end
+  end
+
+  defp bad_pairing!(why), do: raise(ArgumentError, "invalid pairing to explain: " <> why)
 
   defp explain_bracket(bracket, group, next_group, field, partner, ctx, single_bye?) do
     ranks = MapSet.new(bracket, & &1.rank)
@@ -1177,8 +1350,31 @@ defmodule Ainalrami.Pairing do
   will legitimately not always match JaVaFo's own for this reason; pairing
   *composition* (who plays whom) is the thing that should match, and does
   - see the comparison harness in `test/ainalrami/javafo_comparison_test.exs`.
+
+  The roster is checked as `pair_next_round/2` checks it (see "Input" there)
+  and must be a round nobody has played in: a player with any game raises
+  `ArgumentError`, since the rank split above is only Article 1's answer
+  when everyone is tied on zero. It takes no options - a round one with
+  forbidden pairs, acceleration or a recorded drawing of lots is
+  `pair_next_round/2`'s.
   """
   def pair_round_one(players) do
+    validate_players!(players)
+
+    case Enum.find(players, &(&1.games != [])) do
+      nil ->
+        :ok
+
+      p ->
+        raise ArgumentError,
+              "pair_round_one/1 pairs a round nobody has played in, and rank #{p.rank} " <>
+                "has #{length(p.games)} game(s) - use pair_next_round/2"
+    end
+
+    round_one(players)
+  end
+
+  defp round_one(players) do
     sorted = Enum.sort_by(players, & &1.rank)
 
     # 5.2.5's number, built locally rather than read from
@@ -1395,11 +1591,16 @@ defmodule Ainalrami.Pairing do
   @doc """
   Pairs a round from existing score/game history.
 
-  `opts` are the same as `pair_next_round/2`'s: `:expected_rounds` (the
-  tournament's total, which the final-round colour exception needs) and
-  `:forbidden_pairs` (groups of mutually-forbidden starting ranks, from a
-  TRF's `XXP` lines). Prefer `pair_next_round/2`, which also handles the
-  round-one case; this is the later-round path on its own.
+  `opts` are exactly `pair_next_round/2`'s, checked and resolved by the same
+  code - soft pairs, bye exclusions and bye preferences included - and the
+  input is validated the same way. The one difference is the path: this
+  never takes `pair_round_one/1`'s shortcut, so a round nobody has played
+  in is paired by the cascade below too. Prefer `pair_next_round/2`.
+
+  Until 2026-10-02 this was a second, hand-kept copy of the option
+  handling, and it had drifted: `:soft_pairs` and `:bye_preferences` were
+  accepted and silently ignored, and its process state was stamped before
+  its `try`, so a raise there leaked into the next call.
 
   Forms score brackets (Article 1.2: ranked by score, then TPN ascending)
   in descending order and pairs them in one continuous solve. Every
@@ -1450,85 +1651,7 @@ defmodule Ainalrami.Pairing do
   clash, so the C10/C11 rungs are constant across candidate matchings except
   where `final_round_topscorers?/2` admits such a pair.
   """
-  def pair_later_round(players, opts \\ []) do
-    # Public, and it sets none of the process-dictionary state the rules read
-    # - so calling it directly used to ignore every `XXP` line and never fire
-    # the final-round colour exception, silently producing a pairing that
-    # looks entirely legal. That is the exact failure the whole forbidden-pair
-    # feature exists to prevent, reachable by anyone following the docs.
-    #
-    # `pair_next_round/2` sets both before delegating here, and re-setting
-    # them from the same keyword list is idempotent, so this costs that path
-    # nothing while making the direct one safe.
-    Process.put(@expected_rounds_key, opts[:expected_rounds] || Process.get(@expected_rounds_key))
-
-    Process.put(
-      @forbidden_key,
-      (opts[:forbidden_pairs] &&
-         forbidden_map(opts[:forbidden_pairs], rounds_played(players) + 1)) ||
-        Process.get(@forbidden_key)
-    )
-
-    Process.put(@point_system_key, opts[:point_system] || Process.get(@point_system_key))
-
-    # The organiser's bye exclusions (`pair_next_round/2`'s doc), with the
-    # same inherit-from-the-outer-caller fallback as the options above.
-    Process.put(
-      @bye_excluded_key,
-      (opts[:bye_exclusions] &&
-         bye_exclusion_set(
-           opts[:bye_exclusions],
-           Enum.filter(players, &active_this_round?(&1, rounds_played(players)))
-         )) || Process.get(@bye_excluded_key)
-    )
-
-    # The fourth option, and the last one this entry point was ignoring.
-    # `pair_next_round/2` and `explain_round/3` both stamp it; this did not,
-    # so a direct caller passing `initial_colour: "b"` had it silently
-    # dropped and board one came out the wrong way round - `colour_of/2`
-    # reads this key with a default of "w".
-    Process.put(
-      @initial_colour_key,
-      opts[:initial_colour] || Process.get(@initial_colour_key) ||
-        infer_initial_colour(players) || "w"
-    )
-
-    # No `|| Process.get(...)` on this one, unlike the four above: those
-    # fall back because a direct caller has to be able to inherit the outer
-    # caller's OPTIONS, and the environment is not an option. Re-reading it
-    # here on the `pair_next_round/2` path costs three env lookups per
-    # round against the ~70,000 per-edge ones this removes, and buys the
-    # guarantee that a stale flag cannot be inherited even if some future
-    # path ever did leak one.
-    stamp_env_flags()
-
-    # Cleaned up here, and until 2026-08-26 it was not cleaned up at all.
-    # That mattered because of the `|| Process.get(...)` fallbacks above:
-    # the leftovers were not merely inert, the NEXT direct call inherited
-    # them. A forbidden-pair map from tournament A silently forbade the same
-    # starting ranks in tournament B, and A's `expected_rounds` let the
-    # final-round colour exception fire in a mid-tournament round of B -
-    # both of which produce a pairing that looks entirely legal.
-    #
-    # Unconditional, including on the `pair_next_round/2` path that stamps
-    # these keys and delegates here. That is safe because the delegation is
-    # the last thing that function does before its own `after` deletes the
-    # same keys - so nothing reads them after this returns, and a double
-    # delete is a no-op. Anyone adding work after the delegation has to
-    # revisit this.
-    try do
-      do_pair_later_round(players)
-    after
-      Process.delete(@expected_rounds_key)
-      Process.delete(@forbidden_key)
-      Process.delete(@bye_excluded_key)
-      Process.delete(@point_system_key)
-      Process.delete(@initial_colour_key)
-      Process.delete(@parity_number_key)
-      Process.delete(@played_key)
-      clear_env_flags()
-    end
-  end
+  def pair_later_round(players, opts \\ []), do: pair_entry(players, opts, :later)
 
   defp do_pair_later_round(players) do
     played = rounds_played(players)
@@ -2497,7 +2620,6 @@ defmodule Ainalrami.Pairing do
   # themselves are per bracket - see `pair_bracket/6`.
   defp global_context(field) do
     bye_score = Process.get(@bye_score_key)
-    check_unique_ranks!(field)
 
     # The weight bands, computed ONCE over the whole field and shared by
     # every bracket of the round. They used to be re-derived per bracket
@@ -2570,6 +2692,174 @@ defmodule Ainalrami.Pairing do
     }
   end
 
+  # ---------------------------------------------------------------------
+  # Input validation
+  # ---------------------------------------------------------------------
+  #
+  # Run once by every public entry point - `pair_next_round/2`,
+  # `pair_later_round/2`, `pair_round_one/1`, `explain_context/3` (and with
+  # it `explain_round/3`), `bye_eligibility/2` - BEFORE any path is chosen,
+  # so a fast path cannot skip a check the slow one makes. That is what
+  # happened to the duplicate-rank check, which lived in `global_context/1`
+  # and so was never reached by a round one.
+  #
+  # Each check refuses a value the engine would otherwise have read as some
+  # OTHER value, without saying so. Values it would refuse loudly anyway (a
+  # missing key, a wrong type deep in the arithmetic) are refused here too,
+  # but with a message that names the option. Unknown option keys are not
+  # refused: hosts pass their own keys alongside (`Ainalrami.Alternatives`
+  # and `Ainalrami.ByePreference` both carry options of their own through).
+  defp validate_input!(players, opts) do
+    validate_players!(players)
+    validate_opts!(opts)
+  end
+
+  @doc false
+  # For the entry points that live in other modules and read the roster
+  # before they reach one of these - `Ainalrami.ByePreference.pair/3`.
+  def check_input!(players, opts), do: validate_input!(players, opts)
+
+  defp validate_players!(players) when is_list(players) do
+    Enum.each(players, fn
+      %{rank: rank, points: points, games: games}
+      when is_integer(rank) and is_number(points) and is_list(games) ->
+        Enum.each(games, fn
+          %{opponent_rank: opponent} when is_nil(opponent) or is_integer(opponent) ->
+            :ok
+
+          other ->
+            raise ArgumentError,
+                  "rank #{rank}: a game is a map with :opponent_rank (an integer, or nil " <>
+                    "for no opponent), got #{inspect(other)}"
+        end)
+
+      other ->
+        raise ArgumentError,
+              "a player is a map with an integer :rank, a numeric :points and a :games " <>
+                "list, got #{inspect(other, limit: 8)}"
+    end)
+
+    check_unique_ranks!(players)
+  end
+
+  defp validate_players!(other),
+    do: raise(ArgumentError, "players must be a list, got #{inspect(other, limit: 8)}")
+
+  @point_system_fields [
+    :win,
+    :draw,
+    :loss,
+    :pairing_allocated_bye,
+    :forfeit_loss,
+    :zero_point_bye
+  ]
+  @point_system_optional [:forfeit_win, :full_point_bye, :half_point_bye, :unknown]
+
+  defp validate_opts!(opts) do
+    if not (is_list(opts) and Keyword.keyword?(opts)) do
+      raise ArgumentError, "options must be a keyword list, got #{inspect(opts, limit: 8)}"
+    end
+
+    Enum.each(opts, fn {key, value} -> validate_opt!(key, value) end)
+  end
+
+  # `played + 1 >= expected - 1` is the final-round test; anything but an
+  # integer there raised an ArithmeticError from deep in the colour rules.
+  defp validate_opt!(:expected_rounds, v) when is_nil(v) or (is_integer(v) and v >= 0), do: :ok
+
+  # Anything but "w" used to be read as Black: `assign_colour_round_one/3`
+  # compares the stamped value with "w" and nothing else, so "W", "white"
+  # or :white all paired the drawing of lots the other way round.
+  defp validate_opt!(:initial_colour, v) when v in [nil, "w", "b"], do: :ok
+
+  defp validate_opt!(:point_system, nil), do: :ok
+
+  defp validate_opt!(:point_system, %{} = system) do
+    required = Enum.all?(@point_system_fields, &is_number(Map.get(system, &1)))
+
+    optional =
+      Enum.all?(@point_system_optional, fn f ->
+        v = Map.get(system, f)
+        is_nil(v) or is_number(v)
+      end)
+
+    if required and optional, do: :ok, else: bad_opt!(:point_system, system)
+  end
+
+  defp validate_opt!(key, groups) when key in [:forbidden_pairs, :soft_pairs] do
+    cond do
+      is_nil(groups) ->
+        :ok
+
+      is_list(groups) and Enum.all?(groups, &rank_group?/1) ->
+        :ok
+
+      true ->
+        bad_opt!(key, groups)
+    end
+  end
+
+  # The soft rung went to the end of the ladder for `:weak` and to the top
+  # for ANYTHING else (`soften/3`'s `_strong` clause), so a misspelt
+  # `:weak` - or "weak", as a host storing it as a string would send it -
+  # quietly became the strongest setting there is.
+  defp validate_opt!(:soft_position, v) when v in [nil, :strong, :weak], do: :ok
+
+  defp validate_opt!(key, v)
+       when key in [:bye_exclusions, :bye_preference_exclusions] and
+              (is_nil(v) or is_list(v)) do
+    if Enum.all?(v || [], &is_integer/1), do: :ok, else: bad_opt!(key, v)
+  end
+
+  # Anything but `false` used to mean "work it out", including `nil`, and
+  # including "false".
+  defp validate_opt!(:bye_passed_over, v) when is_boolean(v) or is_nil(v), do: :ok
+
+  defp validate_opt!(key, v)
+       when key in [
+              :expected_rounds,
+              :initial_colour,
+              :point_system,
+              :soft_position,
+              :bye_exclusions,
+              :bye_preference_exclusions,
+              :bye_passed_over
+            ],
+       do: bad_opt!(key, v)
+
+  # `:bye_preferences` is `Ainalrami.ByePreference.pair/3`'s to check, and
+  # every other key is the host's.
+  defp validate_opt!(_key, _v), do: :ok
+
+  defp rank_group?(ranks) when is_list(ranks), do: Enum.all?(ranks, &is_integer/1)
+
+  defp rank_group?({ranks, first, last}) when is_integer(first) and is_integer(last),
+    do: rank_group?(ranks)
+
+  defp rank_group?(_), do: false
+
+  defp bad_opt!(key, value) do
+    raise ArgumentError, "#{inspect(key)}: #{opt_expects(key)}, got #{inspect(value, limit: 8)}"
+  end
+
+  defp opt_expects(:expected_rounds), do: "the tournament's round count (an integer) or nil"
+  defp opt_expects(:initial_colour), do: ~s(the drawing of lots, "w" or "b", or nil to infer it)
+
+  defp opt_expects(:point_system),
+    do:
+      "a map with numeric #{Enum.map_join(@point_system_fields, ", ", &inspect/1)} " <>
+        "(and optionally numeric #{Enum.map_join(@point_system_optional, ", ", &inspect/1)})"
+
+  defp opt_expects(key) when key in [:forbidden_pairs, :soft_pairs],
+    do: "a list of groups, each a list of starting ranks or {ranks, first_round, last_round}"
+
+  defp opt_expects(:soft_position), do: ":strong or :weak (nil means :strong)"
+
+  defp opt_expects(key) when key in [:bye_exclusions, :bye_preference_exclusions],
+    do: "a list of starting ranks"
+
+  defp opt_expects(:bye_passed_over), do: "true or false"
+
   # `field_index` is `Map.new` over `p.rank`, so two players sharing a
   # starting rank silently collapse onto one vertex id. Nothing upstream
   # refuses that - `Ainalrami.Trf.parse/1` accepts a file with two `001`
@@ -2578,8 +2868,15 @@ defmodule Ainalrami.Pairing do
   # `edge_weigher/3`, is computed against the wrong position. Unique
   # starting ranks are what a TRF's rank column MEANS, so a duplicate is a
   # caller bug; say so here rather than pair on a degraded tie-break.
-  defp check_unique_ranks!(field) do
-    field
+  #
+  # Over the WHOLE roster, since 2026-10-02, and from `validate_players!/1`
+  # at every entry point: it used to run on the active field only, from
+  # `global_context/1`, which `pair_round_one/1`'s shortcut never reaches -
+  # so the same duplicate was refused on round two and paired on round one,
+  # and a duplicate among the players sitting a round out was never seen,
+  # although opponent ranks in the game records resolve against them too.
+  defp check_unique_ranks!(players) do
+    players
     |> Enum.frequencies_by(& &1.rank)
     |> Enum.filter(fn {_rank, n} -> n > 1 end)
     |> case do
@@ -2588,7 +2885,7 @@ defmodule Ainalrami.Pairing do
 
       dups ->
         raise ArgumentError,
-              "duplicate starting rank(s) in the field: " <>
+              "duplicate starting rank(s) in the roster: " <>
                 Enum.map_join(Enum.sort(dups), ", ", fn {rank, n} -> "#{rank} (x#{n})" end) <>
                 " - every player needs a distinct starting rank"
     end
@@ -7155,9 +7452,12 @@ defmodule Ainalrami.Pairing do
       %{position: position} ->
         rung = {"S soft avoid", bit(not soft_pair?(a, b)), 2}
 
+        # Only these two: `validate_opt!/2` refuses any other
+        # `:soft_position` before a round starts. This was `_strong` and took
+        # everything that was not `:weak`.
         case position do
           :weak -> rungs ++ [rung]
-          _strong -> List.insert_at(rungs, 1, rung)
+          :strong -> List.insert_at(rungs, 1, rung)
         end
     end
   end
@@ -7942,7 +8242,11 @@ defmodule Ainalrami.Pairing do
   # what makes the unchanged matching optimal for the new weights: every
   # dual non-negative, every matched edge tight, every listed edge
   # feasible. A dual that goes DOWN can make an unwritten edge infeasible
-  # too, so every edge of such a vertex is listed. On success the queue
+  # too, so every edge of such a vertex is listed. Since 2026-10-02
+  # `shift_and_set/3` checks those edges itself whether listed or not; they
+  # are still listed here because listing an edge also makes its far end a
+  # TOUCHED vertex, refused when it sits inside a blossom - and that refusal
+  # is part of what the differential corpus pins. On success the queue
   # has been applied and is cleared.
   defp shift_to_live(st, shifted, matcher, to_matcher, weigh) do
     edges =
@@ -9292,12 +9596,14 @@ defmodule Ainalrami.Pairing do
   which its report's `:opts` carry - is `:bye_preference` instead.
   """
   def bye_eligibility(players, opts \\ []) do
+    validate_input!(players, opts)
     previous = Process.get(@point_system_key)
-    Process.put(@point_system_key, opts[:point_system] || Ainalrami.Trf.default_point_system())
-    excluded = MapSet.new(opts[:bye_exclusions] || [])
-    by_preference = MapSet.new(opts[:bye_preference_exclusions] || [])
 
     try do
+      Process.put(@point_system_key, opts[:point_system] || Ainalrami.Trf.default_point_system())
+      excluded = MapSet.new(opts[:bye_exclusions] || [])
+      by_preference = MapSet.new(opts[:bye_preference_exclusions] || [])
+
       Map.new(players, fn player ->
         reason =
           case bye_disqualification(player) do
@@ -9328,10 +9634,12 @@ defmodule Ainalrami.Pairing do
   # name. For `Ainalrami.ByePreference`, which refuses a "must get the bye"
   # for such a player.
   def bye_disqualifications(players, opts \\ []) do
+    validate_input!(players, opts)
     previous = Process.get(@point_system_key)
-    Process.put(@point_system_key, opts[:point_system] || Ainalrami.Trf.default_point_system())
 
     try do
+      Process.put(@point_system_key, opts[:point_system] || Ainalrami.Trf.default_point_system())
+
       for player <- players,
           found =
             player.games

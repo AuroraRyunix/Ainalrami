@@ -97,7 +97,13 @@ defmodule Ainalrami.Generator do
     # written to the file, which left a reader to infer it back. Now it is
     # an option AND is recorded, so a generated tournament states the draw
     # it was actually paired under instead of leaving it to be reconstructed.
-    initial_colour = opts |> Keyword.get(:initial_colour, "w") |> String.downcase()
+    #
+    # Spelled as `Ainalrami.Trf`'s `152` writer spells it - w/W/white or
+    # b/B/black - and handed to the engine as the "w"/"b" it takes. This was
+    # `String.downcase/1` alone, so "white" reached the engine as "white",
+    # which it read as Black, while the file recorded `152 W`: a tournament
+    # paired under one draw and labelled with the other.
+    initial_colour = initial_colour!(Keyword.get(opts, :initial_colour, "w"))
     forbidden = forbidden_pairs(players, Keyword.get(opts, :forbidden_pct, 0))
     accelerations = accelerations(players, rounds, Keyword.get(opts, :acceleration))
 
@@ -227,6 +233,21 @@ defmodule Ainalrami.Generator do
     "Łukasiewicz",
     "Ștefănescu"
   ]
+
+  defp initial_colour!(colour) when is_binary(colour) do
+    case String.downcase(colour) do
+      c when c in ["w", "white"] -> "w"
+      c when c in ["b", "black"] -> "b"
+      _ -> bad_initial_colour!(colour)
+    end
+  end
+
+  defp initial_colour!(colour), do: bad_initial_colour!(colour)
+
+  defp bad_initial_colour!(colour) do
+    raise ArgumentError,
+          ":initial_colour must be w/W/white or b/B/black, got #{inspect(colour)}"
+  end
 
   defp validate_names!(mode) when mode in [:ascii, :unicode], do: mode
 

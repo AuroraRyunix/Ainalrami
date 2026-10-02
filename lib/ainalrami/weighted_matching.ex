@@ -478,16 +478,30 @@ defmodule Ainalrami.WeightedMatching do
   @doc """
   Re-weight edges WITHOUT preparing anyone, by moving duals instead.
 
-  `shifts` is `%{vertex => delta}` (on the doubled scale; even); `edges` is
-  `[{u, v, w}]` on the caller's scale (a multiple of the state's gcd, or
-  it raises). The result is `{:ok, state}` with every touched edge
-  feasible, every matched edge at a shifted vertex and every matched
-  touched edge tight, and the shifted duals non-negative -- or `:error`,
-  in which case the caller falls back to `set_weight/4`. `:error` also
-  covers a touched vertex inside a non-trivial blossom: such a vertex is
-  refused, not dissolved (see the comment in the body). Nothing is
-  unmatched, so a `solve/1` after a successful call finds the matching
-  already optimal when it was optimal before.
+  `shifts` is `%{vertex => delta}` (on the doubled scale; an even integer,
+  or it raises); `edges` is `[{u, v, w}]` on the caller's scale (a multiple
+  of the state's gcd, or it raises) between two distinct vertices of the
+  graph. The result is `{:ok, state}` with every listed edge feasible,
+  EVERY edge at a vertex whose dual went down feasible whether listed or
+  not, every matched edge at a shifted vertex and every matched listed
+  edge tight, and the shifted duals non-negative -- or `:error`, in which
+  case the caller falls back to `set_weight/4`. `:error` also covers a
+  touched vertex inside a non-trivial blossom: such a vertex is refused,
+  not dissolved (see the comment in the body). Nothing is unmatched, so a
+  `solve/1` after a successful call finds the matching already optimal
+  when it was optimal before.
+
+  Why the unlisted edges are checked at a LOWERED dual and nowhere else:
+  a shift moves the slack of every edge at its vertex, not only the
+  listed ones. Every touched vertex is its own top-level blossom, so an
+  edge at it carries no blossom dual and its slack is `y[u] + y[v] - w2`.
+  An unlisted edge kept its weight, so its slack moved by exactly the
+  shifts of its ends: up (or not at all) unless one of them went down.
+  Until 2026-10-02 only the listed edges were checked, so a caller that
+  lowered a dual and did not list every edge at that vertex could get
+  `{:ok, state}` for a state that was not dual feasible - and a `solve/1`
+  that then returned a matching that was not maximum. `Ainalrami.Pairing`
+  always listed them itself (`shift_to_live/5`), so no pairing changed.
 
   This exists for one caller: the refinement stage that rewrites every
   remainder pair's weight at once (`Ainalrami.Pairing`'s stage 4). Done
@@ -497,6 +511,8 @@ defmodule Ainalrami.WeightedMatching do
   on one side of every pair, which is exactly what a dual can absorb.
   """
   def shift_and_set(state, shifts, edges) do
+    check_shift_args!(state, shifts, edges)
+
     touched =
       shifts
       |> Map.keys()
@@ -544,10 +560,56 @@ defmodule Ainalrami.WeightedMatching do
               Map.get(state.blossom_match, u) == v or Map.get(state.blossom_match, v) == u
 
             slack >= 0 and (not matched? or slack == 0)
-          end)
+          end) and
+          Enum.all?(shifts, fn {v, d} -> d >= 0 or row_feasible?(state, v) end)
 
       if ok?, do: {:ok, state}, else: :error
     end
+  end
+
+  # Every edge at `v` - a top-level trivial blossom, so no blossom dual sits
+  # on any of them - has non-negative slack. See `shift_and_set/3`.
+  defp row_feasible?(state, v) do
+    yv = Map.fetch!(state.dual, v)
+    dual = state.dual
+
+    state.weight
+    |> Map.get(v, %{})
+    |> Enum.all?(fn {u, w2} -> yv + :erlang.map_get(u, dual) >= w2 end)
+  end
+
+  # The shape `shift_and_set/3` promises to work on, refused loudly rather
+  # than computed with: an odd shift would leave an exposed dual odd (the
+  # parity `even_up_exposed_duals/1` exists to restore), a vertex outside
+  # the graph used to surface as a `KeyError` from the middle of the dual
+  # update, and a self-loop would be stored as an edge.
+  defp check_shift_args!(state, shifts, edges) do
+    n = state.n
+
+    if not is_map(shifts),
+      do: raise(ArgumentError, "shift_and_set/3: shifts must be a map, got #{inspect(shifts)}")
+
+    Enum.each(shifts, fn
+      {v, d} when is_integer(v) and v >= 0 and v < n and is_integer(d) and rem(d, 2) == 0 ->
+        :ok
+
+      {v, d} ->
+        raise ArgumentError,
+              "shift_and_set/3: a shift is a vertex in 0..#{n - 1} and an even integer " <>
+                "(the doubled scale), got #{inspect(v)} => #{inspect(d)}"
+    end)
+
+    Enum.each(edges, fn
+      {u, v, w}
+      when is_integer(u) and is_integer(v) and is_integer(w) and u != v and u >= 0 and
+             v >= 0 and u < n and v < n ->
+        :ok
+
+      other ->
+        raise ArgumentError,
+              "shift_and_set/3: an edge is {u, v, weight} between two distinct vertices " <>
+                "in 0..#{n - 1} with an integer weight, got #{inspect(other)}"
+    end)
   end
 
   @doc """
