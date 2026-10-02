@@ -98,7 +98,9 @@ defmodule PerfBench do
             forfeit_pct: 2,
             requested_bye_pct: 3,
             forbidden_pct: 1,
-            results: :fide,
+            # The table without the 400-point cap: what this file's seeds were
+            # generated under before `:fide` gained it, so they reproduce.
+            results: :fide_uncapped,
             draw_rate: 0.35,
             ratings: {:step, 2650, 1400 / size, 60}
           )

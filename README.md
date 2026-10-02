@@ -262,6 +262,26 @@ always reproduces itself:
 ainalrami -g out.trf --seed=42 --players=30 --rounds=9 --forfeit-pct=10 --bye-pct=5 --forbidden-pct=10 --acceleration=baku --initial-colour=b
 ```
 
+Without `--seed` a fresh seed is drawn for every run, so two runs with the
+same options give different tournaments; the seed it drew is printed and
+written into the file, and passing it back as `--seed` repeats the run
+exactly.
+
+Every option left out is chosen at random, not left off: each kind of bye
+(`--full-bye-pct`, `--half-bye-pct`, `--zero-bye-pct`), forfeits
+(`--forfeit-win-pct`, `--double-forfeit-pct`), unusual results
+(`--odd-results-pct`), Baku acceleration and a tie-break list
+(`--tie-breaks`, written as `202` with the final ranks it gives) is each
+switched on with a 50% chance (`--unset-chance=N` changes it) at a random,
+modest level. An option you give, an explicit `0` included, is kept.
+Results follow the FIDE rating table (`--results=fide`, draw rate
+`--draw-rate=0.3`), with a rating difference over 400 counted as 400 as
+the rating calculation does, so over many tournaments a player's rating
+change averages zero. `--unset=fixed` turns all of that off - unset options
+off, results uniform - which is what the library's
+`Ainalrami.Generator.generate/1` does by default, so the validated corpora
+reproduce from their seeds.
+
 `--initial-colour` is Article 5.1's drawing of lots, and it is written into
 the file as `152`. It defaults to White - which is what the generator
 always used, implicitly, before the option existed.

@@ -112,7 +112,7 @@ defmodule Ainalrami.CLI do
                    ratings rating-range rating-top rating-step rating-sigma
                    results draw-rate full-bye-pct half-bye-pct zero-bye-pct
                    forfeit-win-pct double-forfeit-pct odd-results-pct tie-breaks
-                   bye-want bye-want-soft bye-avoid bye-avoid-soft)
+                   unset unset-chance bye-want bye-want-soft bye-avoid bye-avoid-soft)
 
   defp split_flags(argv), do: Enum.split_with(argv, &String.starts_with?(&1, "-"))
 
@@ -282,6 +282,19 @@ defmodule Ainalrami.CLI do
         nil
     end
   end
+
+  defp unset_option(flags) do
+    case text_option(flags, "unset") do
+      nil -> :random
+      "random" -> :random
+      "fixed" -> :fixed
+      other -> refuse("unknown --unset \"#{other}\" - random or fixed")
+    end
+  end
+
+  defp bounded_pct(nil, _name), do: nil
+  defp bounded_pct(value, _name) when value in 0..100, do: value
+  defp bounded_pct(value, name), do: refuse("--#{name} takes 0 to 100, not #{value}")
 
   defp results_option(flags) do
     case text_option(flags, "results") do
@@ -455,7 +468,12 @@ defmodule Ainalrami.CLI do
         forfeit_win_pct: option(flags, "forfeit-win-pct"),
         double_forfeit_pct: option(flags, "double-forfeit-pct"),
         odd_results_pct: option(flags, "odd-results-pct"),
-        tie_breaks: tie_breaks_option(flags)
+        tie_breaks: tie_breaks_option(flags),
+        # Q25: what the user left out is drawn, not left off - see
+        # `Ainalrami.Generator`'s "Unset options". `--unset=fixed` is the
+        # library's own default, for reproducing a corpus run from its seed.
+        unset: unset_option(flags),
+        unset_chance: bounded_pct(option(flags, "unset-chance"), "unset-chance")
       ]
       |> Enum.reject(fn {_key, value} -> is_nil(value) end)
 
@@ -1508,7 +1526,9 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
           --version  Show the version number
 
     Generator options (-g), all --name=value; unset ones are chosen at random:
-      --seed --players --rounds          the tournament (seed makes it repeatable)
+      --seed --players --rounds          the tournament (seed makes it repeatable;
+                                         without one a fresh seed is drawn, and
+                                         it is printed and written into the file)
       --ratings=2400,2350,...            each TPN's rating, in order
       --rating-range=1400-2700           ratings drawn from a range
       --rating-top=2600 --rating-step=20 [--rating-sigma=50]
@@ -1523,6 +1543,12 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
                                          ranks it gives
       --forfeit-pct --bye-pct --forbidden-pct --acceleration=baku|random
       --initial-colour=white|black
+      --unset-chance=50                  % chance each unset bye, forfeit,
+                                         odd-result, Baku and tie-break option
+                                         is switched on (at a random level);
+                                         unset results follow the rating table
+      --unset=fixed                      leave unset options off and results
+                                         uniform instead (the corpus default)
     """)
   end
 

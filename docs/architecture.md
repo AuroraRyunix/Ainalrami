@@ -174,7 +174,11 @@ which is why every real measurement runs against an external reference
 instead.
 
 Seeded and fully reproducible, with the seed written into the generated
-tournament's own name so a file always reproduces itself.
+tournament's own name so a file always reproduces itself. A run without a
+seed draws a fresh one. `unset: :random` (the CLI's default) draws the
+checklist options the caller left out; `unset: :fixed` (the library's)
+leaves them off, so the seeds behind the validated corpora keep producing
+the same bytes.
 
 ### `Ainalrami.Log`
 

@@ -39,7 +39,9 @@ for seed <- first..(first + count - 1) do
         forfeit_win_pct: Enum.random([0, 3, 8]),
         double_forfeit_pct: Enum.random([0, 2, 5]),
         odd_results_pct: Enum.random([0, 2, 5]),
-        results: Enum.random([:uniform, :fide]),
+        # The table without the 400-point cap: what this file's seeds were
+        # generated under before `:fide` gained it, so they reproduce.
+        results: Enum.random([:uniform, :fide_uncapped]),
         ratings: {:step, Enum.random(2000..2700), Enum.random(5..40)}
       ]
     else

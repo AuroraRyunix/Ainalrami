@@ -169,9 +169,10 @@ defmodule Ainalrami.GeneratorChecklistTest do
               {s, e, n} ->
                 points = Trf.points_for(g.result)
 
-                exp =
-                  Tiebreaks.Rating.expected_hundredths(rating[p.rank], rating[g.opponent_rank]) /
-                    100
+                # The expectation the rating calculation uses: a gap over
+                # 400 counts as 400.
+                diff = (rating[p.rank] - rating[g.opponent_rank]) |> max(-400) |> min(400)
+                exp = Tiebreaks.Rating.expected_hundredths(diff, 0) / 100
 
                 {s + points, e + exp, n + 1}
             end

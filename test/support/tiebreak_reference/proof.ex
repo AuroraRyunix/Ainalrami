@@ -187,7 +187,9 @@ defmodule Ainalrami.TiebreakReference.Proof do
         forfeit_win_pct: Enum.random([0, 4, 10]),
         double_forfeit_pct: Enum.random([0, 3, 8]),
         odd_results_pct: Enum.random([0, 3, 8]),
-        results: Enum.random([:uniform, :fide])
+        # The table without the 400-point cap: what this file's seeds were
+        # generated under before `:fide` gained it, so they reproduce.
+        results: Enum.random([:uniform, :fide_uncapped])
       ] ++ if(ratings, do: [ratings: ratings], else: [])
 
     {text, _} = Generator.generate(opts)

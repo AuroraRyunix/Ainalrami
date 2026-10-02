@@ -13,7 +13,12 @@ defmodule Ainalrami.Generator do
   ## Reproducibility
 
   Every tournament is generated from a seed, and the seed is recorded in
-  the file so any run can be reproduced from its own output.
+  the file so any run can be reproduced from its own output. Given
+  `:seed`, the same options always give the same bytes. Without it a fresh
+  seed is drawn per call from the clock and the process, so two runs - in
+  one VM or in two - get different tournaments (FIDE's VCL4THP asks that
+  an RTG run twice with the same parameters not repeat itself), and the
+  seed it drew is in the file and returned, so the run can be repeated.
 
   bbpPairings writes the seed as the literal first line of the output,
   before generating anything, so a crash still leaves it recoverable. That
@@ -27,6 +32,14 @@ defmodule Ainalrami.Generator do
   Roster size, round count, ratings, and results. Optionally forfeits,
   arbiter-assigned byes, `XXP` forbidden pairings and `XXA` acceleration -
   all four off by default, see `generate/1`.
+
+  With `unset: :random` (what `ainalrami -g` uses) the checklist axes the
+  caller left out are drawn too: each kind of bye, forfeits, unusual
+  results, Baku acceleration and a tie-break list are each switched on with
+  probability `:unset_chance` percent and given a random level, and
+  results follow the FIDE rating table. The default, `unset: :fixed`,
+  leaves them off, so every seed recorded before this existed still
+  produces the bytes it always did.
 
   Retirements are NOT modelled: a retired player is expressed as a run of
   arbiter-assigned byes to the end of the tournament, which
@@ -55,6 +68,10 @@ defmodule Ainalrami.Generator do
       lines (default: none)
     * `:names` - `:ascii` (default) for `Player17`, or `:unicode` to draw
       surnames with multibyte characters
+    * `:unset` - `:fixed` (default) leaves every checklist option the
+      caller did not give off; `:random` draws them - see "Unset options"
+    * `:unset_chance` - with `unset: :random`, the percentage chance that
+      each one is switched on (default 50)
 
   `:players` must be a positive integer and `:rounds` a non-negative one.
   Either given otherwise raises `ArgumentError` rather than being quietly
@@ -63,7 +80,7 @@ defmodule Ainalrami.Generator do
   Returns `{trf_text, seed}`.
   """
   def generate(opts \\ []) do
-    seed = Keyword.get_lazy(opts, :seed, fn -> :erlang.unique_integer([:positive]) end)
+    seed = Keyword.get_lazy(opts, :seed, &fresh_seed/0)
     :rand.seed(:exsss, {seed, seed * 7919, seed * 104_729})
 
     names = validate_names!(Keyword.get(opts, :names, :ascii))
@@ -80,6 +97,10 @@ defmodule Ainalrami.Generator do
       |> Keyword.get_lazy(:rounds, fn -> Enum.random(5..11) end)
       |> validate_count!(:rounds, 0)
       |> min(players - 1)
+
+    # After the roster size and round count, so those two draw exactly as
+    # they always did, and drawing nothing at all under `unset: :fixed`.
+    opts = draw_unset(opts)
 
     forfeit_pct = Keyword.get(opts, :forfeit_pct, 0)
     bye_pct = Keyword.get(opts, :requested_bye_pct, 0)
@@ -192,6 +213,18 @@ defmodule Ainalrami.Generator do
         values -> Map.put(player, :accelerations, values)
       end
     end
+  end
+
+  # Q30. This was `:erlang.unique_integer([:positive])`, a counter that
+  # starts over with every VM: eight fresh `ainalrami -g` runs got seeds
+  # 2690-2700, 2690 three times, so two runs could write the same file. A
+  # throwaway generator seeded from the clock, the node and the process
+  # (`:rand.seed_s/1`'s own default) is fresh per call and per run, and it
+  # leaves the process's `:rand` state alone. 32 bits: two of a thousand
+  # runs share a seed about once in eight thousand thousand-run batches.
+  defp fresh_seed do
+    {seed, _state} = :rand.uniform_s(0xFFFFFFFF, :rand.seed_s(:exsss))
+    seed
   end
 
   defp validate_count!(value, _key, minimum) when is_integer(value) and value >= minimum,
@@ -451,12 +484,19 @@ defmodule Ainalrami.Generator do
   # one of them is given.
   @result_keys [:results, :draw_rate, :forfeit_win_pct, :double_forfeit_pct, :odd_results_pct]
 
+  # FIDE's Rating Regulations: a difference of more than 400 counts as 400.
+  @rating_cap 400
+
   defp results_config(opts) do
     if Enum.any?(@result_keys, &Keyword.has_key?(opts, &1)) do
       mode = Keyword.get(opts, :results, :uniform)
 
-      unless mode in [:uniform, :fide],
-        do: raise(ArgumentError, ":results must be :uniform or :fide, got #{inspect(mode)}")
+      unless mode in [:uniform, :fide, :fide_uncapped],
+        do:
+          raise(
+            ArgumentError,
+            ":results must be :uniform, :fide or :fide_uncapped, got #{inspect(mode)}"
+          )
 
       %{
         mode: mode,
@@ -485,6 +525,9 @@ defmodule Ainalrami.Generator do
         Enum.random([{"=", "0", 0.5, 0.0}, {"0", "=", 0.0, 0.5}, {"0", "0", 0.0, 0.0}])
 
       config.mode == :fide ->
+        fide_result(capped_difference(white_rating - black_rating), 0, config.draw_rate)
+
+      config.mode == :fide_uncapped ->
         fide_result(white_rating, black_rating, config.draw_rate)
 
       true ->
@@ -498,6 +541,18 @@ defmodule Ainalrami.Generator do
   # expected score is exactly E - over many tournaments a player's rating
   # change averages zero, which is what the checklist asks. d is capped at
   # 2 min(E, 1 - E) so neither probability goes negative.
+  #
+  # "Averages zero" only holds if E is the expectation the rating
+  # calculation itself uses, and FIDE's Rating Regulations, in computing a
+  # rating change, count a difference of more than 400 points as 400. The
+  # table alone runs on to a difference of 736, so a
+  # 2600 meeting a 1900 was expected to score 0.99 here and 0.92 by the
+  # rating calculation, and gained rating on average from every such game.
+  # `:fide` now caps the difference; `:fide_uncapped` is the earlier
+  # reading, kept only so a corpus generated with it before the cap can be
+  # reproduced from its seeds.
+  defp capped_difference(diff), do: diff |> max(-@rating_cap) |> min(@rating_cap)
+
   defp fide_result(white_rating, black_rating, draw_rate) do
     e = Ainalrami.Tiebreaks.Rating.expected_hundredths(white_rating, black_rating) / 100
     d = min(draw_rate, 2 * min(e, 1 - e))
@@ -508,6 +563,89 @@ defmodule Ainalrami.Generator do
       u < e + d / 2 -> {"=", "=", 0.5, 0.5}
       true -> {"0", "1", 0.0, 1.0}
     end
+  end
+
+  # ---------------------------------------------------------------------
+  # Unset options (VCL4THP v13 Q25)
+  # ---------------------------------------------------------------------
+  #
+  # Q25 asks that a parameter the user leaves out get a sensible value,
+  # preferably a random one - always the same fixed value fails it. Under
+  # `unset: :fixed` every checklist axis left out stays off, which is that
+  # failure; it stays the library default anyway because the validated
+  # corpora are reproduced from seeds through this function, and a default
+  # that drew would change every one of them. `ainalrami -g` passes
+  # `unset: :random`.
+  #
+  # Each axis the caller did NOT give is switched on with probability
+  # `:unset_chance` percent and then drawn from a modest range - a level a
+  # real event might see, low enough that stacking all of them on a small
+  # field rarely deadlocks it. Given ones, including an explicit 0, are
+  # never touched. The draws come from the seeded stream, in the fixed
+  # order below, so the seed in the file reproduces them.
+  #
+  # Results follow the FIDE rating table (Q32) unless `:results` is given:
+  # that is what an RTG's results are meant to look like, and the uniform
+  # draw is kept only for the corpora.
+  @unset_ranges [
+    full_bye_pct: 1..3,
+    half_bye_pct: 1..6,
+    zero_bye_pct: 1..3,
+    forfeit_win_pct: 1..6,
+    double_forfeit_pct: 1..3,
+    odd_results_pct: 1..3
+  ]
+
+  # Swiss tie-breaks `Ainalrami.Tiebreaks` computes and `-c` checks, the
+  # ones C.07 lists for individual Swiss events. A drawn list is one to four
+  # of them, distinct, in random order.
+  @unset_tie_breaks ~w(BH/C1 BH SB DE WIN WON BPG BWG ARO AOB PS TPR KS FB)
+
+  defp draw_unset(opts) do
+    case Keyword.get(opts, :unset, :fixed) do
+      :fixed ->
+        opts
+
+      :random ->
+        chance = unset_chance!(Keyword.get(opts, :unset_chance, 50))
+
+        opts
+        |> draw_each(@unset_ranges, chance)
+        |> draw_one(:acceleration, chance, fn -> :baku end)
+        |> draw_one(:tie_breaks, chance, fn ->
+          Enum.take_random(@unset_tie_breaks, Enum.random(1..4))
+        end)
+        |> Keyword.put_new(:results, :fide)
+
+      other ->
+        raise ArgumentError, ":unset must be :fixed or :random, got #{inspect(other)}"
+    end
+  end
+
+  defp draw_each(opts, ranges, chance) do
+    Enum.reduce(ranges, opts, fn {key, range}, acc ->
+      draw_one(acc, key, chance, fn -> Enum.random(range) end)
+    end)
+  end
+
+  # The coin is tossed even when the key is given, so leaving one option
+  # out or putting it in does not shift every draw after it - the same seed
+  # with one more option fixed differs only in that option.
+  defp draw_one(opts, key, chance, value) do
+    on? = :rand.uniform(100) <= chance
+    drawn = if on?, do: value.(), else: nil
+
+    cond do
+      Keyword.has_key?(opts, key) -> opts
+      on? -> Keyword.put(opts, key, drawn)
+      true -> opts
+    end
+  end
+
+  defp unset_chance!(chance) when is_integer(chance) and chance in 0..100, do: chance
+
+  defp unset_chance!(chance) do
+    raise ArgumentError, ":unset_chance must be a whole percentage 0..100, got #{inspect(chance)}"
   end
 
   # Q24's bye axes: each player, each round, may be given a full-point,

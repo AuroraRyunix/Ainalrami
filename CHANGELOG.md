@@ -64,6 +64,43 @@ with the reference on every one of them.
 
 ## [Unreleased]
 
+- [Change] **`ainalrami -g` chooses the options you leave out instead of
+  leaving them off (VCL4THP Q25).** Unset byes of each kind, forfeits,
+  unusual results, Baku acceleration and the tie-break list always fell
+  back to none, while the help said unset options were random. Each is now
+  switched on with a 50% chance (`--unset-chance=N`) at a random, modest
+  level - full byes 1-3%, half byes 1-6%, zero byes 1-3% per player-round,
+  forfeit wins 1-6%, double forfeits 1-3%, odd results 1-3% of games, and a
+  list of one to four Swiss tie-breaks - all drawn from the seeded stream,
+  so the seed still reproduces the run. Options you give, an explicit 0
+  included, are kept, and giving one more option does not shift the
+  others' draws. `--unset=fixed` restores the old behaviour. The library's
+  `Ainalrami.Generator.generate/1` keeps `unset: :fixed` as its default -
+  every recorded seed still produces the same bytes (the checked-in
+  digests pass unchanged) - and takes `unset: :random`, `:unset_chance`.
+  Forty random-mode tournaments check clean with `-c`.
+- [Fix] **A `-g` run without `--seed` no longer repeats an earlier one
+  (VCL4THP Q30).** The default seed was `:erlang.unique_integer/1`, a
+  counter that restarts with the VM: eight fresh runs drew seeds 2690-2700,
+  2690 three times, so two runs could write the same file. It is now drawn
+  from a throwaway generator seeded from the clock, node and process
+  (32 bits), without touching the caller's own `:rand` state. The seed is
+  still printed and written into the tournament name (`012`), and passing
+  it back as `--seed` reproduces the file byte for byte; explicit seeds are
+  as deterministic as before.
+- [Fix] **Rating-table results count a gap over 400 as 400, and `-g`
+  uses them by default (VCL4THP Q32).** `results: :fide` drew from the
+  expected-score table uncapped, so a 2600 met by a 1900 scored 0.99 on
+  average where FIDE's rating calculation expects 0.92, and every such
+  game moved the stronger player's rating up. Capped now: over 1000
+  four-player tournaments at fixed ratings 750-850 points apart, each
+  player's score minus the rating calculation's expectation is within
+  0.007 a game (the uncapped draw: +0.05 for the 2600s, -0.05 for the
+  1900s). `ainalrami -g` now draws results from the table unless
+  `--results` is given (`--unset=fixed` keeps the uniform draw). The old
+  draw stays available as `results: :fide_uncapped`, and
+  `tools/tiebreak_corpus.exs`, `tools/perf_bench.exs` and the tie-break
+  reference proof use it, so their recorded seeds reproduce.
 - [Performance] **The TRF writer is about five times faster on large
   fields.** Every field it placed was cleaned of control characters with a
   regex literal, and on this Elixir/OTP a regex literal is compiled again
