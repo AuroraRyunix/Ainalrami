@@ -17,6 +17,7 @@ every known difference.
 | Individual pairings (C.04.3), our generator | bbpPairings 6.0.0 | 2,536,328,265 pairings, 217,470,056 rounds, 6 corpora | 2 disagreements, both a bbpPairings [C2] defect | [The corpora](#the-corpora) |
 | Individual pairings, three engines | bbpPairings and Gacrux | 649,207 rounds | agrees with bbpPairings on every round; never the odd one out | [The three-way run](#the-three-way-run-2026-08-27) |
 | Individual pairings, Gacrux alone (030bd28) | Gacrux | 373,500 tournaments, 3,219,728 rounds, 119,064,367 boards | 0 disagreements | [Against Gacrux alone](#against-gacrux-alone-32-million-rounds-2026-09-30) |
+| Individual pairings, 0.36.0 release check (be3ae86), partial | Gacrux; bbpPairings | 1,014,700 rounds; 10,614,756 rounds | Gacrux: 258 disagreements judged by rule, this engine legal in every well-formed one, Gacrux illegal in 257 (1 ambiguous input); bbpPairings: 1, a bbpPairings C2 defect | [Release check for 0.36.0](#release-check-for-0360-2026-10-02) |
 | Individual pairings, bbpPairings' generator (Q33 direction 2) | bbpPairings' own `-g` tournaments, checked here | 50,045 tournaments, 499,816 rounds, 28,964,816 pairings | 0 composition, 0 colour disagreements | [Pairings (Q33)](#pairings-vcl4thp-q33-both-directions) |
 | Team Swiss whole rounds (C.04.6), 4-10 teams | brute-force reference written from the regulation | seeds 1-250,000,000, 1,032,949,115 rounds | 0 failures, 0 errors | [Team Swiss pairings](#team-swiss-pairings-c046) |
 | Team Swiss whole rounds, 11-80 teams | exact engine-independent reference | 2,000 seeds, 11,980 rounds | agrees; one 3.6 candidate-budget disagreement found and fixed (0.30.0) | [team-proof-large-fields.md](team-proof-large-fields.md) |
@@ -1425,6 +1426,73 @@ counted, dumped and kept out of every rate since 0.11.0) and 5 Gacrux
 crashes, which the harness reports as test failures. A two-way run against
 one reference; it adds coverage at large field sizes, where the three-way
 run is thin, not a third opinion.
+
+### Release check for 0.36.0 (2026-10-02)
+
+On the same 80-vCPU VM, engine commit be3ae86 (0.36.0 differs from it in
+tests only), two runs of eight- to eleven-round tournaments with byes,
+forfeits, withdrawals, late entries, mixed ratings and initial colours.
+**Figures as of 2026-10-02 18:48 UTC; both runs were still in progress,
+so these are partial totals, not final ones.**
+
+Against Gacrux 1.9.57 alone (`gacrux_only`):
+
+| players | tournaments | rounds identical / compared | boards, same colours / shared |
+|---|---|---|---|
+| 500-1,000 (complete) | 1,500 | 14,260 / 14,260 | 4,516,973 / 4,516,973 |
+| 300-500 (complete) | 7,500 | 71,377 / 71,377 | 12,067,266 / 12,067,266 |
+| 150-250 (complete) | 20,000 | 189,981 / 189,981 | 16,014,440 / 16,014,440 |
+| 40-120 (complete) | 30,000 | 285,209 / 285,209 | 9,570,000 / 9,570,000 |
+| 40-120, Baku (complete) | 25,000 | 237,902 / 237,902 | 7,960,015 / 7,960,015 |
+| 4-40 (running) | 25,000 | 215,714 / 215,971 | 2,083,809 / 2,083,812 |
+| **total so far** | **109,000** | **1,014,443 / 1,014,700** | **52,212,503 / 52,212,506** |
+
+Gacrux artefacts kept out of the rates as before: 1,276 Error 510 rounds
+and 172 Gacrux crashes (exit 139).
+
+Every dumped disagreement of the 4-40 axis - 256 rounds for review, 1
+Article 5.2.5 round and 1 round this engine paired that Gacrux did not, 258
+in all - was judged against the rules rather than against either engine:
+each answer checked for every available player paired exactly once, at
+most one bye and only on an odd field, no pre-assigned H/Z player paired,
+C1 (no rematch), C2 (no second PAB or earlier unplayed full point), C3 and
+forbidden pairs; claims that a round cannot be paired checked by
+exhaustive search; bbpPairings re-run as a third answer. Results:
+
+- This engine's answer breaks no rule on any well-formed file, and is the
+  same as bbpPairings' wherever bbpPairings answered.
+- Gacrux's answer breaks at least one rule in 257 of the 258. 100 are the
+  first disputed round of a tournament; the rest follow from an earlier
+  Gacrux round, because the harness continues each tournament on Gacrux's
+  pairing. In 63 Gacrux pairs a round that exhaustive search shows has no
+  legal pairing (this engine and bbpPairings both refuse it). Every Gacrux
+  C2 violation involves an earlier `U` result, which Gacrux's TRF reader
+  maps to a played game.
+- 13 of the 258 are files that already reach the `XXR` round count
+  (downstream of the above); bbpPairings refuses them, this engine pairs
+  them. That is lenient input checking, not a pairing error.
+- 1 is ambiguous input (the only present player already holds `H` for
+  round 1): this engine and bbpPairings read round 1 as complete and give
+  the round-2 bye, Gacrux does not pair. Not counted as a defect of
+  either.
+
+Against bbpPairings 6.0.0, with forbidden pairs and Baku acceleration:
+
+| axis | tournaments | rounds identical / compared | pairs identical / total |
+|---|---|---|---|
+| forbidden pairs, 4-40 (complete) | 600,000 | 5,150,470 / 5,150,470 | 52,835,215 / 52,835,215 |
+| forbidden pairs, 40-120 (complete) | 120,000 | 1,140,417 / 1,140,417 | 38,886,147 / 38,886,147 |
+| Baku, 4-40 (running) | 500,000 | 4,323,868 / 4,323,869 | 44,112,938 / 44,112,940 |
+| **total so far** | **1,220,000** | **10,614,755 / 10,614,756** | **135,834,300 / 135,834,302** |
+
+0 rounds refused or paired illegally by this engine. The one mismatch
+(seed 15122973, round 6, Baku acceleration) is a bbpPairings answer that
+breaks C2, by the same rule check. 8 bbpPairings process errors, and
+248,580 tournaments ended early when the reference ran out of legal
+pairings (excluded, as in every corpus here).
+
+Two-way runs against one reference each; the rule check covers only the
+rounds where the engines disagreed.
 
 ## Pairings (VCL4THP Q33), both directions
 

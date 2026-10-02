@@ -64,6 +64,20 @@ with the reference on every one of them.
 
 ## [Unreleased]
 
+## [0.36.0] - 2026-10-02
+
+- [Verified] **A release check on be3ae86 against Gacrux and bbpPairings,
+  partial.** Eight- to eleven-round tournaments with byes, forfeits,
+  withdrawals and late entries, as of 2026-10-02 18:48 UTC with both runs
+  still going: against Gacrux 1.9.57 alone, 1,014,443 of 1,014,700 rounds
+  identical; every one of the 258 dumped disagreements was judged against
+  the rules (C1, C2, C3, byes, pre-assigned H/Z, exhaustive search for
+  unpairable rounds), and this engine's answer is legal on every
+  well-formed file while Gacrux's breaks a rule in 257 (the other is
+  ambiguous input). Against bbpPairings 6.0.0 with forbidden pairs and
+  Baku acceleration, 10,614,755 of 10,614,756 rounds identical; the one
+  mismatch (seed 15122973, round 6, Baku) is a bbpPairings answer that
+  breaks C2. See `docs/validation.md`, "Release check for 0.36.0".
 - [Change] **`ainalrami -g` chooses the options you leave out instead of
   leaving them off (VCL4THP Q25).** Unset byes of each kind, forfeits,
   unusual results, Baku acceleration and the tie-break list always fell
