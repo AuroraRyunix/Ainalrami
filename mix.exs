@@ -11,6 +11,9 @@ defmodule Ainalrami.MixProject do
       elixir: "~> 1.17",
       start_permanent: Mix.env() == :prod,
       elixirc_paths: elixirc_paths(Mix.env()),
+      # Fixture data such as test/fixtures/rule_delta/manifest.exs is read by
+      # the tests, never loaded as a test file.
+      test_ignore_filters: [&String.starts_with?(&1, "test/fixtures/")],
       deps: deps(),
       escript: escript(),
       name: "Ainalrami",

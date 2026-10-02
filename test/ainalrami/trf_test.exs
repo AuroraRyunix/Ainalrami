@@ -135,7 +135,7 @@ defmodule Ainalrami.TrfTest do
     names =
       [for(b <- 0..255, into: <<>>, do: <<b>>), "Đurić\u0007x", "\x7F", "", "plain"] ++
         for _ <- 1..200 do
-          for _ <- 1..Enum.random(0..40), into: <<>> do
+          for _ <- 1..Enum.random(0..40)//1, into: <<>> do
             Enum.random([<<Enum.random(0..255)>>, "é", "Ł", <<Enum.random(0..31)>>, "\x7F"])
           end
         end

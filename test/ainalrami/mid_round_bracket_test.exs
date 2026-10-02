@@ -107,8 +107,6 @@ defmodule Ainalrami.MidRoundBracketTest do
     end)
   end
 
-  defp apply_matching(nil, history), do: history
-
   defp apply_matching(matching, history) do
     Enum.reduce(matching, history, fn {a, b}, acc ->
       {ra, rb} = Enum.random([{"1", "0"}, {"0", "1"}, {"=", "="}])

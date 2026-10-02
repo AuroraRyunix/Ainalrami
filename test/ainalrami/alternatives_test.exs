@@ -155,7 +155,7 @@ defmodule Ainalrami.AlternativesTest do
 
       assert [
                %{players: [1, 5], reason: :colour, colour: "b", group: 2.0},
-               %{players: [2, 6], reason: :colour, colour: "w", group: 0.0},
+               %{players: [2, 6], reason: :colour, colour: "w", group: +0.0},
                %{players: [3, 4], reason: :rematch, round: 1, group: 1.0}
              ] = Enum.sort_by(Alternatives.violations(report), & &1.players)
     end

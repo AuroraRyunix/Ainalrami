@@ -75,12 +75,17 @@ defmodule Ainalrami.LogTest do
       Log.set_level(:normal)
       me = self()
 
-      capture_io(fn -> Log.debug(fn -> send(me, :evaluated) && "x" end) end)
+      message = fn ->
+        send(me, :evaluated)
+        "x"
+      end
+
+      capture_io(fn -> Log.debug(message) end)
 
       refute_received :evaluated
 
       Log.set_level(:debug)
-      capture_io(fn -> Log.debug(fn -> send(me, :evaluated) && "x" end) end)
+      capture_io(fn -> Log.debug(message) end)
       assert_received :evaluated
     end
 
