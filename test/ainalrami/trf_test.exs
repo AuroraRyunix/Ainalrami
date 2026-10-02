@@ -123,6 +123,30 @@ defmodule Ainalrami.TrfTest do
     assert col(carlsen_replacement, 15, 47) |> String.trim() =~ ~r/^Ev  il 001 injected$/
   end
 
+  test "control bytes are flattened exactly as the old per-field regex did" do
+    # The writer used to run `String.replace(v, ~r/[\x00-\x1F\x7F]/, " ")`
+    # on every field and now scans bytes instead. Byte for byte the same:
+    # a name already flattened by that regex must serialize to the same
+    # file as the raw name, for every byte value, alone and next to
+    # multibyte characters.
+    flatten = &String.replace(&1, ~r/[\x00-\x1F\x7F]/, " ")
+    :rand.seed(:exsss, {7, 8, 9})
+
+    names =
+      [for(b <- 0..255, into: <<>>, do: <<b>>), "Đurić\u0007x", "\x7F", "", "plain"] ++
+        for _ <- 1..200 do
+          for _ <- 1..Enum.random(0..40), into: <<>> do
+            Enum.random([<<Enum.random(0..255)>>, "é", "Ł", <<Enum.random(0..31)>>, "\x7F"])
+          end
+        end
+
+    for name <- names do
+      raw = put_in(sample(), [:players, Access.at(0), :name], name)
+      flat = put_in(sample(), [:players, Access.at(0), :name], flatten.(name))
+      assert Trf.serialize(raw) == Trf.serialize(flat), inspect(name)
+    end
+  end
+
   test "a blank result still occupies its column, so the round block is whole" do
     # `render/1` trims trailing whitespace, which every other line here
     # wants and a `001` line with games does not. A blank result column

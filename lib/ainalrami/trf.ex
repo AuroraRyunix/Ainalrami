@@ -1782,7 +1782,25 @@ defmodule Ainalrami.Trf do
   # inside a field (a player name has no format check beyond length) would
   # split or shift the fixed-width row - control characters are flattened
   # to spaces before the value is placed.
-  defp strip_controls(text), do: String.replace(text, ~r/[\x00-\x1F\x7F]/, " ")
+  #
+  # A byte scan, not `String.replace(text, ~r/[\x00-\x1F\x7F]/, " ")`: on
+  # this Elixir/OTP a regex literal is recompiled on every call, and this
+  # runs once per field - ~35,000 compiles to write one 1000-player round.
+  # Same bytes out: that regex had no `u` flag, so it matched single bytes,
+  # and no byte of a multibyte UTF-8 sequence is below 0x80. Almost every
+  # value has no control byte at all and is returned untouched.
+  defp strip_controls(text) do
+    if control_byte?(text),
+      do: for(<<byte <- text>>, into: <<>>, do: <<flatten_control(byte)>>),
+      else: text
+  end
+
+  defp control_byte?(<<byte, _::binary>>) when byte < 0x20 or byte == 0x7F, do: true
+  defp control_byte?(<<_, rest::binary>>), do: control_byte?(rest)
+  defp control_byte?(<<>>), do: false
+
+  defp flatten_control(byte) when byte < 0x20 or byte == 0x7F, do: ?\s
+  defp flatten_control(byte), do: byte
 
   # Folding to ASCII (é -> e), which is what FIDE itself stores names as.
   #

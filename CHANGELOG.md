@@ -64,6 +64,17 @@ with the reference on every one of them.
 
 ## [Unreleased]
 
+- [Performance] **The TRF writer is about five times faster on large
+  fields.** Every field it placed was cleaned of control characters with a
+  regex literal, and on this Elixir/OTP a regex literal is compiled again
+  on every call - some 35,000 compiles to write one 1000-player round. It
+  is now a byte scan that returns a field with no control byte untouched.
+  A 1000-player, nine-round file: 97-105 ms to serialize before, 20 ms
+  after. Byte-identical output: the old regex had no `u` flag, so it
+  matched single bytes exactly as the scan does (a new test holds every
+  byte value to it), and every round of 900 fuzz tournaments across six
+  corpus axes, 60 generated tournaments and a set of hostile names
+  serialize to the same bytes as before.
 - [Fix] **`WeightedMatching.shift_and_set/3` checks every edge a shift
   moves, not only the ones it was handed.** Lowering a vertex's dual lowers
   the slack of every edge at that vertex; only the listed edges and the
