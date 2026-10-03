@@ -64,6 +64,8 @@ with the reference on every one of them.
 
 ## [Unreleased]
 
+## [0.37.0] - 2026-10-03
+
 - [Feature] **Team events on the standalone CLI.** `ainalrami file.trf -p`
   on a TRF26 team file (`310`/`001`, `362`, `320`, `330`, `300`) pairs the
   next round team against team: a C.04.6 team Swiss with
