@@ -117,9 +117,13 @@ defmodule Ainalrami.Tiebreaks.Team do
   A team's round is read from its players' games: the opposing team is
   the team of the players they met, and the boards are those players in
   the order the `013` line lists them (a team fielding a reserve moves
-  the players below up a board). A round where none of a team's players
-  met an opponent is a pairing-allocated bye when they were given one
-  (`U`, or `+` with no opponent), and a zero-point bye otherwise.
+  the players below up a board). A board whose opponent the other team
+  could not fill - a win with no opponent (`F`, or `+`/`U` with `0000`)
+  in a round the team met somebody - is one of its boards, a forfeit win
+  worth its point. A round where none of a team's players met an
+  opponent is a pairing-allocated bye when they were given one (`U`, or
+  `+` with no opponent) or the `320` record names the team for the
+  round, and a zero-point bye otherwise.
 
   A match where no board was played over the board - every game a forfeit
   - is a forfeited match: won by the side with more game points, lost by
@@ -130,12 +134,26 @@ defmodule Ainalrami.Tiebreaks.Team do
   Match points are the file's TRF26 `362` record (`W`/`D`/`L`; `A` for a
   match lost by forfeit) when it has one, 2/1/0 otherwise; `:match_points`
   overrides either. A pairing-allocated bye is worth the `320` record's
-  match points, else `362`'s `P`, else a win. Options:
+  match points, else `362`'s `P`, else a win, and the `320` record's game
+  points, else a win on every board. A TRF26 `300` record gives a team's
+  board order in one match, in place of its roster order. Options:
   `:boards` (default: the most games any match had), `:primary`,
   `:match_points`, `:rounds`, `:predetermined?`.
   """
   def from_trf(%{players: players, teams: trf_teams, tournament: tournament} = trf, opts \\ []) do
-    individual = Event.from_trf(trf, Keyword.take(opts, [:rounds, :predetermined?]))
+    individual_opts = Keyword.take(opts, [:rounds, :predetermined?])
+    individual = Event.from_trf(trf, individual_opts)
+
+    # A round whose matches were all forfeited as a whole (`330`, no board
+    # records) - or that only a `320` bye names - has no games to count it
+    # by, but it is a round of the event.
+    team_rounds = Ainalrami.Trf.team_rounds(tournament)
+
+    individual =
+      if is_nil(opts[:rounds]) and team_rounds > individual.rounds,
+        do: Event.from_trf(trf, Keyword.put(individual_opts, :rounds, team_rounds)),
+        else: individual
+
     system = Map.get(tournament, :point_system) || Ainalrami.Trf.default_point_system()
     game_points = %{win: system.win, draw: system.draw, loss: system.loss}
 
@@ -166,6 +184,8 @@ defmodule Ainalrami.Tiebreaks.Team do
 
     # {team, round} => [{roster position, rank, %Round{}}] for the players
     # who met somebody, in roster order.
+    orders = board_orders(tournament)
+
     games =
       for {team, ranks} <- rosters,
           {rank, position} <- Enum.with_index(ranks),
@@ -173,6 +193,7 @@ defmodule Ainalrami.Tiebreaks.Team do
           {r, round} <- individual.participants[rank].rounds,
           reduce: %{} do
         acc ->
+          position = board_position(orders, team, r, rank, position)
           Map.update(acc, {team, r}, [{position, rank, round}], &[{position, rank, round} | &1])
       end
       |> Map.new(fn {key, list} -> {key, Enum.sort(list)} end)
@@ -181,15 +202,18 @@ defmodule Ainalrami.Tiebreaks.Team do
       Keyword.get_lazy(opts, :boards, fn ->
         games
         |> Map.values()
-        |> Enum.map(fn list -> Enum.count(list, fn {_, _, g} -> g.opponent end) end)
+        |> Enum.map(&length(boards_of(&1)))
         |> Enum.max(fn -> 1 end)
         |> max(1)
       end)
+
+    pab_gp = get_in(tournament, [:team_pab, :game_points])
 
     points = %{
       match: match_points,
       game: game_points,
       pab: pab_mp,
+      pab_gp: pab_gp,
       forfeit: forfeit_mp,
       boards: boards
     }
@@ -201,13 +225,15 @@ defmodule Ainalrami.Tiebreaks.Team do
           into: %{},
           do: {{f.round, f.white, f.black}, winner}
 
+    pab_by_round = get_in(tournament, [:team_pab, :teams]) || []
+
     entries =
       for {team, _ranks} <- rosters do
         rounds =
           Map.new(1..individual.rounds//1, fn r ->
             match =
               Map.get(games, {team, r}, [])
-              |> trf_match(team_of, points)
+              |> trf_match(team_of, points, Enum.at(pab_by_round, r - 1) == team)
               |> declared_forfeit(team, r, forfeited, points)
 
             {r, match}
@@ -229,16 +255,60 @@ defmodule Ainalrami.Tiebreaks.Team do
     )
   end
 
-  defp trf_match(games, team_of, points) do
+  # `%{{team, round} => %{rank => board index}}` from the TRF26 `300`
+  # records.
+  defp board_orders(tournament) do
+    for o <- Map.get(tournament, :board_orders) || [],
+        is_integer(o[:round]) and is_integer(o[:team]),
+        into: %{} do
+      boards =
+        for {rank, i} <- Enum.with_index(o[:order] || []),
+            is_integer(rank) and rank > 0,
+            into: %{},
+            do: {rank, i}
+
+      {{o.team, o.round}, boards}
+    end
+  end
+
+  # A player's position among the team's boards in round `r`: the `300`
+  # record's board when there is one, otherwise the roster order (after
+  # every board the record names).
+  defp board_position(orders, team, r, rank, position) do
+    case orders do
+      %{{^team, ^r} => boards} -> Map.get(boards, rank, 10_000 + position)
+      _ -> position
+    end
+  end
+
+  # The boards a team's players sat at in one round: every game against
+  # somebody, and - when the team met somebody - every board whose opponent
+  # the other team could not fill, which the file writes as a win with no
+  # opponent (`F`, or `+`/`U` with `0000`): a forfeit win on that board,
+  # worth its point. Without a game against anybody the round is not a
+  # match and has no boards.
+  defp boards_of(games) do
+    if Enum.any?(games, fn {_, _, g} -> g.opponent end) do
+      Enum.filter(games, fn {_, _, g} -> g.opponent || unfilled?(g) end)
+    else
+      []
+    end
+  end
+
+  defp unfilled?(g), do: is_nil(g.opponent) and g.kind in [:full_bye, :pab]
+
+  defp trf_match(games, team_of, points, pab_team?) do
     met = Enum.filter(games, fn {_, _, g} -> g.opponent end)
 
     case met do
       [] ->
-        if Enum.any?(games, fn {_, _, g} -> g.kind == :pab end) do
+        # The players' `U` (or `+` with no opponent), or the team the `320`
+        # record names for the round - a file may give the bye there alone.
+        if pab_team? or Enum.any?(games, fn {_, _, g} -> g.kind == :pab end) do
           %Match{
             kind: :pab,
             mp: points.pab,
-            gp: points.game.win * points.boards,
+            gp: points.pab_gp || points.game.win * points.boards,
             boards: Map.new(1..points.boards, &{&1, points.game.win})
           }
         else
@@ -253,7 +323,8 @@ defmodule Ainalrami.Tiebreaks.Team do
           |> elem(0)
 
         board_points =
-          met
+          games
+          |> boards_of()
           |> Enum.with_index(1)
           |> Map.new(fn {{_, _, g}, board} -> {board, g.points} end)
 

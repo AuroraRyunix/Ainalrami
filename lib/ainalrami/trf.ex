@@ -781,7 +781,7 @@ defmodule Ainalrami.Trf do
     # record, not as a column on the `001` line - so those columns come off
     # the players before their lines are written, and go out at the end.
     system = t[:point_system] || default_point_system()
-    {written, future_byes} = split_future_byes(players, dialect, system)
+    {written, future_byes} = split_future_byes(players, dialect, system, team_rounds(t))
     max_round = Enum.reduce(written, 0, &max(&2, length(&1[:games] || [])))
     xxr? = dialect == :engine and opts[:xxr] == true
     xxc? = dialect == :engine and opts[:xxc] == true
@@ -818,10 +818,15 @@ defmodule Ainalrami.Trf do
   # - is a `240` record in TRF26, and the column is not written. Only a
   # trailing run of byes moves; anything else past the paired rounds stays
   # where it is, since removing it would shift the columns after it.
-  defp split_future_byes(players, :engine, _system), do: {players, []}
+  defp split_future_byes(players, :engine, _system, _team_rounds), do: {players, []}
 
-  defp split_future_byes(players, :trf26, system) do
-    played = rounds_played(players)
+  # `team_rounds`: the last round a `330` or `320` record names. A round
+  # whose only matches were forfeited as a whole (`330`, no boards) has no
+  # game anybody took part in, but it was paired; the byes recorded in it
+  # stay in their columns rather than becoming `240` records for a round
+  # "not yet paired", which a reader would then place a round too early.
+  defp split_future_byes(players, :trf26, system, team_rounds) do
+    played = max(rounds_played(players), team_rounds)
 
     Enum.map_reduce(players, [], fn player, records ->
       {kept, future} = Enum.split(player[:games] || [], played)
@@ -854,6 +859,17 @@ defmodule Ainalrami.Trf do
 
       {player, records ++ new_records}
     end)
+  end
+
+  @doc false
+  # The last round a TRF26 `330` (forfeited match) or `320` (team bye)
+  # record names, 0 without any.
+  def team_rounds(tournament) do
+    forfeits =
+      for f <- tournament[:forfeited_matches] || [], is_integer(f[:round]), do: f[:round]
+
+    byes = length(get_in(tournament, [:team_pab, :teams]) || [])
+    Enum.max([byes | forfeits], fn -> 0 end)
   end
 
   defp future_bye?(game) do
@@ -1647,7 +1663,7 @@ defmodule Ainalrami.Trf do
     end)
   end
 
-  # TRF26 `362`, `320` and `330`, when the tournament carries them.
+  # TRF26 `362`, `320`, `330` and `300`, when the tournament carries them.
   defp team_record_lines(t) do
     points =
       case t[:team_point_system] do
@@ -1698,7 +1714,26 @@ defmodule Ainalrami.Trf do
         |> render()
       end
 
-    points ++ pab ++ forfeits
+    orders =
+      for o <- t[:board_orders] || [] do
+        (o[:order] || [])
+        |> Enum.with_index()
+        |> Enum.reduce(
+          []
+          |> place({1, 3}, "300")
+          |> place({5, 7}, o[:round], align: :right)
+          |> place({9, 11}, o[:team], align: :right)
+          |> place({13, 15}, o[:opponent], align: :right),
+          fn {rank, i}, acc ->
+            place(acc, {17 + 5 * i, 20 + 5 * i}, if(rank in [nil, 0], do: "0", else: rank),
+              align: :right
+            )
+          end
+        )
+        |> render()
+      end
+
+    points ++ pab ++ forfeits ++ orders
   end
 
   # A team with a number is a TRF26 `310` record (layout in parse/1's doc);
@@ -2050,9 +2085,10 @@ defmodule Ainalrami.Trf do
   `:player_ranks`), and when a file has any `310` its `013` lines are
   ignored; `362` goes to `tournament[:team_point_system]` (`%{win:, draw:,
   loss:}` plus `:pab`, `:absent`, `:unknown` when given), `320` to
-  `[:team_pab]` and `330` lines to `[:forfeited_matches]`. `300`
-  (out-of-order boards), `801`, `802` and national-rating records are not
-  read. Columns (1-based) as FIDE's TRF-2026 description lays them out and
+  `[:team_pab]`, `330` lines to `[:forfeited_matches]` and `300` lines
+  (a team's board order in one match) to `[:board_orders]` (`%{round:,
+  team:, opponent:, order: [starting rank, 0 for an empty board]}`).
+  `801`, `802` and national-rating records are not read. Columns (1-based) as FIDE's TRF-2026 description lays them out and
   TieBreakServer's `trf2json.py` reads them: `310` team number 5-7, name
   9-40, nickname 42-46, strength 48-53, match points 55-60, game points
   62-67, rank 69-71, players' starting ranks in 4-column fields from 74
@@ -2060,7 +2096,9 @@ defmodule Ainalrami.Trf do
   points in 7-10, repeating every 9 columns; `320` match points 5-8, game
   points 10-13, then the team given the bye in each round, 3 columns from
   15 every 4; `330` type 5-6, round 8-10, white team 12-14, black team
-  16-18. `serialize/2` writes all four back.
+  16-18; `300` round 5-7, team 9-11, opponent 13-15, then the starting
+  ranks in board order, 4 columns from 17 every 5. `serialize/2` writes all
+  five back.
   """
   def parse(text) do
     lines =
@@ -2130,6 +2168,9 @@ defmodule Ainalrami.Trf do
 
           "330" ->
             update_in(acc.tournament[:forfeited_matches], &((&1 || []) ++ [parse_330(line)]))
+
+          "300" ->
+            update_in(acc.tournament[:board_orders], &((&1 || []) ++ [parse_300(line)]))
 
           "362" ->
             put_in(acc.tournament[:team_point_system], parse_362(line))
@@ -2741,7 +2782,9 @@ defmodule Ainalrami.Trf do
   defp attach_byes(%{byes: []} = result), do: Map.delete(result, :byes)
 
   defp attach_byes(%{byes: byes, players: players} = result) do
-    played = rounds_played(players)
+    # A round paired with nothing but whole-match forfeits (`330`) counts,
+    # as `split_future_byes/4` counts it when writing.
+    played = max(rounds_played(players), team_rounds(result.tournament))
     system = result.tournament[:point_system] || default_point_system()
 
     by_rank =
@@ -3216,6 +3259,27 @@ defmodule Ainalrami.Trf do
       match_points: parse_float(read(line, {5, 8})),
       game_points: parse_float(read(line, {10, 13})),
       teams: teams
+    }
+  end
+
+  # TRF26 `300`, a team's board order for one match ("out of order"): the
+  # round in 5-7, the team in 9-11, its opponent in 13-15, then its players'
+  # starting ranks in board order, four columns from 17 every 5, `0` (or
+  # blank) for an empty board - TieBreakServer's `parse_trf_outoforder`.
+  defp parse_300(line) do
+    order =
+      Stream.iterate(17, &(&1 + 5))
+      |> Enum.take_while(&(byte_size(line) >= &1))
+      |> Enum.map(&(parse_int(read(line, {&1, &1 + 3})) || 0))
+      |> Enum.reverse()
+      |> Enum.drop_while(&(&1 == 0))
+      |> Enum.reverse()
+
+    %{
+      round: parse_int(read(line, {5, 7})),
+      team: parse_int(read(line, {9, 11})),
+      opponent: parse_int(read(line, {13, 15})),
+      order: order
     }
   end
 
