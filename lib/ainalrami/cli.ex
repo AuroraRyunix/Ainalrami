@@ -35,6 +35,8 @@ defmodule Ainalrami.CLI do
     Generator,
     Log,
     Pairing,
+    RoundRobin,
+    RoundRobinGenerator,
     TeamCLI,
     TeamGenerator,
     TeamReplay,
@@ -121,7 +123,8 @@ defmodule Ainalrami.CLI do
   # Each of those is a command that appears to work. The seed one is the worst
   # kind: it produces a real tournament that can never be produced again, and
   # nothing says so.
-  @bare_flags ~w(-p -g -c -x --explain -q --quiet -d --debug -h --help --version --lineups)
+  @bare_flags ~w(-p -g -c -x --explain -q --quiet -d --debug -h --help --version --lineups
+                 --roundrobin)
   @valued_flags ~w(seed players rounds forfeit-pct bye-pct forbidden-pct
                    acceleration initial-colour initial-color force absent
                    ratings rating-range rating-top rating-step rating-sigma
@@ -385,6 +388,9 @@ defmodule Ainalrami.CLI do
 
       "-g" in flags and text_option(flags, "team") != nil ->
         generate_team(positional, flags)
+
+      "-g" in flags and "--roundrobin" in flags ->
+        generate_round_robin(positional, flags)
 
       "-g" in flags ->
         case given(flags, @team_generator_flags) do
@@ -692,6 +698,7 @@ defmodule Ainalrami.CLI do
     else
       {:error, :halt} -> 1
       {:team, parsed, system} -> pair_team(parsed, system, positional_rest, flags)
+      {:round_robin, parsed, settings} -> pair_round_robin(parsed, settings, positional_rest)
       {:exit, code} -> code
     end
   end
@@ -740,6 +747,7 @@ defmodule Ainalrami.CLI do
     else
       {:error, :halt} -> 1
       {:team, parsed, system} -> explain_team(parsed, system)
+      {:round_robin, parsed, settings} -> explain_round_robin(parsed, settings)
       {:exit, code} -> code
     end
   end
@@ -767,6 +775,21 @@ defmodule Ainalrami.CLI do
 
           true ->
             {:team, parsed, system}
+        end
+
+      {:round_robin, settings} ->
+        cond do
+          prefs != [] ->
+            {:exit,
+             usage_error(
+               "the bye preferences are for a Swiss - a round robin's byes are the table's"
+             )}
+
+          flag = given(flags, ~w(force absent lineups boards)) ->
+            {:exit, usage_error("--#{flag} is not for a round robin")}
+
+          true ->
+            {:round_robin, parsed, settings}
         end
 
       {:unreplayable, reason} ->
@@ -865,6 +888,157 @@ defmodule Ainalrami.CLI do
       end
     else
       {:ok, pairs}
+    end
+  end
+
+  # ---- individual round robins ---------------------------------------------
+
+  defp pair_round_robin(parsed, settings, positional_rest) do
+    Log.step("Pairing engine")
+    Log.detail(RoundRobin.describe(settings))
+
+    case RoundRobin.next_round(parsed, settings) do
+      {:ok, round, boards, free} ->
+        Log.detail("pairing round #{round} of the Berger table")
+        for {w, b} <- boards, do: Log.detail(board_description(w, b))
+        if free, do: Log.detail("##{free} - free round (Berger table)")
+        text = RoundRobin.format(boards, free)
+
+        case positional_rest do
+          [output_path | _] -> write_file!(output_path, text)
+          [] -> IO.write(text)
+        end
+
+        0
+
+      {:error, reason} ->
+        Log.error(round_robin_refusal(reason))
+        1
+    end
+  end
+
+  defp explain_round_robin(parsed, settings) do
+    case RoundRobin.next_round(parsed, settings) do
+      {:ok, round, boards, free} ->
+        IO.write(
+          "\nRound #{round} - #{length(boards)} board#{plural(length(boards))}, round #{round} " <>
+            "of the Berger table for #{length(parsed.players)} players\n" <>
+            "  #{RoundRobin.describe(settings)}\n" <>
+            "  Nothing is chosen: the table fixes every game and its colours.\n" <>
+            Enum.map_join(boards, "", fn {w, b} -> "  #{w} (white) vs. #{b}\n" end) <>
+            if(free, do: "  #{free}: free round\n", else: "")
+        )
+
+        0
+
+      {:error, reason} ->
+        Log.error(round_robin_refusal(reason))
+        1
+    end
+  end
+
+  defp round_robin_refusal({:all_rounds_paired, total}),
+    do: "every round of the Berger table is paired (#{total})"
+
+  defp round_robin_refusal(:too_few_players), do: "a round robin needs at least two players"
+  defp round_robin_refusal(other), do: inspect(other)
+
+  # `-c` on an individual round robin: every round against the table,
+  # colours included; a scheduled game the file has nothing for is
+  # reported, not counted as a difference.
+  defp check_round_robin(parsed, settings) do
+    rounds = RoundRobin.paired_rounds(parsed)
+
+    if rounds == 0 do
+      Log.warn("no completed rounds to check")
+      0
+    else
+      Log.step(
+        "Checking #{rounds} round(s) - #{RoundRobin.describe(settings)}, " <>
+          "#{length(parsed.players)} players"
+      )
+
+      results =
+        Enum.map(1..rounds, fn round ->
+          check = RoundRobin.check_round(parsed, round, settings)
+          report_round_robin_check(check, round)
+        end)
+
+      finish_check(parsed, results, rounds)
+    end
+  end
+
+  defp report_round_robin_check(check, round) do
+    unless check.missing == [] do
+      Log.warn("round #{round}: no record of the scheduled game(s) #{inspect(check.missing)}")
+    end
+
+    case check.result do
+      :ok ->
+        Log.detail("round #{round}: matches the Berger table")
+        :ok
+
+      :colours ->
+        Log.warn(
+          "round #{round}: DIFFERS in colours only - reversed against the Berger table in " <>
+            "#{length(check.differing)} game(s): #{inspect(check.differing)}"
+        )
+
+        :differs
+
+      :differs ->
+        Log.warn("round #{round}: DIFFERS from the Berger table")
+        Log.warn("  file:   #{inspect(Enum.sort(check.file))}")
+        Log.warn("  table:  #{inspect(Enum.sort(check.engine))}")
+        :differs
+
+      :beyond ->
+        Log.warn("round #{round}: the Berger table has no such round")
+        :differs
+    end
+  end
+
+  # `-g --roundrobin`: an individual round robin (`Ainalrami.RoundRobinGenerator`).
+  @round_robin_generator_flags ~w(seed players rounds cycles forfeit-pct draw-rate
+                                  rating-range tie-breaks)
+
+  defp generate_round_robin(positional, flags) do
+    case Enum.find(flags, fn f ->
+           String.starts_with?(f, "--") and f != "--roundrobin" and
+             name_of(f) not in (@round_robin_generator_flags ++ ~w(quiet debug))
+         end) do
+      nil ->
+        opts =
+          [
+            seed: option(flags, "seed"),
+            players: bounded(option(flags, "players"), "players", 2),
+            rounds: bounded(option(flags, "rounds"), "rounds", 0),
+            cycles: bounded(option(flags, "cycles"), "cycles", 1),
+            forfeit_pct: bounded_pct(option(flags, "forfeit-pct"), "forfeit-pct"),
+            draw_rate: fraction_option(flags, "draw-rate"),
+            rating_range:
+              case ratings_option(flags) do
+                {:range, low, high} -> {low, high}
+                nil -> nil
+                _ -> refuse("--roundrobin takes --rating-range only")
+              end,
+            tie_breaks: tie_breaks_option(flags)
+          ]
+          |> Enum.reject(fn {_key, value} -> is_nil(value) end)
+
+        Log.step("Generating a random round robin")
+        {text, seed} = RoundRobinGenerator.generate(opts)
+        Log.detail("seed #{seed}")
+
+        case positional do
+          [output_path | _] -> write_file!(output_path, text)
+          [] -> IO.write(text)
+        end
+
+        0
+
+      flag ->
+        usage_error("--#{name_of(flag)} is not an option of -g --roundrobin")
     end
   end
 
@@ -1232,6 +1406,7 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
         :individual -> check_individual(parsed)
         {:team, settings} -> check_team(parsed, settings)
         {:team_round_robin, settings} -> check_team_round_robin(parsed, settings)
+        {:round_robin, settings} -> check_round_robin(parsed, settings)
         {:unreplayable, reason} -> check_unreplayable(parsed, reason)
       end
     else
@@ -1889,6 +2064,13 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
                                          unset results follow the rating table
       --unset=fixed                      leave unset options off and results
                                          uniform instead (the corpus default)
+
+    Round robins: -p on a file whose 192 is BERGER_ROUNDROBIN_Gn (or
+    FIDE_ROUNDROBIN, BERGER_/FIDE_DOUBLEROUNDROBIN, or a 092 round robin)
+    gives the next round of the Berger table (players numbered by starting
+    rank; the free player as PLAYER 0); -c compares every round with it.
+      -g --roundrobin [--players --rounds --cycles --forfeit-pct --draw-rate
+                       --rating-range --tie-breaks --seed]
 
     Team events:
       -p on a team file (TRF26 310 rosters + 001 games; 192 FIDE_TEAM_... for a

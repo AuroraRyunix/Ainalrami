@@ -29,8 +29,10 @@ defmodule Ainalrami.TeamReplay do
     * a team round robin by the Berger tables (`BERGER_TEAM_ROUNDROBIN_Gn`
       and its aliases) - `{:team_round_robin, %{games: n, code:}}`, compared
       with `Ainalrami.Berger` (`check_round_robin/3`);
-    * everything else is `{:unreplayable, reason}`: individual round robins,
-      Schiller and Scheveningen (predetermined, by rules FIDE has not yet
+    * an individual round robin (`BERGER_ROUNDROBIN_Gn` and its aliases,
+      `FIDE_DOUBLEROUNDROBIN`) - `{:round_robin, %{games: n,
+      reverse_last_two?:, code:}}`, read by `Ainalrami.RoundRobin`;
+    * everything else is `{:unreplayable, reason}`: Schiller and Scheveningen (predetermined, by rules FIDE has not yet
       defined), knockouts, the Dubov, Burstein and Double Swiss systems
       (Ainalrami pairs the Dutch system only), every `CUSTOM_*` system, and
       an accelerated team Swiss (`Ainalrami.TeamPairing` has no
@@ -38,7 +40,7 @@ defmodule Ainalrami.TeamReplay do
 
   With no `192` - or one that is not in the table - the `092` type is read
   for a round robin (a team round robin when the games show a team event,
-  played as many times as its rounds need; otherwise unreplayable),
+  an individual one otherwise, played as many times as its rounds need),
   Scheveningen, Schiller or knockout (unreplayable, as above), and
   otherwise the games decide: the file is a team event when, in
   every round, all the players of a team who met somebody met players of
@@ -197,12 +199,12 @@ defmodule Ainalrami.TeamReplay do
     end
   end
 
-  defp system_for(%{code: code} = d, _parsed), do: {:unreplayable, "#{code} #{not_replayed(d)}"}
-
-  defp not_replayed(%{system: :round_robin}) do
-    "is an individual round robin by the Berger tables: its pairings are predetermined, " <>
-      "and this checker replays the Berger tables for team events only"
+  defp system_for(%{system: :round_robin, code: code} = d, _parsed) do
+    {:round_robin,
+     %{games: d.games, reverse_last_two?: Map.get(d, :reverse_last_two?, false), code: code}}
   end
+
+  defp system_for(%{code: code} = d, _parsed), do: {:unreplayable, "#{code} #{not_replayed(d)}"}
 
   defp not_replayed(%{system: system}) when system in [:schiller, :scheveningen] do
     "is a #{if system == :schiller, do: "Schiller", else: "Scheveningen"} event, whose " <>
@@ -250,8 +252,8 @@ defmodule Ainalrami.TeamReplay do
         {:team_round_robin, %{games: cycles_played(parsed), code: nil}}
 
       String.contains?(type, "robin") ->
-        {:unreplayable,
-         "the file's type (092) is a round robin, whose pairings are predetermined"}
+        {:round_robin,
+         %{games: Ainalrami.RoundRobin.cycles_played(parsed), reverse_last_two?: false, code: nil}}
 
       String.contains?(type, "scheveningen") or String.contains?(type, "schiller") ->
         {:unreplayable,

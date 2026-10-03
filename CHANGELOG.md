@@ -85,6 +85,15 @@ with the reference on every one of them.
   `BERGER_TEAM_ROUNDROBIN_Gn` and its aliases - and a `092` round robin whose
   games are team matches - are compared round by round, board-1 colours
   included, instead of exiting 2.
+- [Feature] **Individual round robins on the CLI.** `-p` on a
+  `BERGER_ROUNDROBIN_Gn` / `FIDE_ROUNDROBIN` / `*DOUBLEROUNDROBIN` file (or a
+  `092` round robin) gives the next round of the Berger table with
+  OpenPairings' boards and order - checked against its own schedule for
+  3-16 players, one and two cycles - `-c` compares every round with the
+  table (they exited 2), `-x` says the table fixed the round, and
+  `-g --roundrobin` (`Ainalrami.RoundRobinGenerator`) writes one.
+  `FIDE_DOUBLEROUNDROBIN` plays the first cycle's last two rounds in
+  reverse order, as FIDE's type table defines it.
 - [Feature] **`-g --team=swiss|roundrobin`**: a random team event
   (`Ainalrami.TeamGenerator`) as TRF26 - rosters with reserves, board-level
   games and results, the pairing-allocated bye, board forfeits, teams not

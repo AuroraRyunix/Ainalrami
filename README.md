@@ -309,11 +309,12 @@ Tournament Type Code Table defines it (`Ainalrami.TypeCode`):
 | `FIDE_DUTCH*_BAKU` | replayed with the virtual points the file gives (`XXA`/`250`); exit 2 when it gives none - the engine does not derive C.04.7's groups itself |
 | `FIDE_TEAM*` without `_BAKU` | replayed team against team (*Team events* below) |
 | a team round robin (`BERGER_TEAM_ROUNDROBIN_Gn`, `FIDE_TEAM_ROUNDROBIN`, `FIDE_TEAM_DOUBLEROUNDROBIN`, ...) | compared with the Berger tables (C.05 Annex 1, `Ainalrami.Berger`), colours included, the table repeated `n` times with the colours reversed in every second cycle |
-| an individual round robin (`BERGER_ROUNDROBIN_Gn`, `FIDE_ROUNDROBIN`, `FIDE_DOUBLEROUNDROBIN`), `CUSTOM_TEAM_ROUNDROBIN` | exit 2: not replayed |
+| an individual round robin (`BERGER_ROUNDROBIN_Gn`, `BERGER_ROUNDROBIN`, `FIDE_ROUNDROBIN`, `BERGER_DOUBLEROUNDROBIN`, `FIDE_DOUBLEROUNDROBIN`) | compared with the Berger tables, colours included, players numbered by starting rank (`Ainalrami.RoundRobin`); `FIDE_DOUBLEROUNDROBIN` plays the first cycle's last two rounds in reverse order |
+| `CUSTOM_ROUNDROBIN`, `CUSTOM_TEAM_ROUNDROBIN` | exit 2: a round robin of the competition's own |
 | `FIDE_SCHILLER_TxP`, `FIDE_SCHEVENINGEN_Gn` and their shorthands | exit 2: predetermined, by rules FIDE has not yet defined |
 | `FIDE_DUBOV`, `FIDE_BURSTEIN`, `FIDE_DOUBLESWISS` (with or without `_BAKU`) | exit 2: Ainalrami pairs the Dutch system only |
 | `CUSTOM_*`, `FIDE_TEAM*_BAKU` | exit 2: a system of the competition's own; the team engine has no acceleration |
-| none, or one off the table (said so) | the `092` type (a round robin is a team round robin when its games are team matches throughout, played as many times as its rounds need; otherwise a round robin, Scheveningen, Schiller or knockout exits 2), else the games: team matches throughout make a team Swiss, anything else the Dutch system |
+| none, or one off the table (said so) | the `092` type (a round robin - a team one when its games are team matches throughout, else individual - played as many times as its rounds need; a Scheveningen, Schiller or knockout exits 2), else the games: team matches throughout make a team Swiss, anything else the Dutch system |
 
 When the file carries a tie-break list (`212`, or `202` after the score)
 and final ranks, `-c` also ranks the field with `Ainalrami.Tiebreaks` and
@@ -407,6 +408,20 @@ refuses the round: exit 1, with an error naming the player and that round.
 They are refused with `-g` and `-c`,
 which pair by the FIDE rules alone, and no TRF line carries them: the
 engine reads non-FIDE options from flags and library options only.
+
+### Round robins: `-p`, `-x`, `-c` and `-g --roundrobin`
+
+On a round-robin file (the `192` codes above, or a `092` round robin) `-p`
+gives the next round of the Berger table - the table OpenPairings plays,
+board for board (`test/fixtures/round_robin/openpairings_berger.txt` holds
+its boards for 3-16 players, one and two cycles): players numbered by
+starting rank, the boards lowest number first, the free player of an odd
+field last as `PLAYER 0`, in JaVaFo's list format. `-x` says the table
+fixed the round; bye preferences, `--force` and `--absent` are refused.
+`-g --roundrobin` writes a random one (`--players --rounds --cycles
+--forfeit-pct --draw-rate --rating-range --tie-breaks --seed`) that `-c`
+passes. A match-format or per-category round robin (OpenPairings'
+`CUSTOM_ROUNDROBIN`) is not paired here.
 
 ### Team events: `-p`, `-x` and `-g`
 

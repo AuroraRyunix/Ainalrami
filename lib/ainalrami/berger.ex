@@ -30,8 +30,15 @@ defmodule Ainalrami.Berger do
   `pairs` as `[{white, black}]` and `free` the participant
   meeting the dummy (nil for an even field), or `{:error,
   {:all_rounds_paired, total}}` past the last round.
+
+  Option `:reverse_last_two?` - `FIDE_DOUBLEROUNDROBIN`'s construction in
+  FIDE's Tournament Type Code Table: the first cycle with its last two
+  rounds played in reverse order, then the second cycle (colours reversed,
+  as in any repeated table) in table order.
   """
-  def round(n, games, round)
+  def round(n, games, round, opts \\ [])
+
+  def round(n, games, round, opts)
       when is_integer(n) and n >= 2 and is_integer(games) and games >= 1 and
              is_integer(round) and round >= 1 do
     field = if rem(n, 2) == 0, do: n, else: n + 1
@@ -44,6 +51,15 @@ defmodule Ainalrami.Berger do
     else
       cycle = div(round - 1, per_cycle)
       r = rem(round - 1, per_cycle)
+
+      r =
+        cond do
+          not Keyword.get(opts, :reverse_last_two?, false) or cycle != 0 or per_cycle < 2 -> r
+          r == per_cycle - 1 -> per_cycle - 2
+          r == per_cycle - 2 -> per_cycle - 1
+          true -> r
+        end
+
       reverse? = rem(cycle, 2) == 1
 
       {pairs, free} =

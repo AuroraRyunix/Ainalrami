@@ -1,6 +1,10 @@
 # The team CLI's proof run: generated team events through the CLI itself.
 #
-#   mix run tools/team_cli_corpus.exs SWISS_COUNT RR_COUNT [FIRST_SEED]
+#   mix run tools/team_cli_corpus.exs SWISS_COUNT RR_COUNT [FIRST_SEED [INDIVIDUAL_RR_COUNT]]
+#
+# INDIVIDUAL_RR_COUNT adds individual round robins
+# (`Ainalrami.RoundRobinGenerator`): -c, and -p on every round of the file
+# cut back to before it, against the Berger table's boards and free player.
 #
 # For every seed, `Ainalrami.TeamGenerator.run/1` makes an event (a team
 # Swiss paired round by round by `Ainalrami.TeamPairing` called directly, or
@@ -29,6 +33,48 @@ defmodule TeamCliCorpus do
   alias Ainalrami.{CLI, TeamGenerator, Trf}
 
   @pre_recorded ~w(Z H F)
+
+  def run_one(:individual_rr, seed, dir) do
+    g = Ainalrami.RoundRobinGenerator.run(seed: seed)
+    base = Path.join(dir, "individual_rr_#{seed}")
+    full = base <> ".trf"
+    File.write!(full, g.text)
+    check = CLI.run([full, "-c", "-q"])
+    parsed = Trf.parse(g.text)
+    failures = if check == 0, do: [], else: ["individual_rr seed #{seed}: -c exited #{check}"]
+
+    failures =
+      Enum.reduce(1..g.rounds//1, failures, fn k, acc ->
+        cut = base <> "_r#{k}.trf"
+        out = base <> "_r#{k}.out"
+        File.write!(cut, Trf.serialize(truncate(parsed, k), dialect: :trf26))
+        code = CLI.run([cut, "-p", out, "-q"])
+        expected = g.pairings[k]
+
+        expected_lines =
+          Enum.map(expected.boards, fn {w, b} -> "#{w} #{b}" end) ++
+            if(expected.free, do: ["#{expected.free} 0"], else: [])
+
+        result =
+          cond do
+            code != 0 ->
+              ["individual_rr seed #{seed} round #{k}: -p exited #{code}"]
+
+            output_lines(File.read!(out)) != expected_lines ->
+              ["individual_rr seed #{seed} round #{k}: boards differ"]
+
+            true ->
+              []
+          end
+
+        File.rm(cut)
+        File.rm(out)
+        acc ++ result
+      end)
+
+    if failures == [], do: File.rm(full)
+    {g.rounds, failures}
+  end
 
   def run_one(system, seed, dir) do
     g = TeamGenerator.run(seed: seed, system: system)
@@ -66,6 +112,9 @@ defmodule TeamCliCorpus do
     if failures == [], do: File.rm(full)
     {g.rounds, failures}
   end
+
+  # The board lines of a JaVaFo-style pairing list, the count line dropped.
+  defp output_lines(text), do: text |> String.split(~r/\r?\n/, trim: true) |> tl()
 
   # What the file held before round k was paired.
   def truncate(parsed, k) do
@@ -166,6 +215,7 @@ defmodule TeamCliCorpus do
 end
 
 [swiss, rr | rest] = System.argv()
+individual_rr = rest |> Enum.at(1, "0") |> String.to_integer()
 swiss = String.to_integer(swiss)
 rr = String.to_integer(rr)
 first = String.to_integer(List.first(rest) || "1")
@@ -175,7 +225,8 @@ concurrency = String.to_integer(System.get_env("CORPUS_CONCURRENCY", "4"))
 
 jobs =
   Enum.map(first..(first + swiss - 1)//1, &{:swiss, &1}) ++
-    Enum.map(first..(first + rr - 1)//1, &{:round_robin, &1})
+    Enum.map(first..(first + rr - 1)//1, &{:round_robin, &1}) ++
+    Enum.map(first..(first + individual_rr - 1)//1, &{:individual_rr, &1})
 
 started = System.monotonic_time(:millisecond)
 
@@ -201,7 +252,8 @@ started = System.monotonic_time(:millisecond)
 seconds = div(System.monotonic_time(:millisecond) - started, 1000)
 
 IO.puts(
-  "team CLI corpus: #{swiss} team Swiss + #{rr} team round robin events (seeds #{first}..), " <>
+  "team CLI corpus: #{swiss} team Swiss + #{rr} team round robin + #{individual_rr} " <>
+    "individual round robin events (seeds #{first}..), " <>
     "#{events} run, #{rounds} rounds re-paired by -p, #{length(failures)} failure(s), #{seconds} s"
 )
 

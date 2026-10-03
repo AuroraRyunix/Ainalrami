@@ -269,9 +269,7 @@ defmodule Ainalrami.TeamReplayTest do
                CUSTOM_SCHEVENINGEN FIDE_SCHILLER FIDE_SCHILLER_4x2 CUSTOM_SCHILLER
                CUSTOM_TEAM_KNOCKOUT CUSTOM_KNOCKOUT CUSTOM_TEAM_SWISS CUSTOM_TEAM_SWISS_MP
                CUSTOM_TEAM_SWISS_GP FIDE_TEAM_BAKU FIDE_TEAM_MP_BAKU FIDE_TEAM_MP_GP_BAKU
-               FIDE_TEAM_TYPEA_MP_GP_BAKU FIDE_TEAM_TYPEB_MP_BAKU
-               BERGER_ROUNDROBIN BERGER_ROUNDROBIN_G1 BERGER_ROUNDROBIN_G3
-               BERGER_DOUBLEROUNDROBIN FIDE_ROUNDROBIN FIDE_DOUBLEROUNDROBIN CUSTOM_ROUNDROBIN
+               FIDE_TEAM_TYPEA_MP_GP_BAKU FIDE_TEAM_TYPEB_MP_BAKU CUSTOM_ROUNDROBIN
                FIDE_DUBOV FIDE_DUBOV_BAKU FIDE_BURSTEIN FIDE_BURSTEIN_BAKU CUSTOM_SWISS
                FIDE_DOUBLESWISS FIDE_DOUBLESWISS_BAKU CUSTOM_DOUBLESWISS),
           teams <- [[%{name: "T", player_ranks: [1]}], []] do
@@ -303,7 +301,7 @@ defmodule Ainalrami.TeamReplayTest do
     test "a code off the table falls back to the file's type and games" do
       assert sys("FIDE_DUTCH_2022", []) == :individual
 
-      assert {:unreplayable, _} =
+      assert {:round_robin, %{code: nil}} =
                TeamReplay.system(%{
                  tournament: %{type_code: "RR", type: "Individual: Round Robin System"},
                  teams: [],
@@ -323,10 +321,9 @@ defmodule Ainalrami.TeamReplayTest do
       Trf.serialize(%{parsed | tournament: tournament})
     end
 
-    test "a round robin, a Schiller, a knockout or a non-Dutch Swiss exits 2, not 1" do
+    test "a custom round robin, a Schiller, a knockout or a non-Dutch Swiss exits 2, not 1" do
       for code <-
-            ~w(BERGER_ROUNDROBIN_G2 FIDE_ROUNDROBIN FIDE_DOUBLEROUNDROBIN CUSTOM_ROUNDROBIN
-               FIDE_SCHILLER_4x3 FIDE_SCHEVENINGEN CUSTOM_KNOCKOUT CUSTOM_SWISS FIDE_DUBOV
+            ~w(CUSTOM_ROUNDROBIN FIDE_SCHILLER_4x3 FIDE_SCHEVENINGEN CUSTOM_KNOCKOUT CUSTOM_SWISS FIDE_DUBOV
                FIDE_BURSTEIN FIDE_DOUBLESWISS) do
         {out, exit_code} = check(individual([], code))
         assert exit_code == 2, "#{code}: #{out}"
@@ -335,14 +332,14 @@ defmodule Ainalrami.TeamReplayTest do
       end
     end
 
-    test "a 092 round robin with no 192 exits 2" do
+    test "a Swiss file labelled a round robin (092, no 192) is checked against the Berger table" do
       {text, _seed} = Ainalrami.Generator.generate(seed: 12, players: 10, rounds: 4)
       parsed = Trf.parse(text)
       tournament = Map.put(parsed.tournament, :type, "Individual: Round Robin System")
 
       {out, exit_code} = check(Trf.serialize(%{parsed | tournament: tournament}))
-      assert exit_code == 2, out
-      assert out =~ "the file's type (092) is a round robin"
+      assert exit_code == 1, out
+      assert out =~ "DIFFERS from the Berger table"
     end
 
     test "the Dutch codes replay, the 2017 edition with a warning" do
