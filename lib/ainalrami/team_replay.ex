@@ -26,9 +26,10 @@ defmodule Ainalrami.TeamReplay do
     * a C.04.6 team Swiss (`FIDE_TEAM`, `FIDE_TEAM_TYPEA_MP_GP`,
       `FIDE_TEAM_MP`, ...) - the team replay, with the settings the code
       names (below);
-    * everything else is `{:unreplayable, reason}`: round robins
-      (individual or team - their pairings come from the Berger tables of
-      the Competition Rules' Appendix 1, which Ainalrami does not have),
+    * a team round robin by the Berger tables (`BERGER_TEAM_ROUNDROBIN_Gn`
+      and its aliases) - `{:team_round_robin, %{games: n, code:}}`, compared
+      with `Ainalrami.Berger` (`check_round_robin/3`);
+    * everything else is `{:unreplayable, reason}`: individual round robins,
       Schiller and Scheveningen (predetermined, by rules FIDE has not yet
       defined), knockouts, the Dubov, Burstein and Double Swiss systems
       (Ainalrami pairs the Dutch system only), every `CUSTOM_*` system, and
@@ -36,8 +37,10 @@ defmodule Ainalrami.TeamReplay do
       acceleration).
 
   With no `192` - or one that is not in the table - the `092` type is read
-  for a round robin, Scheveningen, Schiller or knockout (unreplayable, as
-  above), and otherwise the games decide: the file is a team event when, in
+  for a round robin (a team round robin when the games show a team event,
+  played as many times as its rounds need; otherwise unreplayable),
+  Scheveningen, Schiller or knockout (unreplayable, as above), and
+  otherwise the games decide: the file is a team event when, in
   every round, all the players of a team who met somebody met players of
   one and the same other team, and that team's players met theirs. An
   individual event with team records does not look like that past its
@@ -68,7 +71,8 @@ defmodule Ainalrami.TeamReplay do
 
   Per team and round, read from the players' games in `310`/`013` order
   (the first player of a team who met somebody is its board 1, as
-  `Ainalrami.Tiebreaks.Team.from_trf/2` numbers the boards):
+  `Ainalrami.Tiebreaks.Team.from_trf/2` numbers the boards) - or in the
+  order of a TRF26 `300` record for the match, when the file has one:
 
     * **a match** against the team whose players they met. It was *played*
       when at least one board was played over the board; a match where
@@ -109,6 +113,7 @@ defmodule Ainalrami.TeamReplay do
   round 1's colours (4.3.1 gives round 1's colours from it alone).
   """
 
+  alias Ainalrami.Berger
   alias Ainalrami.TeamPairing
   alias Ainalrami.TeamPairing.Team
   alias Ainalrami.Tiebreaks
@@ -183,11 +188,20 @@ defmodule Ainalrami.TeamReplay do
     end
   end
 
+  defp system_for(%{system: :team_round_robin, code: code} = d, parsed) do
+    if Map.get(parsed, :teams, []) == [] do
+      {:unreplayable,
+       "#{code} is a team round robin, but the file has no team records (013 or 310)"}
+    else
+      {:team_round_robin, %{games: d.games, code: code}}
+    end
+  end
+
   defp system_for(%{code: code} = d, _parsed), do: {:unreplayable, "#{code} #{not_replayed(d)}"}
 
-  defp not_replayed(%{system: system}) when system in [:round_robin, :team_round_robin] do
-    "is a round robin by the Berger tables (Competition Rules, Appendix 1): its pairings " <>
-      "are predetermined, and Ainalrami has no Berger tables to replay them against"
+  defp not_replayed(%{system: :round_robin}) do
+    "is an individual round robin by the Berger tables: its pairings are predetermined, " <>
+      "and this checker replays the Berger tables for team events only"
   end
 
   defp not_replayed(%{system: system}) when system in [:schiller, :scheveningen] do
@@ -232,6 +246,9 @@ defmodule Ainalrami.TeamReplay do
     type = String.downcase(to_string(type || ""))
 
     cond do
+      String.contains?(type, "robin") and team_structured?(parsed) ->
+        {:team_round_robin, %{games: cycles_played(parsed), code: nil}}
+
       String.contains?(type, "robin") ->
         {:unreplayable,
          "the file's type (092) is a round robin, whose pairings are predetermined"}
@@ -252,7 +269,28 @@ defmodule Ainalrami.TeamReplay do
     end
   end
 
+  # A team round robin known only from its `092` type: as many cycles of
+  # the Berger table as its rounds need.
+  defp cycles_played(parsed) do
+    teams = length(parsed.teams)
+    rounds = parsed.players |> Enum.map(&length(&1.games)) |> Enum.max(fn -> 0 end)
+    per_cycle = if teams < 2, do: 1, else: Berger.total_rounds(teams, 1)
+    max(1, div(rounds + per_cycle - 1, per_cycle))
+  end
+
   @doc "A one-line description of `settings`, for the trace."
+  def describe(%{games: games} = s) do
+    times = if games == 1, do: "once", else: "#{games} times"
+
+    source =
+      if s.code,
+        do: " (192 #{s.code})",
+        else: " (092 round robin, no 192: #{times} by the rounds)"
+
+    "a team round robin by the Berger tables (C.05 Annex 1), each match played #{times}" <>
+      source
+  end
+
   def describe(%{} = s) do
     {primary, secondary} =
       case s.score_mode do
@@ -356,14 +394,16 @@ defmodule Ainalrami.TeamReplay do
 
     pab_by_round = get_in(tournament, [:team_pab, :teams]) || []
 
+    orders = board_orders(tournament)
+
     Map.new(rosters, fn {team, ranks} ->
       rounds =
         Map.new(1..event.rounds//1, fn r ->
           rounds =
-            for rank <- ranks,
+            for rank <- board_order(orders, team, r, ranks),
                 participant = individual.participants[rank],
                 participant != nil,
-                do: participant.rounds[r]
+                do: {participant.rounds[r], board_of(orders, team, r, rank)}
 
           points = event.teams[team].rounds[r]
 
@@ -382,10 +422,45 @@ defmodule Ainalrami.TeamReplay do
     end)
   end
 
-  defp read_round(rounds, team, r, team_of, declared, pab_team) do
+  # `{team, round} => [starting rank]` from the TRF26 `300` records: the
+  # team's players in board order for that match.
+  defp board_orders(tournament) do
+    for o <- tournament[:board_orders] || [],
+        is_integer(o[:round]) and is_integer(o[:team]),
+        into: %{},
+        do: {{o.team, o.round}, o[:order] || []}
+  end
+
+  # The roster in board order for round `r`: a `300` record's order first,
+  # then the rest of the roster as listed.
+  defp board_order(orders, team, r, ranks) do
+    case Map.fetch(orders, {team, r}) do
+      {:ok, order} ->
+        named = Enum.filter(order, &(is_integer(&1) and &1 > 0))
+        named ++ (ranks -- named)
+
+      :error ->
+        ranks
+    end
+  end
+
+  # The board (0-based) a `300` record seats `rank` on, nil without one.
+  defp board_of(orders, team, r, rank) do
+    case Map.fetch(orders, {team, r}) do
+      {:ok, order} -> Enum.find_index(order, &(&1 == rank))
+      :error -> nil
+    end
+  end
+
+  defp read_round(boards, team, r, team_of, declared, pab_team) do
+    rounds = Enum.map(boards, &elem(&1, 0))
+
     # A game against a player on no team's roster says nothing about which
     # team this one met.
-    met = Enum.filter(rounds, &(&1.opponent != nil and Map.has_key?(team_of, &1.opponent)))
+    met =
+      Enum.filter(boards, fn {g, _board} ->
+        g.opponent != nil and Map.has_key?(team_of, g.opponent)
+      end)
 
     base = %{kind: :out, opponent: nil, played?: false, colour: nil, full_bye?: false}
 
@@ -416,7 +491,7 @@ defmodule Ainalrami.TeamReplay do
       _ ->
         opponent =
           met
-          |> Enum.frequencies_by(&team_of[&1.opponent])
+          |> Enum.frequencies_by(fn {g, _board} -> team_of[g.opponent] end)
           |> Enum.max_by(fn {_team, n} -> n end)
           |> elem(0)
 
@@ -424,11 +499,25 @@ defmodule Ainalrami.TeamReplay do
           base
           | kind: :match,
             opponent: opponent,
-            played?: Enum.any?(met, &(&1.kind == :played)),
-            colour: Enum.find_value(met, & &1.colour)
+            played?: Enum.any?(met, fn {g, _board} -> g.kind == :played end),
+            colour: Enum.find_value(met, &team_colour/1)
         }
     end
   end
+
+  # The team's colour (1.6.1, board 1's) from the first board that has one:
+  # board 1 itself, or - when a `300` record seats that player lower - the
+  # board's colour turned round on every even board, team colours
+  # alternating down the boards.
+  defp team_colour({%{colour: nil}, _board}), do: nil
+  defp team_colour({%{colour: colour}, board}) when board in [nil, 0], do: colour
+
+  defp team_colour({%{colour: colour}, board}) do
+    if rem(board, 2) == 0, do: colour, else: opposite(colour)
+  end
+
+  defp opposite(:white), do: :black
+  defp opposite(:black), do: :white
 
   @doc "The last round in which the file pairs any team, 0 if none."
   def paired_rounds(history) do
@@ -487,8 +576,19 @@ defmodule Ainalrami.TeamReplay do
   """
   def state_before(history, round, settings) do
     field =
-      for {team, rounds} <- history, rounds[round].kind in [:match, :pab], do: team
+      for {team, rounds} <- history,
+          rec = rounds[round],
+          rec != nil and rec.kind in [:match, :pab],
+          do: team
 
+    state_for(history, round, settings, field)
+  end
+
+  @doc """
+  The engine's input for `round` with the field given: `{teams, absent}`
+  as in `state_before/3`, for the teams in `field`.
+  """
+  def state_for(history, round, settings, field) do
     teams =
       for team <- Enum.sort(field) do
         earlier = earlier(history[team], round)
@@ -622,6 +722,188 @@ defmodule Ainalrami.TeamReplay do
         if paired_rounds(history) >= 1 and misses.(:black) < misses.(:white),
           do: {:black, :inferred},
           else: {:white, :inferred}
+    end
+  end
+
+  # ---- the next round (`ainalrami input.trf -p`) ---------------------------
+
+  @doc """
+  What `-p` pairs on a team Swiss file: the round after the last one the
+  file pairs, with the field and the engine's input for it -
+  `%{round:, field:, out:, teams:, absent:}`.
+
+  The field is every team with at least one player free to sit at a board:
+  a player is not free when the file already records the round for them -
+  a zero-, half- or full-point bye in its column, or a TRF26 `240` record -
+  which is how an arbiter tells the engine, before the pairing, that
+  somebody will not play. A team none of whose players is free sits the
+  round out (`out`); if it was paired before, it is passed as `:absent`
+  and keeps its place in 4.3.1's numbering, as in the replay.
+  """
+  def next_round(parsed, history, settings) do
+    round = paired_rounds(history) + 1
+    {rosters, _team_of} = rosters(parsed)
+    by_rank = Map.new(parsed.players, &{&1.rank, &1})
+
+    {field, out} =
+      rosters
+      |> Enum.split_with(fn {_team, ranks} ->
+        Enum.any?(ranks, &free?(by_rank[&1], round))
+      end)
+
+    field = field |> Enum.map(&elem(&1, 0)) |> Enum.sort()
+    {teams, absent} = state_for(history, round, settings, field)
+
+    %{
+      round: round,
+      field: field,
+      out: out |> Enum.map(&elem(&1, 0)) |> Enum.sort(),
+      teams: teams,
+      absent: absent
+    }
+  end
+
+  @doc """
+  Whether `player` is free to be seated in `round`: the file records
+  nothing for them in that round. A player not in the file is not free.
+  """
+  def free?(nil, _round), do: false
+
+  def free?(player, round) do
+    case Enum.at(player.games, round - 1) do
+      nil -> true
+      game -> blank?(game)
+    end
+  end
+
+  defp blank?(game) do
+    is_nil(game[:opponent_rank]) and
+      (is_nil(game[:result]) or String.trim(to_string(game[:result])) == "")
+  end
+
+  @doc """
+  The players a team seats in `round`, board 1 first: the order of a TRF26
+  `300` record for the round when the file has one, otherwise its free
+  players in roster order (`310`/`013`) - the players below an absent one
+  moving up a board. `boards` long, `nil` for a board nobody fills.
+  """
+  def lineup(parsed, team, round, boards) do
+    {rosters, _team_of} = rosters(parsed)
+    ranks = rosters |> List.keyfind(team, 0, {team, []}) |> elem(1)
+    by_rank = Map.new(parsed.players, &{&1.rank, &1})
+
+    seated =
+      case Enum.find(
+             parsed.tournament[:board_orders] || [],
+             &(&1[:round] == round and &1[:team] == team)
+           ) do
+        %{order: order} -> Enum.map(order, &if(&1 in [nil, 0], do: nil, else: &1))
+        nil -> Enum.filter(ranks, &free?(by_rank[&1], round))
+      end
+
+    seated
+    |> Enum.take(boards)
+    |> then(&(&1 ++ List.duplicate(nil, boards - length(&1))))
+  end
+
+  @doc """
+  The number of boards a match has: the most players of one team who met
+  somebody in one round (`Ainalrami.Tiebreaks.Team.from_trf/2`'s count), or
+  nil when no match has been played yet.
+  """
+  def boards(parsed) do
+    {_rosters, team_of} = rosters(parsed)
+
+    counts =
+      for player <- parsed.players,
+          team = team_of[player.rank],
+          team != nil,
+          {game, r} <- Enum.with_index(player.games, 1),
+          is_integer(game.opponent_rank),
+          Map.has_key?(team_of, game.opponent_rank),
+          reduce: %{} do
+        acc -> Map.update(acc, {team, r}, 1, &(&1 + 1))
+      end
+
+    case Map.values(counts) do
+      [] -> nil
+      values -> Enum.max(values)
+    end
+  end
+
+  # ---- a team round robin --------------------------------------------------
+
+  @doc """
+  The Berger table's pairing of `round` for this file's teams: `{:ok,
+  pairs, free}` with `pairs` as `[{white, black}]` in team numbers (the
+  team with White on board 1 first) and `free` the team the table gives
+  the round off (an odd field), or `{:error, {:all_rounds_paired,
+  total}}`. The teams are numbered for the table in the order of their
+  numbers (`310`; file order for `013`), which for teams numbered 1..n is
+  their own number.
+  """
+  def berger_round(history, round, %{games: games}) do
+    numbers = history |> Map.keys() |> Enum.sort()
+    n = length(numbers)
+
+    if n < 2 do
+      {:error, :too_few_teams}
+    else
+      team = fn position -> Enum.at(numbers, position - 1) end
+
+      with {:ok, pairs, free} <- Berger.round(n, games, round) do
+        {:ok, Enum.map(pairs, fn {w, b} -> {team.(w), team.(b)} end), free && team.(free)}
+      end
+    end
+  end
+
+  @doc """
+  Compares `round` of a team round robin with the Berger table. Returns
+  `%{result:, file:, engine:, differing:, missing:}`:
+
+    * `result` - `:ok`, `:colours` (every recorded match is scheduled, but
+      the board-1 colours of `differing` are the other way round),
+      `:differs` (a recorded match the table does not have, or a bye for a
+      team the table seats), or `:beyond` (the table has no such round);
+    * `file` / `engine` - the recorded and the scheduled pairing,
+      `[{white, black}]` plus `{team, nil}` for a bye or a free round;
+    * `missing` - scheduled matches the file records nothing for (neither
+      team's players have a game, and no `330`): not a different pairing,
+      only an unrecorded one.
+  """
+  def check_round_robin(history, round, settings) do
+    {pairs, bye} = recorded(history, round)
+    file = Enum.sort(Enum.map(pairs, fn {w, b, _} -> {w, b} end) ++ bye_entry(bye))
+
+    case berger_round(history, round, settings) do
+      {:ok, scheduled, free} ->
+        engine = Enum.sort(scheduled ++ bye_entry(free))
+        by_composition = Map.new(scheduled, fn {w, b} -> {Enum.sort([w, b]), {w, b}} end)
+
+        unscheduled =
+          Enum.reject(pairs, fn {w, b, _} -> Map.has_key?(by_composition, Enum.sort([w, b])) end)
+
+        recorded_set = MapSet.new(pairs, fn {w, b, _} -> Enum.sort([w, b]) end)
+
+        missing =
+          for {w, b} <- scheduled, not MapSet.member?(recorded_set, Enum.sort([w, b])), do: {w, b}
+
+        differing =
+          for {w, b, true} <- pairs,
+              Map.get(by_composition, Enum.sort([w, b])) == {b, w},
+              do: {w, b}
+
+        result =
+          cond do
+            unscheduled != [] or (bye != nil and bye != free) -> :differs
+            differing != [] -> :colours
+            true -> :ok
+          end
+
+        %{result: result, file: file, engine: engine, differing: differing, missing: missing}
+
+      {:error, _reason} ->
+        %{result: :beyond, file: file, engine: [], differing: [], missing: []}
     end
   end
 end

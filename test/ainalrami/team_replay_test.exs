@@ -156,7 +156,7 @@ defmodule Ainalrami.TeamReplayTest do
   end
 
   describe "a team system this checker cannot replay" do
-    for {selector, what} <- [{6, "round robin"}, {8, "Scheveningen"}, {9, "Schiller"}] do
+    for {selector, what} <- [{8, "Scheveningen"}, {9, "Schiller"}] do
       test "a team #{what} exits 2 and says why" do
         gen = TeamTrfGenerator.generate(100 + unquote(selector), selector: unquote(selector))
         {out, code} = check(gen.text)
@@ -186,7 +186,7 @@ defmodule Ainalrami.TeamReplayTest do
     end
 
     test "a standings difference still exits 1" do
-      gen = TeamTrfGenerator.generate(106, selector: 6)
+      gen = TeamTrfGenerator.generate(108, selector: 8)
       parsed = Trf.parse(gen.text)
 
       teams =
@@ -265,9 +265,7 @@ defmodule Ainalrami.TeamReplayTest do
 
     test "predetermined, other, custom and accelerated systems are not replayed" do
       for code <-
-            ~w(FIDE_TEAM_ROUNDROBIN FIDE_TEAM_DOUBLEROUNDROBIN BERGER_TEAM_ROUNDROBIN
-               BERGER_TEAM_DOUBLEROUNDROBIN BERGER_TEAM_ROUNDROBIN_G2 CUSTOM_TEAM_ROUNDROBIN
-               FIDE_SCHEVENINGEN FIDE_SCHEVENINGEN_G2 FIDE_DOUBLESCHEVENINGEN
+            ~w(CUSTOM_TEAM_ROUNDROBIN FIDE_SCHEVENINGEN FIDE_SCHEVENINGEN_G2 FIDE_DOUBLESCHEVENINGEN
                CUSTOM_SCHEVENINGEN FIDE_SCHILLER FIDE_SCHILLER_4x2 CUSTOM_SCHILLER
                CUSTOM_TEAM_KNOCKOUT CUSTOM_KNOCKOUT CUSTOM_TEAM_SWISS CUSTOM_TEAM_SWISS_MP
                CUSTOM_TEAM_SWISS_GP FIDE_TEAM_BAKU FIDE_TEAM_MP_BAKU FIDE_TEAM_MP_GP_BAKU
@@ -279,6 +277,21 @@ defmodule Ainalrami.TeamReplayTest do
           teams <- [[%{name: "T", player_ranks: [1]}], []] do
         assert {:unreplayable, reason} = sys(code, teams), code
         assert String.starts_with?(reason, code), reason
+      end
+    end
+
+    test "a team round robin code is replayed by the Berger tables, its cycles from the code" do
+      for {code, games} <- [
+            {"FIDE_TEAM_ROUNDROBIN", 1},
+            {"BERGER_TEAM_ROUNDROBIN", 1},
+            {"BERGER_TEAM_ROUNDROBIN_G1", 1},
+            {"FIDE_TEAM_DOUBLEROUNDROBIN", 2},
+            {"BERGER_TEAM_DOUBLEROUNDROBIN", 2},
+            {"BERGER_TEAM_ROUNDROBIN_G3", 3}
+          ] do
+        assert {:team_round_robin, %{games: ^games}} = sys(code), code
+        assert {:unreplayable, reason} = sys(code, []), code
+        assert reason =~ "no team records"
       end
     end
 
