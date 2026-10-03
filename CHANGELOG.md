@@ -64,6 +64,64 @@ with the reference on every one of them.
 
 ## [Unreleased]
 
+- [Feature] **Team events on the standalone CLI.** `ainalrami file.trf -p`
+  on a TRF26 team file (`310`/`001`, `362`, `320`, `330`, `300`) pairs the
+  next round team against team: a C.04.6 team Swiss with
+  `Ainalrami.TeamPairing` and the settings of its `192` code (`152`, `142`,
+  match points and the bye's from `362` `P`/`A` and `320`, teams with every
+  player on a pre-recorded bye sitting the round out as absent), a team
+  round robin by the Berger tables. The output is the JaVaFo pairing list
+  one level up (`COUNT`, `WHITE BLACK` per match, the bye as `TEAM 0`),
+  with `--lineups [--boards=N]` adding the boards (`MATCH BOARD WHITE
+  BLACK`, players by starting rank). `-x` prints the engine's account: the
+  bye (3.4), the upfloater sets and the deciding criterion per bracket, the
+  Article 4 rule behind each colour. Bye preferences, `--force` and
+  `--absent` are refused on a team file; a team system nothing here pairs
+  exits 2. Until now `-p`/`-x` paired a team file player by player.
+- [Feature] **Team round robins are replayed by `-c`.** `Ainalrami.Berger`
+  holds the Berger tables (C.05 Annex 1; for four, six and eight teams
+  checked against the printed tables), repeated `n` times with the colours
+  reversed in every second cycle as OpenPairings plays them;
+  `BERGER_TEAM_ROUNDROBIN_Gn` and its aliases - and a `092` round robin whose
+  games are team matches - are compared round by round, board-1 colours
+  included, instead of exiting 2.
+- [Feature] **`-g --team=swiss|roundrobin`**: a random team event
+  (`Ainalrami.TeamGenerator`) as TRF26 - rosters with reserves, board-level
+  games and results, the pairing-allocated bye, board forfeits, teams not
+  turning up (board by board or `330`), teams sitting rounds out, players
+  announced absent, lineups out of order (`300`), match points and the
+  bye's and a forfeit's, the C.04.6 settings as the `192` code, the initial
+  colour, cycles, and a team tie-break list with the ranks it gives;
+  deterministic by seed, every option left out drawn from it. A Swiss is
+  paired by `TeamPairing` from the generator's own record, so `-c` and `-p`
+  test the reading of the file against the engine's direct answer.
+  `tools/team_cli_corpus.exs` runs that comparison over a corpus.
+- [Feature] TRF26 `300` records (a team's board order in one match) are
+  read into `tournament[:board_orders]` and written back. The team replay
+  reads board 1's colour through them (gap B6: a team that played its
+  boards out of roster order no longer shows colour differences that are
+  not there), and the team tie-breaks number the boards by them.
+- [Fix] A board one team could not fill - written for the other team's
+  player as a win with no opponent (`0000 - F`, or `+`) - is now one of
+  that team's boards, a forfeit win worth its point. The team reading
+  (`Tiebreaks.Team.from_trf/2`, and through it `-c`'s team replay and
+  standings check) counted only games against somebody, so the point was
+  lost and a won match could read as drawn or lost.
+- [Fix] A team given the pairing-allocated bye in the `320` record alone,
+  its players' columns blank, is scored as the bye (the `320` record's
+  match and game points); it was read as a zero-point bye.
+- [Fix] A round whose matches were all forfeited as a whole (`330`, no
+  board written) counts as a round: the team reading no longer drops it
+  when no game names it, and a bye recorded for the next round (a TRF26
+  `240` record) is written and read back in its own round - it was kept
+  aside as a bye for a round "further ahead than the game list", so the
+  player looked free.
+- [Fix] A team pairing-allocated bye's game points are the `320` record's
+  when it gives them (TieBreakServer's reading); they were always a win on
+  every board, which disagreed with the `320` OpenPairings writes (a draw
+  on every board, C.04.6 1.4) and, in a game-points-primary Swiss, with the
+  scores the round was paired on.
+
 ## [0.36.0] - 2026-10-02
 
 - [Verified] **A release check on be3ae86 against Gacrux and bbpPairings,

@@ -9,12 +9,17 @@ defmodule Ainalrami.CLI do
   `-c` (Pairings Checker, FPC) is implemented - it replays a completed
   tournament and diffs each round against what this engine would have
   paired, exiting nonzero if any round differs; a team Swiss is replayed
-  team against team with the C.04.6 engine (`Ainalrami.TeamReplay`), and
-  a file whose system it cannot replay (a round robin, Scheveningen,
-  Schiller, knockout, Dubov, Burstein, custom system ...) exits 2 with a
-  message saying so. `-g` (Random Tournament
-  Generator) is implemented too - it takes no input file, since it creates
-  a tournament rather than reading one.
+  team against team with the C.04.6 engine (`Ainalrami.TeamReplay`), a
+  team round robin against the Berger tables, and a file whose system it
+  cannot replay (an individual round robin, Scheveningen, Schiller,
+  knockout, Dubov, Burstein, custom system ...) exits 2 with a message
+  saying so. `-g` (Random Tournament Generator) is implemented too - it
+  takes no input file, since it creates a tournament rather than reading
+  one; `-g --team=swiss|roundrobin` generates a team event
+  (`Ainalrami.TeamGenerator`).
+
+  `-p` and `-x` on a team file pair the next round team against team
+  (`Ainalrami.TeamCLI`, whose moduledoc defines the output format).
 
   Verbose trace is the default (see `Ainalrami.Log`); pass `-q`/`--quiet` to
   suppress it.
@@ -25,7 +30,17 @@ defmodule Ainalrami.CLI do
   place that halts.
   """
 
-  alias Ainalrami.{ByePreference, Generator, Log, Pairing, TeamReplay, Trf, TypeCode}
+  alias Ainalrami.{
+    ByePreference,
+    Generator,
+    Log,
+    Pairing,
+    TeamCLI,
+    TeamGenerator,
+    TeamReplay,
+    Trf,
+    TypeCode
+  }
 
   @doc false
   def main(argv), do: argv |> run() |> System.halt()
@@ -106,13 +121,32 @@ defmodule Ainalrami.CLI do
   # Each of those is a command that appears to work. The seed one is the worst
   # kind: it produces a real tournament that can never be produced again, and
   # nothing says so.
-  @bare_flags ~w(-p -g -c -x --explain -q --quiet -d --debug -h --help --version)
+  @bare_flags ~w(-p -g -c -x --explain -q --quiet -d --debug -h --help --version --lineups)
   @valued_flags ~w(seed players rounds forfeit-pct bye-pct forbidden-pct
                    acceleration initial-colour initial-color force absent
                    ratings rating-range rating-top rating-step rating-sigma
                    results draw-rate full-bye-pct half-bye-pct zero-bye-pct
                    forfeit-win-pct double-forfeit-pct odd-results-pct tie-breaks
-                   unset unset-chance bye-want bye-want-soft bye-avoid bye-avoid-soft)
+                   unset unset-chance bye-want bye-want-soft bye-avoid bye-avoid-soft
+                   team teams boards reserves cycles team-type score secondary
+                   match-points pab forfeit-match-points match-forfeit-pct
+                   absent-team-pct absent-player-pct out-of-order-pct)
+
+  # `-g` options that only an individual tournament has, and the ones only
+  # a team event has (`--team=...`); each refused for the other.
+  @individual_generator_flags ~w(players bye-pct forbidden-pct acceleration ratings
+                                 rating-range rating-top rating-step rating-sigma results
+                                 full-bye-pct half-bye-pct zero-bye-pct forfeit-win-pct
+                                 double-forfeit-pct odd-results-pct unset unset-chance)
+  @team_generator_flags ~w(teams boards reserves cycles team-type score secondary
+                           match-points pab forfeit-match-points match-forfeit-pct
+                           absent-team-pct absent-player-pct out-of-order-pct)
+
+  # `-c`'s (and a team file's `-p`/`-x`) exit code when the rounds could not be replayed at all because
+  # the file's pairing system is not one this checker replays - distinct
+  # from 1, which says something was compared and differed. A standings
+  # difference still exits 1: that WAS compared.
+  @not_replayed 2
 
   defp split_flags(argv), do: Enum.split_with(argv, &String.starts_with?(&1, "-"))
 
@@ -349,14 +383,20 @@ defmodule Ainalrami.CLI do
             "--bye-avoid-soft) apply to -p and -x only - -g and -c pair by the FIDE rules alone"
         )
 
+      "-g" in flags and text_option(flags, "team") != nil ->
+        generate_team(positional, flags)
+
       "-g" in flags ->
-        generate(positional, flags)
+        case given(flags, @team_generator_flags) do
+          nil -> generate(positional, flags)
+          flag -> usage_error("--#{flag} is a team event's option - add --team=swiss|roundrobin")
+        end
 
       positional == [] ->
         usage_error("missing input TRF file")
 
       "-p" in flags ->
-        pair_checked(hd(positional), tl(positional), prefs)
+        pair_checked(hd(positional), tl(positional), prefs, flags)
 
       "-c" in flags ->
         check(hd(positional))
@@ -492,6 +532,113 @@ defmodule Ainalrami.CLI do
     0
   end
 
+  # `-g --team=swiss|roundrobin`: a random team event
+  # (`Ainalrami.TeamGenerator`). The individual generator's roster, bye,
+  # acceleration and rating options do not apply and are refused; the
+  # team's own are read here, and what is left out is drawn from the seed.
+  defp generate_team(positional, flags) do
+    case given(flags, @individual_generator_flags) do
+      nil ->
+        opts =
+          [
+            system: team_system_option(flags),
+            seed: option(flags, "seed"),
+            teams: bounded(option(flags, "teams"), "teams", 2),
+            rounds: bounded(option(flags, "rounds"), "rounds", 0),
+            boards: bounded(option(flags, "boards"), "boards", 1),
+            reserves: bounded(option(flags, "reserves"), "reserves", 0),
+            cycles: bounded(option(flags, "cycles"), "cycles", 1),
+            type: word_option(flags, "team-type", %{"a" => :a, "b" => :b, "none" => :none}),
+            score_mode:
+              word_option(flags, "score", %{"mp" => :match_points, "gp" => :game_points}),
+            use_secondary?: word_option(flags, "secondary", %{"yes" => true, "no" => false}),
+            initial_colour: team_initial_colour(flags),
+            match_points: match_points_option(flags),
+            pab: word_option(flags, "pab", %{"draw" => :draw, "win" => :win}),
+            forfeit_match_points:
+              bounded(option(flags, "forfeit-match-points"), "forfeit-match-points", 0),
+            board_forfeit_pct: bounded_pct(option(flags, "forfeit-pct"), "forfeit-pct"),
+            match_forfeit_pct:
+              bounded_pct(option(flags, "match-forfeit-pct"), "match-forfeit-pct"),
+            absent_team_pct: bounded_pct(option(flags, "absent-team-pct"), "absent-team-pct"),
+            absent_player_pct:
+              bounded_pct(option(flags, "absent-player-pct"), "absent-player-pct"),
+            out_of_order_pct: bounded_pct(option(flags, "out-of-order-pct"), "out-of-order-pct"),
+            draw_rate: fraction_option(flags, "draw-rate"),
+            tie_breaks: tie_breaks_option(flags)
+          ]
+          |> Enum.reject(fn {_key, value} -> is_nil(value) end)
+
+        Log.step("Generating a random team tournament")
+        {text, seed} = TeamGenerator.generate(opts)
+        Log.detail("seed #{seed}")
+
+        case positional do
+          [output_path | _] -> write_file!(output_path, text)
+          [] -> IO.write(text)
+        end
+
+        0
+
+      flag ->
+        usage_error("--#{flag} is an individual tournament's option, not a team event's")
+    end
+  end
+
+  defp team_system_option(flags) do
+    case text_option(flags, "team") do
+      v when v in ["swiss", "team-swiss"] -> :swiss
+      v when v in ["roundrobin", "round-robin", "rr"] -> :round_robin
+      other -> refuse("unknown --team \"#{other}\" - swiss or roundrobin")
+    end
+  end
+
+  # A word option, refused when it is not one of `words`' keys.
+  defp word_option(flags, key, words) do
+    case text_option(flags, key) do
+      nil ->
+        nil
+
+      text ->
+        Map.get_lazy(words, String.downcase(text), fn ->
+          refuse(
+            "unknown --#{key} \"#{text}\" - #{words |> Map.keys() |> Enum.sort() |> Enum.join(" or ")}"
+          )
+        end)
+    end
+  end
+
+  # Only when given - an unset initial colour is drawn from the seed.
+  defp team_initial_colour(flags) do
+    if text_option(flags, "initial-colour") || text_option(flags, "initial-color") do
+      case initial_colour_option(flags) do
+        "w" -> :white
+        "b" -> :black
+      end
+    end
+  end
+
+  # `--match-points=2,1,0`: a win's, a draw's and a loss's match points.
+  defp match_points_option(flags) do
+    case text_option(flags, "match-points") do
+      nil ->
+        nil
+
+      text ->
+        with [w, d, l] <- String.split(text, ","),
+             [{w, ""}, {d, ""}, {l, ""}] <- Enum.map([w, d, l], &Integer.parse(String.trim(&1))),
+             true <- w >= d and d >= l and l >= 0 do
+          {w, d, l}
+        else
+          _ ->
+            refuse(
+              "--match-points takes WIN,DRAW,LOSS as whole numbers, highest first " <>
+                "(e.g. 2,1,0), not \"#{text}\""
+            )
+        end
+    end
+  end
+
   # `-p`'s output is not a TRF - it is JaVaFo's bare board list, a count line
   # and one "white black" per pair. `ainalrami live.trf -p live.trf` therefore
   # did not "update" the tournament, it REPLACED it: 361 bytes of roster and
@@ -501,7 +648,7 @@ defmodule Ainalrami.CLI do
   # `./live.trf` and `live.trf` are the same file here as they are on disk.
   # A caller who genuinely wants to overwrite can write elsewhere and move it,
   # which at least leaves a moment where both files exist.
-  defp pair_checked(input_path, positional_rest, prefs) do
+  defp pair_checked(input_path, positional_rest, prefs, flags) do
     case positional_rest do
       [output_path | _] ->
         if Path.expand(output_path) == Path.expand(input_path) do
@@ -510,19 +657,20 @@ defmodule Ainalrami.CLI do
               "-p writes a board list, not a tournament, so this would destroy it"
           )
         else
-          pair(input_path, positional_rest, prefs)
+          pair(input_path, positional_rest, prefs, flags)
         end
 
       [] ->
-        pair(input_path, positional_rest, prefs)
+        pair(input_path, positional_rest, prefs, flags)
     end
   end
 
-  defp pair(input_path, positional_rest, prefs) do
+  defp pair(input_path, positional_rest, prefs, flags) do
     Log.step("Loading #{input_path}")
 
     with {:ok, text} <- read_input(input_path),
-         {:ok, parsed} <- parse_input(text) do
+         {:ok, parsed} <- parse_input(text),
+         :individual <- team_or_individual(parsed, prefs, flags) do
       round_count = report_roster(parsed)
 
       Log.step("Pairing engine")
@@ -543,6 +691,8 @@ defmodule Ainalrami.CLI do
       end
     else
       {:error, :halt} -> 1
+      {:team, parsed, system} -> pair_team(parsed, system, positional_rest, flags)
+      {:exit, code} -> code
     end
   end
 
@@ -567,7 +717,8 @@ defmodule Ainalrami.CLI do
     Log.step("Loading #{input_path}")
 
     with {:ok, text} <- read_input(input_path),
-         {:ok, parsed} <- parse_input(text) do
+         {:ok, parsed} <- parse_input(text),
+         :individual <- team_or_individual(parsed, prefs, flags) do
       round_count = report_roster(parsed)
       Log.step("Pairing engine")
       Log.detail("explaining round #{round_count + 1}")
@@ -588,7 +739,137 @@ defmodule Ainalrami.CLI do
       end
     else
       {:error, :halt} -> 1
+      {:team, parsed, system} -> explain_team(parsed, system)
+      {:exit, code} -> code
     end
+  end
+
+  # ---- team events ---------------------------------------------------------
+
+  # Which `-p`/`-x` this file gets: `:individual` (the Dutch system, as
+  # always), `{:team, parsed, system}` for a team Swiss or a team round robin
+  # (`Ainalrami.TeamCLI`), or `{:exit, code}` - a team system nothing here
+  # pairs (exit 2), or an option the team path does not have (a usage
+  # error). `TeamReplay.system/1` decides, as it does for `-c`.
+  defp team_or_individual(parsed, prefs, flags) do
+    case TeamReplay.system(parsed) do
+      {kind, _settings} = system when kind in [:team, :team_round_robin] ->
+        cond do
+          prefs != [] ->
+            {:exit,
+             usage_error(
+               "the bye preferences are for an individual tournament - a team event's " <>
+                 "bye is C.04.6's pairing-allocated bye"
+             )}
+
+          flag = given(flags, ~w(force absent)) ->
+            {:exit, usage_error("--#{flag} is for an individual tournament, not a team event")}
+
+          true ->
+            {:team, parsed, system}
+        end
+
+      {:unreplayable, reason} ->
+        if team_code?(parsed) do
+          Log.error(
+            "not paired - #{reason}. This program pairs C.04.6 team Swiss events and team " <>
+              "round robins by the Berger tables (exit code #{@not_replayed})"
+          )
+
+          {:exit, @not_replayed}
+        else
+          individual_only(flags)
+        end
+
+      :individual ->
+        individual_only(flags)
+    end
+  end
+
+  defp individual_only(flags) do
+    case given(flags, ~w(lineups boards)) do
+      nil -> :individual
+      flag -> {:exit, usage_error("--#{flag} is for a team event, and this file is not one")}
+    end
+  end
+
+  defp team_code?(parsed) do
+    case TypeCode.parse(parsed.tournament[:type_code] || "") do
+      {:ok, %{team?: true}} -> true
+      _ -> false
+    end
+  end
+
+  # The first of `names` the flags give, as `--name` or `--name=...`.
+  defp given(flags, names) do
+    Enum.find_value(flags, fn flag ->
+      name = name_of(flag)
+      if name in names, do: name
+    end)
+  end
+
+  defp pair_team(parsed, system, positional_rest, flags) do
+    report_teams(parsed)
+
+    with {:ok, round} <- team_round(parsed, system, []),
+         {:ok, text} <- team_output(parsed, round, flags) do
+      case positional_rest do
+        [output_path | _] -> write_file!(output_path, text)
+        [] -> IO.write(text)
+      end
+
+      0
+    else
+      {:error, :halt} -> 1
+    end
+  end
+
+  defp explain_team(parsed, system) do
+    report_teams(parsed)
+
+    case team_round(parsed, system, explain: true) do
+      {:ok, round} ->
+        IO.write(TeamCLI.render_explanation(round))
+        0
+
+      {:error, :halt} ->
+        1
+    end
+  end
+
+  defp team_round(parsed, system, opts) do
+    Log.step("Pairing engine")
+
+    case TeamCLI.pair(parsed, system, opts) do
+      {:ok, round} ->
+        TeamCLI.report(round)
+        {:ok, round}
+
+      {:error, message} ->
+        Log.error(message)
+        {:error, :halt}
+    end
+  end
+
+  defp team_output(parsed, round, flags) do
+    pairs = TeamCLI.format_pairs(round)
+
+    if "--lineups" in flags do
+      case TeamCLI.format_lineups(parsed, round, bounded(option(flags, "boards"), "boards", 1)) do
+        {:ok, boards} ->
+          {:ok, pairs <> boards}
+
+        {:error, message} ->
+          Log.error(message)
+          {:error, :halt}
+      end
+    else
+      {:ok, pairs}
+    end
+  end
+
+  defp report_teams(parsed) do
+    Log.detail("#{length(parsed.teams)} teams, #{length(parsed.players)} players")
   end
 
   defp render_explanation(reports, pairs, round_number) do
@@ -950,18 +1231,13 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
       case TeamReplay.system(parsed) do
         :individual -> check_individual(parsed)
         {:team, settings} -> check_team(parsed, settings)
+        {:team_round_robin, settings} -> check_team_round_robin(parsed, settings)
         {:unreplayable, reason} -> check_unreplayable(parsed, reason)
       end
     else
       {:error, :halt} -> 1
     end
   end
-
-  # `-c`'s exit code when the rounds could not be replayed at all because
-  # the file's pairing system is not one this checker replays - distinct
-  # from 1, which says something was compared and differed. A standings
-  # difference still exits 1: that WAS compared.
-  @not_replayed 2
 
   defp check_individual(parsed) do
     report_type_code(parsed)
@@ -1022,6 +1298,65 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
       opts = Keyword.put(opts, :initial_colour, colour)
       results = Enum.map(1..rounds, &check_team_round(history, &1, settings, opts))
       finish_check(parsed, results, rounds)
+    end
+  end
+
+  # A team round robin: every round against the Berger table
+  # (`TeamReplay.check_round_robin/3`), the colours included - the table
+  # gives them. A scheduled match the file has nothing for is reported but
+  # is not a difference: it was not recorded, not paired otherwise.
+  defp check_team_round_robin(parsed, settings) do
+    history = TeamReplay.history(parsed)
+    rounds = TeamReplay.paired_rounds(history)
+
+    if rounds == 0 do
+      Log.warn("no completed rounds to check")
+      0
+    else
+      Log.step(
+        "Checking #{rounds} team round(s) - #{TeamReplay.describe(settings)}, " <>
+          "#{map_size(history)} teams"
+      )
+
+      results = Enum.map(1..rounds, &check_round_robin_round(history, &1, settings))
+      finish_check(parsed, results, rounds)
+    end
+  end
+
+  defp check_round_robin_round(history, round, settings) do
+    check = TeamReplay.check_round_robin(history, round, settings)
+
+    unless check.missing == [] do
+      Log.warn(
+        "round #{round}: no record of the scheduled match(es) #{inspect(check.missing)} " <>
+          "(no games, no 330)"
+      )
+    end
+
+    case check.result do
+      :ok ->
+        Log.detail("round #{round}: matches the Berger table")
+        :ok
+
+      :colours ->
+        Log.warn(
+          "round #{round}: DIFFERS in colours only - board-1 colours reversed against the " <>
+            "Berger table in #{length(check.differing)} match(es): #{inspect(check.differing)}"
+        )
+
+        Log.warn("  file:   #{inspect(check.file)}")
+        Log.warn("  table:  #{inspect(check.engine)}")
+        :differs
+
+      :differs ->
+        Log.warn("round #{round}: DIFFERS from the Berger table")
+        Log.warn("  file:   #{inspect(check.file)}")
+        Log.warn("  table:  #{inspect(check.engine)}")
+        :differs
+
+      :beyond ->
+        Log.warn("round #{round}: the Berger table has no such round (#{inspect(check.file)})")
+        :differs
     end
   end
 
@@ -1100,8 +1435,9 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
 
   defp check_unreplayable(parsed, reason) do
     Log.warn(
-      "rounds: not replayed - #{reason}. This checker replays the Dutch system (C.04.3) " <>
-        "and C.04.6 team Swiss events, so no round was compared (exit code #{@not_replayed})"
+      "rounds: not replayed - #{reason}. This checker replays the Dutch system (C.04.3), " <>
+        "C.04.6 team Swiss events and team round robins, so no round was compared " <>
+        "(exit code #{@not_replayed})"
     )
 
     if check_standings(parsed) == :differs, do: 1, else: @not_replayed
@@ -1481,11 +1817,13 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
 
   defp print_help do
     IO.puts("""
-    ainalrami - a FIDE Dutch-system Swiss pairing engine
+    ainalrami - a FIDE Dutch-system Swiss pairing engine (and C.04.6 team Swiss)
 
     Usage:
       ainalrami <input.trf> -p [<output.trf>]   Pair the next round (writes to
-                                                stdout if <output.trf> is omitted)
+                                                stdout if <output.trf> is omitted);
+                                                on a team file team against team
+                                                (see "Team events" below)
       ainalrami -g [<output.trf>]                Random Tournament Generator
       ainalrami <input.trf> -c                   Pairings and Tie-Break Checker:
                                                  replay a tournament, diff every
@@ -1493,12 +1831,14 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
                                                  check the final ranks against
                                                  the file's own tie-break list
                                                  (202/212); for a team file,
-                                                 the team rounds (C.04.6) and
-                                                 the teams' ranks (TRF26 310).
+                                                 the team rounds (C.04.6, or
+                                                 the Berger tables for a team
+                                                 round robin) and the teams'
+                                                 ranks (TRF26 310).
                                                  Exit 0 all match, 1 something
-                                                 differs, 2 a team system that
-                                                 cannot be replayed (round
-                                                 robin, Scheveningen, ...)
+                                                 differs, 2 a system that
+                                                 cannot be replayed (individual
+                                                 round robin, Scheveningen, ...)
       ainalrami <input.trf> -x                   Explain: pair the next round and
                                                  report, per bracket, which
                                                  criteria decided it
@@ -1549,6 +1889,29 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
                                          unset results follow the rating table
       --unset=fixed                      leave unset options off and results
                                          uniform instead (the corpus default)
+
+    Team events:
+      -p on a team file (TRF26 310 rosters + 001 games; 192 FIDE_TEAM_... for a
+      C.04.6 Swiss, BERGER_TEAM_ROUNDROBIN_Gn for a round robin) writes
+        COUNT                one line per match, the bye counted
+        WHITE BLACK          team numbers (310), White = White on board 1;
+                             the bye (or a round robin's free team) as TEAM 0
+      --lineups            then the boards: COUNT, and MATCH BOARD WHITE BLACK
+                           (players' starting ranks, 0 = nobody); seats a 300
+                           record's order, else the free players in 310 order
+      --boards=N           boards per match, when no match in the file says
+      A team sits the round out when every player has the round recorded
+      (a Z/H/F bye or 240 record). -x explains the round (bye, brackets,
+      upfloater sets, colour rules).
+
+    Team generator (-g --team=swiss|roundrobin), unset ones drawn from the seed:
+      --seed --teams --rounds --boards --reserves --cycles
+      --team-type=a|b|none --score=mp|gp --secondary=yes|no   (the 192 code)
+      --initial-colour=white|black
+      --match-points=2,1,0 --pab=draw|win --forfeit-match-points=N
+      --forfeit-pct --match-forfeit-pct --absent-team-pct
+      --absent-player-pct --out-of-order-pct --draw-rate
+      --tie-breaks=MPTS,GPTS,EDE         212 and the teams' final ranks
     """)
   end
 

@@ -245,10 +245,11 @@ ainalrami input.trf -p output.trf
 
 | invocation | mode |
 |---|---|
-| `ainalrami input.trf -p output.trf` | pair the next round |
+| `ainalrami input.trf -p output.trf` | pair the next round (a team file: team against team) |
 | `ainalrami input.trf -p` | same, printed to stdout |
-| `ainalrami -g output.trf` | Random Tournament Generator |
-| `ainalrami input.trf -c` | Pairings Checker: replay and diff every round (team Swiss: team against team) |
+| `ainalrami input.trf -x` | pair the next round and explain it |
+| `ainalrami -g output.trf` | Random Tournament Generator (`--team=swiss` or `--team=roundrobin` for a team event) |
+| `ainalrami input.trf -c` | Pairings Checker: replay and diff every round (team Swiss: team against team; team round robin: against the Berger tables) |
 
 `-g` and `-c` mirror JaVaFo's own RTG/FPC modes, used for FIDE's FE1
 endorsement auto-test.
@@ -307,11 +308,12 @@ Tournament Type Code Table defines it (`Ainalrami.TypeCode`):
 | `FIDE_DUTCH_2017`, or `FIDE_DUTCH` for an event that started (`042`) before 1 July 2025 | replayed, with a warning: the engine pairs the current C.04.3, not the 2017 edition |
 | `FIDE_DUTCH*_BAKU` | replayed with the virtual points the file gives (`XXA`/`250`); exit 2 when it gives none - the engine does not derive C.04.7's groups itself |
 | `FIDE_TEAM*` without `_BAKU` | replayed team against team (*Team events* below) |
-| a round robin (`BERGER_ROUNDROBIN_Gn`, `FIDE_ROUNDROBIN`, `FIDE_DOUBLEROUNDROBIN`, the team ones, ...) | exit 2: predetermined by the Berger tables (Competition Rules Appendix 1), which Ainalrami does not have |
+| a team round robin (`BERGER_TEAM_ROUNDROBIN_Gn`, `FIDE_TEAM_ROUNDROBIN`, `FIDE_TEAM_DOUBLEROUNDROBIN`, ...) | compared with the Berger tables (C.05 Annex 1, `Ainalrami.Berger`), colours included, the table repeated `n` times with the colours reversed in every second cycle |
+| an individual round robin (`BERGER_ROUNDROBIN_Gn`, `FIDE_ROUNDROBIN`, `FIDE_DOUBLEROUNDROBIN`), `CUSTOM_TEAM_ROUNDROBIN` | exit 2: not replayed |
 | `FIDE_SCHILLER_TxP`, `FIDE_SCHEVENINGEN_Gn` and their shorthands | exit 2: predetermined, by rules FIDE has not yet defined |
 | `FIDE_DUBOV`, `FIDE_BURSTEIN`, `FIDE_DOUBLESWISS` (with or without `_BAKU`) | exit 2: Ainalrami pairs the Dutch system only |
 | `CUSTOM_*`, `FIDE_TEAM*_BAKU` | exit 2: a system of the competition's own; the team engine has no acceleration |
-| none, or one off the table (said so) | the `092` type (a round robin, Scheveningen, Schiller or knockout exits 2), else the games: team matches throughout make a team Swiss, anything else the Dutch system |
+| none, or one off the table (said so) | the `092` type (a round robin is a team round robin when its games are team matches throughout, played as many times as its rounds need; otherwise a round robin, Scheveningen, Schiller or knockout exits 2), else the games: team matches throughout make a team Swiss, anything else the Dutch system |
 
 When the file carries a tie-break list (`212`, or `202` after the score)
 and final ranks, `-c` also ranks the field with `Ainalrami.Tiebreaks` and
@@ -361,8 +363,13 @@ A file whose pairings this checker cannot replay is reported as such and
 nothing is compared:
 
 ```
-warning: rounds: not replayed - FIDE_TEAM_ROUNDROBIN is a round robin by the Berger tables (Competition Rules, Appendix 1): its pairings are predetermined, and Ainalrami has no Berger tables to replay them against. This checker replays the Dutch system (C.04.3) and C.04.6 team Swiss events, so no round was compared (exit code 2)
+warning: rounds: not replayed - FIDE_SCHEVENINGEN is a Scheveningen event, whose pairings are predetermined (by rules FIDE has not yet defined). This checker replays the Dutch system (C.04.3), C.04.6 team Swiss events and team round robins, so no round was compared (exit code 2)
 ```
+
+A team round robin is compared round by round with the Berger table for
+its number of teams (numbered in the order of their `310` numbers), board
+1's colour included. A scheduled match the file records nothing for - no
+games and no `330` - is reported but is not a difference.
 
 `-c` exit codes: **0** every round (and the standings, when checked)
 match; **1** something differs, or the file cannot be read; **2** a system
@@ -400,6 +407,94 @@ refuses the round: exit 1, with an error naming the player and that round.
 They are refused with `-g` and `-c`,
 which pair by the FIDE rules alone, and no TRF line carries them: the
 engine reads non-FIDE options from flags and library options only.
+
+### Team events: `-p`, `-x` and `-g`
+
+**`-p` on a team file** pairs the next round team against team. Which
+system is `-c`'s choice (above): a C.04.6 team Swiss is paired by
+`Ainalrami.TeamPairing` with the settings of its `192` code (colour
+preferences, primary score, secondary score for colours), the initial
+colour of `152` (else the one round 1 shows, else White), the round count
+of `142`, the history the file records (match and game points as the team
+standings read them - `362` with its `P` and `A`, `320`, `330` - opponents
+and board-1 colours of the matches played, byes, forfeit wins, last
+round's floaters) and the teams sitting the round out passed as absent; a
+team round robin gets the next round of the Berger table. A team sits the
+round out when every one of its players already has the round recorded -
+a zero-, half- or full-point bye in the column or a TRF26 `240` record -
+which is how an arbiter says so before the pairing. A fresh team event
+needs its `192` code: with no games yet, nothing else says it is one.
+
+The output is JaVaFo's pairing list one level up - a count line, then one
+line per match with the team that has White on board 1 first, the bye
+last as `TEAM 0` (a Swiss's pairing-allocated bye; a round robin's free
+round), CRLF throughout. Team numbers are the `310` numbers. Matches come
+in C.04.2 3.6's recommended order (Swiss) or by the lower team number
+(round robin):
+
+```
+4
+3 4
+2 1
+8 5
+7 0
+```
+
+With `--lineups` the boards follow as a second block: a count line, then
+`MATCH BOARD WHITE BLACK` per board - the match's line number above (from
+1), the board, and the players' starting ranks, 0 for a board nobody
+fills. A team seats the order of a `300` record for the round when the file
+has one, otherwise its free players in roster (`310`) order, and the team
+with White on board 1 has White on every odd board. The number of boards is
+the most any match of the file had, or `--boards=N` (needed before the
+first match is played).
+
+```bash
+ainalrami league.trf -p round6.txt --lineups
+```
+
+**`-x` on a team file** prints the engine's own account (C.04.6
+`explain: true`): the teams going in (match and game points, colours,
+colour preference, bye/forfeit/float flags), the pairing-allocated bye and
+why it went where it did (3.4), every bracket with the upfloater sets
+considered, the runner-up and the criterion that decided between them
+([C4]-[C7], 3.5.4), and the Article 4 rule behind each match's colours. On
+a round robin it says the table fixed the round. Bye preferences,
+`--force` and `--absent` are for individual events and are refused on a
+team file; `--lineups`/`--boards` on an individual one. A team system
+nothing here pairs (Scheveningen, Schiller, an accelerated or custom team
+Swiss) exits 2.
+
+**`-g --team=swiss` / `--team=roundrobin`** generates a random team event
+(`Ainalrami.TeamGenerator`) as a TRF26 file: `310` teams with rosters,
+board-level games in `001`, `362` (`W`/`D`/`L`, `P`, `A`), `320`, `330`,
+`300`, `192`, `152`, `142` and, with a tie-break list, `212` and the team
+ranks. A Swiss is paired by `Ainalrami.TeamPairing` round by round from the
+generator's own record of the event, so `-c` on the file - and `-p` on any
+copy of it cut back to before a round - re-reads that record from the
+file. Options left out are drawn from the seed, which is printed and
+written into the tournament name:
+
+| option | meaning |
+|---|---|
+| `--seed --teams --rounds` | the event (a Swiss 4-16 teams and 3-9 rounds, never more than teams - 1; a round robin 3-10 teams and its whole table unless fewer rounds are asked for) |
+| `--boards --reserves --cycles` | boards per match (2-6), at most this many reserves per team (0-2), a round robin's cycles (1 or 2) |
+| `--team-type=a\|b\|none --score=mp\|gp --secondary=yes\|no` | C.04.6 colour preferences, primary score, and whether the secondary score allocates colours - written as the `192` code |
+| `--initial-colour=white\|black` | the drawing of lots (4.1), `152` |
+| `--match-points=2,1,0 --pab=draw\|win --forfeit-match-points=0` | match points; the pairing-allocated bye's (1.4: a draw's by default); a match lost by forfeit's |
+| `--forfeit-pct --match-forfeit-pct` | boards forfeited; matches a team did not turn up for (board by board, or as a `330` with no boards) |
+| `--absent-team-pct --absent-player-pct` | teams sitting a round out (every player a `Z`; in a round robin the match is forfeited, `330`); players announced absent (the players below move up, a reserve fills in) |
+| `--out-of-order-pct` | lineups out of roster order, with a `300` record |
+| `--draw-rate --tie-breaks=MPTS,GPTS,EDE` | draws; a team tie-break list (`212`) and the ranks it gives |
+
+```bash
+ainalrami -g league.trf --team=swiss --seed=7 --teams=12 --boards=4 --team-type=b --absent-team-pct=5
+ainalrami league.trf -c
+```
+
+`tools/team_cli_corpus.exs SWISS RR` is the large run: generated events
+through `-c`, and `-p --lineups` on every round of every one of them cut
+back to before that round, compared with the generator's direct answer.
 
 ### Verbose by default
 
@@ -484,9 +579,11 @@ all of the above unconditionally, to the same shape `XXR`/`BB*`/`XXA`/`XXP`
 parse to, so a round paired from either spelling of one tournament is the
 same round. Of TRF26's team records, `310` (teams with their numbers,
 scores and final ranks; it takes precedence over `013`), `362` (match
-points), `320` (the team pairing-allocated bye) and `330` (forfeited
-matches) are read and written; `300` (boards out of order), `801`, `802`
-and national-rating records are not read.
+points), `320` (the team pairing-allocated bye, its match and game
+points), `330` (forfeited matches) and `300` (a team's board order in one
+match: board 1's colour is read from it, and the team tie-breaks number
+the boards by it) are read and written; `801`, `802` and national-rating
+records are not read.
 
 ## Organiser deviations (not FIDE)
 

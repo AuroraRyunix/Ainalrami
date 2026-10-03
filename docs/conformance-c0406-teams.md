@@ -513,11 +513,13 @@ brute-force reference.
   reading; `Ainalrami.TeamReplay` replays with it.
 * **Which board is board 1 in a TRF (checker, 2026-09-27).** 1.6.1 reads a
   team's colour off its first board. A TRF names no boards unless it
-  carries TRF26 `300` records, which are not read; the checker takes the
+  carries TRF26 `300` records; the checker takes the
   first player in `310`/`013` order who met somebody, as the team
   tie-breaks already do. A file whose teams shift their board order
   between rounds without `300` records will show colour differences that
-  are not there.
+  are not there. Since 2026-10-03 `300` records are read: board 1 is the
+  record's first board, and a team colour read off a lower board is turned
+  round on every even board (team colours alternate down the boards).
 
 ## No colour preferences (1.7), 2026-09-27
 
