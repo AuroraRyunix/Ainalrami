@@ -64,6 +64,15 @@ with the reference on every one of them.
 
 ## [Unreleased]
 
+- [Change] **A seed the generators draw for themselves now comes from the
+  operating system's random source.** Without `--seed`, `-g` (individual
+  Swiss, team events and round robins) took its seed from `:rand`'s own
+  default seeding, the clock, node and process: fresh in practice, but only
+  as fresh as the clock. It now comes from `:crypto.strong_rand_bytes/1`,
+  which neither a fresh VM nor a fast loop can repeat, still 32 bits and
+  still printed and written into the file, so `--seed` repeats a run exactly
+  as before. A seed given explicitly produces the same bytes it always did.
+
 ## [0.37.0] - 2026-10-03
 
 - [Feature] **Team events on the standalone CLI.** `ainalrami file.trf -p`

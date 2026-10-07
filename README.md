@@ -263,8 +263,9 @@ always reproduces itself:
 ainalrami -g out.trf --seed=42 --players=30 --rounds=9 --forfeit-pct=10 --bye-pct=5 --forbidden-pct=10 --acceleration=baku --initial-colour=b
 ```
 
-Without `--seed` a fresh seed is drawn for every run, so two runs with the
-same options give different tournaments; the seed it drew is printed and
+Without `--seed` a fresh seed is drawn for every run from the operating
+system's random source, so two runs with the same options give different
+tournaments; the seed it drew is printed and
 written into the file, and passing it back as `--seed` repeats the run
 exactly.
 

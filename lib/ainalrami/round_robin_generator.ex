@@ -30,7 +30,7 @@ defmodule Ainalrami.RoundRobinGenerator do
   end
 
   def run(opts \\ []) do
-    seed = Keyword.get_lazy(opts, :seed, &fresh_seed/0)
+    seed = Keyword.get_lazy(opts, :seed, &Ainalrami.Generator.fresh_seed/0)
     :rand.seed(:exsss, {seed, seed * 31 + 7, seed * 7919 + 1})
 
     n = Keyword.get_lazy(opts, :players, fn -> Enum.random(3..16) end)
@@ -151,10 +151,5 @@ defmodule Ainalrami.RoundRobinGenerator do
       {:error, reason} ->
         raise ArgumentError, ":tie_breaks - #{reason}"
     end
-  end
-
-  defp fresh_seed do
-    {seed, _state} = :rand.uniform_s(0xFFFFFFFF, :rand.seed_s(:exsss))
-    seed
   end
 end
