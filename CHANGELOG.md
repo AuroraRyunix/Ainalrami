@@ -64,6 +64,26 @@ with the reference on every one of them.
 
 ## [Unreleased]
 
+- [Feature] **Score variants in one call: `Ainalrami.Pairing.pair_variants/3`.**
+  Pairs the next round once for each of several variants of one position
+  that differ only in some results of the round just played and the
+  totals that go with them - OpenPairings' "which boards are already
+  certain" preview, `3^k` variants for `k` open games - and returns, per
+  variant, exactly what `pair_next_round/2` returns for it, or the
+  `NoValidPairingError` it raises. A variant is `%{rank => player}`, the
+  players it replaces. Work that cannot differ between variants is done
+  once: the input check, the 5.2.5 arrival numbering, the inferred initial
+  colour, and every untouched player's colour state, float history and
+  per-round facts. Each variant is paired with the certified shortcuts
+  taken at any field size or not at all, whichever has been faster on the
+  variants before it; both give the reference search's answer. A variant
+  that changes more than results and points (a colour, an opponent, a bye
+  turned into a game), and every variant under `:bye_preferences`, is
+  paired by `pair_next_round/2` itself. `pair_next_round/2` and every
+  other entry point are unchanged. `tools/variants_check.exs` is the
+  differential harness that holds every variant to its own
+  `pair_next_round/2` call.
+
 ## [0.38.0] - 2026-10-07
 
 - [Feature] **The match format on the standalone CLI.** OpenPairings'
