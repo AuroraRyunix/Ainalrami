@@ -935,6 +935,53 @@ was held to: 447,152 rounds (early 1,980, large 5,497, flags 68,898, small
 370,777), 0 differing, 0 missing - pairs, explanations, perturbed-pairing
 judgements and alternatives alike.
 
+## Score variants (2026-10-07)
+
+`Pairing.pair_variants/3` promises, for every variant, exactly what
+`pair_next_round/2` returns for that variant alone. Nothing references it
+but the engine itself, so that is what it is held to:
+`tools/variants_check.exs` pairs every variant in the batch, then again on
+its own with `pair_next_round/2` in a separate process, and compares the
+two: the same pairs in the same order with the same colours and the same
+bye, or the same refusal (exception, reason, excluded ranks, override,
+message).
+
+A position is the fuzz generator's tournament played forward by the
+engine to a random round T, round T paired and its results drawn, and k of
+its boards left open; the position is round T+1 with that round's
+withdrawals, late entrants and requested byes applied, and the variants
+are the 3^k ways the open games can end, in OpenPairings' order. On a
+third of tournaments the arbiter's soft pairs, on a third of positions
+organiser bye exclusions (a refusal they cause is answered as OpenPairings
+answers it, with the override, while the tournament is played forward).
+k is 1-6, uniform per position.
+
+| axis | knobs | positions | variants compared | refused (both) |
+|---|---|---|---|---|
+| general | 6-300 players (bands 6-40 / 41-100 / 101-200 / 201-300 weighted 45 / 27 / 18 / 10), 5-11 rounds, 5% requested byes, 3% forfeits, 2% withdrawals, 5% late entrants, 2% `XXP`, acceleration, initial colour, rating shape and point system mixed | 6,771 | 1,119,147 | 2,058 |
+| small and hard | 6-20 players, 7-11 rounds, 15% byes, 8% forfeits, 3% withdrawals, 5% late entrants, 5% `XXP`, the rest mixed | 38,469 | 3,830,061 | 50,725 |
+| timing | 30 / 80 / 150 / 300 players, k = 4-8 (k = 7 and 8 compare 60 variants of each) | 247 | 71,037 | 0 |
+
+**5,020,245 variants compared, 0 mismatches**; 52,783 of them refused by
+both (the same `NoValidPairingError`, to the message). By field size (the
+active roster, 3-300 once withdrawals have thinned the smallest): 6-40
+players 4,310,091, 41-100 339,492, 101-200 240,777, 201-300 129,885. By k:
+1: 23,139, 2: 85,914, 3: 278,154, 4: 696,600, 5: 1,413,045, 6: 2,520,153,
+7 and 8: 3,240.
+
+Every search mode the batch can choose was exercised: each batch of three
+or more structured variants pairs at least one variant in each, and the
+choice between them is made on time, so which variants got which differs
+from run to run. `test/ainalrami/pair_variants_test.exs` pins each mode
+in turn (`AINALRAMI_VARIANT_MODE`) on a fixed position, and covers the
+plain fallback (a recoloured game), a forfeit kept on the fast path, the
+refusal, the input checks and the process dictionary being left clean.
+
+The run: one scheduler per worker on the shared 80-core VM, 2026-10-07,
+24 then 16 workers (the first workers were stopped part-way to free cores
+and the rest continued on fresh seeds; every line written is a whole
+position). Usage and the summary are in the script's header.
+
 ## Not covered
 
 Stated so the claim's boundary is explicit:

@@ -64,25 +64,36 @@ with the reference on every one of them.
 
 ## [Unreleased]
 
+## [0.39.0] - 2026-10-07
+
 - [Feature] **Score variants in one call: `Ainalrami.Pairing.pair_variants/3`.**
-  Pairs the next round once for each of several variants of one position
-  that differ only in some results of the round just played and the
-  totals that go with them - OpenPairings' "which boards are already
-  certain" preview, `3^k` variants for `k` open games - and returns, per
-  variant, exactly what `pair_next_round/2` returns for it, or the
-  `NoValidPairingError` it raises. A variant is `%{rank => player}`, the
-  players it replaces. Work that cannot differ between variants is done
-  once: the input check, the 5.2.5 arrival numbering, the inferred initial
-  colour, and every untouched player's colour state, float history and
-  per-round facts. Each variant is paired with the certified shortcuts
-  taken at any field size or not at all, whichever has been faster on the
-  variants before it; both give the reference search's answer. A variant
-  that changes more than results and points (a colour, an opponent, a bye
-  turned into a game), and every variant under `:bye_preferences`, is
-  paired by `pair_next_round/2` itself. `pair_next_round/2` and every
-  other entry point are unchanged. `tools/variants_check.exs` is the
-  differential harness that holds every variant to its own
-  `pair_next_round/2` call.
+  Pairs the next round once for each variant of one position that differs
+  only in results of the round just played and the totals that follow -
+  OpenPairings' "which boards are already certain" preview, `3^k` variants
+  for `k` open games. Each answer is exactly what `pair_next_round/2`
+  returns for that variant alone, or the `NoValidPairingError` it raises.
+  A variant is `%{rank => player}`, the players it replaces. Done once
+  instead of `3^k` times: the input check, the 5.2.5 arrival numbering, the
+  inferred initial colour, and every untouched player's colour state,
+  float history and per-round facts. Each variant takes the certified
+  shortcuts at any field size or not at all, whichever has been faster on
+  the variants before it; both give the reference search's answer. A
+  variant that changes more than results and points (a colour, an
+  opponent, a bye turned into a game), and every variant under
+  `:bye_preferences`, is paired by `pair_next_round/2`. Measured per
+  preview: 1.45-2.4x faster in all below 100 players (median position
+  1.6-4.6x), 1.0-1.3x for the median position from 100 up, and 1.0x for
+  the slow ones, which are slow because of soft pairs and stay that way -
+  the batch removes repeated work, and those positions repeat almost none.
+  Matcher warm starts and bracket reuse between variants were measured and
+  dropped (`docs/performance.md`, "Score variants").
+- [Verified] **`pair_variants/3` against `pair_next_round/2`, variant by
+  variant.** `tools/variants_check.exs` pairs every variant again on its
+  own in another process and compares pairs, colours, order, bye and
+  refusal: 5,020,245 variants of 45,487 positions (6-300 players, k = 1-6,
+  plus 3,240 at k = 7-8), 52,783 of them refused by both, **0 mismatches**.
+  The equality was not in doubt; the harness exists so that nobody has to
+  take that sentence on faith. See `docs/validation.md`, "Score variants".
 
 ## [0.38.0] - 2026-10-07
 

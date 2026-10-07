@@ -1,7 +1,9 @@
 # Performance
 
-First the timing study, which measures all three engines on 3,000 random
-positions and is the figure to quote. Then six passes, newest first: the
+First the score variants (`Pairing.pair_variants/3`, the batch behind
+OpenPairings' next-round preview). Then the timing study, which measures
+all three engines on 3,000 random positions and is the figure to quote.
+Then six passes, newest first: the
 weighted matcher itself (the blossom fallback), the slow tail of the last
 round, the slow spots the direct bracket left, the
 direct bracket on odd fields, the direct bracket itself, which took the
@@ -9,6 +11,149 @@ pairing past Gacrux on every benchmark file, and the large-field pass
 before it. The passes measure single benchmark positions, one per row;
 read their tables as before-and-after on those positions, not as a
 comparison of engines.
+
+## Score variants (2026-10-07)
+
+`Pairing.pair_variants/3` pairs the next round once for each of several
+variants of one position that differ only in results of the round just
+played - OpenPairings' "which boards are already certain" preview, 3^k
+variants for k open games - and must give, for every variant, exactly what
+`pair_next_round/2` gives for it alone. This section is what was measured
+on the way, what was kept, and what was dropped and why; the equality is
+in [validation.md](validation.md#score-variants-2026-10-07).
+
+### Where one pairing spends its time
+
+`pair_next_round/2` on the fuzz generator's positions (5% requested byes,
+3% forfeits), eight positions per row, one scheduler on the 80-core VM,
+the median of three calls after a warm one. The shares are from a
+temporary build with a timer around each phase (not committed): the input
+check; the prelude (5.2.5 arrival numbering, float history, colour state
+and per-round facts, score groups, the bye bootstrap); the completability
+oracle; and the brackets, with the weighted matcher's share of the whole
+from `:tprof`.
+
+| players | round | median | input check | prelude | oracle | brackets | matcher |
+|---|---|---|---|---|---|---|---|
+| 30 | 3 / 5 / 7 / 9 | 8.5 / 12.5 / 12.5 / 10.8 ms | 0.2-0.3% | 5-8% | 2-3% | 89-93% | 49-58% |
+| 80 | 3 / 5 / 7 / 9 | 25 / 68 / 86 / 82 ms | 0.1-0.2% | 2-3% | 1-2% | 95-97% | 68-85% |
+| 150 | 3 / 5 / 7 / 9 | 6.5 / 10 / 17 / 20 ms | 0.5-1.1% | 13-29% | 5-30% | 41-81% | 0-11% |
+| 300 | 3 / 5 / 7 / 9 | 15 / 24 / 21 / 31 ms | 0.3-1.3% | 7-32% | 3-30% | 40-89% | 0-18% |
+
+Inside the prelude the float history was the largest part (4-16%), then
+the colour state and facts (2-6%); the arrival numbering stayed under 1%.
+Two things stand out. Below 100 players the pairing is mostly the matcher:
+the certified shortcuts, which `pair_next_round/2` takes from 100 players
+up (`@cert_min_field`), are off, and an 80-player round costs three to
+four times a 300-player one. And the slowest positions of all have
+nothing to do with field size: every position above ~200 ms in the
+harness below carried the arbiter's soft pairs, which turn off the direct
+bracket (`direct_allowed?/2`) and put every bracket on the field graph -
+the same position without them paired 15-90 times faster (250-1,500 ms
+against 12-30 ms at 238-279 players).
+
+### What was kept
+
+* **The work that cannot differ between variants, done once.** The input
+  check; the arrival numbering and the inferred initial colour, which read
+  only the game structure; and per player the colour state, the per-round
+  facts and the float history, taken over for every player a variant
+  leaves alone. A player's float history reads the scores of the two last
+  opponents, so it is worked out again for anyone who met a changed player
+  in those rounds. On its own it measured 1.0x below 100 players, where
+  the prelude is a few percent; from 100 players up it is most of what the
+  table below shows on the light positions (1.1-1.4x).
+* **The certified shortcuts at any size - or not.** Below 100 players,
+  forcing them (`AINALRAMI_CERT=force`) made the profile's positions 3-7x
+  faster (80 players, round 7: 86 -> 14 ms). On the harness's positions it
+  was bimodal: up to 13x faster on some, 1.3-1.7x slower on others, where
+  most of the reads need certifying (no certified read aborted; the cost is
+  the certification itself). Both give the reference search's answer, so
+  the batch chooses on time: the first variant `:plain`, then each mode
+  once, then the faster one by a running average, with every 32nd variant
+  spent on the other so a change is noticed. A third mode, the reference
+  search at every size, was tried and dropped: from 100 players up its
+  occasional exploration alone made light 150-300-player previews 1.4-4.6x
+  slower than pairing each variant on its own.
+
+### What was dropped
+
+* **Gray-code order.** It exists for state carried from one variant to
+  the next, and none is: the shared work is taken from the first variant,
+  and the dirty set against it is the 2k players of the open games at
+  most. The order of the variants does not matter, and they are paired in
+  the order given.
+* **Warm starts of the matcher between variants.** In the slow positions
+  the matcher's time is the field graph's incremental re-solves - 70-80
+  of them per pairing at 230 players, three to five stages each, which the
+  eight refinement stages ask for one after another. Building the field
+  graph's matcher (`new/3`) was 5-8% of it (24% on one position, where a
+  window and a whole-field matcher were built besides), and that is all a
+  warm start could replace: the re-solves already start from the previous
+  optimum. It would also need the previous variant's state relabelled (the
+  vertex ids are positions in the score-ordered field, which shift when a
+  score changes) and every changed weight set, and it changes which
+  optimum the search returns where several tie, and the duals the next
+  call inherits - the reason the blossom pass (below) did not attempt one
+  either. Not worth 5-8% at that risk.
+* **Bracket and prefix reuse.** A bracket on the field graph has every
+  unfinalised player of the round as a vertex (`@peek_budget :unbounded`),
+  so every changed player is in every bracket's graph whatever their
+  score; its weights read round-wide values (the bye score, the score
+  places of the whole field, C9's unplayed games); and it runs against the
+  round's oracle and matcher, both built over the whole field. No bracket's
+  input is the same in two variants, and showing that its answer is would
+  mean re-reading every stage's decision under the new weights - the solve
+  itself. The local and direct brackets, whose input is the bracket alone,
+  are the cheap ones (none of the slow positions' time).
+
+### Results
+
+The timing run of the harness below: positions of nominally 30, 80, 150
+and 300 players (a few off once withdrawals and late entrants are drawn),
+the general axis's knobs, one scheduler per worker on the shared VM. Per
+variant is the preview's time divided by its variants; a preview is all
+3^k of them. Median / p95 over the positions, milliseconds; the speedup is
+the median of each position's own ratio, and the ratio of the summed times
+("in all").
+
+| players | k | positions | per variant, batch | per variant, alone | preview, batch | preview, alone | speedup median | in all |
+|---|---|---|---|---|---|---|---|---|
+| 30 | 4 | 18 | 5.5 / 13.9 | 10.8 / 14.4 | 447 / 1,124 | 877 / 1,164 | 1.95 | 1.61 |
+| 30 | 5 | 14 | 7.5 / 11.7 | 10.6 / 12.2 | 1,830 / 2,830 | 2,582 / 2,958 | 1.61 | 1.45 |
+| 30 | 6 | 16 | 9.1 / 14.6 | 11.9 / 14.8 | 6,647 / 10,614 | 8,651 / 10,812 | 1.91 | 1.50 |
+| 80 | 4 | 14 | 16.7 / 89.4 | 84.2 / 118.3 | 1,356 / 7,242 | 6,822 / 9,583 | 3.50 | 2.41 |
+| 80 | 5 | 14 | 13.6 / 54.0 | 58.6 / 83.6 | 3,312 / 13,110 | 14,245 / 20,314 | 4.59 | 2.35 |
+| 80 | 6 | 15 | 28.0 / 86.3 | 57.8 / 106.9 | 20,439 / 62,911 | 42,141 / 77,925 | 1.90 | 1.59 |
+| 150 | 4 | 17 | 24.5 / 365 | 25.2 / 370 | 1,983 / 29,589 | 2,044 / 29,932 | 1.10 | 1.01 |
+| 150 | 5 | 25 | 22.6 / 345 | 27.2 / 342 | 5,486 / 83,838 | 6,616 / 83,016 | 1.16 | 1.04 |
+| 150 | 6 | 16 | 73.1 / 247 | 75.5 / 221 | 53,309 / 180,287 | 55,019 / 161,421 | 1.03 | 0.96 |
+| 300 | 4 | 14 | 17.2 / 1,404 | 22.4 / 1,322 | 1,393 / 113,692 | 1,810 / 107,116 | 1.29 | 0.98 |
+| 300 | 5 | 13 | 42.0 / 859 | 49.1 / 915 | 10,216 / 208,755 | 11,935 / 222,315 | 1.17 | 1.07 |
+| 300 | 6 | 17 | 17.2 / 446 | 22.6 / 440 | 12,557 / 325,267 | 16,493 / 320,895 | 1.24 | 1.04 |
+
+k = 7 and 8 (timed, 60 variants of each preview compared): 30 players
+2.5x / 2.9x median, 80 players 5.7x / 3.5x, 150 players 1.2x / 1.4x, 300
+players 1.3x / 1.4x.
+
+So: below 100 players a preview is 1.45-2.4x faster in all, and several
+times faster on the positions where the shortcuts suit it. From 100
+players up the typical preview is 1.0-1.3x faster and the slow ones -
+soft pairs, the field graph on every bracket - are not faster at all;
+their p95 is within the run-to-run noise of pairing alone, and they are
+what the "in all" column is made of. Making those faster is a change to
+the pairing itself (the direct bracket under soft pairs), not to the
+batch, and is not attempted here.
+
+### Reproducing
+
+    # the differential harness and its timings (one scheduler per worker)
+    MIX_ENV=test VAR_W=0 VAR_N=4 VAR_SIZES=30,80,150,300 VAR_K=4,4,5,5,6,6,7,8 VAR_OUT=OUT \
+      elixir --erl "+S 1" -S mix run tools/variants_check.exs
+    VAR_BANDS=nominal VAR_SUMMARY=OUT MIX_ENV=test mix run tools/variants_check.exs
+
+    # the mode experiments: pin one
+    AINALRAMI_VARIANT_MODE=plain|force|off ...
 
 ## The timing study (2026-09-30)
 

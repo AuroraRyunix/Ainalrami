@@ -334,7 +334,11 @@ defmodule VariantsCheck do
         {batch_us, batch} = :timer.tc(fn -> Pairing.pair_variants(base, variants, opts) end)
 
         if System.get_env("VAR_STATS"),
-          do: IO.puts(:stderr, "#{seed} n=#{n} k=#{k} #{batch_us} #{inspect(Pairing.take_cert_stats())}")
+          do:
+            IO.puts(
+              :stderr,
+              "#{seed} n=#{n} k=#{k} #{batch_us} #{inspect(Pairing.take_cert_stats())}"
+            )
 
         if System.get_env("AINALRAMI_WM_PROFILE") do
           Ainalrami.WeightedMatching.Profile.dump()
@@ -347,11 +351,17 @@ defmodule VariantsCheck do
           end)
           |> Enum.group_by(&elem(&1, 0), &elem(&1, 1))
           |> Enum.map(fn {key, rs} ->
-            {key, Enum.reduce(rs, {0, 0, 0, 0, 0}, fn {a, b, c, d, e}, {x, y, z, u, v} -> {a + x, b + y, c + z, d + u, e + v} end)}
+            {key,
+             Enum.reduce(rs, {0, 0, 0, 0, 0}, fn {a, b, c, d, e}, {x, y, z, u, v} ->
+               {a + x, b + y, c + z, d + u, e + v}
+             end)}
           end)
           |> Enum.sort_by(fn {_, {_, us, _, _, _}} -> -us end)
           |> Enum.each(fn {key, {c, us, sn, se, st}} ->
-            IO.puts(:stderr, "  #{div(us, 1000)} ms #{c} calls n~#{div(sn, max(c, 1))} e~#{div(se, max(c, 1))} stages~#{div(st, max(c, 1))} #{inspect(key)}")
+            IO.puts(
+              :stderr,
+              "  #{div(us, 1000)} ms #{c} calls n~#{div(sn, max(c, 1))} e~#{div(se, max(c, 1))} stages~#{div(st, max(c, 1))} #{inspect(key)}"
+            )
           end)
 
           Ainalrami.WeightedMatching.Profile.reset()
@@ -467,10 +477,17 @@ defmodule VariantsCheck do
     end)
   end
 
+  # The summary's rows: size bands; VAR_BANDS=exact the field size itself,
+  # VAR_BANDS=nominal the nearest of the timing run's sizes (a field ends up
+  # a few players off its nominal size once withdrawals and late entrants
+  # are drawn).
   defp band(n) do
     case System.get_env("VAR_BANDS") do
       "exact" ->
         n
+
+      "nominal" ->
+        Enum.min_by([30, 80, 150, 300], &abs(&1 - n))
 
       _ ->
         Enum.find([{6, 40}, {41, 100}, {101, 200}, {201, 300}, {301, 100_000}], fn {lo, hi} ->
