@@ -209,6 +209,12 @@ defmodule Ainalrami.TeamReplay do
        "engine has no acceleration"}
   end
 
+  defp system_for(%{system: :team_swiss, code: code}, %{tournament: %{match_format: true}}) do
+    {:unreplayable,
+     "XXM (match format) is for a Swiss or a round robin, and #{code} is a team Swiss, " <>
+       "which has no match format"}
+  end
+
   defp system_for(%{system: :team_swiss, code: code} = d, parsed) do
     if Map.get(parsed, :teams, []) == [] do
       {:unreplayable, "#{code} is a team Swiss, but the file has no team records (013 or 310)"}
