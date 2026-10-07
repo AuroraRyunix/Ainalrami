@@ -169,6 +169,40 @@ defmodule Ainalrami.TeamReplay do
 
   defp system_for(%{system: :dutch}, _parsed), do: :individual
 
+  # OpenPairings writes its Swiss match format as CUSTOM_SWISS (FIDE's
+  # table has no code for it); with `XXM` (or `--match-format`) saying so,
+  # it is the Dutch system with the second legs copied
+  # (`Ainalrami.EventFormat`).
+  defp system_for(%{system: :custom_swiss}, %{tournament: %{match_format: true}}),
+    do: :individual
+
+  # And its round robin match format as CUSTOM_ROUNDROBIN: one Berger table,
+  # every game a two-game match.
+  defp system_for(%{system: :custom_round_robin, code: code}, %{
+         tournament: %{match_format: true} = t
+       }) do
+    {:round_robin,
+     %{
+       games: 1,
+       reverse_last_two?: false,
+       code: code,
+       match_format?: true,
+       groups: t[:pairing_groups] || []
+     }}
+  end
+
+  defp system_for(
+         %{system: :custom_team_round_robin, code: code},
+         %{tournament: %{match_format: true}} = parsed
+       ) do
+    if Map.get(parsed, :teams, []) == [] do
+      {:unreplayable,
+       "#{code} is a team round robin, but the file has no team records (013 or 310)"}
+    else
+      {:team_round_robin, %{games: 1, code: code, match_format?: true}}
+    end
+  end
+
   defp system_for(%{system: :team_swiss, baku?: true, code: code}, _parsed) do
     {:unreplayable,
      "#{code} is an accelerated team Swiss (Baku Acceleration Method), and the C.04.6 " <>
@@ -195,13 +229,13 @@ defmodule Ainalrami.TeamReplay do
       {:unreplayable,
        "#{code} is a team round robin, but the file has no team records (013 or 310)"}
     else
-      {:team_round_robin, %{games: d.games, code: code}}
+      match_format_settings(%{games: d.games, code: code}, parsed, :team_round_robin)
     end
   end
 
-  defp system_for(%{system: :round_robin, code: code} = d, _parsed) do
-    {:round_robin,
-     %{games: d.games, reverse_last_two?: Map.get(d, :reverse_last_two?, false), code: code}}
+  defp system_for(%{system: :round_robin, code: code} = d, parsed) do
+    %{games: d.games, reverse_last_two?: Map.get(d, :reverse_last_two?, false), code: code}
+    |> match_format_settings(parsed, :round_robin)
   end
 
   defp system_for(%{code: code} = d, _parsed), do: {:unreplayable, "#{code} #{not_replayed(d)}"}
@@ -239,6 +273,31 @@ defmodule Ainalrami.TeamReplay do
   defp not_replayed(%{system: :custom_team_swiss}),
     do: "is a custom team Swiss - a system of the competition's own, not C.04.6"
 
+  # A Berger round robin's settings with the file's match format (`XXM`)
+  # and, for an individual one, its pairing groups (`XXG`). The match format
+  # is a single table played as two-game matches, so a code playing the
+  # table twice, or reversing its last two rounds, contradicts it - and
+  # OpenPairings refuses the two together too.
+  defp match_format_settings(settings, %{tournament: t}, kind) do
+    match? = t[:match_format] == true
+
+    cond do
+      match? and (settings.games != 1 or Map.get(settings, :reverse_last_two?, false)) ->
+        {:unreplayable,
+         "XXM (match format) plays one Berger table as two-game matches, and " <>
+           "#{settings.code || "this round robin"} plays the table #{settings.games} times"}
+
+      kind == :team_round_robin ->
+        {kind, Map.put(settings, :match_format?, match?)}
+
+      true ->
+        {kind,
+         settings
+         |> Map.put(:match_format?, match?)
+         |> Map.put(:groups, t[:pairing_groups] || [])}
+    end
+  end
+
   defp accelerated?(player) do
     Enum.any?(player[:accelerations] || [], &(&1 != 0))
   end
@@ -249,11 +308,21 @@ defmodule Ainalrami.TeamReplay do
 
     cond do
       String.contains?(type, "robin") and team_structured?(parsed) ->
-        {:team_round_robin, %{games: cycles_played(parsed), code: nil}}
+        if parsed.tournament[:match_format] == true,
+          do: {:team_round_robin, %{games: 1, code: nil, match_format?: true}},
+          else: {:team_round_robin, %{games: cycles_played(parsed), code: nil}}
 
       String.contains?(type, "robin") ->
-        {:round_robin,
-         %{games: Ainalrami.RoundRobin.cycles_played(parsed), reverse_last_two?: false, code: nil}}
+        games =
+          if parsed.tournament[:match_format] == true,
+            do: 1,
+            else: Ainalrami.RoundRobin.cycles_played(parsed)
+
+        match_format_settings(
+          %{games: games, reverse_last_two?: false, code: nil},
+          parsed,
+          :round_robin
+        )
 
       String.contains?(type, "scheveningen") or String.contains?(type, "schiller") ->
         {:unreplayable,
@@ -289,8 +358,12 @@ defmodule Ainalrami.TeamReplay do
         do: " (192 #{s.code})",
         else: " (092 round robin, no 192: #{times} by the rounds)"
 
-    "a team round robin by the Berger tables (C.05 Annex 1), each match played #{times}" <>
-      source
+    shape =
+      if s[:match_format?],
+        do: "each pairing played as two matches in a row, colours reversed in the second (XXM)",
+        else: "each match played #{times}"
+
+    "a team round robin by the Berger tables (C.05 Annex 1), #{shape}" <> source
   end
 
   def describe(%{} = s) do
@@ -844,7 +917,7 @@ defmodule Ainalrami.TeamReplay do
   numbers (`310`; file order for `013`), which for teams numbered 1..n is
   their own number.
   """
-  def berger_round(history, round, %{games: games}) do
+  def berger_round(history, round, %{games: games} = settings) do
     numbers = history |> Map.keys() |> Enum.sort()
     n = length(numbers)
 
@@ -852,8 +925,9 @@ defmodule Ainalrami.TeamReplay do
       {:error, :too_few_teams}
     else
       team = fn position -> Enum.at(numbers, position - 1) end
+      opts = [match_format?: Map.get(settings, :match_format?, false)]
 
-      with {:ok, pairs, free} <- Berger.round(n, games, round) do
+      with {:ok, pairs, free} <- Berger.round(n, games, round, opts) do
         {:ok, Enum.map(pairs, fn {w, b} -> {team.(w), team.(b)} end), free && team.(free)}
       end
     end

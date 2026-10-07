@@ -35,12 +35,44 @@ defmodule Ainalrami.Berger do
   FIDE's Tournament Type Code Table: the first cycle with its last two
   rounds played in reverse order, then the second cycle (colours reversed,
   as in any repeated table) in table order.
+
+  Option `:match_format?` - every game of a single table played twice in a
+  row as a two-game match, colours reversed in the second: physical rounds
+  `2k - 1` and `2k` are round `k` of the table, the second with every board
+  turned round and the same participant free. OpenPairings' "match format"
+  (`PairingsEngine.RoundRobin.match_schedule/2`), a different shape from
+  `games: 2`, which repeats the table a whole cycle apart. `games` must be 1.
   """
   def round(n, games, round, opts \\ [])
 
-  def round(n, games, round, opts)
-      when is_integer(n) and n >= 2 and is_integer(games) and games >= 1 and
-             is_integer(round) and round >= 1 do
+  def round(n, games, round, opts) do
+    if Keyword.get(opts, :match_format?, false) do
+      match_round(n, games, round, Keyword.delete(opts, :match_format?))
+    else
+      plain_round(n, games, round, opts)
+    end
+  end
+
+  defp match_round(n, 1, round, opts) when is_integer(n) and n >= 2 and is_integer(round) do
+    total = total_rounds(n, 1, match_format?: true)
+
+    if round > total do
+      {:error, {:all_rounds_paired, total}}
+    else
+      {:ok, pairs, free} = plain_round(n, 1, div(round + 1, 2), opts)
+      pairs = if rem(round, 2) == 0, do: Enum.map(pairs, fn {w, b} -> {b, w} end), else: pairs
+      {:ok, pairs, free}
+    end
+  end
+
+  defp match_round(_n, games, _round, _opts) do
+    raise ArgumentError,
+          "the match format plays a single table (games: 1), not #{inspect(games)}"
+  end
+
+  defp plain_round(n, games, round, opts)
+       when is_integer(n) and n >= 2 and is_integer(games) and games >= 1 and
+              is_integer(round) and round >= 1 do
     field = if rem(n, 2) == 0, do: n, else: n + 1
     dummy = if field == n, do: nil, else: field
     per_cycle = field - 1
@@ -76,10 +108,17 @@ defmodule Ainalrami.Berger do
     end
   end
 
-  @doc "How many rounds the table needs for `n` participants played `games` times."
-  def total_rounds(n, games) when is_integer(n) and n >= 2 and is_integer(games) and games >= 1 do
+  @doc """
+  How many rounds the table needs for `n` participants played `games`
+  times - twice a single table's under `match_format?: true`.
+  """
+  def total_rounds(n, games, opts \\ [])
+
+  def total_rounds(n, games, opts)
+      when is_integer(n) and n >= 2 and is_integer(games) and games >= 1 do
     field = if rem(n, 2) == 0, do: n, else: n + 1
-    (field - 1) * games
+    per_table = (field - 1) * games
+    if Keyword.get(opts, :match_format?, false), do: per_table * 2, else: per_table
   end
 
   # Round `r` (0-based) of the single table for an even `field`.

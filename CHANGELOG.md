@@ -64,6 +64,46 @@ with the reference on every one of them.
 
 ## [Unreleased]
 
+- [Feature] **The match format on the standalone CLI.** OpenPairings'
+  Swiss and round robin match formats - every match two games in a row,
+  colours reversed in the second - are read from a new `XXM` line or given
+  as `--match-format`, for `-p`, `-x` and `-c`. A Swiss pairs its odd
+  rounds by the Dutch system and copies each even round from the one
+  before, boards turned round and in the first leg's order, a
+  pairing-allocated bye given again (`Ainalrami.EventFormat`); `-c` holds
+  the second legs to exactly that, colours included. A round robin plays
+  round `k` of one Berger table as rounds `2k - 1` and `2k`
+  (`Ainalrami.Berger`'s `:match_format?`), individual and team alike.
+  `CUSTOM_SWISS`, `CUSTOM_ROUNDROBIN` and `CUSTOM_TEAM_ROUNDROBIN` files -
+  what OpenPairings writes for them - are paired and checked when `XXM` or
+  the flag says so (they exited 2, or paired as a plain Dutch Swiss); a
+  double round robin in match format is refused (exit 2). A second leg
+  that cannot be copied (a seated player already has a result for it, or
+  one who sat the first leg out is in it) is refused with the player named.
+- [Feature] **Pairing by category on the standalone CLI.** A new `XXG`
+  line per group, or `--groups=1-8/9-12,15`, pairs each group on its own as
+  OpenPairings' `pair_by_category` does: a Swiss group by the Dutch system
+  with everybody else sitting the round out (checked against a TRF that
+  marks them `0000 - Z`, OpenPairings' own construction), a lone player
+  given the pairing-allocated bye, a round robin group by its own Berger
+  table; boards group after group, players in no group a last group.
+  `-x` explains each group as its own round. Groups together with the
+  match format are refused, as OpenPairings refuses them, and so is `XXG`
+  on a team file.
+- [Feature] **Soft pairs on the standalone CLI.** `--soft-pairs=1,4/2,9,12`
+  and `--soft-position=strong|weak` give `-p` and `-x` the library's
+  `:soft_pairs`/`:soft_position` (OpenPairings' soft forbidden pairings and
+  club protection), announced on stderr as an organiser's wish; refused
+  with `-g`, `-c`, round robins and team events.
+- [Feature] **`-g` writes them.** `--match-format` (Swiss, `--roundrobin`,
+  `--team=roundrobin`) and `--groups=N` (N random groups) or
+  `--groups=RANKS/RANKS` (Swiss, `--roundrobin`); the files carry `XXM`/`XXG`
+  and `-c` passes them. Nothing new is drawn without them, so every seed
+  recorded before generates the same bytes.
+- [Change] `Ainalrami.RoundRobin.schedule/3` and `next_round/2` give the
+  free players as a list (one per odd table), and `format/2` takes it;
+  `Ainalrami.Berger.total_rounds/3` takes the match format.
+
 ## [0.37.0] - 2026-10-03
 
 - [Feature] **Team events on the standalone CLI.** `ainalrami file.trf -p`

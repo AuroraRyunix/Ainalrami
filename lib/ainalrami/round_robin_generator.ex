@@ -20,7 +20,7 @@ defmodule Ainalrami.RoundRobinGenerator do
   `{boards, free}` as the table gave them.
   """
 
-  alias Ainalrami.{Berger, Tiebreaks, Trf}
+  alias Ainalrami.{Berger, RoundRobin, Tiebreaks, Trf}
 
   @points %{"1" => 1.0, "=" => 0.5, "0" => 0.0, "+" => 1.0, "-" => 0.0, "Z" => 0.0}
 
@@ -38,20 +38,46 @@ defmodule Ainalrami.RoundRobinGenerator do
     unless is_integer(n) and n >= 2,
       do: raise(ArgumentError, ":players must be at least 2, not #{inspect(n)}")
 
-    cycles = Keyword.get_lazy(opts, :cycles, fn -> if :rand.uniform(4) == 1, do: 2, else: 1 end)
+    match? = Keyword.get(opts, :match_format, false) == true
+
+    cycles =
+      if match?,
+        do: Keyword.get(opts, :cycles, 1),
+        else: Keyword.get_lazy(opts, :cycles, fn -> if :rand.uniform(4) == 1, do: 2, else: 1 end)
 
     unless is_integer(cycles) and cycles >= 1,
       do: raise(ArgumentError, ":cycles must be at least 1, not #{inspect(cycles)}")
+
+    if match? and cycles != 1,
+      do: raise(ArgumentError, ":match_format plays a single table, not #{cycles} cycles")
 
     reverse? = cycles == 2 and :rand.uniform(2) == 1
 
     code =
       cond do
+        match? -> "CUSTOM_ROUNDROBIN"
         reverse? -> "FIDE_DOUBLEROUNDROBIN"
         true -> "BERGER_ROUNDROBIN_G#{cycles}"
       end
 
-    total = Berger.total_rounds(n, cycles)
+    groups = Ainalrami.Generator.pairing_groups(n, Keyword.get(opts, :groups))
+
+    settings = %{
+      games: cycles,
+      reverse_last_two?: reverse?,
+      match_format?: match?,
+      groups: groups,
+      code: code
+    }
+
+    field = %{players: Enum.map(1..n, &%{rank: &1})}
+
+    total =
+      field
+      |> RoundRobin.tables(settings)
+      |> Enum.map(&Berger.total_rounds(length(&1), cycles, match_format?: match?))
+      |> Enum.max(fn -> 0 end)
+
     rounds = opts |> Keyword.get(:rounds, total) |> min(total) |> max(0)
     forfeit_pct = Keyword.get_lazy(opts, :forfeit_pct, fn -> Enum.random([0, 0, 3]) end)
     draw_rate = Keyword.get(opts, :draw_rate, 0.3)
@@ -71,7 +97,19 @@ defmodule Ainalrami.RoundRobinGenerator do
 
     {games, pairings} =
       Enum.reduce(1..rounds//1, {Map.new(1..n, &{&1, []}), %{}}, fn r, {games, pairings} ->
-        {:ok, pairs, free} = Berger.round(n, cycles, r, reverse_last_two?: reverse?)
+        # One table is drawn in the table's own order, as it always was, so a
+        # seed recorded before the groups existed gives the same results;
+        # several are played table after table, as `-p` writes them.
+        {pairs, boards, frees} =
+          if groups == [] do
+            {:ok, pairs, free} =
+              Berger.round(n, cycles, r, reverse_last_two?: reverse?, match_format?: match?)
+
+            {pairs, Enum.sort_by(pairs, fn {w, b} -> min(w, b) end), List.wrap(free)}
+          else
+            {:ok, boards, frees} = RoundRobin.schedule(field, settings, r)
+            {boards, boards, frees}
+          end
 
         games =
           Enum.reduce(pairs, games, fn {w, b}, games ->
@@ -82,14 +120,23 @@ defmodule Ainalrami.RoundRobinGenerator do
             |> Map.update!(b, &(&1 ++ [%{opponent_rank: w, colour: "b", result: rb}]))
           end)
 
-        games =
-          if free,
-            do:
-              Map.update!(games, free, &(&1 ++ [%{opponent_rank: nil, colour: nil, result: "Z"}])),
-            else: games
+        # A free round, and a round a finished table sits out beside a
+        # longer one, are both zero-point byes - as OpenPairings records them.
+        seated = MapSet.new(Enum.flat_map(boards, fn {w, b} -> [w, b] end))
 
-        boards = Enum.sort_by(pairs, fn {w, b} -> min(w, b) end)
-        {games, Map.put(pairings, r, %{boards: boards, free: free})}
+        games =
+          Enum.reduce(1..n, games, fn rank, games ->
+            if MapSet.member?(seated, rank),
+              do: games,
+              else:
+                Map.update!(
+                  games,
+                  rank,
+                  &(&1 ++ [%{opponent_rank: nil, colour: nil, result: "Z"}])
+                )
+          end)
+
+        {games, Map.put(pairings, r, %{boards: boards, free: List.first(frees), frees: frees})}
       end)
 
     players =
@@ -109,7 +156,9 @@ defmodule Ainalrami.RoundRobinGenerator do
       name: "Ainalrami round robin RTG seed=#{seed}",
       type: "Round Robin",
       type_code: code,
-      number_of_rounds: total
+      number_of_rounds: total,
+      match_format: if(match?, do: true),
+      pairing_groups: if(groups != [], do: groups)
     }
 
     {players, tournament} = with_ranks(players, tournament, tie_breaks)

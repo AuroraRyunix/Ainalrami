@@ -420,8 +420,39 @@ field last as `PLAYER 0`, in JaVaFo's list format. `-x` says the table
 fixed the round; bye preferences, `--force` and `--absent` are refused.
 `-g --roundrobin` writes a random one (`--players --rounds --cycles
 --forfeit-pct --draw-rate --rating-range --tie-breaks --seed`) that `-c`
-passes. A match-format or per-category round robin (OpenPairings'
-`CUSTOM_ROUNDROBIN`) is not paired here.
+passes. A match-format round robin (`XXM` or `--match-format`; OpenPairings
+writes it as `CUSTOM_ROUNDROBIN`) plays round `k` of one table as rounds
+`2k - 1` and `2k`, the second with the colours reversed, and a round robin
+by category (`XXG` or `--groups=`) plays one table per group, table after
+table - both as OpenPairings schedules them; `-g --roundrobin` takes
+`--match-format` and `--groups=N`.
+
+### Match format, pairing groups and soft pairs
+
+Three settings OpenPairings pairs with that no FIDE record carries. The
+first two are read from the file (`XXM`, `XXG` - see "TRF extension lines")
+or given as flags, which take their place; `-p`, `-x` and `-c` all pair by
+them, and `-g` writes them:
+
+| flag | record | what |
+|---|---|---|
+| `--match-format` | `XXM` | every match two games in a row, colours reversed in the second. A Swiss pairs the odd rounds by the Dutch system (from the whole history, both legs of every match) and copies each even round from the one before, boards turned round, a pairing-allocated bye given again; `-c` holds the second legs to exactly that, colours included. A round robin: round `k` of one Berger table as rounds `2k - 1` and `2k`. Files: `CUSTOM_SWISS` / `CUSTOM_ROUNDROBIN` / `CUSTOM_TEAM_ROUNDROBIN` with `XXM`. |
+| `--groups=1-8/9-12,15` | `XXG 1 2 ...` (one line per group) | pairing by category: each group paired on its own - a Swiss group by the Dutch system with everybody else sitting the round out, one player alone in the round given the pairing-allocated bye, a round robin group by its own Berger table. Groups in the order given, boards following one another; ranks in no group form a last group. |
+| `--soft-pairs=1,4/2,9,12`, `--soft-position=strong\|weak` | none | pairs to keep apart where the criteria allow it (`-p`, `-x` only - an organiser's wish, see "Organiser deviations"). |
+
+```
+ainalrami event.trf -p --groups=1-12/13-20       # a Swiss paired by category
+ainalrami event.trf -c --match-format             # check an OpenPairings match-format Swiss
+ainalrami -g out.trf --roundrobin --match-format --groups=2
+```
+
+Match format and pairing groups together are refused, as OpenPairings
+refuses them. A second leg that cannot be copied - a player seated in the
+first leg with a result already recorded for the second, or one who sat
+the first out and is in the second - is refused with the player named.
+The library call is `Ainalrami.EventFormat.pair_next_round/2`
+(`Ainalrami.Pairing`'s options plus `:match_format` and `:groups`), and the
+CLI's answer is that call's, which the tests hold it to.
 
 ### Team events: `-p`, `-x` and `-g`
 
@@ -530,6 +561,13 @@ extension codes:
 | `XXA` | per-player acceleration ("virtual points"), round by round |
 | `260` | forbidden pairs, limited to a range of rounds |
 | `250` | acceleration for a range of players over a range of rounds |
+| `XXM` | match format: every match two games in a row, colours reversed (Ainalrami's own) |
+| `XXG a b [c …]` | one pairing group - a category paired on its own (Ainalrami's own) |
+
+`XXM` and `XXG` are this engine's own, for the two OpenPairings settings
+neither TRF16 nor TRF26 can say; no other program reads them. `XXM` takes
+no value. A malformed `XXG`, a rank the file does not have and a rank in
+two groups are refused, as a malformed `XXP` is.
 
 `XXR` and `142` are the same field: a file may carry both, but they must
 **agree**, and two different counts are refused rather than silently
@@ -610,7 +648,9 @@ without them, byte for byte.
 
 - **Soft pairs** - `soft_pairs:` / `soft_position:` on `pair_next_round/2`
   and `explain_round/3`: pairs to avoid if the alternative is not worse
-  (club protection, family). See the 0.20.0 changelog entry.
+  (club protection, family). See the 0.20.0 changelog entry. On the CLI,
+  `--soft-pairs=1,4/2,9,12 [--soft-position=weak]` with `-p` and `-x`
+  (refused with `-g` and `-c`, like the bye preferences).
 - **Bye exclusions** - `bye_exclusions: [rank, ...]` on
   `pair_next_round/2`, `pair_later_round/2` and `explain_round/3`: players
   who must not receive the pairing-allocated bye this round (someone who

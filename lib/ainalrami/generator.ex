@@ -92,11 +92,26 @@ defmodule Ainalrami.Generator do
 
     # A round-robin exhausts the field after `players - 1` rounds, and the
     # pairing has nothing legal left. Cap rather than let the engine fail.
+    match_format = Keyword.get(opts, :match_format, false) == true
+
+    # In match format every pairing is played twice, so the field runs out
+    # after twice as many rounds - and every match needs both its legs.
     rounds =
       opts
       |> Keyword.get_lazy(:rounds, fn -> Enum.random(5..11) end)
       |> validate_count!(:rounds, 0)
-      |> min(players - 1)
+      |> min(if match_format, do: 2 * (players - 1), else: players - 1)
+      |> then(&if(match_format, do: &1 - rem(&1, 2), else: &1))
+
+    groups = pairing_groups(players, Keyword.get(opts, :groups))
+
+    if match_format and groups != [] do
+      raise ArgumentError,
+            ":match_format and :groups together are not paired (OpenPairings refuses them too)"
+    end
+
+    format = if match_format, do: [match_format: true], else: []
+    format = if groups == [], do: format, else: format ++ [groups: groups]
 
     # After the roster size and round count, so those two draw exactly as
     # they always did, and drawing nothing at all under `unset: :fixed`.
@@ -141,15 +156,25 @@ defmodule Ainalrami.Generator do
       Enum.reduce_while(1..rounds//1, roster(players, accelerations, names, ratings), fn round_no,
                                                                                          current ->
         try do
+          before =
+            if match_format and rem(round_no, 2) == 0,
+              do: repeat_absences(current, round_no),
+              else: current |> grant_requested_byes(bye_pct) |> grant_byes(round_no, byes)
+
           next =
-            current
-            |> grant_requested_byes(bye_pct)
-            |> grant_byes(round_no, byes)
-            |> play_one_round(round_no, rounds, {forfeit_pct, results}, forbidden, initial_colour)
+            play_one_round(
+              before,
+              round_no,
+              rounds,
+              {forfeit_pct, results},
+              {forbidden, format},
+              initial_colour
+            )
 
           {:cont, next}
         rescue
           Pairing.NoValidPairingError -> {:halt, current}
+          Ainalrami.EventFormat.Error -> {:halt, current}
         end
       end)
 
@@ -184,7 +209,11 @@ defmodule Ainalrami.Generator do
           number_of_rounds: rounds,
           initial_colour: initial_colour,
           forbidden_pairs: forbidden,
-          tie_breaks: tie_breaks
+          tie_breaks: tie_breaks,
+          # `XXM` and `XXG` (`Ainalrami.Trf`), only when asked for.
+          match_format: if(match_format, do: true),
+          pairing_groups: if(groups != [], do: groups),
+          type_code: if(match_format, do: "CUSTOM_SWISS")
         },
         players: final
       }) <> "XXR #{rounds}\r\n"
@@ -361,6 +390,57 @@ defmodule Ainalrami.Generator do
 
   defp ceil_div(a, b), do: div(a + b - 1, b)
 
+  # Pairing groups for `:groups` - a count splits the field at random into
+  # that many groups of near-equal size (each in starting-rank order), a
+  # list of rank lists is taken as given. Nothing is drawn without it.
+  @doc false
+  def pairing_groups(_players, nil), do: []
+
+  def pairing_groups(players, groups) when is_list(groups) do
+    case Enum.find(List.flatten(groups), &(not (is_integer(&1) and &1 in 1..players//1))) do
+      nil -> groups
+      rank -> raise ArgumentError, ":groups names #{inspect(rank)}, not a rank of 1..#{players}"
+    end
+  end
+
+  def pairing_groups(players, count) when is_integer(count) and count >= 1 do
+    1..players//1
+    |> Enum.shuffle()
+    |> Enum.with_index()
+    |> Enum.group_by(fn {_rank, i} -> rem(i, count) end, fn {rank, _i} -> rank end)
+    |> Enum.sort()
+    |> Enum.map(fn {_index, ranks} -> Enum.sort(ranks) end)
+  end
+
+  def pairing_groups(_players, other) do
+    raise ArgumentError,
+          ":groups must be a positive group count or a list of rank lists, got #{inspect(other)}"
+  end
+
+  # A match's second leg (`:match_format`): whoever sat the first leg out
+  # sits the second out the same way - OpenPairings records a player away
+  # for a match as away for both legs - and nobody else is granted a bye,
+  # since the second leg seats exactly the first leg's players.
+  @absence_points %{"H" => 0.5, "Z" => 0.0, "F" => 1.0}
+
+  defp repeat_absences(players, round_no) do
+    Enum.map(players, fn player ->
+      last = if length(player.games) == round_no - 1, do: List.last(player.games)
+
+      case last do
+        %{opponent_rank: nil, result: result} = game when result in ~w(H Z F) ->
+          %{
+            player
+            | points: player.points + Map.fetch!(@absence_points, result),
+              games: player.games ++ [game]
+          }
+
+        _ ->
+          player
+      end
+    end)
+  end
+
   # An arbiter-assigned bye is granted BEFORE the round is paired and
   # recorded in advance, which is exactly how the engine knows to leave
   # that player out - see `Ainalrami.Pairing`'s `active_this_round?/2`.
@@ -386,18 +466,24 @@ defmodule Ainalrami.Generator do
   # pairing. Nobody then looks absent to the engine, which would pair the
   # NEXT round - two rounds written for one, and a file with one round more
   # than its `142` says (found by the tie-break comparison, seed 1002432).
-  defp play_one_round(players, round_no, total_rounds, outcomes, forbidden, initial_colour) do
+  defp play_one_round(players, round_no, total_rounds, outcomes, rules, initial_colour) do
     if Enum.all?(players, &(length(&1.games) >= round_no)),
       do: players,
-      else: pair_and_play(players, total_rounds, outcomes, forbidden, initial_colour)
+      else: pair_and_play(players, total_rounds, outcomes, rules, initial_colour)
   end
 
-  defp pair_and_play(players, total_rounds, outcomes, forbidden, initial_colour) do
+  # `format` is empty unless the match format or pairing groups were asked
+  # for, and `EventFormat` is then `Pairing.pair_next_round/2` itself - so
+  # every seed recorded before either existed pairs exactly as it did.
+  defp pair_and_play(players, total_rounds, outcomes, {forbidden, format}, initial_colour) do
     pairs =
-      Pairing.pair_next_round(players,
-        expected_rounds: total_rounds,
-        forbidden_pairs: forbidden,
-        initial_colour: initial_colour
+      Ainalrami.EventFormat.pair_next_round(
+        players,
+        [
+          expected_rounds: total_rounds,
+          forbidden_pairs: forbidden,
+          initial_colour: initial_colour
+        ] ++ format
       )
 
     ratings = Map.new(players, &{&1.rank, &1.fide_rating})

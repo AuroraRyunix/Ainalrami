@@ -171,6 +171,25 @@ defmodule Ainalrami.Trf do
       `XXC rank` is a third setting on the same line and RAISES, because
       this engine cannot honour it.
 
+  Two more are this engine's own, for what OpenPairings pairs and neither
+  TRF16 nor TRF26 can say. Both are read and written in either dialect:
+
+    * `XXM` - match format: every match is two games in a row, colours
+      reversed in the second (OpenPairings' `swiss_match_format` and
+      `rr_match_format`). Surfaced as `tournament[:match_format]` (`true`).
+      In a Swiss the odd rounds are paired and each even round replays the
+      round before it with the colours reversed; in a round robin rounds
+      `2k - 1` and `2k` are round `k` of a single Berger table. Nothing may
+      follow the code.
+    * `XXG a b [c ...]` - one pairing group: a category paired on its own
+      (OpenPairings' `pair_by_category`). One line per group, in the order
+      the groups are paired and their boards numbered; players on no line
+      form a last group of their own. Surfaced as
+      `tournament[:pairing_groups]`, a list of rank lists. A rank the file
+      does not have, or one in two groups, raises `ValidationError`.
+
+  `Ainalrami.EventFormat` and `Ainalrami.RoundRobin` pair by them.
+
   Anything else beginning `XX` still falls through `parse_header_line/3`'s
   `nil -> acc` clause and is ignored. That silent-discard behaviour is
   correct for a genuinely unknown code and was WRONG for these two: an
@@ -1129,11 +1148,28 @@ defmodule Ainalrami.Trf do
         :engine -> numeric_acceleration_lines(players)
       end
 
-    acceleration ++ numeric_forbidden_lines(t[:forbidden_pairs], max(rounds, max_round + 1))
+    acceleration ++
+      numeric_forbidden_lines(t[:forbidden_pairs], max(rounds, max_round + 1)) ++
+      format_lines(t)
   end
 
   defp extension_lines(t, players, _max_round, _numeric?, _dialect) do
-    acceleration_lines(players) ++ forbidden_pair_lines(t[:forbidden_pairs])
+    acceleration_lines(players) ++ forbidden_pair_lines(t[:forbidden_pairs]) ++ format_lines(t)
+  end
+
+  # `XXM` and `XXG`, this engine's own (see the moduledoc). Written in both
+  # dialects: neither TRF16 nor TRF26 has a record for a two-game match or
+  # for a category paired on its own, so there is no numeric spelling to
+  # write instead.
+  defp format_lines(t) do
+    match = if t[:match_format] == true, do: ["XXM"], else: []
+
+    groups =
+      for group <- t[:pairing_groups] || [], group != [] do
+        "XXG " <> Enum.map_join(group, " ", &Integer.to_string/1)
+      end
+
+    match ++ groups
   end
 
   # One `250` per rank range per round range - the shape of TRF26's own
@@ -2190,6 +2226,12 @@ defmodule Ainalrami.Trf do
           "XXC" ->
             parse_xxc(acc, line)
 
+          "XXM" ->
+            parse_xxm(acc, line)
+
+          "XXG" ->
+            parse_xxg(acc, line)
+
           "250" ->
             parse_250(acc, line)
 
@@ -2232,6 +2274,7 @@ defmodule Ainalrami.Trf do
     )
 
     result
+    |> check_pairing_groups!()
     |> attach_accelerations()
     |> attach_byes()
   end
@@ -2571,6 +2614,70 @@ defmodule Ainalrami.Trf do
       update_in(acc.tournament[:forbidden_pairs], &((&1 || []) ++ [ids]))
     end
   end
+
+  # `XXM` - this engine's own extension (see the moduledoc): every match is
+  # two games in a row, colours reversed in the second. Nothing may follow
+  # the code: a value would be a request this engine does not know how to
+  # honour (three-game matches, say), and pairing the two-game shape
+  # instead would be pairing a different event.
+  defp parse_xxm(acc, line) do
+    case line |> String.slice(3..-1//1) |> String.trim() do
+      "" ->
+        put_in(acc.tournament[:match_format], true)
+
+      other ->
+        raise ValidationError,
+          message:
+            "XXM takes no value (a match is two games, colours reversed), got " <>
+              "#{inspect(other)}: #{line}"
+    end
+  end
+
+  # `XXG a b [c ...]` - this engine's own extension: one pairing group (a
+  # category paired on its own), its players by starting rank. Raises on
+  # an unreadable rank for `parse_xxp/2`'s reason - a group read wrong
+  # pairs players across categories with nothing to show for it. Ranks
+  # unknown to the file, and a rank in two groups, are refused once every
+  # line is read (`check_pairing_groups!/1`).
+  defp parse_xxg(acc, line) do
+    ids =
+      line
+      |> String.slice(3..-1//1)
+      |> String.split([" ", "\t"], trim: true)
+      |> Enum.map(fn token ->
+        strict_int(token) ||
+          raise ValidationError,
+            message: "XXG line names #{inspect(token)}, which is not a starting rank: #{line}"
+      end)
+
+    if ids == [] do
+      raise ValidationError, message: "XXG line names nobody: #{line}"
+    end
+
+    update_in(acc.tournament[:pairing_groups], &((&1 || []) ++ [ids]))
+  end
+
+  defp check_pairing_groups!(%{tournament: %{pairing_groups: groups}} = result)
+       when is_list(groups) do
+    ranks = MapSet.new(result.players, & &1.rank)
+    all = List.flatten(groups)
+
+    case Enum.find(all, &(not MapSet.member?(ranks, &1))) do
+      nil ->
+        :ok
+
+      rank ->
+        raise ValidationError,
+          message: "XXG names #{rank}, which is not a starting rank in this file"
+    end
+
+    case all -- Enum.uniq(all) do
+      [] -> result
+      [rank | _] -> raise ValidationError, message: "XXG puts #{rank} in two pairing groups"
+    end
+  end
+
+  defp check_pairing_groups!(result), do: result
 
   # `250` - bbpPairings' ROUND-LIMITED acceleration, the fixed-column
   # sibling of `XXA`. One line hands the same number of virtual points to a

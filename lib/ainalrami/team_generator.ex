@@ -158,10 +158,27 @@ defmodule Ainalrami.TeamGenerator do
     reserves =
       opts |> Keyword.get_lazy(:reserves, fn -> Enum.random(0..2) end) |> at_least!(:reserves, 0)
 
+    # A round robin's match format (`XXM`): one table, every pairing played
+    # as two matches in a row. Drawn from nothing, so every seed recorded
+    # before it existed generates what it did.
+    match? = Keyword.get(opts, :match_format, false) == true
+
+    if match? and system != :round_robin,
+      do: raise(ArgumentError, ":match_format is for a team round robin here")
+
     cycles =
-      opts
-      |> Keyword.get_lazy(:cycles, fn -> if :rand.uniform(4) == 1, do: 2, else: 1 end)
-      |> at_least!(:cycles, 1)
+      if match? do
+        cycles = Keyword.get(opts, :cycles, 1)
+
+        if cycles != 1,
+          do: raise(ArgumentError, ":match_format plays a single table, not #{cycles} cycles")
+
+        cycles
+      else
+        opts
+        |> Keyword.get_lazy(:cycles, fn -> if :rand.uniform(4) == 1, do: 2, else: 1 end)
+        |> at_least!(:cycles, 1)
+      end
 
     {planned, play} =
       case system do
@@ -175,7 +192,7 @@ defmodule Ainalrami.TeamGenerator do
           {rounds, rounds}
 
         :round_robin ->
-          total = Berger.total_rounds(teams, cycles)
+          total = Berger.total_rounds(teams, cycles, match_format?: match?)
           play = opts |> Keyword.get(:rounds, total) |> at_least!(:rounds, 0) |> min(total)
           {total, play}
       end
@@ -224,6 +241,7 @@ defmodule Ainalrami.TeamGenerator do
       boards: boards,
       reserves: reserves,
       cycles: cycles,
+      match_format?: match?,
       planned: planned,
       play: play,
       type: type,
@@ -414,7 +432,7 @@ defmodule Ainalrami.TeamGenerator do
   end
 
   defp pairing(_st, r, _present, %{system: :round_robin} = ctx) do
-    {:ok, pairs, free} = Berger.round(ctx.teams, ctx.cycles, r)
+    {:ok, pairs, free} = Berger.round(ctx.teams, ctx.cycles, r, match_format?: ctx.match_format?)
     {:ok, pairs, free}
   end
 
@@ -657,6 +675,7 @@ defmodule Ainalrami.TeamGenerator do
         type: if(ctx.system == :swiss, do: "Team Swiss System", else: "Team Round Robin"),
         type_code: type_code(ctx),
         number_of_rounds: ctx.planned,
+        match_format: if(ctx.match_format?, do: true),
         team_point_system: %{
           win: p.win,
           draw: p.draw,
@@ -730,6 +749,7 @@ defmodule Ainalrami.TeamGenerator do
   defp individual_points("U"), do: 1.0
   defp individual_points(result), do: Map.get(@board_points, result, 0.0)
 
+  defp type_code(%{system: :round_robin, match_format?: true}), do: "CUSTOM_TEAM_ROUNDROBIN"
   defp type_code(%{system: :round_robin, cycles: cycles}), do: "BERGER_TEAM_ROUNDROBIN_G#{cycles}"
 
   defp type_code(ctx) do

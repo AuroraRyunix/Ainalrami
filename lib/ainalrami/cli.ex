@@ -32,6 +32,7 @@ defmodule Ainalrami.CLI do
 
   alias Ainalrami.{
     ByePreference,
+    EventFormat,
     Generator,
     Log,
     Pairing,
@@ -124,7 +125,7 @@ defmodule Ainalrami.CLI do
   # kind: it produces a real tournament that can never be produced again, and
   # nothing says so.
   @bare_flags ~w(-p -g -c -x --explain -q --quiet -d --debug -h --help --version --lineups
-                 --roundrobin)
+                 --roundrobin --match-format)
   @valued_flags ~w(seed players rounds forfeit-pct bye-pct forbidden-pct
                    acceleration initial-colour initial-color force absent
                    ratings rating-range rating-top rating-step rating-sigma
@@ -133,14 +134,15 @@ defmodule Ainalrami.CLI do
                    unset unset-chance bye-want bye-want-soft bye-avoid bye-avoid-soft
                    team teams boards reserves cycles team-type score secondary
                    match-points pab forfeit-match-points match-forfeit-pct
-                   absent-team-pct absent-player-pct out-of-order-pct)
+                   absent-team-pct absent-player-pct out-of-order-pct
+                   groups soft-pairs soft-position)
 
   # `-g` options that only an individual tournament has, and the ones only
   # a team event has (`--team=...`); each refused for the other.
   @individual_generator_flags ~w(players bye-pct forbidden-pct acceleration ratings
                                  rating-range rating-top rating-step rating-sigma results
                                  full-bye-pct half-bye-pct zero-bye-pct forfeit-win-pct
-                                 double-forfeit-pct odd-results-pct unset unset-chance)
+                                 double-forfeit-pct odd-results-pct unset unset-chance groups)
   @team_generator_flags ~w(teams boards reserves cycles team-type score secondary
                            match-points pab forfeit-match-points match-forfeit-pct
                            absent-team-pct absent-player-pct out-of-order-pct)
@@ -386,6 +388,12 @@ defmodule Ainalrami.CLI do
             "--bye-avoid-soft) apply to -p and -x only - -g and -c pair by the FIDE rules alone"
         )
 
+      (flag = given(flags, ~w(soft-pairs soft-position))) && ("-g" in flags or "-c" in flags) ->
+        usage_error(
+          "--#{flag} applies to -p and -x only - soft pairs are an organiser's wish, and " <>
+            "-g and -c pair by the FIDE rules alone"
+        )
+
       "-g" in flags and text_option(flags, "team") != nil ->
         generate_team(positional, flags)
 
@@ -405,7 +413,7 @@ defmodule Ainalrami.CLI do
         pair_checked(hd(positional), tl(positional), prefs, flags)
 
       "-c" in flags ->
-        check(hd(positional))
+        check(hd(positional), flags)
 
       "-x" in flags or "--explain" in flags ->
         explain(hd(positional), flags, prefs)
@@ -477,6 +485,118 @@ defmodule Ainalrami.CLI do
     end
   end
 
+  # `--groups=1-8/9-12,15`: pairing groups, `/` between groups, `,` between
+  # ranks and `a-b` for a run of them - what the file's `XXG` lines say,
+  # given on the command line (and taking their place). A file OpenPairings
+  # writes does not carry its categories, so this is how a tournament it
+  # pairs by category is paired here.
+  defp groups_option(flags) do
+    case text_option(flags, "groups") do
+      nil ->
+        nil
+
+      text ->
+        bad = fn ->
+          refuse(
+            "--groups takes groups of starting ranks separated by /, the ranks by commas " <>
+              "or as a-b (e.g. 1-8/9-12,15), not \"#{text}\""
+          )
+        end
+
+        groups =
+          text
+          |> String.split("/")
+          |> Enum.map(fn group ->
+            group
+            |> String.split(",", trim: true)
+            |> Enum.flat_map(&round_span(String.trim(&1), bad))
+            |> case do
+              [] -> bad.()
+              ranks -> ranks
+            end
+          end)
+
+        all = List.flatten(groups)
+
+        case all -- Enum.uniq(all) do
+          [] -> groups
+          [rank | _] -> refuse("--groups puts #{rank} in two groups")
+        end
+    end
+  end
+
+  # `--soft-pairs=1,4/2,9,12` and `--soft-position=strong|weak`: pairs to
+  # keep apart where the criteria allow it (`Ainalrami.Pairing`'s
+  # `:soft_pairs`, OpenPairings' soft forbidden pairings and club
+  # protection) - an organiser's wish, not a FIDE rule, so `-p` and `-x`
+  # only, as the bye preferences are.
+  defp soft_options(flags) do
+    pairs =
+      case text_option(flags, "soft-pairs") do
+        nil ->
+          nil
+
+        text ->
+          bad = fn ->
+            refuse(
+              "--soft-pairs takes groups of two or more starting ranks separated by /, " <>
+                "the ranks by commas (e.g. 1,4/2,9,12), not \"#{text}\""
+            )
+          end
+
+          text
+          |> String.split("/")
+          |> Enum.map(fn group ->
+            ranks =
+              group
+              |> String.split(",", trim: true)
+              |> Enum.map(&(positive_int(String.trim(&1)) || bad.()))
+
+            if length(ranks) < 2, do: bad.(), else: ranks
+          end)
+      end
+
+    position =
+      case text_option(flags, "soft-position") do
+        nil -> nil
+        "strong" -> :strong
+        "weak" -> :weak
+        other -> refuse("unknown --soft-position \"#{other}\" - strong or weak")
+      end
+
+    cond do
+      position != nil and pairs == nil -> refuse("--soft-position needs --soft-pairs")
+      pairs == nil -> []
+      true -> [soft_pairs: pairs, soft_position: position || :strong]
+    end
+  end
+
+  # The command line's `--match-format` and `--groups=` laid over what the
+  # file says (`XXM`, `XXG`), so every mode reads one place. A rank the file
+  # does not have is refused, as the parser refuses one in an `XXG` line.
+  defp with_format_flags(parsed, flags) do
+    tournament =
+      if "--match-format" in flags,
+        do: Map.put(parsed.tournament, :match_format, true),
+        else: parsed.tournament
+
+    tournament =
+      case groups_option(flags) do
+        nil ->
+          tournament
+
+        groups ->
+          ranks = MapSet.new(parsed.players, & &1.rank)
+
+          case Enum.find(List.flatten(groups), &(not MapSet.member?(ranks, &1))) do
+            nil -> Map.put(tournament, :pairing_groups, groups)
+            rank -> refuse("--groups names #{rank}, which is not a starting rank in this file")
+          end
+      end
+
+    %{parsed | tournament: tournament}
+  end
+
   defp positive_int(text) do
     case Integer.parse(text) do
       {n, ""} when n >= 1 -> n
@@ -519,9 +639,16 @@ defmodule Ainalrami.CLI do
         # `Ainalrami.Generator`'s "Unset options". `--unset=fixed` is the
         # library's own default, for reproducing a corpus run from its seed.
         unset: unset_option(flags),
-        unset_chance: bounded_pct(option(flags, "unset-chance"), "unset-chance")
+        unset_chance: bounded_pct(option(flags, "unset-chance"), "unset-chance"),
+        # OpenPairings' Swiss match format and pairing by category, written
+        # as `XXM` (with CUSTOM_SWISS) and `XXG`.
+        match_format: if("--match-format" in flags, do: true),
+        groups: generator_groups_option(flags)
       ]
       |> Enum.reject(fn {_key, value} -> is_nil(value) end)
+
+    if opts[:match_format] && opts[:groups],
+      do: refuse("--match-format and --groups together are not paired - give one")
 
     Log.step("Generating a random tournament")
     {text, seed} = Generator.generate(opts)
@@ -571,7 +698,8 @@ defmodule Ainalrami.CLI do
               bounded_pct(option(flags, "absent-player-pct"), "absent-player-pct"),
             out_of_order_pct: bounded_pct(option(flags, "out-of-order-pct"), "out-of-order-pct"),
             draw_rate: fraction_option(flags, "draw-rate"),
-            tie_breaks: tie_breaks_option(flags)
+            tie_breaks: tie_breaks_option(flags),
+            match_format: team_match_format_option(flags)
           ]
           |> Enum.reject(fn {_key, value} -> is_nil(value) end)
 
@@ -588,6 +716,32 @@ defmodule Ainalrami.CLI do
 
       flag ->
         usage_error("--#{flag} is an individual tournament's option, not a team event's")
+    end
+  end
+
+  # `--match-format` on a team event: a team round robin's (`XXM`); a team
+  # Swiss has none in OpenPairings either.
+  defp team_match_format_option(flags) do
+    cond do
+      "--match-format" not in flags -> nil
+      team_system_option(flags) == :round_robin -> true
+      true -> refuse("--match-format is for a team round robin, not a team Swiss")
+    end
+  end
+
+  # `-g`'s `--groups=`: a number of groups the field is split into at
+  # random, or the groups themselves as `-p` takes them.
+  defp generator_groups_option(flags) do
+    case text_option(flags, "groups") do
+      nil ->
+        nil
+
+      text ->
+        case Integer.parse(text) do
+          {n, ""} when n >= 1 -> n
+          {_n, ""} -> refuse("--groups takes at least one group, not #{text}")
+          _ -> groups_option(flags)
+        end
     end
   end
 
@@ -675,7 +829,7 @@ defmodule Ainalrami.CLI do
     Log.step("Loading #{input_path}")
 
     with {:ok, text} <- read_input(input_path),
-         {:ok, parsed} <- parse_input(text),
+         {:ok, parsed} <- parse_input(text, flags),
          :individual <- team_or_individual(parsed, prefs, flags) do
       round_count = report_roster(parsed)
 
@@ -687,7 +841,7 @@ defmodule Ainalrami.CLI do
 
       report_extensions(parsed)
 
-      case pair_next_round(parsed.players, parsed.tournament, prefs) do
+      case pair_next_round(parsed.players, parsed.tournament, prefs, soft_options(flags)) do
         {:ok, pairs, _opts} ->
           write_pairs(pairs, positional_rest)
           0
@@ -724,22 +878,16 @@ defmodule Ainalrami.CLI do
     Log.step("Loading #{input_path}")
 
     with {:ok, text} <- read_input(input_path),
-         {:ok, parsed} <- parse_input(text),
+         {:ok, parsed} <- parse_input(text, flags),
          :individual <- team_or_individual(parsed, prefs, flags) do
       round_count = report_roster(parsed)
       Log.step("Pairing engine")
       Log.detail("explaining round #{round_count + 1}")
       report_extensions(parsed)
 
-      case pair_next_round(parsed.players, parsed.tournament, prefs) do
+      case pair_next_round(parsed.players, parsed.tournament, prefs, soft_options(flags)) do
         {:ok, pairs, opts} ->
-          reports = Pairing.explain_round(parsed.players, pairs, opts)
-
-          IO.write(render_cascade(reports))
-          IO.write(render_explanation(reports, pairs, round_count + 1))
-          IO.write(render_force(parsed.players, pairs, opts, flags))
-          IO.write(render_no_show(parsed.players, pairs, opts, flags))
-          0
+          explain_pairs(parsed.players, pairs, opts, flags, round_count + 1)
 
         {:error, :halt} ->
           1
@@ -750,6 +898,77 @@ defmodule Ainalrami.CLI do
       {:round_robin, parsed, settings} -> explain_round_robin(parsed, settings)
       {:exit, code} -> code
     end
+  end
+
+  # `-x`'s account of a round already paired. In match format the second
+  # leg is not chosen at all, and with pairing groups each group is its own
+  # round and is explained as one; `--force` and `--absent` ask about a
+  # single pool's alternatives and are refused for either.
+  defp explain_pairs(players, pairs, opts, flags, label) do
+    round = Trf.rounds_played(players) + 1
+
+    case EventFormat.kind(players, opts) do
+      :plain ->
+        reports = Pairing.explain_round(players, pairs, opts)
+        IO.write(render_cascade(reports))
+        IO.write(render_explanation(reports, pairs, label))
+        IO.write(render_force(players, pairs, opts, flags))
+        IO.write(render_no_show(players, pairs, opts, flags))
+        0
+
+      kind ->
+        case given(flags, ~w(force absent)) do
+          nil -> explain_format(kind, pairs, opts, round)
+          flag -> usage_error("--#{flag} is for a single pairing pool, not #{format_name(kind)}")
+        end
+    end
+  end
+
+  defp format_name(:second_leg), do: "a match's second leg"
+  defp format_name({:groups, _}), do: "pairing groups"
+
+  defp explain_format(:second_leg, pairs, _opts, round) do
+    boards = Enum.count(pairs, fn {_w, b} -> b != nil end)
+
+    IO.write(
+      "\nRound #{round} - #{boards} board#{plural(boards)}, the second leg of the match " <>
+        "begun in round #{round - 1} (match format, XXM)\n" <>
+        "  Nothing is chosen: every board of round #{round - 1} is played again, colours " <>
+        "reversed.\n" <>
+        Enum.map_join(pairs, "", fn
+          {w, nil} -> "  #{w}: pairing-allocated bye, as in round #{round - 1}\n"
+          {w, b} -> "  #{w} (white) vs. #{b}\n"
+        end)
+    )
+
+    0
+  end
+
+  defp explain_format({:groups, fields}, pairs, opts, round) do
+    fields
+    |> Enum.with_index(1)
+    |> Enum.each(fn {{ranks, field}, index} ->
+      members = MapSet.new(ranks)
+      own = Enum.filter(pairs, fn {w, _b} -> MapSet.member?(members, w) end)
+
+      IO.write(
+        "\n== Pairing group #{index} of #{length(fields)} (XXG): " <>
+          "#{length(ranks)} player#{plural(length(ranks))} in the round - " <>
+          "#{Enum.join(ranks, ", ")}\n"
+      )
+
+      case ranks do
+        [only] ->
+          IO.write("  #{only}: pairing-allocated bye - nobody else in the group plays\n")
+
+        _ ->
+          reports = Pairing.explain_round(field, own, opts)
+          IO.write(render_cascade(reports))
+          IO.write(render_explanation(reports, own, round))
+      end
+    end)
+
+    0
   end
 
   # ---- team events ---------------------------------------------------------
@@ -770,8 +989,12 @@ defmodule Ainalrami.CLI do
                  "bye is C.04.6's pairing-allocated bye"
              )}
 
-          flag = given(flags, ~w(force absent)) ->
+          flag = given(flags, ~w(force absent soft-pairs soft-position groups)) ->
             {:exit, usage_error("--#{flag} is for an individual tournament, not a team event")}
+
+          (parsed.tournament[:pairing_groups] || []) != [] ->
+            Log.error("XXG pairing groups are for an individual tournament, not a team event")
+            {:exit, 1}
 
           true ->
             {:team, parsed, system}
@@ -785,12 +1008,18 @@ defmodule Ainalrami.CLI do
                "the bye preferences are for a Swiss - a round robin's byes are the table's"
              )}
 
-          flag = given(flags, ~w(force absent lineups boards)) ->
+          flag = given(flags, ~w(force absent lineups boards soft-pairs soft-position)) ->
             {:exit, usage_error("--#{flag} is not for a round robin")}
 
           true ->
             {:round_robin, parsed, settings}
         end
+
+      # A match format the file's own round robin code contradicts: neither
+      # schedule can be the one asked for, and a Dutch Swiss is not either.
+      {:unreplayable, "XXM" <> _ = reason} ->
+        Log.error("not paired - #{reason} (exit code #{@not_replayed})")
+        {:exit, @not_replayed}
 
       {:unreplayable, reason} ->
         if team_code?(parsed) do
@@ -901,7 +1130,7 @@ defmodule Ainalrami.CLI do
       {:ok, round, boards, free} ->
         Log.detail("pairing round #{round} of the Berger table")
         for {w, b} <- boards, do: Log.detail(board_description(w, b))
-        if free, do: Log.detail("##{free} - free round (Berger table)")
+        for f <- free, do: Log.detail("##{f} - free round (Berger table)")
         text = RoundRobin.format(boards, free)
 
         case positional_rest do
@@ -926,7 +1155,7 @@ defmodule Ainalrami.CLI do
             "  #{RoundRobin.describe(settings)}\n" <>
             "  Nothing is chosen: the table fixes every game and its colours.\n" <>
             Enum.map_join(boards, "", fn {w, b} -> "  #{w} (white) vs. #{b}\n" end) <>
-            if(free, do: "  #{free}: free round\n", else: "")
+            Enum.map_join(free, "", &"  #{&1}: free round\n")
         )
 
         0
@@ -941,7 +1170,6 @@ defmodule Ainalrami.CLI do
     do: "every round of the Berger table is paired (#{total})"
 
   defp round_robin_refusal(:too_few_players), do: "a round robin needs at least two players"
-  defp round_robin_refusal(other), do: inspect(other)
 
   # `-c` on an individual round robin: every round against the table,
   # colours included; a scheduled game the file has nothing for is
@@ -1000,7 +1228,7 @@ defmodule Ainalrami.CLI do
 
   # `-g --roundrobin`: an individual round robin (`Ainalrami.RoundRobinGenerator`).
   @round_robin_generator_flags ~w(seed players rounds cycles forfeit-pct draw-rate
-                                  rating-range tie-breaks)
+                                  rating-range tie-breaks match-format groups)
 
   defp generate_round_robin(positional, flags) do
     case Enum.find(flags, fn f ->
@@ -1022,9 +1250,17 @@ defmodule Ainalrami.CLI do
                 nil -> nil
                 _ -> refuse("--roundrobin takes --rating-range only")
               end,
-            tie_breaks: tie_breaks_option(flags)
+            tie_breaks: tie_breaks_option(flags),
+            match_format: if("--match-format" in flags, do: true),
+            groups: generator_groups_option(flags)
           ]
           |> Enum.reject(fn {_key, value} -> is_nil(value) end)
+
+        if opts[:match_format] && opts[:cycles] not in [nil, 1],
+          do:
+            refuse(
+              "--match-format plays one table as two-game matches, not --cycles=#{opts[:cycles]}"
+            )
 
         Log.step("Generating a random round robin")
         {text, seed} = RoundRobinGenerator.generate(opts)
@@ -1265,23 +1501,80 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
   # departure from FIDE is announced on stderr, and what each preference did
   # is reported; the options handed back are the resolved ones, so `-x`
   # explains the round under the rules it was actually paired by.
-  defp pair_next_round(players, tournament, []) do
-    opts = pairing_opts(tournament)
-    {:ok, Pairing.pair_next_round(players, opts), opts}
+  defp pair_next_round(players, tournament, prefs, extra) do
+    opts = pairing_opts(tournament) ++ extra
+
+    if extra != [] do
+      Log.warn(
+        "soft pairs are an organiser's wish, not FIDE's - a round they change is not a " <>
+          "pure FIDE pairing, and a FIDE checker replaying the file will not reproduce it"
+      )
+    end
+
+    cond do
+      format?(opts) -> pair_in_format(players, opts, prefs)
+      prefs == [] -> {:ok, Pairing.pair_next_round(players, opts), opts}
+      true -> pair_with_preferences(players, opts, prefs)
+    end
   rescue
     e in Pairing.NoValidPairingError ->
       Log.error("no legal pairing exists for this round: #{Exception.message(e)}")
       {:error, :halt}
+
+    e in EventFormat.Error ->
+      Log.error(Exception.message(e))
+      {:error, :halt}
+
+    # A "must get the bye" for a player C2 rules out: the round is not
+    # paired, and the message names the player and their earlier bye.
+    e in ByePreference.RefusedError ->
+      Log.error(Exception.message(e))
+      {:error, :halt}
   end
 
-  defp pair_next_round(players, tournament, prefs) do
+  # Match format or pairing groups (`Ainalrami.EventFormat`): the round as
+  # OpenPairings pairs it in that format. Bye preferences are resolved
+  # group by group by the engine itself, without `ByePreference`'s
+  # per-preference account.
+  defp pair_in_format(players, opts, prefs) do
+    case EventFormat.kind(players, opts) do
+      :second_leg ->
+        Log.detail("the second leg of a match: the round before, colours reversed (XXM)")
+
+        unless prefs == [],
+          do: Log.warn("bye preferences: not applied - a second leg copies the first")
+
+      {:groups, fields} ->
+        Log.detail(
+          "#{length(fields)} pairing group(s), each paired on its own (XXG): " <>
+            Enum.map_join(fields, " / ", fn {ranks, _} -> Enum.join(ranks, ",") end)
+        )
+
+      :plain ->
+        Log.detail("the first leg of a match: paired by the Dutch system (XXM)")
+    end
+
+    opts = if prefs == [], do: opts, else: opts ++ [bye_preferences: prefs]
+
+    unless prefs == [] do
+      Log.warn(
+        "bye preferences are an organiser's rule, not FIDE's - this is not a pure FIDE " <>
+          "pairing, and a FIDE checker replaying the file will not reproduce a round they change"
+      )
+    end
+
+    {:ok, EventFormat.pair_next_round(players, opts), opts}
+  end
+
+  defp format?(opts), do: opts[:match_format] == true or (opts[:groups] || []) != []
+
+  defp pair_with_preferences(players, opts, prefs) do
     Log.warn(
       "bye preferences are an organiser's rule, not FIDE's - this is not a pure FIDE " <>
         "pairing, and a FIDE checker replaying the file will not reproduce a round they change"
     )
 
-    opts = pairing_opts(tournament) ++ [bye_preferences: prefs]
-    {pairs, report} = ByePreference.pair(players, opts)
+    {pairs, report} = ByePreference.pair(players, opts ++ [bye_preferences: prefs])
 
     for {outcome, line} <- Enum.zip(report.outcomes, ByePreference.describe(report)) do
       if outcome.outcome == :honoured,
@@ -1297,16 +1590,6 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
     end
 
     {:ok, pairs, Keyword.put_new(report.opts, :bye_passed_over, false)}
-  rescue
-    e in Pairing.NoValidPairingError ->
-      Log.error("no legal pairing exists for this round: #{Exception.message(e)}")
-      {:error, :halt}
-
-    # A "must get the bye" for a player C2 rules out: the round is not
-    # paired, and the message names the player and their earlier bye.
-    e in ByePreference.RefusedError ->
-      Log.error(Exception.message(e))
-      {:error, :halt}
   end
 
   # Everything the engine needs that lives on the tournament rather than on
@@ -1332,7 +1615,23 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
       # harmless: the engine falls through to inference and then to White,
       # exactly as before.
       initial_colour: tournament[:initial_colour]
-    ]
+    ] ++ format_opts(tournament)
+  end
+
+  # The match format and the pairing groups (`XXM`/`XXG` or their flags),
+  # for `Ainalrami.EventFormat` - only when the file or the command line
+  # asks for them, so every other round is paired with exactly the options
+  # it always was.
+  defp format_opts(tournament) do
+    match = if tournament[:match_format] == true, do: [match_format: true], else: []
+
+    groups =
+      case tournament[:pairing_groups] do
+        [_ | _] = groups -> [groups: groups]
+        _ -> []
+      end
+
+    match ++ groups
   end
 
   # An arbiter's exclusions and any acceleration are reported explicitly.
@@ -1340,6 +1639,8 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
   # and a silent "no `XXP` line here after all" is exactly the failure the
   # trace should make impossible to miss.
   defp report_extensions(parsed) do
+    report_format(parsed)
+
     for group <- parsed.tournament[:forbidden_pairs] || [] do
       Log.detail("forbidden pairing: #{describe_group(group)}")
     end
@@ -1353,6 +1654,19 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
             &:erlang.float_to_binary(&1 / 1, decimals: 1)
           )
       )
+    end
+  end
+
+  defp report_format(parsed) do
+    if parsed.tournament[:match_format] == true do
+      Log.detail(
+        "match format (XXM): odd rounds paired, each even round the round before with the " <>
+          "colours reversed"
+      )
+    end
+
+    for {group, index} <- Enum.with_index(parsed.tournament[:pairing_groups] || [], 1) do
+      Log.detail("pairing group #{index} (XXG): #{join_ids(group)}")
     end
   end
 
@@ -1397,17 +1711,36 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
   # points - is said to be one and exits `@not_replayed`
   # (`check_unreplayable/2`). `Ainalrami.TeamReplay.system/1` decides which,
   # from the `192` code as `Ainalrami.TypeCode` reads FIDE's table.
-  defp check(input_path) do
+  defp check(input_path, flags) do
     Log.step("Loading #{input_path}")
 
     with {:ok, text} <- read_input(input_path),
-         {:ok, parsed} <- parse_input(text) do
+         {:ok, parsed} <- parse_input(text, flags) do
+      groups? = (parsed.tournament[:pairing_groups] || []) != []
+
       case TeamReplay.system(parsed) do
-        :individual -> check_individual(parsed)
-        {:team, settings} -> check_team(parsed, settings)
-        {:team_round_robin, settings} -> check_team_round_robin(parsed, settings)
-        {:round_robin, settings} -> check_round_robin(parsed, settings)
-        {:unreplayable, reason} -> check_unreplayable(parsed, reason)
+        {kind, _settings} when kind in [:team, :team_round_robin] and groups? ->
+          Log.error("XXG pairing groups are for an individual tournament, not a team event")
+          1
+
+        {:unreplayable, "XXM" <> _ = reason} ->
+          Log.warn("rounds: not replayed - #{reason} (exit code #{@not_replayed})")
+          @not_replayed
+
+        :individual ->
+          check_individual(parsed)
+
+        {:team, settings} ->
+          check_team(parsed, settings)
+
+        {:team_round_robin, settings} ->
+          check_team_round_robin(parsed, settings)
+
+        {:round_robin, settings} ->
+          check_round_robin(parsed, settings)
+
+        {:unreplayable, reason} ->
+          check_unreplayable(parsed, reason)
       end
     else
       {:error, :halt} -> 1
@@ -1416,6 +1749,7 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
 
   defp check_individual(parsed) do
     report_type_code(parsed)
+    report_format(parsed)
     rounds = completed_rounds(parsed.players)
 
     if rounds == 0 do
@@ -1752,9 +2086,46 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
   defp check_round(parsed, round) do
     before = state_before_round(parsed.players, round, parsed.tournament[:point_system])
 
-    expected = Pairing.pair_next_round(before, pairing_opts(parsed.tournament))
+    opts = pairing_opts(parsed.tournament)
+    expected = EventFormat.pair_next_round(before, opts)
     actual = recorded_pairs(parsed.players, round)
 
+    # A match's second leg is not chosen: the round before, every colour
+    # reversed. So its colours are part of what is checked, where a
+    # Dutch-system round leaves the first colour to the drawing of lots.
+    second_leg? = opts[:match_format] == true and EventFormat.kind(before, opts) == :second_leg
+
+    cond do
+      second_leg? and Enum.sort(expected) == Enum.sort(actual) ->
+        Log.detail("round #{round}: matches - the second leg of round #{round - 1}'s match")
+        :ok
+
+      second_leg? ->
+        Log.warn(
+          "round #{round}: DIFFERS from round #{round - 1} with the colours reversed (XXM)"
+        )
+
+        Log.warn("  file:   #{inspect(Enum.sort(actual))}")
+        Log.warn("  engine: #{inspect(Enum.sort(expected))}")
+        :differs
+
+      true ->
+        compare_round(expected, actual, round)
+    end
+  rescue
+    e in Pairing.NoValidPairingError ->
+      Log.warn(
+        "round #{round}: this engine finds no legal pairing at all - #{Exception.message(e)}"
+      )
+
+      :differs
+
+    e in EventFormat.Error ->
+      Log.warn("round #{round}: #{Exception.message(e)}")
+      :differs
+  end
+
+  defp compare_round(expected, actual, round) do
     if composition(expected) == composition(actual) do
       Log.detail("round #{round}: matches" <> colour_note(expected, actual))
       :ok
@@ -1764,13 +2135,6 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
       Log.warn("  engine: #{inspect(Enum.sort(expected))}")
       :differs
     end
-  rescue
-    e in Pairing.NoValidPairingError ->
-      Log.warn(
-        "round #{round}: this engine finds no legal pairing at all - #{Exception.message(e)}"
-      )
-
-      :differs
   end
 
   # How many rounds were actually PAIRED. Taken over players rather than the
@@ -1950,8 +2314,8 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
     end
   end
 
-  defp parse_input(text) do
-    {:ok, Trf.parse(text)}
+  defp parse_input(text, flags) do
+    {:ok, text |> Trf.parse() |> with_format_flags(flags)}
   rescue
     e in Trf.ValidationError ->
       Log.error("invalid TRF file: #{Exception.message(e)}")
@@ -2037,6 +2401,26 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
                              it if anyone can
       RANKS is starting ranks separated by commas, each optionally with the
       rounds it applies to: --bye-want=5,12@3-4+7 (12 in rounds 3, 4 and 7)
+
+    Soft pairs (-p and -x; an organiser's wish, NOT FIDE, announced on stderr):
+      --soft-pairs=1,4/2,9,12   groups of players to keep apart where the
+                                criteria allow it (club protection, family)
+      --soft-position=strong|weak
+                                strong (default): above C6, a float rather
+                                than the pair; weak: after C21, ties only
+
+    Event formats (-p, -x, -c; also what the file's XXM and XXG lines say):
+      --match-format            every match two games in a row, colours
+                                reversed in the second: a Swiss pairs the odd
+                                rounds and copies each even one reversed; a
+                                round robin plays round k of one table as
+                                rounds 2k-1 and 2k (CUSTOM_SWISS/_ROUNDROBIN)
+      --groups=1-8/9-12,15      pairing groups (categories), each paired on
+                                its own; ranks in no group form a last one;
+                                a round robin plays one table per group
+      -g takes --match-format (Swiss, --roundrobin, --team=roundrobin) and
+      --groups=N (N random groups) or --groups=RANKS/RANKS (Swiss, round robin)
+
       -h, --help     Show this help
           --version  Show the version number
 
@@ -2070,7 +2454,8 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
     gives the next round of the Berger table (players numbered by starting
     rank; the free player as PLAYER 0); -c compares every round with it.
       -g --roundrobin [--players --rounds --cycles --forfeit-pct --draw-rate
-                       --rating-range --tie-breaks --seed]
+                       --rating-range --tie-breaks --seed --match-format
+                       --groups]
 
     Team events:
       -p on a team file (TRF26 310 rosters + 001 games; 192 FIDE_TEAM_... for a

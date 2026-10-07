@@ -22,11 +22,28 @@ defmodule Ainalrami.RoundRobin do
   its boards for 3-16 players, one and two cycles, and the tests hold this
   module to them.
 
+  ## Match format and pairing groups
+
+  Two settings OpenPairings pairs with and FIDE's codes cannot say, read
+  from the file's `XXM` and `XXG` lines (`Ainalrami.Trf`) or given on the
+  command line (`--match-format`, `--groups=`):
+
+    * `match_format?` - every game of a single table played as a two-game
+      match: rounds `2k - 1` and `2k` are round `k` of the table, the second
+      with the colours reversed (`PairingsEngine.RoundRobin.match_schedule/2`;
+      `Ainalrami.Berger`'s `:match_format?`). A `CUSTOM_ROUNDROBIN` file -
+      what OpenPairings writes for it - is paired this way when it says so.
+    * `groups` - one table per pairing group, in the order given, then one
+      of everybody named in none; each numbered in starting-rank order
+      within it (OpenPairings' round robin by category,
+      `PairingsEngine.RoundRobin.schedule_groups/2`). A table that has
+      played all its rounds beside a longer one adds nothing.
+
   ## Output (`-p`)
 
   JaVaFo's pairing list, as for a Swiss: a count line, then `WHITE BLACK`
-  per board in OpenPairings' board order (lowest number first), and the
-  free player last as `PLAYER 0`.
+  per board in OpenPairings' board order (lowest number first, table after
+  table), and the free players last as `PLAYER 0`.
   """
 
   alias Ainalrami.{Berger, Trf}
@@ -43,12 +60,49 @@ defmodule Ainalrami.RoundRobin do
         do: " (192 #{s.code})",
         else: " (092 round robin, no 192: #{times} by the rounds)"
 
-    "a round robin by the Berger tables (C.05 Annex 1), every game played #{times}#{order}" <>
-      source
+    shape =
+      if s[:match_format?],
+        do: "every game played as a two-game match, colours reversed in the second (XXM)",
+        else: "every game played #{times}#{order}"
+
+    groups =
+      case s[:groups] do
+        [_ | _] = groups -> ", one table per pairing group (#{length(groups)} named, XXG)"
+        _ -> ""
+      end
+
+    "a round robin by the Berger tables (C.05 Annex 1), #{shape}#{groups}" <> source
   end
 
   @doc "The starting ranks in Berger-number order."
   def numbers(parsed), do: parsed.players |> Enum.map(& &1.rank) |> Enum.sort()
+
+  @doc """
+  The Berger tables the round robin plays, each its players' starting ranks
+  in Berger-number order: one over the whole field, or with pairing groups
+  one per group in the order given and a last one of everybody named in
+  none. A group of one has nobody to play and gets no table.
+  """
+  def tables(parsed, settings) do
+    numbers = numbers(parsed)
+
+    case Map.get(settings, :groups) do
+      [_ | _] = groups ->
+        known = MapSet.new(numbers)
+
+        named =
+          Enum.map(groups, fn group ->
+            group |> Enum.filter(&MapSet.member?(known, &1)) |> Enum.sort()
+          end)
+
+        listed = named |> List.flatten() |> MapSet.new()
+        rest = Enum.reject(numbers, &MapSet.member?(listed, &1))
+        Enum.filter(named ++ [rest], &(length(&1) >= 2))
+
+      _ ->
+        if length(numbers) >= 2, do: [numbers], else: []
+    end
+  end
 
   @doc """
   How many cycles a round robin known only from its `092` type plays: as
@@ -71,28 +125,46 @@ defmodule Ainalrami.RoundRobin do
   end
 
   @doc """
-  The Berger table's round `round` in starting ranks: `{:ok, boards,
-  free}` with `boards` as `[{white, black}]` in board order, `free` the
-  player with the round off (nil in an even field), or `{:error, reason}`.
+  Round `round` of the tables in starting ranks: `{:ok, boards, free}` with
+  `boards` as `[{white, black}]` in board order, `free` the players with
+  the round off (one per odd table, in table order; `[]` when none), or
+  `{:error, reason}` - `{:all_rounds_paired, total}` once every table is
+  done.
   """
   def schedule(parsed, settings, round) do
-    numbers = numbers(parsed)
-    n = length(numbers)
+    case tables(parsed, settings) do
+      [] ->
+        {:error, :too_few_players}
 
-    if n < 2 do
-      {:error, :too_few_players}
-    else
-      rank = fn number -> Enum.at(numbers, number - 1) end
-      opts = [reverse_last_two?: Map.get(settings, :reverse_last_two?, false)]
+      tables ->
+        opts = [
+          reverse_last_two?: Map.get(settings, :reverse_last_two?, false),
+          match_format?: Map.get(settings, :match_format?, false)
+        ]
 
-      with {:ok, pairs, free} <- Berger.round(n, settings.games, round, opts) do
-        boards =
-          pairs
-          |> Enum.map(fn {w, b} -> {rank.(w), rank.(b)} end)
-          |> Enum.sort_by(fn {w, b} -> min(w, b) end)
+        played =
+          for table <- tables,
+              {:ok, pairs, free} <- [Berger.round(length(table), settings.games, round, opts)] do
+            rank = fn number -> Enum.at(table, number - 1) end
 
-        {:ok, boards, free && rank.(free)}
-      end
+            boards =
+              pairs
+              |> Enum.map(fn {w, b} -> {rank.(w), rank.(b)} end)
+              |> Enum.sort_by(fn {w, b} -> min(w, b) end)
+
+            {boards, if(free, do: [rank.(free)], else: [])}
+          end
+
+        if played == [] do
+          total =
+            tables
+            |> Enum.map(&Berger.total_rounds(length(&1), settings.games, opts))
+            |> Enum.max()
+
+          {:error, {:all_rounds_paired, total}}
+        else
+          {:ok, Enum.flat_map(played, &elem(&1, 0)), Enum.flat_map(played, &elem(&1, 1))}
+        end
     end
   end
 
@@ -108,8 +180,7 @@ defmodule Ainalrami.RoundRobin do
   @doc "The pairing list `-p` writes - see the moduledoc."
   def format(boards, free) do
     lines =
-      Enum.map(boards, fn {w, b} -> "#{w} #{b}" end) ++
-        if(free, do: ["#{free} 0"], else: [])
+      Enum.map(boards, fn {w, b} -> "#{w} #{b}" end) ++ Enum.map(List.wrap(free), &"#{&1} 0")
 
     Enum.map_join(["#{length(lines)}" | lines], "", &(&1 <> "\r\n"))
   end
