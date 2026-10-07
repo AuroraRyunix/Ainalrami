@@ -64,6 +64,8 @@ with the reference on every one of them.
 
 ## [Unreleased]
 
+## [0.38.0] - 2026-10-07
+
 - [Feature] **The match format on the standalone CLI.** OpenPairings'
   Swiss and round robin match formats - every match two games in a row,
   colours reversed in the second - are read from a new `XXM` line or given
@@ -103,6 +105,14 @@ with the reference on every one of them.
 - [Change] `Ainalrami.RoundRobin.schedule/3` and `next_round/2` give the
   free players as a list (one per odd table), and `format/2` takes it;
   `Ainalrami.Berger.total_rounds/3` takes the match format.
+- [Change] **A seed the generators draw for themselves now comes from the
+  operating system's random source.** Without `--seed`, `-g` (individual
+  Swiss, team events and round robins) took its seed from `:rand`'s own
+  default seeding, the clock, node and process: fresh in practice, but only
+  as fresh as the clock. It now comes from `:crypto.strong_rand_bytes/1`,
+  which neither a fresh VM nor a fast loop can repeat, still 32 bits and
+  still printed and written into the file, so `--seed` repeats a run exactly
+  as before. A seed given explicitly produces the same bytes it always did.
 
 ## [0.37.0] - 2026-10-03
 

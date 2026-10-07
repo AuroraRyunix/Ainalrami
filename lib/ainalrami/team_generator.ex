@@ -90,7 +90,7 @@ defmodule Ainalrami.TeamGenerator do
   each paired team's boards.
   """
   def run(opts \\ []) do
-    seed = Keyword.get_lazy(opts, :seed, &fresh_seed/0)
+    seed = Keyword.get_lazy(opts, :seed, &Ainalrami.Generator.fresh_seed/0)
     :rand.seed(:exsss, {seed, seed * 7919 + 11, seed * 104_729 + 3})
 
     ctx = context(opts, seed)
@@ -281,11 +281,6 @@ defmodule Ainalrami.TeamGenerator do
     unless value in allowed do
       raise ArgumentError, ":#{key} - one of #{inspect(allowed)}, not #{inspect(value)}"
     end
-  end
-
-  defp fresh_seed do
-    {seed, _state} = :rand.uniform_s(0xFFFFFFFF, :rand.seed_s(:exsss))
-    seed
   end
 
   # ---- teams -----------------------------------------------------------------

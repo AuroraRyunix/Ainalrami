@@ -1,7 +1,7 @@
 defmodule Ainalrami.MixProject do
   use Mix.Project
 
-  @version "0.37.0"
+  @version "0.38.0"
   @source_url "https://github.com/AuroraRyunix/Ainalrami"
 
   def project do
@@ -38,7 +38,7 @@ defmodule Ainalrami.MixProject do
 
   def application do
     [
-      extra_applications: [:logger]
+      extra_applications: [:logger, :crypto]
     ]
   end
 

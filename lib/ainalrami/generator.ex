@@ -15,7 +15,8 @@ defmodule Ainalrami.Generator do
   Every tournament is generated from a seed, and the seed is recorded in
   the file so any run can be reproduced from its own output. Given
   `:seed`, the same options always give the same bytes. Without it a fresh
-  seed is drawn per call from the clock and the process, so two runs - in
+  seed is drawn per call from the operating system's random source
+  (`:crypto.strong_rand_bytes/1`), so two runs - in
   one VM or in two - get different tournaments (FIDE's VCL4THP asks that
   an RTG run twice with the same parameters not repeat itself), and the
   seed it drew is in the file and returned, so the run can be repeated.
@@ -246,14 +247,21 @@ defmodule Ainalrami.Generator do
 
   # Q30. This was `:erlang.unique_integer([:positive])`, a counter that
   # starts over with every VM: eight fresh `ainalrami -g` runs got seeds
-  # 2690-2700, 2690 three times, so two runs could write the same file. A
-  # throwaway generator seeded from the clock, the node and the process
-  # (`:rand.seed_s/1`'s own default) is fresh per call and per run, and it
-  # leaves the process's `:rand` state alone. 32 bits: two of a thousand
-  # runs share a seed about once in eight thousand thousand-run batches.
-  defp fresh_seed do
-    {seed, _state} = :rand.uniform_s(0xFFFFFFFF, :rand.seed_s(:exsss))
-    seed
+  # 2690-2700, 2690 three times, so two runs could write the same file. It
+  # then came from `:rand.seed_s/1`'s own default, the clock, node and
+  # process - fresh in practice, but only as fresh as the clock. Now it is
+  # the operating system's random source, which nothing about a fresh VM or
+  # a fast loop can repeat, and it leaves the process's `:rand` state
+  # alone. 32 bits, so a seed stays short enough to type back as `--seed`:
+  # two of a thousand runs share one about once in eight thousand
+  # thousand-run batches. Shared by the team and round-robin generators.
+  @doc false
+  def fresh_seed do
+    case :crypto.strong_rand_bytes(4) do
+      # 1..2^32-1, the range it always had: a seed of 0 is never written.
+      <<0::32>> -> fresh_seed()
+      <<seed::unsigned-32>> -> seed
+    end
   end
 
   defp validate_count!(value, _key, minimum) when is_integer(value) and value >= minimum,
