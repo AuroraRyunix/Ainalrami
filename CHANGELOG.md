@@ -64,6 +64,18 @@ with the reference on every one of them.
 
 ## [Unreleased]
 
+- [Fix] **Boards come back in C.04.2 Art. 3.6's order.** `pair_next_round/2`,
+  `pair_later_round/2`, `pair_round_one/1` and `pair_variants/3` return the
+  pairs sorted by the higher score of the pair's higher-ranked player, then
+  the higher sum of the two scores, then the smaller TPN of the
+  higher-ranked player, the pairing-allocated bye last - bbpPairings'
+  `sortResults`, real scores, acceleration left out. They used to come back
+  in the order the cascade found them, bracket by bracket, which is not
+  3.6's order whenever a float or a heterogeneous bracket is involved:
+  about one round in thirteen of a random 10-30 player event put a board
+  above one it belongs below. Same pairs, same colours, same bye; only the
+  board numbers move.
+
 ## [0.40.0] - 2026-10-08
 
 - [Performance] **The certified shortcuts start at 30 players, not 100.**

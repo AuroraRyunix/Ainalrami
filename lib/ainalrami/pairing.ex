@@ -691,20 +691,53 @@ defmodule Ainalrami.Pairing do
       #
       # `pair_later_round/2` asks for the cascade whatever the round, and
       # gets it.
-      if path == :auto and Enum.all?(active, &(&1.games == [])) and
-           is_nil(Process.get(@forbidden_key)) and
-           is_nil(Process.get(@soft_key)) and is_nil(Process.get(@bye_excluded_key)) and
-           not Enum.any?(active, &(acceleration_at(&1, played) != 0.0)) do
-        round_one(active)
-      else
-        # The FULL roster, not just the active players - float direction
-        # has to look up opponents' scores, and an opponent may be one of
-        # the players sitting this round out.
-        do_pair_later_round(players)
-      end
+      pairs =
+        if path == :auto and Enum.all?(active, &(&1.games == [])) and
+             is_nil(Process.get(@forbidden_key)) and
+             is_nil(Process.get(@soft_key)) and is_nil(Process.get(@bye_excluded_key)) and
+             not Enum.any?(active, &(acceleration_at(&1, played) != 0.0)) do
+          round_one(active)
+        else
+          # The FULL roster, not just the active players - float direction
+          # has to look up opponents' scores, and an opponent may be one of
+          # the players sitting this round out.
+          do_pair_later_round(players)
+        end
+
+      board_order(pairs, players)
     after
       clear_round_state()
     end
+  end
+
+  # The pairs in board order, C.04.2 Art. 3.6: the higher score of the
+  # pair's higher-ranked player first, then the higher sum of the two
+  # scores, then the smaller TPN (starting rank) of the higher-ranked
+  # player; the pairing-allocated bye last. "Higher-ranked" is C.04.3 1.2's
+  # order - score, then TPN. Scores are the real ones, acceleration left
+  # out: a board number is published to the hall, and Baku's virtual
+  # points are not a score anyone has. This is bbpPairings' `sortResults`
+  # (`common.cpp:172`), which sorts on `scoreWithoutAcceleration` and
+  # `rankIndex` the same way.
+  #
+  # The cascade hands its pairs back in the order it found them - bracket
+  # by bracket, a downfloater's board inside the bracket that took it in -
+  # which is not 3.6's order whenever a heterogeneous bracket or a float is
+  # involved: about one round in thirteen of a random 10-30 player event.
+  # Ordering is applied once here, at the one exit every pairing path
+  # shares, so no caller has to know it was ever otherwise.
+  defp board_order(pairs, players) do
+    points = Map.new(players, &{&1.rank, &1.points})
+
+    Enum.sort_by(pairs, fn
+      {white, nil} ->
+        {1, 0, 0, white}
+
+      {white, black} ->
+        [higher, lower] = Enum.sort_by([white, black], &{-Map.fetch!(points, &1), &1})
+        high = Map.fetch!(points, higher)
+        {0, -high, -(high + Map.fetch!(points, lower)), higher}
+    end)
   end
 
   # Every process-dictionary key the pairing and explanation paths stamp,
@@ -1607,7 +1640,7 @@ defmodule Ainalrami.Pairing do
                 "has #{length(p.games)} game(s) - use pair_next_round/2"
     end
 
-    round_one(players)
+    players |> round_one() |> board_order(players)
   end
 
   defp round_one(players) do
