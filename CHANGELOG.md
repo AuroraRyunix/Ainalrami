@@ -64,6 +64,8 @@ with the reference on every one of them.
 
 ## [Unreleased]
 
+## [0.40.0] - 2026-10-08
+
 - [Performance] **The certified shortcuts start at 30 players, not 100.**
   The old line came with the shortcuts and was never timed; timed now, on
   fuzz positions of 10-600 players. Without the arbiter's soft pairs the
