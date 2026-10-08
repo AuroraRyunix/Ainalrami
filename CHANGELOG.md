@@ -64,6 +64,27 @@ with the reference on every one of them.
 
 ## [Unreleased]
 
+- [Performance] **The certified shortcuts start at 30 players, not 100.**
+  The old line came with the shortcuts and was never timed; timed now, on
+  fuzz positions of 10-600 players. Without the arbiter's soft pairs the
+  shortcuts win from about 20 players on the median and from 30 at p95 as
+  well, so rounds of 30-99 active players take them: 3.0-4.6x faster on
+  the median and 2.0-3.0x in all without soft pairs, 1.4-1.7x in all on
+  the mixed corpus (where a third of tournaments have soft pairs). Soft
+  pairs switch the direct bracket off and leave the shortcuts mostly
+  certifying reads the reference would make anyway - slower at 10-200
+  players - so a round with soft pairs keeps the old line of 100. Below 30
+  nothing changes; neither does anything from 100 up. Every shortcut still
+  falls back to the reference search on any read it cannot certify, so
+  the answers cannot move, and didn't: 2,157,665 rounds of 6-150 players
+  paired under both rules, 971,637 of them on different paths, 0
+  differences. `AINALRAMI_CERT_MIN=<n>` moves both
+  lines (100 is the old rule); `tools/cert_threshold.exs` is the timing
+  and equality harness. The p99 is still worse with the shortcuts from 30
+  to 100 players - the certification cost on positions where nearly every
+  read needs it - by the same 20% the old line already put up with at 100.
+  Numbers in docs/performance.md.
+
 ## [0.39.0] - 2026-10-07
 
 - [Feature] **Score variants in one call: `Ainalrami.Pairing.pair_variants/3`.**

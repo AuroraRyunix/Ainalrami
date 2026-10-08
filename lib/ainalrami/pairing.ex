@@ -192,6 +192,7 @@ defmodule Ainalrami.Pairing do
   @env_nofast_key :ainalrami_env_nofast
   @env_cert_key :ainalrami_env_cert
   @env_cert_stats_key :ainalrami_env_cert_stats
+  @env_cert_min_key :ainalrami_env_cert_min
   @env_direct_key :ainalrami_env_direct
   @env_direct_plain_key :ainalrami_env_direct_plain
   @direct_budget_key :ainalrami_direct_budget
@@ -480,7 +481,8 @@ defmodule Ainalrami.Pairing do
   # variants of one position cost much the same. Two modes:
   #
   #   * `:plain` - what `pair_next_round/2` does: the shortcuts from
-  #     `@cert_min_field` players up, the reference search below;
+  #     `@cert_min_field` players up (`@cert_min_field_soft` in a round
+  #     with soft pairs), the reference search below;
   #   * `:force` - the shortcuts at every size, with their own small-solve
   #     thresholds lifted (as `AINALRAMI_CERT=force`).
   #
@@ -489,9 +491,9 @@ defmodule Ainalrami.Pairing do
   # then the one with the lower running time, with every
   # `@mode_explore_every`-th variant spent on the other one, so a mode that
   # has become the faster is noticed. A third mode, `:off` (the reference
-  # search at every size), is never chosen: from `@cert_min_field` players
-  # up it was measured at up to fifty times the others, and below that it
-  # is `:plain`. `AINALRAMI_VARIANT_MODE=off|plain|force` pins one, for the
+  # search at every size), is never chosen: from 100 players up it was
+  # measured at up to fifty times the others, and where `:plain` takes no
+  # shortcut it is `:plain`. `AINALRAMI_VARIANT_MODE=off|plain|force` pins one, for the
   # harness and the tests.
   @variant_modes [:plain, :force]
   @mode_explore_every 32
@@ -1978,10 +1980,18 @@ defmodule Ainalrami.Pairing do
   # round-scoped key the cascade uses is (re)initialised at its entry, and
   # nothing before this call depends on the attempt.
   #
-  # Only on a large field unless forced: a small round's searches are cheap
-  # and its reads are the ones most often tied, so the shortcuts would
-  # mostly buy certification work and retries.
-  @cert_min_field 100
+  # Unless forced: from `@cert_min_field` players up, and from
+  # `@cert_min_field_soft` in a round with the arbiter's soft pairs. Both
+  # measured (docs/performance.md, "The certified shortcuts' threshold").
+  # Below ~30 players the searches are cheap and the reads the most often
+  # tied, so the shortcuts mostly buy certification work. Soft pairs switch
+  # the direct bracket off (`direct_allowed?/2`), which leaves the shortcuts
+  # little to skip and nearly every read to certify: 5-15% slower at 100-200
+  # players, 10-25% faster in the opening round from 300 up - so those
+  # rounds keep the old line rather than gain a new one. It used to be 100
+  # everywhere, a figure nobody had timed.
+  @cert_min_field 30
+  @cert_min_field_soft 100
 
   defp certified_cascade(brackets, allowed_byes) do
     size = brackets |> Enum.map(&length/1) |> Enum.sum()
@@ -1989,7 +1999,7 @@ defmodule Ainalrami.Pairing do
     # `pair_variants/3` may ask for them at every size, or not at all: see
     # `choose_mode/1`.
     if cert_enabled?() and Process.get(@batch_on_key) != :off and
-         (size >= @cert_min_field or cert_force?()) do
+         (cert_worth?(size) or cert_force?()) do
       Process.put(@cert_key, true)
 
       try do
@@ -2011,6 +2021,18 @@ defmodule Ainalrami.Pairing do
   # every shortcut there is, however small the solve it saves (for the
   # corpus, which is mostly small fields).
   defp cert_enabled?, do: env_flag(@env_cert_key, "AINALRAMI_CERT") != "off"
+
+  # AINALRAMI_CERT_MIN=<n> puts both thresholds at n: the threshold study's
+  # knob, and with n = 100 the behaviour before it.
+  defp cert_worth?(size) do
+    min =
+      case env_flag(@env_cert_min_key, "AINALRAMI_CERT_MIN") do
+        nil -> if is_nil(Process.get(@soft_key)), do: @cert_min_field, else: @cert_min_field_soft
+        value -> String.to_integer(value)
+      end
+
+    size >= min
+  end
 
   defp cert_force?,
     do:
@@ -2660,6 +2682,7 @@ defmodule Ainalrami.Pairing do
     Process.put(@env_nofast_key, read_env_flag("AINALRAMI_NOFAST"))
     Process.put(@env_cert_key, read_env_flag("AINALRAMI_CERT"))
     Process.put(@env_cert_stats_key, read_env_flag("AINALRAMI_CERT_STATS"))
+    Process.put(@env_cert_min_key, read_env_flag("AINALRAMI_CERT_MIN"))
     Process.put(@env_direct_key, read_env_flag("AINALRAMI_DIRECT"))
     Process.put(@env_direct_plain_key, read_env_flag("AINALRAMI_DIRECT_PLAIN"))
   end
@@ -2670,6 +2693,7 @@ defmodule Ainalrami.Pairing do
     Process.delete(@env_nofast_key)
     Process.delete(@env_cert_key)
     Process.delete(@env_cert_stats_key)
+    Process.delete(@env_cert_min_key)
     Process.delete(@env_direct_key)
     Process.delete(@env_direct_plain_key)
   end
