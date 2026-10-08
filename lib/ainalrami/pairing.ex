@@ -704,7 +704,12 @@ defmodule Ainalrami.Pairing do
           do_pair_later_round(players)
         end
 
-      board_order(pairs, players)
+      # `:cascade_order` - the pairs as the cascade found them, unsorted -
+      # exists for `Ainalrami.Generator` alone: it draws each board's result
+      # in board order, so sorting would change every recorded seed's file,
+      # the corpora and the reproductions keyed on them included. Nothing
+      # that publishes a board passes it.
+      if opts[:cascade_order], do: pairs, else: board_order(pairs, players)
     after
       clear_round_state()
     end

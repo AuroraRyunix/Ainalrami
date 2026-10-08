@@ -490,7 +490,11 @@ defmodule Ainalrami.Generator do
         [
           expected_rounds: total_rounds,
           forbidden_pairs: forbidden,
-          initial_colour: initial_colour
+          initial_colour: initial_colour,
+          # Results are drawn board by board, so the boards keep the order
+          # every recorded seed was generated in (see `Pairing`'s
+          # `board_order/2`).
+          cascade_order: true
         ] ++ format
       )
 
