@@ -64,6 +64,8 @@ with the reference on every one of them.
 
 ## [Unreleased]
 
+## [0.41.0] - 2026-10-08
+
 - [Fix] **Boards come back in C.04.2 Art. 3.6's order.** `pair_next_round/2`,
   `pair_later_round/2`, `pair_round_one/1` and `pair_variants/3` return the
   pairs sorted by the higher score of the pair's higher-ranked player, then
