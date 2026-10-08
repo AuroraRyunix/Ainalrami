@@ -68,13 +68,15 @@ with the reference on every one of them.
   `pair_later_round/2`, `pair_round_one/1` and `pair_variants/3` return the
   pairs sorted by the higher score of the pair's higher-ranked player, then
   the higher sum of the two scores, then the smaller TPN of the
-  higher-ranked player, the pairing-allocated bye last - bbpPairings'
-  `sortResults`, real scores, acceleration left out. They used to come back
+  higher-ranked player, the pairing-allocated bye last. Scores are pairing
+  scores: Baku's virtual points count (VCL4THP Q188), the one place this
+  differs from bbpPairings' `sortResults`. They used to come back
   in the order the cascade found them, bracket by bracket, which is not
   3.6's order whenever a float or a heterogeneous bracket is involved:
   about one round in thirteen of a random 10-30 player event put a board
   above one it belongs below. Same pairs, same colours, same bye; only the
-  board numbers move.
+  board numbers move. `Ainalrami.Generator` keeps the old order
+  (`cascade_order: true`), so every recorded seed still writes the same file.
 
 ## [0.40.0] - 2026-10-08
 

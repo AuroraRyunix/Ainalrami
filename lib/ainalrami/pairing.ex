@@ -709,7 +709,7 @@ defmodule Ainalrami.Pairing do
       # in board order, so sorting would change every recorded seed's file,
       # the corpora and the reproductions keyed on them included. Nothing
       # that publishes a board passes it.
-      if opts[:cascade_order], do: pairs, else: board_order(pairs, players)
+      if opts[:cascade_order], do: pairs, else: board_order(pairs, players, played)
     after
       clear_round_state()
     end
@@ -719,11 +719,14 @@ defmodule Ainalrami.Pairing do
   # pair's higher-ranked player first, then the higher sum of the two
   # scores, then the smaller TPN (starting rank) of the higher-ranked
   # player; the pairing-allocated bye last. "Higher-ranked" is C.04.3 1.2's
-  # order - score, then TPN. Scores are the real ones, acceleration left
-  # out: a board number is published to the hall, and Baku's virtual
-  # points are not a score anyone has. This is bbpPairings' `sortResults`
-  # (`common.cpp:172`), which sorts on `scoreWithoutAcceleration` and
-  # `rankIndex` the same way.
+  # order - score, then TPN.
+  #
+  # "Score" is the PAIRING score: an accelerated round's virtual points
+  # (`acceleration_at/2`, Baku's C.04.7) count, as they count for every
+  # other decision this round. That is VCL4THP Q188's answer, which
+  # OpenPairings holds the boards to, and where this parts company with
+  # bbpPairings' `sortResults` (`common.cpp:172`), which otherwise sorts on
+  # the same three keys but takes `scoreWithoutAcceleration`.
   #
   # The cascade hands its pairs back in the order it found them - bracket
   # by bracket, a downfloater's board inside the bracket that took it in -
@@ -731,8 +734,8 @@ defmodule Ainalrami.Pairing do
   # involved: about one round in thirteen of a random 10-30 player event.
   # Ordering is applied once here, at the one exit every pairing path
   # shares, so no caller has to know it was ever otherwise.
-  defp board_order(pairs, players) do
-    points = Map.new(players, &{&1.rank, &1.points})
+  defp board_order(pairs, players, played) do
+    points = Map.new(players, &{&1.rank, &1.points + acceleration_at(&1, played)})
 
     Enum.sort_by(pairs, fn
       {white, nil} ->
@@ -1645,7 +1648,7 @@ defmodule Ainalrami.Pairing do
                 "has #{length(p.games)} game(s) - use pair_next_round/2"
     end
 
-    players |> round_one() |> board_order(players)
+    players |> round_one() |> board_order(players, 0)
   end
 
   defp round_one(players) do
