@@ -64,6 +64,8 @@ with the reference on every one of them.
 
 ## [Unreleased]
 
+## [0.42.0] - 2026-10-09
+
 - [Feature] **Rating tie-breaks can use the rating each opponent had in
   that round (VCL4THP Q214).** `Tiebreaks.Event.Participant` takes an
   optional `round_ratings` (`%{round => rating}`); ARO with its cuts and
