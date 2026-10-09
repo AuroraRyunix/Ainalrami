@@ -64,6 +64,19 @@ with the reference on every one of them.
 
 ## [Unreleased]
 
+- [Feature] **Rating tie-breaks can use the rating each opponent had in
+  that round (VCL4THP Q214).** `Tiebreaks.Event.Participant` takes an
+  optional `round_ratings` (`%{round => rating}`); ARO with its cuts and
+  working, TPR, PTP, and through them APRO and APPO, then count each
+  opponent at the rating they held in the round the game was played.
+  C.07 Article 10's note makes the first rating the default "unless the
+  specific regulations of the tournament state otherwise"; this is the
+  otherwise. RTNG still sorts by `rating`, and being unrated is still
+  decided by it. Leave the field empty and every value and working is
+  what it was - tested, since "should be identical" is what everyone says
+  right before it isn't. TRF has one rating per player, so the CLI never
+  fills it.
+
 ## [0.41.0] - 2026-10-08
 
 - [Fix] **Boards come back in C.04.2 Art. 3.6's order.** `pair_next_round/2`,

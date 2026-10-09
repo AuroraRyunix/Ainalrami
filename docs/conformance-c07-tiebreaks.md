@@ -114,7 +114,8 @@ or checked. It now accepts the syntax above.
 OpenPairings can hand it its own data directly; `from_trf/2` builds one
 from `Trf.parse/1`.
 
-Per participant: id, TPN, rating (nil when unrated), and per round one of:
+Per participant: id, TPN, rating (nil when unrated), optionally a rating
+per round (`round_ratings`, see "Ratings" below), and per round one of:
 
 | kind | meaning | Article 16.2 category |
 |---|---|---|
@@ -293,6 +294,31 @@ Over games played over the board against rated opponents. When unrated
 participants are present the tie-breaks are dropped, unless the event
 supplies a rating for them (`U<rating>`) - the "detailed rules" Article 10
 allows.
+
+**More than one rating during the event (VCL4THP Q214).** Article 10's
+note: these tie-breaks "are not recommended when a player can get more than
+one rating during the tournament ... If they are nevertheless chosen, the
+rating used to calculate them is the first one, unless the specific
+regulations of the tournament state otherwise." So the first rating is the
+rule (`rating`, VCL4THP Q215, which FIDE requires), and the per-round rating
+is what a tournament's regulations may choose instead (Q214, recommended
+rather than required). A host that wants the latter fills
+`Participant.round_ratings` (`%{round => rating}`); every Article 10
+computation over opponents then takes the opponent's rating for the round
+the game was played in (`Event.rating_in/2`), falling back to `rating` for
+rounds not listed. Concretely:
+
+- ARO, its cuts and its working, TPR and PTP read the opponent's rating for
+  that round; APRO and APPO average opponents' TPR/PTP, which inherit it.
+- RTNG sorts by the participant's own `rating`: it has no round to pick one
+  from, and the host passes whichever rating it means.
+- Whether a participant is unrated (the opening paragraph of Article 10,
+  and `U<rating>`) is decided by `rating`; a later list does not undo the
+  drop.
+- With `round_ratings` empty - the default - every value and every working
+  is the same as before the field existed (tested).
+- TRF carries one rating per player, so `from_trf/2` and the CLI checker
+  never fill it.
 
 - **ARO (10.1):** average opponent rating, rounded half up. Cuts remove the
   lowest (and for medians the highest) ratings.

@@ -49,14 +49,25 @@ defmodule Ainalrami.Tiebreaks.Event do
   end
 
   defmodule Participant do
-    @moduledoc "One participant. `rating` is nil when unrated."
+    @moduledoc """
+    One participant. `rating` is nil when unrated.
+
+    `round_ratings` is optional: `%{round => rating}`, the rating the
+    participant held in that round when it differs over the event (a new
+    rating list mid-event). When a round is in it, the Article 10
+    tie-breaks of the participant's OPPONENT in that round use it instead
+    of `rating`; rounds not in it fall back to `rating`. Left empty, the
+    tie-breaks are exactly what they were before it existed. See
+    `Ainalrami.Tiebreaks.Event.rating_in/2`.
+    """
     @enforce_keys [:id]
-    defstruct id: nil, tpn: nil, rating: nil, rounds: %{}
+    defstruct id: nil, tpn: nil, rating: nil, round_ratings: %{}, rounds: %{}
 
     @type t :: %__MODULE__{
             id: term(),
             tpn: pos_integer() | nil,
             rating: non_neg_integer() | nil,
+            round_ratings: %{pos_integer() => non_neg_integer()},
             rounds: %{pos_integer() => Ainalrami.Tiebreaks.Event.Round.t()}
           }
   end
@@ -126,6 +137,24 @@ defmodule Ainalrami.Tiebreaks.Event do
       points: points,
       participants: participants
     }
+  end
+
+  @doc """
+  The rating `participant` held in `round`: its `round_ratings` entry when
+  there is one, its `rating` otherwise.
+
+  C.07 Article 10's note: when a player can get more than one rating
+  during the tournament, "the rating used to calculate them is the first
+  one, unless the specific regulations of the tournament state otherwise".
+  `rating` is the first one (or whichever the host decided on);
+  `round_ratings` is how a host says the regulations state otherwise, and
+  which rating applied to which round (VCL4THP Q214).
+  """
+  def rating_in(%Participant{rating: rating} = participant, round) do
+    case Map.get(participant.round_ratings || %{}, round) do
+      nil -> rating
+      per_round -> per_round
+    end
   end
 
   defp zero_bye(points), do: %Round{kind: :zero_bye, points: 0.0, outcome: outcome(0.0, points)}
