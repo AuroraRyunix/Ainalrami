@@ -895,8 +895,6 @@ cleanest way to honour that rather than leaving it ambiguous.
 [NOTICE](NOTICE) spells out exactly which files are derived and what
 changed.
 
-JaVaFo is © Roberto Ricca, is not open source, and is not bundled here.
-
 ## Licence
 
 Apache-2.0 (see [LICENSE](LICENSE)), © 2026 Jorian Burssens.
