@@ -1,0 +1,10 @@
+@echo off
+rem Starts (or resumes) the large-field C.04.6 run from this worktree, log
+rem appended to team_large_run.log. Arguments replace the default range:
+rem   tools\team_large_start.cmd --first 1 --last 14000 --workers 6
+cd /d "%~dp0.."
+if "%~1"=="" (
+  py -3 -u tools\team_large_run.py --first 1 --last 14000 --chunk 6 --workers 6 >> team_large_run.log 2>&1
+) else (
+  py -3 -u tools\team_large_run.py %* >> team_large_run.log 2>&1
+)
