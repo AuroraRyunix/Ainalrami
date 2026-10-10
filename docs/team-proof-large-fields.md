@@ -39,6 +39,27 @@ engine can be compared with it round for round up to 80 teams.
   only chooses which reachable histories get checked; it decides nothing
   about the round being checked.
 
+### Reviewed 2026-10-10: one argument is now shared
+
+The list above was true when written and one line of it has aged. On
+2026-09-25 the ENGINE took over section 3's reduction for its own 3.6
+(`Ainalrami.TeamPairing.Bracket.exact/1`: the same two matchings, the same
+packed identifier, on its own matcher). Still no shared code - but for 3.6
+the engine and this reference now share an ARGUMENT, and an error in the
+argument would be made on both sides and agree with itself. What stands
+between that and a false "0 disagreements":
+
+- at 4-10 teams the naive enumeration, which uses no argument at all;
+- the proof in section 3, which does not depend on the size of the bracket;
+- since 2026-10-10, `Ainalrami.TeamProof.RoundChecker`: 3.6 checked
+  position by position with no identifier packed into any cost (see
+  "100-200 teams" below).
+
+Everything else is as stated. 3.5 (the upfloater set) is the part with the
+most room for error and it is fully independent: the engine walks candidate
+sets in order with feasibility checks, the reference solves one matching of
+the whole remaining field. 3.4 and Article 4 share nothing but the reading.
+
 ## Readings (the naive reference's, unchanged)
 
 - [C1]: two teams have met when either lists the other.
@@ -223,6 +244,90 @@ reference's is (two minimum-cost matchings per bracket, section 3 above),
 instead of an enumeration with a budget. That engine change was made on
 2026-09-25 (above).
 
+## 100-200 teams (2026-10-10)
+
+Code: `test/support/team_proof/large_events.ex` (the events),
+`test/support/team_proof/round_checker.ex` (the checker),
+`test/ainalrami/team_proof_xl_test.exs`, runner `tools/team_large_run.py`.
+
+### Does the exact reference reach 200 teams? Yes
+
+It is polynomial and nothing in it knows about 80. Measured on this PC,
+one scheduler (`+S 1:1`), 11 events of 100-200 teams, 100 rounds:
+
+| | per round |
+|---|---|
+| exact reference | 3.5 s mean (1.4 s around 115 teams, about 4-8 s at 165-200) |
+| engine, `explain: true` | 22 ms |
+| checker, brackets up to 64 teams | 70 ms |
+
+About 33 s per event per core. Slow enough that a day buys some ten
+thousand events rather than a billion rounds, fast enough that no fallback
+to a weaker check was needed: every round of the run is compared with the
+exact reference, at every size.
+
+### The events
+
+`Events` plays one shape (4 boards, coin-flip boards, 3-9 rounds, one team
+in twelve sitting out). `LargeEvents` draws a shape per seed: 100-200 teams,
+4-6 boards, 7-11 rounds; results flat or rated (strength falling with the
+TPN, spread drawn per event, so the field forms the long thin scoregroups a
+real event has); teams sitting a round out, withdrawing for good, entering
+late in round 2 or 3, and whole matches forfeited, each at a rate drawn per
+event including zero. Odd fields, and so byes, in about 60% of rounds.
+Colour histories and float flags are whatever the played rounds produced.
+
+### The checker, and why
+
+See "Reviewed 2026-10-10" above: 3.6 is the one place engine and reference
+share an argument. `RoundChecker` takes the engine's round and, per bracket:
+
+1. least `{C8, C10}`: one matching whose cost is those two counts only;
+2. no least-cost pairing has an earlier top set: for each bottom of the
+   round, force it to be a top with every smaller team held to its role -
+   a least-cost pairing must not exist;
+3. no least-cost pairing has an earlier bottom sequence: for each top in
+   order, hold the earlier pairs and offer it only smaller bottoms - a
+   least-cost pairing must not exist.
+
+That is 3.6's definition asked one position at a time; nothing is packed.
+It costs a matching per team, so it takes brackets up to 64 teams - 95% of
+the brackets in the measured events; the ones it skips are the first two
+rounds' giant scoregroups, where almost every preference can be met and
+the engine's answer is usually the plain first legal pairing. It also
+checks, on every round at any size: every team placed once, a bye exactly
+when the field is odd and only for a team [C2] allows, no rematch.
+
+It shares the matcher with the reference (`Blossom`, used here with costs
+below 5,000) and nothing with the engine but the struct. It does not check
+3.5 or Article 4; those are the reference's.
+
+### How these were validated (4-10 teams, `LargeEvents` shapes)
+
+1,500 seeds, 8,606 rounds (2026-10-10, `TEAM_XL_NAIVE_SEEDS="1..1500"`):
+the exact reference equals the naive one on every round, reasons included;
+the checker accepts every naive round; and shown 11,080 OTHER legal
+pairings (two pairs of a bracket re-partnered) it refused every one. The
+old generator's cross-check was repeated the same day on main at v0.42.0:
+1,000 seeds, 4,154 rounds, no disagreement.
+
+The failure path was exercised end to end with `TEAM_XL_INJECT` (one
+engine round corrupted on purpose): reproducer written, failure counted,
+run carried on.
+
+### What each size range proves
+
+| teams | reference | what agreement proves |
+|---|---|---|
+| 4-10 | naive enumeration, no argument (3.55 billion rounds, 0 failures) | the engine computes the readings, by brute force |
+| 4-10 | exact = naive (2,000 + 1,000 + 1,500 seeds) | the exact reference computes the same definition, where that can be enumerated |
+| 11-80 | exact reference (2,000 seeds, 11,980 rounds) | bye, pairs, colours and reasons are the definition's - GIVEN section 2-3's proofs; 3.6 by a shared argument |
+| 100-200 | exact reference on every round, plus the checker | as 11-80 in realistic shapes; and 3.6 confirmed without the shared argument on brackets up to 64 teams |
+| 100-200, brackets over 64 | exact reference only | 3.6 rests on section 3's proof and on the two sides' different matchers |
+
+Results of the run: `RUN.md` in the worktree it runs from; to be copied
+here when it has finished.
+
 ## Running it
 
     # default suite: 300 seeds against the naive reference, 12 events of 11-80
@@ -237,6 +342,11 @@ instead of an enumeration with a budget. That engine change was made on
     # TEAM_PROOF_ENGINE_MAX_CANDIDATES=N (raise the engine's 3.6 budget, to
     # look past the known disagreement), TEAM_PROOF_NAIVE_SEEDS / _SIZES.
 
+    # 100-200 teams: scale mode never fails on a disagreement, it writes
+    # failures/seed_N_round_R.txt and prints a count
+    TEAM_XL_SEEDS="1..20" mix test test/ainalrami/team_proof_xl_test.exs --only whole_rounds_xl
+    py -3 -u tools/team_large_run.py --first 1 --last 14000 --workers 6   # the long run, resumable
+
 On this machine every `mix` run here used `ELIXIR_ERL_OPTIONS="+S 2:2"`.
 
 ## Limits - what is NOT proven
@@ -247,9 +357,13 @@ On this machine every `mix` run here used `ELIXIR_ERL_OPTIONS="+S 2:2"`.
   4.2.2; the default `matches_played` (played colours). Type B's [C9],
   game points as primary score and `use_secondary?: false` are not covered
   here (Type B is proven at bracket level in `team_pairing_test.exs`).
-- The histories come from one generator: 4 boards, 2/1/0 match points,
-  about one team in twelve sitting a round out from round 2, one match in
-  fifteen forfeited as a whole, 3-9 rounds.
+- The histories come from two generators (`Events`: 4 boards, one team in
+  twelve sitting out, one match in fifteen forfeited, 3-9 rounds;
+  `LargeEvents`: above). Neither plays requested half-point byes, a
+  secondary score other than game points, or accelerated rounds.
+- Events are advanced with the ENGINE's round. After a disagreement the
+  rest of that event is not played (the long run abandons the event and
+  starts the next seed).
 - The readings are shared with the naive reference and the engine by
   design; this proves the computation, not the reading.
 - The matcher is trusted by comparison (with the DP up to 16 vertices, and
