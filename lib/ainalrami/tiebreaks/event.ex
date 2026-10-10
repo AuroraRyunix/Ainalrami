@@ -180,8 +180,13 @@ defmodule Ainalrami.Tiebreaks.Event do
   rating, nil when zero. Rounds run to the longest game list in the file,
   or to `opts[:rounds]`.
 
+  A player's `:round_ratings` (`%{round => rating}`, an `XXO round-ratings` line) become
+  the participant's - the rating tie-breaks then count each opponent at the
+  rating of that round. No file written before the record existed has any.
+
   Options: `:rounds`, `:predetermined?` (default: whether the `192` type
-  code names a round robin).
+  code names a round robin) and `:cap_rounds` (`new/3`'s, default
+  `:played`).
   """
   def from_trf(%{players: players, tournament: tournament}, opts \\ []) do
     system = Map.get(tournament, :point_system) || Trf.default_point_system()
@@ -198,6 +203,7 @@ defmodule Ainalrami.Tiebreaks.Event do
           id: player.rank,
           tpn: player.rank,
           rating: rating(player),
+          round_ratings: Map.get(player, :round_ratings) || %{},
           rounds:
             player.games
             |> Enum.take(rounds)
@@ -212,7 +218,8 @@ defmodule Ainalrami.Tiebreaks.Event do
     new(participants, rounds,
       points: points,
       predetermined?: predetermined?,
-      total_rounds: tournament[:number_of_rounds]
+      total_rounds: tournament[:number_of_rounds],
+      cap_rounds: Keyword.get(opts, :cap_rounds, :played)
     )
   end
 

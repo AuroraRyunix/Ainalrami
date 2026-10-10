@@ -730,7 +730,8 @@ defmodule Ainalrami.TeamReplay do
     * `{:no_pairing, reason}` - the engine refused the round.
 
   `file` and `engine` are `[{white, black}]` plus `{bye, nil}`, sorted.
-  Options: `:initial_colour` (`:white` default), `:expected_rounds`.
+  Options: `:initial_colour` (`:white` default), `:expected_rounds`,
+  `:max_upfloater_sets` (`Ainalrami.TeamPairing.pair_round/2`'s).
   """
   def check_round(history, round, settings, opts \\ []) do
     {teams, absent} = state_before(history, round, settings)
@@ -745,6 +746,8 @@ defmodule Ainalrami.TeamReplay do
       round: round,
       expected_rounds: Keyword.get(opts, :expected_rounds)
     ]
+
+    engine_opts = engine_opts ++ Keyword.take(opts, [:max_upfloater_sets])
 
     file = Enum.sort(Enum.map(pairs, fn {w, b, _} -> {w, b} end) ++ bye_entry(bye))
 

@@ -64,6 +64,70 @@ with the reference on every one of them.
 
 ## [Unreleased]
 
+- [Feature] **The standalone CLI takes every pairing option the library
+  does.** OpenPairings reaches the engine through the library; a TRF and a
+  command line could say about half of what it says. Now, laid over the
+  file by `-p`, `-x` and `-c`: `--rounds=N`, `--initial-colour=`,
+  `--points=3,1,0` (or by name; totals re-added under it),
+  `--forbidden=1,4/2,9,12@3-5`, round-limited `--soft-pairs=2,9@3-5`,
+  `--bye-exclude=` (the plain `:bye_exclusions`), `--acceleration=baku`
+  with `--baku-group-a=N` (C.04.7 worked out here, in the new
+  `Ainalrami.Acceleration`, for a file without `XXA`),
+  `--virtual-points=1-10:1,1,0.5`, `--half-bye=` / `--zero-bye=` /
+  `--full-bye=` for the round being paired, `--cascade-order`; on `-x`,
+  `--judge=1-5,2-6,3-0`, `--bye-alternatives` and `--float-alternatives`
+  (the rest of `Ainalrami.Alternatives`); on a team Swiss, `--team-type=`,
+  `--score=`, `--secondary=`, `--initial-colour=`, `--rounds=`,
+  `--absent-teams=`, `--max-upfloater-sets=` and `--explain-limit=`. A
+  flag in a mode or on a kind of file that has no use for it is refused,
+  which several of these used to be spared: `-p --rounds=5` was accepted
+  and ignored. `docs/cli-parity.md` is the table, with the library
+  entries that stay library-only and why.
+- [Feature] **The organiser's options can live in the file: `XXO`.**
+  `XXO soft-pairs`, `soft-position`, `bye-want`, `bye-want-soft`,
+  `bye-avoid`, `bye-avoid-soft` and `bye-exclude`, each with the command
+  line's own spelling, rounds included; `Trf.parse/1` surfaces them on the
+  tournament and `Trf.serialize/2` writes them, in either dialect.
+  `Ainalrami.PairingInput` turns them into engine options. `-p` and `-x`
+  pair with them and print the same "not a pure FIDE pairing" warning the
+  flags get; `-c` replays each round with the settings that applied to it
+  and says that this is not a pure FIDE check. The README used to say no
+  TRF line carries a non-FIDE option. It was true and it meant a round
+  paired with one could not be replayed by anything, including us. One
+  code with keywords rather than a code per option, because `XXS` - the
+  obvious name for soft pairs - is JaVaFo's point system. bbpPairings
+  6.0.0 and JaVaFo both skip `XXO` lines: ten mid-event files each, the
+  same boards with and without them.
+- [Feature] **Standings from the command line: `-s`.** `ainalrami
+  event.trf -s --tie-breaks=BH,SB` prints `Tiebreaks.rank/3`'s answer,
+  rank, id and every value; a team file gets the team tie-breaks.
+  `--tie-breaks=` and `--cap-rounds=played|announced` also work on `-c`.
+  `XXO round-ratings 12 2100 2150 -` gives a player's rating round by
+  round, which is how the per-round rating tie-breaks of 0.42.0 reach a
+  file: that entry ended "TRF has one rating per player, so the CLI never
+  fills it", and now it does.
+- [Verified] **The CLI's answer is the library's, option by option.** 200
+  generated tournaments of 5-60 players, each cut back to before one of
+  its rounds; every option paired through the library and through
+  `ainalrami -p`, boards compared in order; all 131 compatible pairs of
+  options on a slice each; the `XXO` lines written, read back and paired in
+  both dialects; whole events played under them and replayed by `-c`
+  (which then fails the same file with the lines removed, as it should);
+  teams against `TeamPairing.pair_round/2`, standings against
+  `Tiebreaks.rank/3`, Baku against the generator's own `XXA` lines. The
+  library side builds its options by hand rather than with the helpers the
+  CLI uses, so one mistake cannot agree with itself. 0 differences.
+  `AINALRAMI_CLI_PARITY_SEEDS` sizes it.
+- [Verified] **Absent, the options change nothing.** `tools/cli_golden.exs`
+  records everything the CLI prints - stdout, stderr, exit code, output
+  file - for `-p`, `-x`, `-c` and `-g` on generated Swiss, team and
+  round-robin events with only the flags the last release had: 2,747 runs,
+  5.8 MB, byte for byte the same on this branch and on 0.42.0. The first
+  comparison was not: `-x --force=` on a player who is not in the round
+  used to print the explanation and then fail, and for a while printed
+  nothing and then failed. Nobody would have asked for the old behaviour,
+  but nobody asked for it to change either.
+
 ## [0.42.0] - 2026-10-09
 
 - [Feature] **Rating tie-breaks can use the rating each opponent had in

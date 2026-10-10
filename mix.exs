@@ -25,6 +25,7 @@ defmodule Ainalrami.MixProject do
           "README.md",
           "docs/architecture.md",
           "docs/validation.md",
+          "docs/cli-parity.md",
           "docs/conformance-c0403-2026.md",
           "docs/fide-criteria.md",
           "docs/engineering-log.md"

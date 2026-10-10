@@ -52,7 +52,8 @@ defmodule Ainalrami.TeamCLI do
   @doc """
   Pairs the next round. `system` is `TeamReplay.system/1`'s `{:team, _}` or
   `{:team_round_robin, _}`. Options: `:explain` (record the engine's
-  reasons), `:boards`. Returns `{:ok, round}` or `{:error, message}`.
+  reasons), `:boards`, and for a Swiss `:max_upfloater_sets` and
+  `:explain_limit`, passed to `Ainalrami.TeamPairing.pair_round/2`. Returns `{:ok, round}` or `{:error, message}`.
   """
   def pair(parsed, system, opts \\ []) do
     history = TeamReplay.history(parsed)
@@ -80,6 +81,10 @@ defmodule Ainalrami.TeamCLI do
       expected_rounds: expected,
       explain: Keyword.get(opts, :explain, false)
     ]
+
+    # `Ainalrami.TeamPairing`'s own budget and explanation bound, when the
+    # caller gives them; otherwise the list above is the whole of it.
+    engine_opts = engine_opts ++ Keyword.take(opts, [:max_upfloater_sets, :explain_limit])
 
     cond do
       length(next.field) < 2 ->
