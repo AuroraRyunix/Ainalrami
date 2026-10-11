@@ -322,11 +322,31 @@ run carried on.
 | 4-10 | naive enumeration, no argument (3.55 billion rounds, 0 failures) | the engine computes the readings, by brute force |
 | 4-10 | exact = naive (2,000 + 1,000 + 1,500 seeds) | the exact reference computes the same definition, where that can be enumerated |
 | 11-80 | exact reference (2,000 seeds, 11,980 rounds) | bye, pairs, colours and reasons are the definition's - GIVEN section 2-3's proofs; 3.6 by a shared argument |
-| 100-200 | exact reference on every round, plus the checker | as 11-80 in realistic shapes; and 3.6 confirmed without the shared argument on brackets up to 64 teams |
+| 100-200 | exact reference on every round (9,000 events, 81,101 rounds, 0 disagreements), plus the checker | as 11-80 in realistic shapes; and 3.6 confirmed without the shared argument on brackets up to 64 teams |
 | 100-200, brackets over 64 | exact reference only | 3.6 rests on section 3's proof and on the two sides' different matchers |
 
-Results of the run: `RUN.md` in the worktree it runs from; to be copied
-here when it has finished.
+### Results of the run (2026-10-10 21:37 to 2026-10-11 12:26, this PC)
+
+Ainalrami v0.42.0 plus the proof code, seeds 1..9000, 6 workers of one
+scheduler each.
+
+| | |
+|---|---|
+| events (seeds) | 9,000 |
+| rounds compared with the exact reference | 81,101 |
+| disagreements | **0** |
+| brackets through the 3.6 checker | 621,900, all accepted |
+| brackets skipped by the checker (over 64 teams) | 20,415 (3.2%) |
+| cost | about 36 core-seconds per event |
+
+Ten chunks of six seeds were interrupted when the process that launched the
+run was stopped on the first evening; the runner recorded them as errors,
+they were queued again on restart and are among the 9,000. No event was
+abandoned on a disagreement, because there was none.
+
+This is a sample, not a census: about eighty thousand rounds, where the
+4-10 team runs have billions. The exact reference is the bottleneck at this
+size, not the engine.
 
 ## Running it
 
