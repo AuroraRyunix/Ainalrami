@@ -64,6 +64,8 @@ with the reference on every one of them.
 
 ## [Unreleased]
 
+## [0.43.0] - 2026-10-11
+
 - [Feature] **An alternative now comes with its boards.** "Why did he
   float and not me" was answered with a verdict and ONE board - the
   candidate's new opponent - though the forced search behind it had paired
