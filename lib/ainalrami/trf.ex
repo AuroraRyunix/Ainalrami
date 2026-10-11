@@ -190,6 +190,43 @@ defmodule Ainalrami.Trf do
 
   `Ainalrami.EventFormat` and `Ainalrami.RoundRobin` pair by them.
 
+  ## The organiser's records
+
+  One more code, also this engine's own and also read and written in
+  either dialect: `XXO keyword ...`, for the options OpenPairings pairs and
+  ranks with that no TRF record carries. The keywords are the command
+  line's own names. All but the last carry options that are NOT FIDE's - a
+  round they change is not a Dutch-system round, and whoever pairs from
+  them says so:
+
+    * `XXO soft-pairs a b [c ...] [@ROUND | @FIRST-LAST]` - a soft group:
+      players to keep apart where the criteria allow it, for every round or
+      the rounds named. Surfaced as `tournament[:soft_pairs]`, in the shape
+      `Ainalrami.Pairing`'s `:soft_pairs` takes.
+    * `XXO soft-position strong|weak` - `:soft_position`
+      (`tournament[:soft_position]`).
+    * `XXO bye-want|bye-want-soft|bye-avoid-soft|bye-avoid rank[@ROUNDS] ...`
+      - the four bye preferences (`tournament[:bye_preferences]`, as
+      `Ainalrami.ByePreference` takes them). `ROUNDS` is `3`, `3-5` or
+      several joined by `+`.
+    * `XXO bye-exclude rank[@ROUNDS] ...` - the plain bye exclusion
+      (`tournament[:bye_exclusions]`: a rank, or `{rank, rounds}`).
+    * `XXO round-ratings rank rating rating ...` - the rating the player
+      held in each round, `-` or `0` for none, for an event whose
+      regulations count the rating tie-breaks that way (C.07 Article 10's
+      note). Surfaced as the player's `:round_ratings`,
+      `%{round => rating}`.
+
+  One code, not one per option, because each new `XX` code is a chance of
+  meaning something else to another program: `XXS` would have been the
+  obvious name for soft pairs and is JaVaFo's point system.
+
+  `Ainalrami.PairingInput` has the spelling and turns the first four into
+  engine options. A malformed line, a keyword `XXO` does not have and a
+  rank the file does not have raise `ValidationError`. A file with no `XXO`
+  line parses to exactly what it parsed to before the code existed: the
+  keys are absent, not empty.
+
   Anything else beginning `XX` still falls through `parse_header_line/3`'s
   `nil -> acc` clause and is ignored. That silent-discard behaviour is
   correct for a genuinely unknown code and was WRONG for these two: an
@@ -1150,11 +1187,69 @@ defmodule Ainalrami.Trf do
 
     acceleration ++
       numeric_forbidden_lines(t[:forbidden_pairs], max(rounds, max_round + 1)) ++
-      format_lines(t)
+      format_lines(t) ++ organiser_lines(t, players)
   end
 
   defp extension_lines(t, players, _max_round, _numeric?, _dialect) do
-    acceleration_lines(players) ++ forbidden_pair_lines(t[:forbidden_pairs]) ++ format_lines(t)
+    acceleration_lines(players) ++
+      forbidden_pair_lines(t[:forbidden_pairs]) ++ format_lines(t) ++ organiser_lines(t, players)
+  end
+
+  # The `XXO` lines, this engine's own (see the moduledoc, "The
+  # organiser's records"). Nothing is written for a tournament that has
+  # none of them, which is every tournament written before they existed.
+  defp organiser_lines(t, players) do
+    soft =
+      for group <- t[:soft_pairs] || [] do
+        "XXO soft-pairs " <> Ainalrami.PairingInput.format_group(group)
+      end
+
+    position =
+      case t[:soft_position] do
+        :weak -> ["XXO soft-position weak"]
+        :strong when soft != [] -> ["XXO soft-position strong"]
+        _ -> []
+      end
+
+    excluded =
+      case t[:bye_exclusions] || [] do
+        [] ->
+          []
+
+        entries ->
+          [
+            "XXO bye-exclude " <>
+              Enum.map_join(entries, " ", fn
+                {rank, rounds} -> Ainalrami.PairingInput.format_ranked(rank, rounds)
+                rank -> Ainalrami.PairingInput.format_ranked(rank, :all)
+              end)
+          ]
+      end
+
+    preferences =
+      for {word, setting} <- Ainalrami.PairingInput.bye_kinds(),
+          entries = Enum.filter(t[:bye_preferences] || [], &(elem(&1, 1) == setting)),
+          entries != [] do
+        "XXO bye-#{word} " <>
+          Enum.map_join(entries, " ", fn
+            {rank, _setting} -> Ainalrami.PairingInput.format_ranked(rank, :all)
+            {rank, _setting, :all} -> Ainalrami.PairingInput.format_ranked(rank, :all)
+            {rank, _setting, rounds} -> Ainalrami.PairingInput.format_ranked(rank, rounds)
+          end)
+      end
+
+    ratings =
+      for player <- players,
+          by_round = player[:round_ratings],
+          is_map(by_round),
+          by_round != %{} do
+        last = by_round |> Map.keys() |> Enum.max()
+
+        "XXO round-ratings #{player[:rank]} " <>
+          Enum.map_join(1..last, " ", &(Map.get(by_round, &1) || "-"))
+      end
+
+    soft ++ position ++ excluded ++ preferences ++ ratings
   end
 
   # `XXM` and `XXG`, this engine's own (see the moduledoc). Written in both
@@ -2232,6 +2327,9 @@ defmodule Ainalrami.Trf do
           "XXG" ->
             parse_xxg(acc, line)
 
+          "XXO" ->
+            parse_xxo(acc, line)
+
           "250" ->
             parse_250(acc, line)
 
@@ -2275,6 +2373,8 @@ defmodule Ainalrami.Trf do
 
     result
     |> check_pairing_groups!()
+    |> check_organiser_records!()
+    |> attach_round_ratings()
     |> attach_accelerations()
     |> attach_byes()
   end
@@ -2678,6 +2778,195 @@ defmodule Ainalrami.Trf do
   end
 
   defp check_pairing_groups!(result), do: result
+
+  # `XXO keyword ...` - this engine's own extension (see the moduledoc, "The
+  # organiser's records"): the options OpenPairings pairs and ranks with
+  # that no TRF record carries, under one code and the command line's own
+  # names. One code rather than one per option because every new `XX` code
+  # is a chance of meaning something else to another program - JaVaFo's
+  # `XXS` is its point system, which is why soft pairs are not `XXS`.
+  #
+  # Refused when malformed, as `XXP` is: a wish read wrong is a round paired
+  # by rules nobody asked for.
+  defp parse_xxo(acc, line) do
+    rest = line |> String.slice(3..-1//1) |> String.trim()
+
+    case String.split(rest, [" ", "\t"], parts: 2, trim: true) do
+      ["soft-pairs", text] ->
+        case Ainalrami.PairingInput.parse_group(text) do
+          {:ok, group} ->
+            update_in(acc.tournament[:soft_pairs], &((&1 || []) ++ [group]))
+
+          :error ->
+            raise ValidationError,
+              message:
+                "XXO soft-pairs takes two or more starting ranks, optionally @ROUND or " <>
+                  "@FIRST-LAST: #{line}"
+        end
+
+      ["soft-position", word] ->
+        case String.trim(word) do
+          "strong" ->
+            put_in(acc.tournament[:soft_position], :strong)
+
+          "weak" ->
+            put_in(acc.tournament[:soft_position], :weak)
+
+          _ ->
+            raise ValidationError, message: "XXO soft-position takes strong or weak: #{line}"
+        end
+
+      ["round-ratings", text] ->
+        parse_xxo_ratings(acc, text, line)
+
+      ["bye-" <> kind = keyword, text] ->
+        kinds = Map.new(Ainalrami.PairingInput.bye_kinds())
+
+        unless kind == "exclude" or Map.has_key?(kinds, kind) do
+          raise ValidationError, message: "XXO does not have #{inspect(keyword)}: #{line}"
+        end
+
+        entries =
+          text
+          |> String.split([" ", "\t"], trim: true)
+          |> Enum.map(fn token ->
+            case Ainalrami.PairingInput.parse_ranked(token) do
+              {:ok, rank, rounds} ->
+                {rank, rounds}
+
+              :error ->
+                raise ValidationError,
+                  message:
+                    "XXO #{keyword} takes starting ranks, each optionally with @ROUNDS " <>
+                      "(e.g. 12@3-4+7): #{line}"
+            end
+          end)
+
+        if kind == "exclude" do
+          entries =
+            Enum.map(entries, fn
+              {rank, :all} -> rank
+              entry -> entry
+            end)
+
+          update_in(acc.tournament[:bye_exclusions], &((&1 || []) ++ entries))
+        else
+          setting = Map.fetch!(kinds, kind)
+
+          entries =
+            Enum.map(entries, fn
+              {rank, :all} -> {rank, setting}
+              {rank, rounds} -> {rank, setting, rounds}
+            end)
+
+          update_in(acc.tournament[:bye_preferences], &((&1 || []) ++ entries))
+        end
+
+      [keyword | _] ->
+        raise ValidationError,
+          message:
+            "XXO does not have #{inspect(keyword)} (soft-pairs, soft-position, bye-want, " <>
+              "bye-want-soft, bye-avoid, bye-avoid-soft, bye-exclude, round-ratings), or " <>
+              "it has nothing after it: #{line}"
+
+      [] ->
+        raise ValidationError, message: "XXO line says nothing: #{line}"
+    end
+  end
+
+  # `XXO round-ratings rank rating rating ...`: the rating a player held in
+  # each round, for the rating tie-breaks of an event whose regulations
+  # count them that way (C.07 Article 10's note, VCL4THP Q214). `-` or `0`
+  # is a round with nothing to say: the 001 rating counts.
+  defp parse_xxo_ratings(acc, text, line) do
+    bad = fn ->
+      raise ValidationError,
+        message:
+          "XXO round-ratings takes a starting rank, then one rating per round " <>
+            "(- or 0 for none): #{line}"
+    end
+
+    case String.split(text, [" ", "\t"], trim: true) do
+      [rank | [_ | _] = ratings] ->
+        rank = strict_int(rank) || bad.()
+
+        by_round =
+          ratings
+          |> Enum.with_index(1)
+          |> Enum.flat_map(fn
+            {"-", _round} ->
+              []
+
+            {token, round} ->
+              case strict_int(token) do
+                0 -> []
+                n when is_integer(n) and n > 0 -> [{round, n}]
+                _ -> bad.()
+              end
+          end)
+          |> Map.new()
+
+        if Map.has_key?(Map.get(acc, :round_ratings, %{}), rank) do
+          raise ValidationError, message: "two XXO round-ratings lines for starting rank #{rank}"
+        end
+
+        Map.update(acc, :round_ratings, %{rank => by_round}, &Map.put(&1, rank, by_round))
+
+      _ ->
+        bad.()
+    end
+  end
+
+  # Every rank an `XXO` line names has to be a rank the
+  # file has - checked once every line is read, as `XXG` is.
+  defp check_organiser_records!(result) do
+    t = result.tournament
+
+    named =
+      Enum.flat_map(t[:soft_pairs] || [], fn
+        {ids, _first, _last} -> Enum.map(ids, &{"XXO", &1})
+        ids -> Enum.map(ids, &{"XXO", &1})
+      end) ++
+        Enum.map(t[:bye_exclusions] || [], fn
+          {rank, _rounds} -> {"XXO", rank}
+          rank -> {"XXO", rank}
+        end) ++
+        Enum.map(t[:bye_preferences] || [], &{"XXO", elem(&1, 0)}) ++
+        Enum.map(Map.keys(Map.get(result, :round_ratings, %{})), &{"XXO", &1})
+
+    if named == [] do
+      result
+    else
+      ranks = MapSet.new(result.players, & &1.rank)
+
+      case Enum.find(named, fn {_code, rank} -> not MapSet.member?(ranks, rank) end) do
+        nil ->
+          result
+
+        {code, rank} ->
+          raise ValidationError,
+            message: "#{code} names #{rank}, which is not a starting rank in this file"
+      end
+    end
+  end
+
+  defp attach_round_ratings(result) do
+    case Map.pop(result, :round_ratings) do
+      {nil, result} ->
+        result
+
+      {by_rank, result} ->
+        players =
+          Enum.map(result.players, fn player ->
+            case Map.fetch(by_rank, player[:rank]) do
+              {:ok, ratings} -> Map.put(player, :round_ratings, ratings)
+              :error -> player
+            end
+          end)
+
+        %{result | players: players}
+    end
+  end
 
   # `250` - bbpPairings' ROUND-LIMITED acceleration, the fixed-column
   # sibling of `XXA`. One line hands the same number of virtual points to a

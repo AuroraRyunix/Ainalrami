@@ -113,7 +113,9 @@ defmodule Ainalrami.ByePreference do
 
   A round these settings MOVED is not a Dutch-system round in the
   homologation sense, and a FIDE checker replaying the file will not
-  reproduce it. No TRF line records them.
+  reproduce it. No FIDE record carries them; this engine's own `XXO` lines
+  do (`Ainalrami.Trf`, "The organiser's records"), which no other program
+  reads.
   """
 
   alias Ainalrami.Pairing

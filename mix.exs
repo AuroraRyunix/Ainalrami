@@ -1,7 +1,7 @@
 defmodule Ainalrami.MixProject do
   use Mix.Project
 
-  @version "0.42.0"
+  @version "0.43.0"
   @source_url "https://github.com/AuroraRyunix/Ainalrami"
 
   def project do
@@ -25,6 +25,7 @@ defmodule Ainalrami.MixProject do
           "README.md",
           "docs/architecture.md",
           "docs/validation.md",
+          "docs/cli-parity.md",
           "docs/conformance-c0403-2026.md",
           "docs/fide-criteria.md",
           "docs/engineering-log.md"
