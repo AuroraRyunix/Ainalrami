@@ -136,7 +136,7 @@ defmodule Ainalrami.CLI do
   # nothing says so.
   @bare_flags ~w(-p -g -c -x --explain -q --quiet -d --debug -h --help --version --lineups
                  --roundrobin --match-format -s --standings --cascade-order
-                 --bye-alternatives --float-alternatives)
+                 --bye-alternatives --float-alternatives --alternative-pairs)
   @valued_flags ~w(seed players rounds forfeit-pct bye-pct forbidden-pct
                    acceleration initial-colour initial-color force absent
                    ratings rating-range rating-top rating-step rating-sigma
@@ -648,6 +648,7 @@ defmodule Ainalrami.CLI do
     "judge" => [:explain],
     "bye-alternatives" => [:explain],
     "float-alternatives" => [:explain],
+    "alternative-pairs" => [:explain],
     "explain-limit" => [:explain],
     "force" => [:explain],
     "absent" => [:explain],
@@ -677,7 +678,7 @@ defmodule Ainalrami.CLI do
 
   # Flags a file of the wrong kind cannot use.
   @individual_only ~w(forbidden bye-exclude virtual-points baku-group-a acceleration judge
-                      bye-alternatives float-alternatives cascade-order)
+                      bye-alternatives float-alternatives alternative-pairs cascade-order)
   @team_swiss_only ~w(team-type score secondary max-upfloater-sets explain-limit)
   @bye_flags ~w(half-bye zero-bye full-bye absent-teams)
 
@@ -1250,7 +1251,8 @@ defmodule Ainalrami.CLI do
           "\nBye alternatives\n  the round has no pairing-allocated bye\n"
 
         %{holder: holder} = result ->
-          "\nBye alternatives (the bye went to #{holder})\n" <> render_candidates(result)
+          "\nBye alternatives (the bye went to #{holder})\n" <>
+            render_candidates(result, "--alternative-pairs" in flags)
       end
     else
       ""
@@ -1268,7 +1270,8 @@ defmodule Ainalrami.CLI do
         entries ->
           Enum.map_join(entries, "", fn entry ->
             "\nFloat alternatives (#{entry.floater} floated out of the " <>
-              "#{format_score(entry.group)} bracket)\n" <> render_candidates(entry)
+              "#{format_score(entry.group)} bracket)\n" <>
+              render_candidates(entry, "--alternative-pairs" in flags)
           end)
       end
     else
@@ -1276,12 +1279,16 @@ defmodule Ainalrami.CLI do
     end
   end
 
-  defp render_candidates(%{skipped: :too_many, count: count}),
+  # `whole?` is `--alternative-pairs`: under each candidate that has a
+  # round to show, that round's boards and the played ones they replace.
+  # Without the flag the lines are what they were before the engine kept
+  # the round, to the byte.
+  defp render_candidates(%{skipped: :too_many, count: count}, _whole?),
     do: "  not worked out: #{count} candidates\n"
 
-  defp render_candidates(%{candidates: []}), do: "  nobody else in the bracket\n"
+  defp render_candidates(%{candidates: []}, _whole?), do: "  nobody else in the bracket\n"
 
-  defp render_candidates(%{candidates: candidates}) do
+  defp render_candidates(%{candidates: candidates}, whole?) do
     Enum.map_join(candidates, "", fn candidate ->
       words =
         case candidate do
@@ -1310,9 +1317,34 @@ defmodule Ainalrami.CLI do
             to_string(outcome)
         end
 
-      "  #{candidate.rank}: #{words}\n"
+      "  #{candidate.rank}: #{words}\n" <>
+        if(whole?, do: render_whole(Map.get(candidate, :alternative)), else: "")
     end)
   end
+
+  defp render_whole(nil), do: ""
+
+  defp render_whole(%{skipped: :too_many_boards, count: count}),
+    do: "     alternative: not written out, #{count} boards differ\n"
+
+  defp render_whole(%{pairs: pairs, played: played, unchanged: unchanged} = whole) do
+    step =
+      case whole.step do
+        :transposition -> "; another order of S2"
+        :exchange -> "; an exchange between S1 and S2"
+        :floater -> "; a different player leaves the bracket"
+        nil -> ""
+      end
+
+    "     alternative: #{render_boards(pairs)}\n" <>
+      "     played:      #{render_boards(played)}\n" <>
+      "     #{unchanged} other board#{if unchanged == 1, do: "", else: "s"} unchanged#{step}\n"
+  end
+
+  defp render_boards([]), do: "-"
+
+  defp render_boards(pairs),
+    do: Enum.map_join(pairs, ", ", fn {w, b} -> if b, do: "#{w}-#{b}", else: "#{w}-bye" end)
 
   # ---- -s: the standings ----------------------------------------------------
 
@@ -1730,7 +1762,10 @@ defmodule Ainalrami.CLI do
         0
 
       kind ->
-        case given(flags, ~w(force absent judge bye-alternatives float-alternatives)) do
+        case given(
+               flags,
+               ~w(force absent judge bye-alternatives float-alternatives alternative-pairs)
+             ) do
           nil -> explain_format(kind, pairs, opts, round)
           flag -> usage_error("--#{flag} is for a single pairing pool, not #{format_name(kind)}")
         end
@@ -3290,6 +3325,8 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
       --bye-alternatives    With -x: had each other player of the bye's
                    bracket taken the bye instead
       --float-alternatives  With -x: had each other player floated instead
+      --alternative-pairs   With either: under each alternative, its boards
+                   that differ from the played round, and the played ones
 
     The tournament, over what the file says (-p, -x, -c):
       --rounds=N                the round count (142/XXR)

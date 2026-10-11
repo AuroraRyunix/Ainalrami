@@ -50,6 +50,7 @@ unless said otherwise).
 | `Alternatives.judge/4` (and `violations/1`) | judging an arbiter's proposal | `-x --judge=1-5,2-6,3-0` **(new)** | - | |
 | `Alternatives.bye_alternatives/3` | "why not me" | `-x --bye-alternatives` **(new)** | - | |
 | `Alternatives.float_alternatives/3` | "why did I float" | `-x --float-alternatives` **(new)** | - | |
+| each candidate's `alternative` (0.43.0) | both versions of the round, side by side | `-x --alternative-pairs`, with either of the two above | - | opt-in: without it the listings are byte for byte what they were |
 
 ### Deliberately not on the command line
 
@@ -61,6 +62,7 @@ unless said otherwise).
 | `Pairing.bye_eligibility/2`, `bye_disqualifications/2` | answered inside `-x --bye-alternatives` (each candidate C2 rules out is named with the reason); no listing of its own. |
 | `Alternatives.float_alternative/5` | one entry of `--float-alternatives`. |
 | `Alternatives` `max_candidates:` | the cap on how many candidates are searched; the CLI keeps the default and prints "not worked out" past it. |
+| `Alternatives` `max_alternative_boards:` | the cap on how many boards of one alternative are written out (40); the CLI keeps the default and prints "not written out, N boards differ" past it. |
 
 ## Team Swiss (C.04.6) - `-p`, `-x`, `-c` on a team file
 

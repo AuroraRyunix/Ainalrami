@@ -163,6 +163,7 @@ defmodule Ainalrami.CLIParityErrorsTest do
           {["-p", "--judge=1-2"], "--judge is for -x, not -p"},
           {["-p", "--bye-alternatives"], "--bye-alternatives is for -x, not -p"},
           {["-p", "--float-alternatives"], "--float-alternatives is for -x, not -p"},
+          {["-p", "--alternative-pairs"], "--alternative-pairs is for -x, not -p"},
           {["-p", "--cap-rounds=played"], "--cap-rounds is for -c, -s, not -p"},
           {["-p", "--explain-limit=5"], "--explain-limit is for -x, not -p"},
           {["-s", "--forbidden=1,2"], "--forbidden is for -p, -x, -c, not -s"},
@@ -391,7 +392,8 @@ defmodule Ainalrami.CLIParityErrorsTest do
       for word <- ~w(--rounds=N --initial-colour=white|black --points=3,1,0 --forbidden=
                      --acceleration=baku --baku-group-a=N --virtual-points= --half-bye=
                      --zero-bye= --full-bye= --cascade-order --bye-exclude=RANKS --judge=
-                     --bye-alternatives --float-alternatives --absent-teams= --team-type=a|b|none
+                     --bye-alternatives --float-alternatives --alternative-pairs
+                     --absent-teams= --team-type=a|b|none
                      --max-upfloater-sets=N --explain-limit=N --tie-breaks=BH,SB
                      --cap-rounds=played|announced XXO) do
         assert out =~ word, word

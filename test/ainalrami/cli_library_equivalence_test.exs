@@ -1479,8 +1479,36 @@ defmodule Ainalrami.CLILibraryEquivalenceTest do
               end
           end
 
-          for entry <- Ainalrami.Alternatives.float_alternatives(pos.players, pairs, opts) do
+          floats = Ainalrami.Alternatives.float_alternatives(pos.players, pairs, opts)
+
+          for entry <- floats do
             assert out =~ "Float alternatives (#{entry.floater} floated out of"
+          end
+
+          # --alternative-pairs adds lines under the candidates and changes
+          # none: without the flag the listing is the old one to the byte,
+          # which is that output with the added lines taken out again.
+          {whole, 0} =
+            cli([
+              pos.path,
+              "-x",
+              "-q",
+              "--judge=#{judged}",
+              "--bye-alternatives",
+              "--float-alternatives",
+              "--alternative-pairs"
+            ])
+
+          added = ~r/^     (alternative: |played:      |\d+ other boards? unchanged).*\r?\n/m
+          assert Regex.replace(added, whole, "") == out
+
+          for entry <- floats,
+              %{alternative: %{pairs: boards}} <- Map.get(entry, :candidates, []),
+              boards != [] do
+            line =
+              Enum.map_join(boards, ", ", fn {w, b} -> "#{w}-#{b || "bye"}" end)
+
+            assert whole =~ "     alternative: #{line}\n"
           end
 
           # A round with two boards' Blacks swapped is another round, and

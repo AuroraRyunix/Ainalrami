@@ -64,6 +64,40 @@ with the reference on every one of them.
 
 ## [Unreleased]
 
+- [Feature] **An alternative now comes with its boards.** "Why did he
+  float and not me" was answered with a verdict and ONE board - the
+  candidate's new opponent - though the forced search behind it had paired
+  the whole round and then dropped it. Every candidate
+  `Alternatives.float_alternatives/3`, `float_alternative/5` and
+  `bye_alternatives/3` searched and found a round for now carries
+  `alternative`: `pairs` (its boards the played round lacks, colours
+  included, its own board order), `played` (the played boards it lacks),
+  `unchanged` (how many boards are the same), `brackets` (each bracket it
+  pairs or empties differently, complete: `group`, `pairs`, `floats`),
+  `bye` (who has the bye in it) and `step`. `step` is for a tie, and only
+  when the brackets leave no doubt: `:transposition` when the alternative
+  still pairs S1 against S2 in the first bracket where the rounds differ,
+  `:exchange` when it pairs two of the same half or sends an S1 player
+  down, `:floater` in a heterogeneous bracket when somebody else leaves it;
+  `nil` means not known, not "none". An alternative that differs in more
+  than 40 boards is not written out (`%{skipped: :too_many_boards,
+  count: n}`; `max_alternative_boards: n | :all` moves the cap) - nobody
+  reads forty boards to find out why they floated. `:impossible` and
+  `:ineligible` candidates have no round and no key. Every other key of a
+  candidate is what it was, and no pairing code was touched: the suite's
+  golden and corpus tests pass unchanged. Cost: two list differences per
+  candidate on a round the search already had. A 200-player field after
+  five rounds, both questions, default caps: 29 ms before, 29 ms after;
+  with every candidate searched (152 forced pairings) 1.25 s before, 1.17 s
+  after, which is noise in both directions. The stored answer grows from
+  25 kB to 98 kB in that uncapped case.
+- [Feature] **`-x --alternative-pairs`.** With `--float-alternatives` or
+  `--bye-alternatives`: under each candidate, the alternative's differing
+  boards, the played ones they replace, how many boards are unchanged and
+  the step when known. Opt-in - without it the two listings are byte for
+  byte what 0.42.0 printed, and a test takes the added lines out again to
+  prove it.
+
 - [Feature] **The standalone CLI takes every pairing option the library
   does.** OpenPairings reaches the engine through the library; a TRF and a
   command line could say about half of what it says. Now, laid over the

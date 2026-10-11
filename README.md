@@ -437,6 +437,7 @@ to the library's for each one. A flag is laid over what the file says:
 | `--cascade-order` | `cascade_order: true` | (`-p`) boards in the order the brackets were paired instead of C.04.2 3.6's |
 | `--judge=1-5,2-6,3-0` | `Alternatives.judge/4` | (`-x`) a whole other round, 0 for the bye, judged against the one paired: illegal pairs, then the first criterion that separates them |
 | `--bye-alternatives` `--float-alternatives` | `Alternatives.bye_alternatives/3`, `float_alternatives/3` | (`-x`) had each other player of the bracket taken the bye, or floated, instead |
+| `--alternative-pairs` | each candidate's `alternative` | (`-x`, with either of the two above) under each alternative, its boards that differ from the played round, the played boards they replace, how many boards are the same, and - for a tie, when the brackets leave no doubt - whether it is another order of S2 or an exchange between S1 and S2. Without it the two listings print what they always printed |
 
 A flag in a mode that has no use for it is refused, not ignored
 (`--cascade-order is for -p, not -c`), and so is one for another kind of
