@@ -100,7 +100,8 @@ option, and `escript ainalrami --help` for the short list.
 
 Each release on GitHub has the ready-built `ainalrami` file attached,
 together with a `SHA256SUMS` file. Running that file also needs only
-Erlang/OTP.
+Erlang/OTP. It is built with OTP 29, so run it with OTP 29 or newer; an
+older Erlang will refuse it, and building it yourself is then the way.
 
 ## Validation at a glance
 
