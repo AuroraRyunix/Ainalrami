@@ -27,6 +27,81 @@ the engine now conforms. Both are documented rather than hidden - see
 
 ---
 
+## Running it from the command line
+
+To build the tool you need Erlang/OTP and Elixir. The project requires
+Elixir `~> 1.17` (`mix.exs`); CI builds and tests on Elixir 1.20 with
+OTP 29.0 (`.github/workflows/elixir.yml`). To run the built file you need
+only Erlang/OTP; Elixir is not needed.
+
+Build it from the project folder:
+
+```bash
+mix deps.get
+mix escript.build
+```
+
+The project has no dependencies, so `mix deps.get` only confirms that.
+`mix escript.build` leaves one file, `ainalrami`, in the project folder.
+It is not committed to git.
+
+On Windows, run it with Erlang's `escript`:
+
+```bash
+escript ainalrami input.trf -p
+```
+
+On Linux and macOS it is run as `./ainalrami input.trf -p`, which is the
+standard escript behaviour. The examples below were run on Windows with
+Elixir 1.20.3 on OTP 27, and the `escript` form was also checked with
+Elixir removed from the `PATH`.
+
+Pair the next round of a tournament file. The example file is one of the
+repository's fixtures: six players, three rounds played, round 4 to pair.
+`-q` leaves out the trace of each step:
+
+```bash
+escript ainalrami test/fixtures/forbidden_pairs/only-legal-pairing.trf -p -q
+```
+
+```
+3
+4 2
+5 6
+1 3
+```
+
+The first line is the number of boards, then one line per board: White's
+starting number, then Black's. Leave out `-q` to see the trace first.
+Give a file name after `-p` to write the boards there instead of to the
+screen: `ainalrami input.trf -p round4.trf`.
+
+Check a file against the engine. `-c` replays each round recorded in the
+file and reports whether the engine would have paired it the same way:
+
+```bash
+escript ainalrami test/fixtures/forbidden_pairs/only-legal-pairing.trf -c
+```
+
+```
+==> Checking 3 round(s)
+    round 1: matches
+    round 2: matches
+    round 3: matches
+==> 3/3 round(s) match this engine's own pairing
+    standings: no tie-break list in the file (202/212) - not checked
+```
+
+The exit code is 0 when every round matches and 1 when one differs. See
+[Command-line interface](#command-line-interface) for every mode and
+option, and `escript ainalrami --help` for the short list.
+
+`mix run` is not how the tool is used. `mix help` lists the Mix tasks.
+
+Each release on GitHub has the ready-built `ainalrami` file attached,
+together with a `SHA256SUMS` file. Running that file also needs only
+Erlang/OTP.
+
 ## Validation at a glance
 
 | area | compared against | size | result | detail |
@@ -225,8 +300,8 @@ how the engine got here from 90 s and 498 s:
 git clone https://github.com/AuroraRyunix/Ainalrami
 ```
 
-Then `mix deps.get && mix escript.build`, which produces a standalone
-`ainalrami` executable. Requires Elixir `~> 1.17`.
+Then build the command-line file as described in
+[Running it from the command line](#running-it-from-the-command-line).
 
 As a dependency:
 

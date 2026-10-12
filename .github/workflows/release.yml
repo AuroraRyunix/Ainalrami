@@ -1,0 +1,45 @@
+# Release file: on a pushed tag v*, build the escript and attach it, with
+# SHA256SUMS, to the GitHub release for that tag (created if missing).
+# Uses the same setup-beam pin and versions as elixir.yml; runs-on is pinned
+# to ubuntu-24.04 for the reason given there, not ubuntu-latest.
+# Untested as a workflow: it has only been checked for valid YAML.
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  escript:
+    name: Build and attach the escript
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+    - name: Set up Elixir
+      uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1.24.1
+      with:
+        elixir-version: '1.20'
+        otp-version: '29.0'
+
+    - name: Build the escript
+      run: |
+        mix deps.get
+        MIX_ENV=prod mix escript.build
+        sha256sum ainalrami > SHA256SUMS
+
+    - name: Attach to the release
+      env:
+        GH_TOKEN: ${{ github.token }}
+        TAG: ${{ github.ref_name }}
+      run: |
+        gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "$TAG" --generate-notes
+        gh release upload "$TAG" ainalrami SHA256SUMS --clobber

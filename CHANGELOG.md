@@ -64,6 +64,8 @@ with the reference on every one of them.
 
 ## [Unreleased]
 
+- [Feature] **Command-line build instructions in the README, and a release file.** The README has a "Running it from the command line" section (build with `mix escript.build`, run with `escript ainalrami`, Erlang only to run). A pushed `v*` tag now builds the escript and attaches `ainalrami` and `SHA256SUMS` to its GitHub release (`.github/workflows/release.yml`); the workflow is untested until the next tag is pushed.
+
 ## [0.36.0] - 2026-10-02
 
 - [Verified] **A release check on be3ae86 against Gacrux and bbpPairings,
