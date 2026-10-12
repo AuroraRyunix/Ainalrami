@@ -19,6 +19,7 @@ every known difference.
 | Individual pairings, Gacrux alone (030bd28) | Gacrux | 373,500 tournaments, 3,219,728 rounds, 119,064,367 boards | 0 disagreements | [Against Gacrux alone](#against-gacrux-alone-32-million-rounds-2026-09-30) |
 | Individual pairings, 0.36.0 release check (be3ae86), partial | Gacrux; bbpPairings | 1,014,700 rounds; 10,614,756 rounds | Gacrux: 258 disagreements judged by rule, this engine legal in every well-formed one, Gacrux illegal in 257 (1 ambiguous input); bbpPairings: 1, a bbpPairings C2 defect | [Release check for 0.36.0](#release-check-for-0360-2026-10-02) |
 | Individual pairings, bbpPairings' generator (Q33 direction 2) | bbpPairings' own `-g` tournaments, checked here | 50,045 tournaments, 499,816 rounds, 28,964,816 pairings | 0 composition, 0 colour disagreements | [Pairings (Q33)](#pairings-vcl4thp-q33-both-directions) |
+| bbpPairings' "no legal pairing" answers, 11-40 players | perfect-matching oracle (networkx blossom and Tutte rank), cross-checked against enumeration to 12 players | 3,839 refusals in 10,000 tournaments, 101,736 positions cross-checked | 0 disagreements; the full 46,052-refusal probe axis was not re-run | [Refusals above 12 players](#refusals-above-12-players-by-matching-2026-10-12) |
 | Team Swiss whole rounds (C.04.6), 4-10 teams | brute-force reference written from the regulation | seeds 1-860,000,000, 3,553,445,286 rounds (two runs) | 0 failures, 0 errors | [Team Swiss pairings](#team-swiss-pairings-c046) |
 | Team Swiss whole rounds, 11-80 teams | exact engine-independent reference | 2,000 seeds, 11,980 rounds | agrees; one 3.6 candidate-budget disagreement found and fixed (0.30.0) | [team-proof-large-fields.md](team-proof-large-fields.md) |
 | Team Swiss, no colour preferences (1.7) | brute-force reference | 30,000 seeds, 123,593 rounds | 0 disagreements | [conformance-c0406-teams.md](conformance-c0406-teams.md#no-colour-preferences-17-2026-09-27) |
@@ -453,9 +454,105 @@ specification; when it lags the code it does not go quiet, it propagates.
 
 **What is still not proved.** The enumeration is capped at 14 active
 players, so it says nothing about refusals on larger fields - though those
-are rarer, since a bigger field has more ways to be pairable. And it tests
-the three ABSOLUTE criteria; a refusal driven by something else would not
-be caught. Nothing in the corpus suggests one exists.
+are rarer, since a bigger field has more ways to be pairable. (Closed for
+the sizes it reached by [the matching oracle](#refusals-above-12-players-by-matching-2026-10-12)
+below.) And it tests the three ABSOLUTE criteria; a refusal driven by
+something else would not be caught. Nothing in the corpus suggests one
+exists.
+
+### Refusals above 12 players, by matching (2026-10-12)
+
+Enumeration cannot go past 12-14 players, so the probe's `11-20, 16 rounds`
+axis (46,052 refusals) was only corroborated above 12. Whether a legal
+complete pairing exists does not need enumeration: it is a perfect-matching
+question. One vertex per active player, an edge for each pair that C1, C3 and
+the arbiter's forbidden pairs allow; on an odd field a dummy vertex joined to
+every bye-eligible player (C2) stands for the bye. A legal pairing exists iff
+that graph has a perfect matching, which is polynomial in the field size.
+
+`tools/exhaustion_matching.exs` builds the graph with the brute-force tool's
+reading of the rules (copied, since the 4.8 million positive controls had
+already validated it) and writes it out; `tools/exhaustion_matching.py` solves
+it. The solving shares no code with `Ainalrami.Pairing`, `Ainalrami.Matching`
+or `Ainalrami.WeightedMatching`, and uses two unrelated algorithms that must
+agree on the SIZE of the maximum matching, not only on whether it is perfect:
+
+* networkx 3.6.1 `max_weight_matching(maxcardinality=True)`, a third-party
+  implementation of Edmonds' blossom algorithm. An independent library was
+  chosen over a blossom written for this tool because a hand-written one
+  would itself need an oracle.
+* The rank of a random Tutte matrix over GF(2^61 - 1) (Lovasz), which is
+  algebraic and contains no blossom code. It can only err by reporting a
+  rank that is too low, with probability at most N/p (about 2e-17) per graph.
+
+It was run on every refusal, and on every positive control up to 24 players.
+
+**Cross-check against enumeration, 4-12 players.** Over the same graphs the
+tool also enumerates every perfect matching (n <= 12). 101,736 positions
+across four axes (plain; 15% byes; 12% forfeits with 10% forbidden pairs;
+every axis on, with mixed point systems, acceleration, initial colour and
+ratings), 14,000 refusals and 87,736 positive controls: the matching oracle,
+the Tutte rank and the enumeration agreed on every position, 0 disagreements.
+The original `tools/exhaustion_bruteforce.exs` was also run on seeds 1-1000
+of the first axis: 1,000 refusals proved and 6,987 controls passed, the same
+1,000 and 6,987 (7,987 positions) the new tool counted on those seeds.
+
+**Positive controls.** On every round bbpPairings did pair, the solver must
+find a legal pairing, AND the reference's own pairing must be a witness
+against the graph: every pair an edge, the bye holder eligible, the seated set
+exactly the active set. A graph that was too strict would fail there. 0
+failures in 87,736 + 41,279 + 35,837 + 86,761 controls.
+
+**Refusals, 11-40 players.** Fields are the number of active players in the
+refused round.
+
+| axis | tournaments | refusals | no perfect matching | legal pairing exists | controls passed |
+|---|---|---|---|---|---|
+| 11-20 players, 16 rounds, seeds 1-3,000 | 3,000 | 1,947 (64.9%) | 1,947 | 0 | 41,279 |
+| 13-40 players, 16 rounds, seeds 1-2,300 | 2,300 | 373 (16.2%) | 373 | 0 | 35,837 |
+| 13-40 players, 20 rounds, 12% byes, 12% forfeits, 25% forbidden, mixed acceleration and point systems, seeds 1-4,700 | 4,700 | 1,519 (32.3%) | 1,519 | 0 | 86,761 |
+| **total** | **10,000** | **3,839** | **3,839** | **0** | **163,877** |
+
+Of these, at least 2,364 are refusals on fields of 13 or more active players
+(counted from the per-size histograms the tool prints; one run's histogram was
+not kept, so the true figure is higher). Refusals above 12 players occur up to
+37 active players in the harsh axis, but only up to 18 in the plain ones: on a
+plain 13-40 axis a field over 18 players was never refused in 2,300
+tournaments, which is the rate falling off that was expected, not a measured
+bound. The harsh axis exists because refusals on large fields are rare enough
+that the plain axis yields 0.16 per tournament.
+
+**Disagreements: none**, between the matching oracle and the reference's
+refusals, between the two solvers, between matching and enumeration, and
+between the graph and the original tool.
+
+**What this does and does not establish.**
+
+* It proves, for these 3,839 positions, that no complete pairing satisfies
+  the absolute criteria as this tool reads them. It does not cover the rest
+  of the probe's 46,052: the full 80,000-tournament axis would take about
+  4.5 hours on this machine, because every round is a `bbpPairings` process
+  launch, and was not run. 3,000 tournaments is 3.75% of it.
+* The refusal RATE on the 11-20 axis here (64.9%) is higher than the probe's
+  57.6%. Sampling does not explain it (the standard error at 3,000
+  tournaments is about 0.9 points). The probe's seed range is not recorded,
+  and the generator has been extended since; the 46,052 was therefore not
+  reproduced, and the difference is not explained. The two figures count
+  different tournaments.
+* It is not a new measurement of the engine. The refusals come from
+  bbpPairings, so this proves "the reference's refusals are correct", not that
+  this engine refuses them; the engine's side is still the probe's. The
+  probe was not re-run here.
+* The edge reading is the brute-force tool's, so an ambiguity in the
+  regulation read the same way in both tools would survive. The positive
+  controls bound that for the readings that matter (a too-strict graph fails
+  them) but not for a too-LENIENT one, which could only make a refusal look
+  legal and so would have shown as a disagreement.
+* Tutte-rank and networkx are both run in the same Python process family and
+  see the same graph; they are independent as algorithms, not as inputs.
+* Runs used the engine at origin/main 471621c (0.43.0), generator at the same
+  commit. Run time was dominated by launching `bbpPairings` (about 60-80
+  positions per second on 13 threads); the solving took 1-6% of it.
 
 ### What this run added over its predecessors
 

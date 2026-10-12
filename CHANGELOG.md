@@ -52,9 +52,11 @@ That blind spot was measured on 2026-08-27 and came back clean:
 `tools/exhaustion_probe.exs` put 815,479 positions bbpPairings had refused
 to this engine, across six axes and 930,000 tournaments, and it refused
 every one. What that does NOT establish is that a legal pairing genuinely
-does not exist in those positions - two engines can be wrong together, and
-the brute-force check that would settle it has not been run. See
-[the exhaustion probe](docs/validation.md#the-exhaustion-probe-2026-08-27).
+does not exist in those positions - two engines can be wrong together. The
+brute-force check settled that up to 12-14 players and the matching oracle
+above it, for the positions it was run on. See
+[the exhaustion probe](docs/validation.md#the-exhaustion-probe-2026-08-27)
+and [refusals above 12 players](docs/validation.md#refusals-above-12-players-by-matching-2026-10-12).
 
 And a clean corpus is evidence a change broke nothing, not evidence the
 change was unnecessary. Of the thirteen bugs closed on 2026-08-26, two are
@@ -63,6 +65,19 @@ breaking a matcher invariant 734 times per 800 tournaments while agreeing
 with the reference on every one of them.
 
 ## [Unreleased]
+
+- [Verified] **bbpPairings' "no legal pairing" answers are now proved above 12
+  players too, by matching rather than enumeration.** A legal complete
+  pairing exists iff the graph of allowed pairs (plus a dummy vertex for the
+  bye) has a perfect matching; `tools/exhaustion_matching.exs` builds that
+  graph and `tools/exhaustion_matching.py` solves it with networkx's blossom
+  algorithm and, independently, a random Tutte-matrix rank. Agreed with
+  enumeration on 101,736 positions up to 12 players, then proved 3,839
+  refusals on 11-40-player fields (10,000 tournaments), with 163,877 positive
+  controls, 0 disagreements. It does not re-measure this engine, and covers
+  3,000 of the probe's 80,000 tournaments on the 11-20 axis; the probe's
+  46,052 was not reproduced (64.9% refused here against 57.6%, unexplained).
+  See [validation](docs/validation.md#refusals-above-12-players-by-matching-2026-10-12).
 
 ## [0.43.0] - 2026-10-11
 
