@@ -79,6 +79,8 @@ with the reference on every one of them.
   46,052 was not reproduced (64.9% refused here against 57.6%, unexplained).
   See [validation](docs/validation.md#refusals-above-12-players-by-matching-2026-10-12).
 
+- [Feature] **Command-line build instructions in the README, and a release file.** The README has a "Running it from the command line" section (build with `mix escript.build`, run with `escript ainalrami`, Erlang only to run). A pushed `v*` tag now builds the escript and attaches `ainalrami` and `SHA256SUMS` to its GitHub release (`.github/workflows/release.yml`); the workflow is untested until the next tag is pushed.
+
 ## [0.43.0] - 2026-10-11
 
 - [Feature] **An alternative now comes with its boards.** "Why did he
