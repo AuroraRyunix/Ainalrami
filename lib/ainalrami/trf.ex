@@ -171,6 +171,62 @@ defmodule Ainalrami.Trf do
       `XXC rank` is a third setting on the same line and RAISES, because
       this engine cannot honour it.
 
+  Two more are this engine's own, for what OpenPairings pairs and neither
+  TRF16 nor TRF26 can say. Both are read and written in either dialect:
+
+    * `XXM` - match format: every match is two games in a row, colours
+      reversed in the second (OpenPairings' `swiss_match_format` and
+      `rr_match_format`). Surfaced as `tournament[:match_format]` (`true`).
+      In a Swiss the odd rounds are paired and each even round replays the
+      round before it with the colours reversed; in a round robin rounds
+      `2k - 1` and `2k` are round `k` of a single Berger table. Nothing may
+      follow the code.
+    * `XXG a b [c ...]` - one pairing group: a category paired on its own
+      (OpenPairings' `pair_by_category`). One line per group, in the order
+      the groups are paired and their boards numbered; players on no line
+      form a last group of their own. Surfaced as
+      `tournament[:pairing_groups]`, a list of rank lists. A rank the file
+      does not have, or one in two groups, raises `ValidationError`.
+
+  `Ainalrami.EventFormat` and `Ainalrami.RoundRobin` pair by them.
+
+  ## The organiser's records
+
+  One more code, also this engine's own and also read and written in
+  either dialect: `XXO keyword ...`, for the options OpenPairings pairs and
+  ranks with that no TRF record carries. The keywords are the command
+  line's own names. All but the last carry options that are NOT FIDE's - a
+  round they change is not a Dutch-system round, and whoever pairs from
+  them says so:
+
+    * `XXO soft-pairs a b [c ...] [@ROUND | @FIRST-LAST]` - a soft group:
+      players to keep apart where the criteria allow it, for every round or
+      the rounds named. Surfaced as `tournament[:soft_pairs]`, in the shape
+      `Ainalrami.Pairing`'s `:soft_pairs` takes.
+    * `XXO soft-position strong|weak` - `:soft_position`
+      (`tournament[:soft_position]`).
+    * `XXO bye-want|bye-want-soft|bye-avoid-soft|bye-avoid rank[@ROUNDS] ...`
+      - the four bye preferences (`tournament[:bye_preferences]`, as
+      `Ainalrami.ByePreference` takes them). `ROUNDS` is `3`, `3-5` or
+      several joined by `+`.
+    * `XXO bye-exclude rank[@ROUNDS] ...` - the plain bye exclusion
+      (`tournament[:bye_exclusions]`: a rank, or `{rank, rounds}`).
+    * `XXO round-ratings rank rating rating ...` - the rating the player
+      held in each round, `-` or `0` for none, for an event whose
+      regulations count the rating tie-breaks that way (C.07 Article 10's
+      note). Surfaced as the player's `:round_ratings`,
+      `%{round => rating}`.
+
+  One code, not one per option, because each new `XX` code is a chance of
+  meaning something else to another program: `XXS` would have been the
+  obvious name for soft pairs and is JaVaFo's point system.
+
+  `Ainalrami.PairingInput` has the spelling and turns the first four into
+  engine options. A malformed line, a keyword `XXO` does not have and a
+  rank the file does not have raise `ValidationError`. A file with no `XXO`
+  line parses to exactly what it parsed to before the code existed: the
+  keys are absent, not empty.
+
   Anything else beginning `XX` still falls through `parse_header_line/3`'s
   `nil -> acc` clause and is ignored. That silent-discard behaviour is
   correct for a genuinely unknown code and was WRONG for these two: an
@@ -781,7 +837,7 @@ defmodule Ainalrami.Trf do
     # record, not as a column on the `001` line - so those columns come off
     # the players before their lines are written, and go out at the end.
     system = t[:point_system] || default_point_system()
-    {written, future_byes} = split_future_byes(players, dialect, system)
+    {written, future_byes} = split_future_byes(players, dialect, system, team_rounds(t))
     max_round = Enum.reduce(written, 0, &max(&2, length(&1[:games] || [])))
     xxr? = dialect == :engine and opts[:xxr] == true
     xxc? = dialect == :engine and opts[:xxc] == true
@@ -818,10 +874,15 @@ defmodule Ainalrami.Trf do
   # - is a `240` record in TRF26, and the column is not written. Only a
   # trailing run of byes moves; anything else past the paired rounds stays
   # where it is, since removing it would shift the columns after it.
-  defp split_future_byes(players, :engine, _system), do: {players, []}
+  defp split_future_byes(players, :engine, _system, _team_rounds), do: {players, []}
 
-  defp split_future_byes(players, :trf26, system) do
-    played = rounds_played(players)
+  # `team_rounds`: the last round a `330` or `320` record names. A round
+  # whose only matches were forfeited as a whole (`330`, no boards) has no
+  # game anybody took part in, but it was paired; the byes recorded in it
+  # stay in their columns rather than becoming `240` records for a round
+  # "not yet paired", which a reader would then place a round too early.
+  defp split_future_byes(players, :trf26, system, team_rounds) do
+    played = max(rounds_played(players), team_rounds)
 
     Enum.map_reduce(players, [], fn player, records ->
       {kept, future} = Enum.split(player[:games] || [], played)
@@ -854,6 +915,17 @@ defmodule Ainalrami.Trf do
 
       {player, records ++ new_records}
     end)
+  end
+
+  @doc false
+  # The last round a TRF26 `330` (forfeited match) or `320` (team bye)
+  # record names, 0 without any.
+  def team_rounds(tournament) do
+    forfeits =
+      for f <- tournament[:forfeited_matches] || [], is_integer(f[:round]), do: f[:round]
+
+    byes = length(get_in(tournament, [:team_pab, :teams]) || [])
+    Enum.max([byes | forfeits], fn -> 0 end)
   end
 
   defp future_bye?(game) do
@@ -1113,11 +1185,86 @@ defmodule Ainalrami.Trf do
         :engine -> numeric_acceleration_lines(players)
       end
 
-    acceleration ++ numeric_forbidden_lines(t[:forbidden_pairs], max(rounds, max_round + 1))
+    acceleration ++
+      numeric_forbidden_lines(t[:forbidden_pairs], max(rounds, max_round + 1)) ++
+      format_lines(t) ++ organiser_lines(t, players)
   end
 
   defp extension_lines(t, players, _max_round, _numeric?, _dialect) do
-    acceleration_lines(players) ++ forbidden_pair_lines(t[:forbidden_pairs])
+    acceleration_lines(players) ++
+      forbidden_pair_lines(t[:forbidden_pairs]) ++ format_lines(t) ++ organiser_lines(t, players)
+  end
+
+  # The `XXO` lines, this engine's own (see the moduledoc, "The
+  # organiser's records"). Nothing is written for a tournament that has
+  # none of them, which is every tournament written before they existed.
+  defp organiser_lines(t, players) do
+    soft =
+      for group <- t[:soft_pairs] || [] do
+        "XXO soft-pairs " <> Ainalrami.PairingInput.format_group(group)
+      end
+
+    position =
+      case t[:soft_position] do
+        :weak -> ["XXO soft-position weak"]
+        :strong when soft != [] -> ["XXO soft-position strong"]
+        _ -> []
+      end
+
+    excluded =
+      case t[:bye_exclusions] || [] do
+        [] ->
+          []
+
+        entries ->
+          [
+            "XXO bye-exclude " <>
+              Enum.map_join(entries, " ", fn
+                {rank, rounds} -> Ainalrami.PairingInput.format_ranked(rank, rounds)
+                rank -> Ainalrami.PairingInput.format_ranked(rank, :all)
+              end)
+          ]
+      end
+
+    preferences =
+      for {word, setting} <- Ainalrami.PairingInput.bye_kinds(),
+          entries = Enum.filter(t[:bye_preferences] || [], &(elem(&1, 1) == setting)),
+          entries != [] do
+        "XXO bye-#{word} " <>
+          Enum.map_join(entries, " ", fn
+            {rank, _setting} -> Ainalrami.PairingInput.format_ranked(rank, :all)
+            {rank, _setting, :all} -> Ainalrami.PairingInput.format_ranked(rank, :all)
+            {rank, _setting, rounds} -> Ainalrami.PairingInput.format_ranked(rank, rounds)
+          end)
+      end
+
+    ratings =
+      for player <- players,
+          by_round = player[:round_ratings],
+          is_map(by_round),
+          by_round != %{} do
+        last = by_round |> Map.keys() |> Enum.max()
+
+        "XXO round-ratings #{player[:rank]} " <>
+          Enum.map_join(1..last, " ", &(Map.get(by_round, &1) || "-"))
+      end
+
+    soft ++ position ++ excluded ++ preferences ++ ratings
+  end
+
+  # `XXM` and `XXG`, this engine's own (see the moduledoc). Written in both
+  # dialects: neither TRF16 nor TRF26 has a record for a two-game match or
+  # for a category paired on its own, so there is no numeric spelling to
+  # write instead.
+  defp format_lines(t) do
+    match = if t[:match_format] == true, do: ["XXM"], else: []
+
+    groups =
+      for group <- t[:pairing_groups] || [], group != [] do
+        "XXG " <> Enum.map_join(group, " ", &Integer.to_string/1)
+      end
+
+    match ++ groups
   end
 
   # One `250` per rank range per round range - the shape of TRF26's own
@@ -1647,7 +1794,7 @@ defmodule Ainalrami.Trf do
     end)
   end
 
-  # TRF26 `362`, `320` and `330`, when the tournament carries them.
+  # TRF26 `362`, `320`, `330` and `300`, when the tournament carries them.
   defp team_record_lines(t) do
     points =
       case t[:team_point_system] do
@@ -1698,7 +1845,26 @@ defmodule Ainalrami.Trf do
         |> render()
       end
 
-    points ++ pab ++ forfeits
+    orders =
+      for o <- t[:board_orders] || [] do
+        (o[:order] || [])
+        |> Enum.with_index()
+        |> Enum.reduce(
+          []
+          |> place({1, 3}, "300")
+          |> place({5, 7}, o[:round], align: :right)
+          |> place({9, 11}, o[:team], align: :right)
+          |> place({13, 15}, o[:opponent], align: :right),
+          fn {rank, i}, acc ->
+            place(acc, {17 + 5 * i, 20 + 5 * i}, if(rank in [nil, 0], do: "0", else: rank),
+              align: :right
+            )
+          end
+        )
+        |> render()
+      end
+
+    points ++ pab ++ forfeits ++ orders
   end
 
   # A team with a number is a TRF26 `310` record (layout in parse/1's doc);
@@ -2050,9 +2216,10 @@ defmodule Ainalrami.Trf do
   `:player_ranks`), and when a file has any `310` its `013` lines are
   ignored; `362` goes to `tournament[:team_point_system]` (`%{win:, draw:,
   loss:}` plus `:pab`, `:absent`, `:unknown` when given), `320` to
-  `[:team_pab]` and `330` lines to `[:forfeited_matches]`. `300`
-  (out-of-order boards), `801`, `802` and national-rating records are not
-  read. Columns (1-based) as FIDE's TRF-2026 description lays them out and
+  `[:team_pab]`, `330` lines to `[:forfeited_matches]` and `300` lines
+  (a team's board order in one match) to `[:board_orders]` (`%{round:,
+  team:, opponent:, order: [starting rank, 0 for an empty board]}`).
+  `801`, `802` and national-rating records are not read. Columns (1-based) as FIDE's TRF-2026 description lays them out and
   TieBreakServer's `trf2json.py` reads them: `310` team number 5-7, name
   9-40, nickname 42-46, strength 48-53, match points 55-60, game points
   62-67, rank 69-71, players' starting ranks in 4-column fields from 74
@@ -2060,7 +2227,9 @@ defmodule Ainalrami.Trf do
   points in 7-10, repeating every 9 columns; `320` match points 5-8, game
   points 10-13, then the team given the bye in each round, 3 columns from
   15 every 4; `330` type 5-6, round 8-10, white team 12-14, black team
-  16-18. `serialize/2` writes all four back.
+  16-18; `300` round 5-7, team 9-11, opponent 13-15, then the starting
+  ranks in board order, 4 columns from 17 every 5. `serialize/2` writes all
+  five back.
   """
   def parse(text) do
     lines =
@@ -2131,6 +2300,9 @@ defmodule Ainalrami.Trf do
           "330" ->
             update_in(acc.tournament[:forfeited_matches], &((&1 || []) ++ [parse_330(line)]))
 
+          "300" ->
+            update_in(acc.tournament[:board_orders], &((&1 || []) ++ [parse_300(line)]))
+
           "362" ->
             put_in(acc.tournament[:team_point_system], parse_362(line))
 
@@ -2148,6 +2320,15 @@ defmodule Ainalrami.Trf do
 
           "XXC" ->
             parse_xxc(acc, line)
+
+          "XXM" ->
+            parse_xxm(acc, line)
+
+          "XXG" ->
+            parse_xxg(acc, line)
+
+          "XXO" ->
+            parse_xxo(acc, line)
 
           "250" ->
             parse_250(acc, line)
@@ -2191,6 +2372,9 @@ defmodule Ainalrami.Trf do
     )
 
     result
+    |> check_pairing_groups!()
+    |> check_organiser_records!()
+    |> attach_round_ratings()
     |> attach_accelerations()
     |> attach_byes()
   end
@@ -2531,6 +2715,259 @@ defmodule Ainalrami.Trf do
     end
   end
 
+  # `XXM` - this engine's own extension (see the moduledoc): every match is
+  # two games in a row, colours reversed in the second. Nothing may follow
+  # the code: a value would be a request this engine does not know how to
+  # honour (three-game matches, say), and pairing the two-game shape
+  # instead would be pairing a different event.
+  defp parse_xxm(acc, line) do
+    case line |> String.slice(3..-1//1) |> String.trim() do
+      "" ->
+        put_in(acc.tournament[:match_format], true)
+
+      other ->
+        raise ValidationError,
+          message:
+            "XXM takes no value (a match is two games, colours reversed), got " <>
+              "#{inspect(other)}: #{line}"
+    end
+  end
+
+  # `XXG a b [c ...]` - this engine's own extension: one pairing group (a
+  # category paired on its own), its players by starting rank. Raises on
+  # an unreadable rank for `parse_xxp/2`'s reason - a group read wrong
+  # pairs players across categories with nothing to show for it. Ranks
+  # unknown to the file, and a rank in two groups, are refused once every
+  # line is read (`check_pairing_groups!/1`).
+  defp parse_xxg(acc, line) do
+    ids =
+      line
+      |> String.slice(3..-1//1)
+      |> String.split([" ", "\t"], trim: true)
+      |> Enum.map(fn token ->
+        strict_int(token) ||
+          raise ValidationError,
+            message: "XXG line names #{inspect(token)}, which is not a starting rank: #{line}"
+      end)
+
+    if ids == [] do
+      raise ValidationError, message: "XXG line names nobody: #{line}"
+    end
+
+    update_in(acc.tournament[:pairing_groups], &((&1 || []) ++ [ids]))
+  end
+
+  defp check_pairing_groups!(%{tournament: %{pairing_groups: groups}} = result)
+       when is_list(groups) do
+    ranks = MapSet.new(result.players, & &1.rank)
+    all = List.flatten(groups)
+
+    case Enum.find(all, &(not MapSet.member?(ranks, &1))) do
+      nil ->
+        :ok
+
+      rank ->
+        raise ValidationError,
+          message: "XXG names #{rank}, which is not a starting rank in this file"
+    end
+
+    case all -- Enum.uniq(all) do
+      [] -> result
+      [rank | _] -> raise ValidationError, message: "XXG puts #{rank} in two pairing groups"
+    end
+  end
+
+  defp check_pairing_groups!(result), do: result
+
+  # `XXO keyword ...` - this engine's own extension (see the moduledoc, "The
+  # organiser's records"): the options OpenPairings pairs and ranks with
+  # that no TRF record carries, under one code and the command line's own
+  # names. One code rather than one per option because every new `XX` code
+  # is a chance of meaning something else to another program - JaVaFo's
+  # `XXS` is its point system, which is why soft pairs are not `XXS`.
+  #
+  # Refused when malformed, as `XXP` is: a wish read wrong is a round paired
+  # by rules nobody asked for.
+  defp parse_xxo(acc, line) do
+    rest = line |> String.slice(3..-1//1) |> String.trim()
+
+    case String.split(rest, [" ", "\t"], parts: 2, trim: true) do
+      ["soft-pairs", text] ->
+        case Ainalrami.PairingInput.parse_group(text) do
+          {:ok, group} ->
+            update_in(acc.tournament[:soft_pairs], &((&1 || []) ++ [group]))
+
+          :error ->
+            raise ValidationError,
+              message:
+                "XXO soft-pairs takes two or more starting ranks, optionally @ROUND or " <>
+                  "@FIRST-LAST: #{line}"
+        end
+
+      ["soft-position", word] ->
+        case String.trim(word) do
+          "strong" ->
+            put_in(acc.tournament[:soft_position], :strong)
+
+          "weak" ->
+            put_in(acc.tournament[:soft_position], :weak)
+
+          _ ->
+            raise ValidationError, message: "XXO soft-position takes strong or weak: #{line}"
+        end
+
+      ["round-ratings", text] ->
+        parse_xxo_ratings(acc, text, line)
+
+      ["bye-" <> kind = keyword, text] ->
+        kinds = Map.new(Ainalrami.PairingInput.bye_kinds())
+
+        unless kind == "exclude" or Map.has_key?(kinds, kind) do
+          raise ValidationError, message: "XXO does not have #{inspect(keyword)}: #{line}"
+        end
+
+        entries =
+          text
+          |> String.split([" ", "\t"], trim: true)
+          |> Enum.map(fn token ->
+            case Ainalrami.PairingInput.parse_ranked(token) do
+              {:ok, rank, rounds} ->
+                {rank, rounds}
+
+              :error ->
+                raise ValidationError,
+                  message:
+                    "XXO #{keyword} takes starting ranks, each optionally with @ROUNDS " <>
+                      "(e.g. 12@3-4+7): #{line}"
+            end
+          end)
+
+        if kind == "exclude" do
+          entries =
+            Enum.map(entries, fn
+              {rank, :all} -> rank
+              entry -> entry
+            end)
+
+          update_in(acc.tournament[:bye_exclusions], &((&1 || []) ++ entries))
+        else
+          setting = Map.fetch!(kinds, kind)
+
+          entries =
+            Enum.map(entries, fn
+              {rank, :all} -> {rank, setting}
+              {rank, rounds} -> {rank, setting, rounds}
+            end)
+
+          update_in(acc.tournament[:bye_preferences], &((&1 || []) ++ entries))
+        end
+
+      [keyword | _] ->
+        raise ValidationError,
+          message:
+            "XXO does not have #{inspect(keyword)} (soft-pairs, soft-position, bye-want, " <>
+              "bye-want-soft, bye-avoid, bye-avoid-soft, bye-exclude, round-ratings), or " <>
+              "it has nothing after it: #{line}"
+
+      [] ->
+        raise ValidationError, message: "XXO line says nothing: #{line}"
+    end
+  end
+
+  # `XXO round-ratings rank rating rating ...`: the rating a player held in
+  # each round, for the rating tie-breaks of an event whose regulations
+  # count them that way (C.07 Article 10's note, VCL4THP Q214). `-` or `0`
+  # is a round with nothing to say: the 001 rating counts.
+  defp parse_xxo_ratings(acc, text, line) do
+    bad = fn ->
+      raise ValidationError,
+        message:
+          "XXO round-ratings takes a starting rank, then one rating per round " <>
+            "(- or 0 for none): #{line}"
+    end
+
+    case String.split(text, [" ", "\t"], trim: true) do
+      [rank | [_ | _] = ratings] ->
+        rank = strict_int(rank) || bad.()
+
+        by_round =
+          ratings
+          |> Enum.with_index(1)
+          |> Enum.flat_map(fn
+            {"-", _round} ->
+              []
+
+            {token, round} ->
+              case strict_int(token) do
+                0 -> []
+                n when is_integer(n) and n > 0 -> [{round, n}]
+                _ -> bad.()
+              end
+          end)
+          |> Map.new()
+
+        if Map.has_key?(Map.get(acc, :round_ratings, %{}), rank) do
+          raise ValidationError, message: "two XXO round-ratings lines for starting rank #{rank}"
+        end
+
+        Map.update(acc, :round_ratings, %{rank => by_round}, &Map.put(&1, rank, by_round))
+
+      _ ->
+        bad.()
+    end
+  end
+
+  # Every rank an `XXO` line names has to be a rank the
+  # file has - checked once every line is read, as `XXG` is.
+  defp check_organiser_records!(result) do
+    t = result.tournament
+
+    named =
+      Enum.flat_map(t[:soft_pairs] || [], fn
+        {ids, _first, _last} -> Enum.map(ids, &{"XXO", &1})
+        ids -> Enum.map(ids, &{"XXO", &1})
+      end) ++
+        Enum.map(t[:bye_exclusions] || [], fn
+          {rank, _rounds} -> {"XXO", rank}
+          rank -> {"XXO", rank}
+        end) ++
+        Enum.map(t[:bye_preferences] || [], &{"XXO", elem(&1, 0)}) ++
+        Enum.map(Map.keys(Map.get(result, :round_ratings, %{})), &{"XXO", &1})
+
+    if named == [] do
+      result
+    else
+      ranks = MapSet.new(result.players, & &1.rank)
+
+      case Enum.find(named, fn {_code, rank} -> not MapSet.member?(ranks, rank) end) do
+        nil ->
+          result
+
+        {code, rank} ->
+          raise ValidationError,
+            message: "#{code} names #{rank}, which is not a starting rank in this file"
+      end
+    end
+  end
+
+  defp attach_round_ratings(result) do
+    case Map.pop(result, :round_ratings) do
+      {nil, result} ->
+        result
+
+      {by_rank, result} ->
+        players =
+          Enum.map(result.players, fn player ->
+            case Map.fetch(by_rank, player[:rank]) do
+              {:ok, ratings} -> Map.put(player, :round_ratings, ratings)
+              :error -> player
+            end
+          end)
+
+        %{result | players: players}
+    end
+  end
+
   # `250` - bbpPairings' ROUND-LIMITED acceleration, the fixed-column
   # sibling of `XXA`. One line hands the same number of virtual points to a
   # RANGE of players over a RANGE of rounds, where `XXA` spells out one
@@ -2741,7 +3178,9 @@ defmodule Ainalrami.Trf do
   defp attach_byes(%{byes: []} = result), do: Map.delete(result, :byes)
 
   defp attach_byes(%{byes: byes, players: players} = result) do
-    played = rounds_played(players)
+    # A round paired with nothing but whole-match forfeits (`330`) counts,
+    # as `split_future_byes/4` counts it when writing.
+    played = max(rounds_played(players), team_rounds(result.tournament))
     system = result.tournament[:point_system] || default_point_system()
 
     by_rank =
@@ -3216,6 +3655,27 @@ defmodule Ainalrami.Trf do
       match_points: parse_float(read(line, {5, 8})),
       game_points: parse_float(read(line, {10, 13})),
       teams: teams
+    }
+  end
+
+  # TRF26 `300`, a team's board order for one match ("out of order"): the
+  # round in 5-7, the team in 9-11, its opponent in 13-15, then its players'
+  # starting ranks in board order, four columns from 17 every 5, `0` (or
+  # blank) for an empty board - TieBreakServer's `parse_trf_outoforder`.
+  defp parse_300(line) do
+    order =
+      Stream.iterate(17, &(&1 + 5))
+      |> Enum.take_while(&(byte_size(line) >= &1))
+      |> Enum.map(&(parse_int(read(line, {&1, &1 + 3})) || 0))
+      |> Enum.reverse()
+      |> Enum.drop_while(&(&1 == 0))
+      |> Enum.reverse()
+
+    %{
+      round: parse_int(read(line, {5, 7})),
+      team: parse_int(read(line, {9, 11})),
+      opponent: parse_int(read(line, {13, 15})),
+      order: order
     }
   end
 

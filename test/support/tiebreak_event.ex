@@ -12,6 +12,9 @@ defmodule Ainalrami.Test.TiebreakEvent do
   `"+" "-"` for forfeits, `"W" "D" "L"` for games under one move), or one of
   `:pab :full :half :zero`. The builder does not check that both sides of a
   game agree - tests that need an inconsistent record can write one.
+
+  `round_ratings: %{id => %{round => rating}}` sets per-round ratings
+  (`Participant.round_ratings`).
   """
 
   alias Ainalrami.Tiebreaks.Event
@@ -27,6 +30,7 @@ defmodule Ainalrami.Test.TiebreakEvent do
           id: id,
           tpn: Keyword.get(opts, :tpn, %{}) |> Map.get(id, id),
           rating: rating,
+          round_ratings: opts |> Keyword.get(:round_ratings, %{}) |> Map.get(id, %{}),
           rounds: rs |> Enum.with_index(1) |> Map.new(fn {r, i} -> {i, round(r, points)} end)
         }
       end

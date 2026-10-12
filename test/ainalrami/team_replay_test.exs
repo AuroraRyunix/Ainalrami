@@ -156,7 +156,7 @@ defmodule Ainalrami.TeamReplayTest do
   end
 
   describe "a team system this checker cannot replay" do
-    for {selector, what} <- [{6, "round robin"}, {8, "Scheveningen"}, {9, "Schiller"}] do
+    for {selector, what} <- [{8, "Scheveningen"}, {9, "Schiller"}] do
       test "a team #{what} exits 2 and says why" do
         gen = TeamTrfGenerator.generate(100 + unquote(selector), selector: unquote(selector))
         {out, code} = check(gen.text)
@@ -186,7 +186,7 @@ defmodule Ainalrami.TeamReplayTest do
     end
 
     test "a standings difference still exits 1" do
-      gen = TeamTrfGenerator.generate(106, selector: 6)
+      gen = TeamTrfGenerator.generate(108, selector: 8)
       parsed = Trf.parse(gen.text)
 
       teams =
@@ -265,20 +265,31 @@ defmodule Ainalrami.TeamReplayTest do
 
     test "predetermined, other, custom and accelerated systems are not replayed" do
       for code <-
-            ~w(FIDE_TEAM_ROUNDROBIN FIDE_TEAM_DOUBLEROUNDROBIN BERGER_TEAM_ROUNDROBIN
-               BERGER_TEAM_DOUBLEROUNDROBIN BERGER_TEAM_ROUNDROBIN_G2 CUSTOM_TEAM_ROUNDROBIN
-               FIDE_SCHEVENINGEN FIDE_SCHEVENINGEN_G2 FIDE_DOUBLESCHEVENINGEN
+            ~w(CUSTOM_TEAM_ROUNDROBIN FIDE_SCHEVENINGEN FIDE_SCHEVENINGEN_G2 FIDE_DOUBLESCHEVENINGEN
                CUSTOM_SCHEVENINGEN FIDE_SCHILLER FIDE_SCHILLER_4x2 CUSTOM_SCHILLER
                CUSTOM_TEAM_KNOCKOUT CUSTOM_KNOCKOUT CUSTOM_TEAM_SWISS CUSTOM_TEAM_SWISS_MP
                CUSTOM_TEAM_SWISS_GP FIDE_TEAM_BAKU FIDE_TEAM_MP_BAKU FIDE_TEAM_MP_GP_BAKU
-               FIDE_TEAM_TYPEA_MP_GP_BAKU FIDE_TEAM_TYPEB_MP_BAKU
-               BERGER_ROUNDROBIN BERGER_ROUNDROBIN_G1 BERGER_ROUNDROBIN_G3
-               BERGER_DOUBLEROUNDROBIN FIDE_ROUNDROBIN FIDE_DOUBLEROUNDROBIN CUSTOM_ROUNDROBIN
+               FIDE_TEAM_TYPEA_MP_GP_BAKU FIDE_TEAM_TYPEB_MP_BAKU CUSTOM_ROUNDROBIN
                FIDE_DUBOV FIDE_DUBOV_BAKU FIDE_BURSTEIN FIDE_BURSTEIN_BAKU CUSTOM_SWISS
                FIDE_DOUBLESWISS FIDE_DOUBLESWISS_BAKU CUSTOM_DOUBLESWISS),
           teams <- [[%{name: "T", player_ranks: [1]}], []] do
         assert {:unreplayable, reason} = sys(code, teams), code
         assert String.starts_with?(reason, code), reason
+      end
+    end
+
+    test "a team round robin code is replayed by the Berger tables, its cycles from the code" do
+      for {code, games} <- [
+            {"FIDE_TEAM_ROUNDROBIN", 1},
+            {"BERGER_TEAM_ROUNDROBIN", 1},
+            {"BERGER_TEAM_ROUNDROBIN_G1", 1},
+            {"FIDE_TEAM_DOUBLEROUNDROBIN", 2},
+            {"BERGER_TEAM_DOUBLEROUNDROBIN", 2},
+            {"BERGER_TEAM_ROUNDROBIN_G3", 3}
+          ] do
+        assert {:team_round_robin, %{games: ^games}} = sys(code), code
+        assert {:unreplayable, reason} = sys(code, []), code
+        assert reason =~ "no team records"
       end
     end
 
@@ -290,7 +301,7 @@ defmodule Ainalrami.TeamReplayTest do
     test "a code off the table falls back to the file's type and games" do
       assert sys("FIDE_DUTCH_2022", []) == :individual
 
-      assert {:unreplayable, _} =
+      assert {:round_robin, %{code: nil}} =
                TeamReplay.system(%{
                  tournament: %{type_code: "RR", type: "Individual: Round Robin System"},
                  teams: [],
@@ -310,10 +321,9 @@ defmodule Ainalrami.TeamReplayTest do
       Trf.serialize(%{parsed | tournament: tournament})
     end
 
-    test "a round robin, a Schiller, a knockout or a non-Dutch Swiss exits 2, not 1" do
+    test "a custom round robin, a Schiller, a knockout or a non-Dutch Swiss exits 2, not 1" do
       for code <-
-            ~w(BERGER_ROUNDROBIN_G2 FIDE_ROUNDROBIN FIDE_DOUBLEROUNDROBIN CUSTOM_ROUNDROBIN
-               FIDE_SCHILLER_4x3 FIDE_SCHEVENINGEN CUSTOM_KNOCKOUT CUSTOM_SWISS FIDE_DUBOV
+            ~w(CUSTOM_ROUNDROBIN FIDE_SCHILLER_4x3 FIDE_SCHEVENINGEN CUSTOM_KNOCKOUT CUSTOM_SWISS FIDE_DUBOV
                FIDE_BURSTEIN FIDE_DOUBLESWISS) do
         {out, exit_code} = check(individual([], code))
         assert exit_code == 2, "#{code}: #{out}"
@@ -322,14 +332,14 @@ defmodule Ainalrami.TeamReplayTest do
       end
     end
 
-    test "a 092 round robin with no 192 exits 2" do
+    test "a Swiss file labelled a round robin (092, no 192) is checked against the Berger table" do
       {text, _seed} = Ainalrami.Generator.generate(seed: 12, players: 10, rounds: 4)
       parsed = Trf.parse(text)
       tournament = Map.put(parsed.tournament, :type, "Individual: Round Robin System")
 
       {out, exit_code} = check(Trf.serialize(%{parsed | tournament: tournament}))
-      assert exit_code == 2, out
-      assert out =~ "the file's type (092) is a round robin"
+      assert exit_code == 1, out
+      assert out =~ "DIFFERS from the Berger table"
     end
 
     test "the Dutch codes replay, the 2017 edition with a warning" do

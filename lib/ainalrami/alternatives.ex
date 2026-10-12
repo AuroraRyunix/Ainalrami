@@ -64,6 +64,21 @@ defmodule Ainalrami.Alternatives do
   # which has no such key.
   defp pop_cap(opts), do: Keyword.pop(opts, :max_candidates, @max_candidates)
 
+  # Boards of one alternative above which it is not written out board by
+  # board. The search has the whole round in hand either way - this caps
+  # what a caller is given to store and print, not what is computed. Forty
+  # boards is every alternative anybody will read; past that the candidate
+  # says `skipped: :too_many_boards` and how many there were.
+  @max_alternative_boards 40
+
+  @doc "The cap on boards per written-out alternative, for callers that want to say so."
+  def max_alternative_boards, do: @max_alternative_boards
+
+  # `max_alternative_boards: n | :all`, popped before the options reach the
+  # engine like the candidate cap.
+  defp pop_board_cap(opts),
+    do: Keyword.pop(opts, :max_alternative_boards, @max_alternative_boards)
+
   # Every report built here is compared rung by rung, never shown on its
   # own, so it does not need `explain_round/3`'s account of who a bye
   # exclusion passed over - which would re-pair the round once more per
@@ -214,21 +229,63 @@ defmodule Ainalrami.Alternatives do
   at what score) and `floater_stayed?` - whether the forced alternative
   actually kept the original floater in the bracket, which it need not.
 
+  ## The alternative itself
+
+  Every candidate that was searched and found a round also carries
+  `alternative`, the round the verdict is about, as far as it differs from
+  the one played:
+
+      %{
+        pairs: [{white, black | nil}],   # its boards the played round lacks
+        played: [{white, black | nil}],  # the played boards it lacks
+        unchanged: n,                    # boards the two have in common
+        brackets: [%{group:, pairs: [{white, black}], floats: [rank]}],
+        bye: rank | nil,
+        step: :transposition | :exchange | :floater | nil
+      }
+
+  `pairs` and `played` are in each round's own board order; a board with
+  the same two players and the colours reversed counts as different, since
+  a pairing sheet would show it differently. `brackets` is every bracket
+  the alternative pairs or empties differently, COMPLETE as the alternative
+  has it - all its pairs, colours included, and whoever leaves it - so the
+  whole of a changed bracket can be laid beside the played one. `bye` is
+  who has the pairing-allocated bye in the alternative.
+
+  `step` is said only for a `:tie`, and only when the brackets leave no
+  doubt: what the alternative does to Article 4.1's S1 and S2 in the first
+  bracket where the two rounds differ, the played round pairing S1 against
+  S2 there with any floater from S2. `:transposition` - the alternative
+  does too, in another order of S2; `:exchange` - it pairs two players of
+  the same half or sends an S1 player down, which takes an exchange between
+  S1 and S2. In a heterogeneous bracket, where the halves are the moved-down
+  players and the residents and that reading does not hold, `:floater` when
+  a different player leaves the bracket and nothing otherwise. `nil` is "not
+  known", never "none".
+
+  Past `max_alternative_boards/0` differing boards (or the
+  `:max_alternative_boards` option - an integer, or `:all`) the alternative
+  is not written out: `alternative: %{skipped: :too_many_boards, count: n}`.
+  The verdict is unaffected. `:impossible` and `:ineligible` candidates
+  have no round to show and no `alternative` key.
+
   The pairing-allocated bye is not a float and is not analysed here; see
   `bye_alternatives/3`. For one floater's entry alone, `float_alternative/5`.
   """
   def float_alternatives(players, pairs, opts \\ []) do
     {cap, opts} = pop_cap(opts)
+    {board_cap, opts} = pop_board_cap(opts)
     context = Pairing.explain_context(players, quiet(opts), pairs)
     actual = Pairing.explain_pairs(context, pairs)
     bye = bye_holder(pairs)
+    round = played_round(players, opts, context, actual, pairs, board_cap)
 
     # Laid out first, searched after: every forced search of every floater
     # in the round goes through ONE `attempts/1` call, so they run side by
     # side (see `attempts/1`) and come back in exactly this order.
     entries =
       for bracket <- actual, floater <- bracket.floats, floater != bye do
-        float_entry(bracket, floater, cap, players, opts, context, actual)
+        float_entry(bracket, floater, cap, round)
       end
 
     results =
@@ -270,12 +327,14 @@ defmodule Ainalrami.Alternatives do
   """
   def float_alternative(players, pairs, group, floater, opts \\ []) do
     {cap, opts} = pop_cap(opts)
+    {board_cap, opts} = pop_board_cap(opts)
     context = Pairing.explain_context(players, quiet(opts), pairs)
     actual = Pairing.explain_pairs(context, pairs)
+    round = played_round(players, opts, context, actual, pairs, board_cap)
 
     with false <- floater == bye_holder(pairs),
          %{} = bracket <- Enum.find(actual, &(&1.group == group and floater in &1.floats)) do
-      case float_entry(bracket, floater, cap, players, opts, context, actual) do
+      case float_entry(bracket, floater, cap, round) do
         {:skipped, entry} -> entry
         {:searched, entry, specs} -> Map.put(entry, :candidates, attempts(specs))
       end
@@ -288,7 +347,7 @@ defmodule Ainalrami.Alternatives do
   # search for each other member of the bracket, in bracket order. Shared by
   # `float_alternatives/3` and `float_alternative/5`, so the one-question
   # answer is the all-at-once entry by construction.
-  defp float_entry(bracket, floater, cap, players, opts, context, actual) do
+  defp float_entry(bracket, floater, cap, round) do
     candidates = bracket.order -- [floater]
 
     if over_cap?(candidates, cap) do
@@ -303,7 +362,7 @@ defmodule Ainalrami.Alternatives do
       {:searched, %{group: bracket.group, floater: floater},
        Enum.map(candidates, fn y ->
          forced = for m <- bracket.order, m != y, do: [y, m]
-         {players, opts, context, actual, y, forced, floater}
+         {round, y, forced, floater}
        end)}
     end
   end
@@ -333,8 +392,10 @@ defmodule Ainalrami.Alternatives do
 
       holder ->
         {cap, opts} = pop_cap(opts)
+        {board_cap, opts} = pop_board_cap(opts)
         context = Pairing.explain_context(players, quiet(opts), pairs)
         actual = Pairing.explain_pairs(context, pairs)
+        round = played_round(players, opts, context, actual, pairs, board_cap)
         eligibility = Pairing.bye_eligibility(players, opts)
         bracket = Enum.find(actual, &(holder in &1.order)) || List.last(actual)
         candidates = bracket.order -- [holder]
@@ -348,7 +409,7 @@ defmodule Ainalrami.Alternatives do
             |> Enum.filter(&is_nil(Map.get(eligibility, &1)))
             |> Enum.map(fn y ->
               forced = for m <- everyone, m != y, do: [y, m]
-              {players, opts, context, actual, y, forced, holder}
+              {round, y, forced, holder}
             end)
             |> attempts()
             |> then(&Enum.zip(Enum.map(&1, fn %{rank: y} -> y end), &1))
@@ -369,8 +430,21 @@ defmodule Ainalrami.Alternatives do
     end
   end
 
-  # Runs a batch of forced searches, `{players, opts, context, actual, y,
-  # forced, displaced}` each, and returns their results in the order given.
+  # The played round and everything its forced searches share.
+  defp played_round(players, opts, context, actual, pairs, board_cap) do
+    %{
+      players: players,
+      opts: opts,
+      context: context,
+      actual: actual,
+      pairs: pairs,
+      board_cap: board_cap
+    }
+  end
+
+  # Runs a batch of forced searches, `{round, y, forced, displaced}` each -
+  # `round` being `played_round/6` - and returns their results in the order
+  # given.
   #
   # Each one is a complete pairing of the round and none reads another's
   # answer, so they run side by side, one per scheduler. They were the
@@ -430,9 +504,6 @@ defmodule Ainalrami.Alternatives do
       System.get_env("AINALRAMI_TRACE_FALLBACK") != nil
   end
 
-  defp attempt({players, opts, context, actual, y, forced, displaced}),
-    do: attempt(players, opts, context, actual, y, forced, displaced)
-
   # One forced search: pair again with `forced` added to the forbidden
   # pairs, then score the result under the REAL options - the forcing is how
   # the alternative is reached, not a rule it should be judged by.
@@ -441,7 +512,14 @@ defmodule Ainalrami.Alternatives do
   # real options, shared by every search of the round: scoring against it
   # is `explain_round/3` on the same arguments, without re-deriving the
   # field and the bye bootstrap for every search.
-  defp attempt(players, opts, context, actual, y, forced, displaced) do
+  #
+  # The round the search found is kept, as far as it differs from the one
+  # played (`whole/4`). It was always in hand here and used to be dropped
+  # once the candidate's own opponent had been read off it, which left
+  # every reader of the verdict to guess the other boards.
+  defp attempt({round, y, forced, displaced}) do
+    %{players: players, opts: opts, context: context, actual: actual} = round
+
     forced_opts =
       Keyword.put(opts, :forbidden_pairs, (Keyword.get(opts, :forbidden_pairs) || []) ++ forced)
 
@@ -455,12 +533,94 @@ defmodule Ainalrami.Alternatives do
         outcome: outcome(verdict),
         differs_at: differs_at(verdict),
         fate: fate(alt_pairs, players, y),
-        floater_stayed?: stayed?(alt, displaced)
+        floater_stayed?: stayed?(alt, displaced),
+        alternative: whole(round, alt_pairs, alt, verdict)
       }
     rescue
       e in Pairing.NoValidPairingError ->
         %{rank: y, outcome: :impossible, reason: Exception.message(e)}
     end
+  end
+
+  # The alternative round, as far as it differs from the played one - see
+  # `float_alternatives/3`, "The alternative itself". Two list differences
+  # and a walk over the brackets: nothing is searched or scored again.
+  defp whole(%{pairs: played, actual: actual, board_cap: cap}, alt_pairs, alt, verdict) do
+    theirs = alt_pairs -- played
+    ours = played -- alt_pairs
+
+    if over_board_cap?(theirs, cap) do
+      %{skipped: :too_many_boards, count: length(theirs)}
+    else
+      seated = Map.new(alt_pairs, fn {w, b} -> {Enum.sort([w, b]), {w, b}} end)
+      by_group = Map.new(actual, &{&1.group, &1})
+
+      %{
+        pairs: theirs,
+        played: ours,
+        unchanged: length(alt_pairs) - length(theirs),
+        brackets:
+          for bracket <- alt, changed?(bracket, Map.get(by_group, bracket.group)) do
+            %{
+              group: bracket.group,
+              pairs: Enum.map(bracket.pairs, fn {x, y} -> Map.fetch!(seated, [x, y]) end),
+              floats: bracket.floats
+            }
+          end,
+        bye: bye_holder(alt_pairs),
+        step: step(verdict, by_group, alt)
+      }
+    end
+  end
+
+  defp over_board_cap?(_boards, :all), do: false
+  defp over_board_cap?(boards, cap) when is_integer(cap), do: length(boards) > cap
+
+  defp changed?(_bracket, nil), do: true
+
+  defp changed?(bracket, played) do
+    Enum.sort(bracket.pairs) != Enum.sort(played.pairs) or
+      Enum.sort(bracket.floats) != Enum.sort(played.floats)
+  end
+
+  # What the alternative does to S1 and S2 in the first bracket where the
+  # two rounds part - and only for a tie, where the fixed order is all that
+  # separates them. Every bracket above that one is the same in both, so
+  # the bracket has the same members and the same halves in both reports.
+  #
+  # The played round has to pair S1 against S2 there, leaving S2 players
+  # over, or this says nothing: "the alternative needs an exchange" is a
+  # comparison, and it is only a clean one against a pairing that needs
+  # none.
+  defp step({:tie, group, _pick}, by_group, alt) do
+    with %{} = played <- Map.get(by_group, group),
+         %{} = theirs <- Enum.find(alt, &(&1.group == group)) do
+      cond do
+        played.heterogeneous? ->
+          if Enum.sort(played.floats) != Enum.sort(theirs.floats), do: :floater
+
+        not straight?(played, played) ->
+          nil
+
+        straight?(theirs, played) ->
+          :transposition
+
+        true ->
+          :exchange
+      end
+    else
+      _ -> nil
+    end
+  end
+
+  defp step(_verdict, _by_group, _alt), do: nil
+
+  # Every pair one from S1 and one from S2, and nobody from S1 leaving -
+  # by the halves of the bracket as the played round has it.
+  defp straight?(bracket, %{s1: s1, s2: s2}) do
+    Enum.all?(bracket.pairs, fn {x, y} ->
+      (x in s1 and y in s2) or (x in s2 and y in s1)
+    end) and Enum.all?(bracket.floats, &(&1 in s2))
   end
 
   defp outcome(:identical), do: :same

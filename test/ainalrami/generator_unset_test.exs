@@ -33,6 +33,32 @@ defmodule Ainalrami.GeneratorUnsetTest do
       for {text, seed} <- runs, do: assert(text =~ "012 Ainalrami RTG seed=#{seed}\r\n")
     end
 
+    test "a fresh seed comes from the OS random source, not the process's :rand state" do
+      seeds =
+        for _ <- 1..200 do
+          # The same :rand state before every draw: a seed derived from it
+          # would repeat.
+          :rand.seed(:exsss, {1, 2, 3})
+          Generator.fresh_seed()
+        end
+
+      assert length(Enum.uniq(seeds)) == 200
+      assert Enum.all?(seeds, &(&1 in 1..0xFFFFFFFF))
+    end
+
+    test "the team and round-robin generators draw fresh seeds the same way" do
+      for gen <- [Ainalrami.TeamGenerator, Ainalrami.RoundRobinGenerator] do
+        seeds =
+          for _ <- 1..5 do
+            :rand.seed(:exsss, {1, 2, 3})
+            {_text, seed} = gen.generate([])
+            seed
+          end
+
+        assert length(Enum.uniq(seeds)) == 5, "#{inspect(gen)} repeated a seed"
+      end
+    end
+
     test "the seed a run drew reproduces it, in either unset mode" do
       for unset <- [:fixed, :random] do
         {text, seed} = Generator.generate(unset: unset, players: 14, rounds: 5)

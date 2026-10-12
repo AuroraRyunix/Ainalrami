@@ -26,13 +26,15 @@ defmodule Ainalrami.TiebreaksTest do
   #
   #   scores: 1 = 2.5, 2 = 1, 3 = 2, 4 = 0.5
   # ------------------------------------------------------------------
-  defp swiss do
-    build(%{
+  defp swiss, do: build(swiss_spec())
+
+  defp swiss_spec do
+    %{
       1 => {2000, [{:w, 2, "1"}, {:b, 3, "="}, {:w, 4, "1"}]},
       2 => {1900, [{:b, 1, "0"}, {:w, 4, "1"}, {:b, 3, "0"}]},
       3 => {1800, [{:w, 4, "="}, {:w, 1, "="}, {:w, 2, "1"}]},
       4 => {1700, [{:b, 3, "="}, {:b, 2, "0"}, {:b, 1, "0"}]}
-    })
+    }
   end
 
   describe "a plain Swiss" do
@@ -521,6 +523,76 @@ defmodule Ainalrami.TiebreaksTest do
       for p <- 0..100, do: assert(Rating.dp(p) == -Rating.dp(100 - p))
       assert Rating.dp(100) == 800
       assert Rating.dp(83) == 273
+    end
+
+    # Article 10's note: the first rating, unless the regulations say
+    # otherwise - and when they do, each opponent counts with the rating
+    # they held in the round the game was played (VCL4THP Q214).
+    #
+    # The plain Swiss again, with a new list after round 1: 2 goes to 2000
+    # for rounds 2 and 3, 4 drops to 1600 for round 3.
+    #
+    #   1 met 2 (R1, 1900) 3 (R2, 1800) 4 (R3, 1600) = 5300/3 = 1766.7 -> 1767
+    #   2 met 1 (R1, 2000) 4 (R2, 1700) 3 (R3, 1800) = 5500/3 = 1833.3 -> 1833
+    #   3 met 4 (R1, 1700) 1 (R2, 2000) 2 (R3, 2000) = 5700/3 = 1900
+    #   4 met 3 (R1, 1800) 2 (R2, 2000) 1 (R3, 2000) = 5800/3 = 1933.3 -> 1933
+    defp new_list_after_round_1 do
+      swiss_spec()
+      |> build(round_ratings: %{2 => %{2 => 2000, 3 => 2000}, 4 => %{3 => 1600}})
+    end
+
+    test "ARO uses each opponent's rating for the round they were met" do
+      assert values(new_list_after_round_1(), "ARO") ==
+               %{1 => 1767, 2 => 1833, 3 => 1900, 4 => 1933}
+    end
+
+    test "TPR, APRO and the working follow the per-round ratings" do
+      # 1: 83% -> +273 = 2040   2: 33% -> -125 = 1708
+      # 3: 67% -> +125 = 2025   4: 17% -> -273 = 1660
+      assert values(new_list_after_round_1(), "TPR") ==
+               %{1 => 2040, 2 => 1708, 3 => 2025, 4 => 1660}
+
+      # 1 met 2, 3, 4: (1708 + 2025 + 1660) / 3 = 1797.7 -> 1798
+      assert values(new_list_after_round_1(), "APRO")[1] == 1798
+
+      {:ok, working} = Tiebreaks.working(new_list_after_round_1(), ~w(ARO))
+      assert Enum.map(working["ARO"][1], & &1.value) == [1900.0, 1800.0, 1600.0]
+    end
+
+    test "PTP reads the per-round ratings too" do
+      # 3 scored 2 of 3 against 1700, 2000, 2000.
+      assert values(new_list_after_round_1(), "PTP")[3] ==
+               Rating.ptp([1700, 2000, 2000], 2.0)
+    end
+
+    test "RTNG sorts by the participant's own rating, not a round's" do
+      assert values(new_list_after_round_1(), "RTNG") == values(swiss(), "RTNG")
+    end
+
+    test "without per-round ratings, or with ones equal to the rating, nothing moves" do
+      codes = ~w(PTS BH BH/C1 SB PS ARO ARO/C1 ARO/M1 TPR PTP APRO APPO RTNG)
+      {:ok, plain} = Tiebreaks.compute(swiss(), codes)
+
+      same =
+        Map.new(swiss_spec(), fn {id, {rating, _}} -> {id, Map.new(1..3, &{&1, rating})} end)
+
+      assert {:ok, ^plain} = Tiebreaks.compute(build(swiss_spec(), round_ratings: %{}), codes)
+      assert {:ok, ^plain} = Tiebreaks.compute(build(swiss_spec(), round_ratings: same), codes)
+      assert {:ok, w} = Tiebreaks.working(swiss(), codes)
+      assert {:ok, ^w} = Tiebreaks.working(build(swiss_spec(), round_ratings: same), codes)
+    end
+
+    test "an unrated participant still drops Article 10 without U<rating>" do
+      # The first rating decides whether one is unrated; a later list does
+      # not rescue a tie-break the regulations did not set up for it.
+      event =
+        build(
+          %{1 => {2000, [{:w, 2, "1"}]}, 2 => {nil, [{:b, 1, "0"}]}},
+          round_ratings: %{2 => %{1 => 1500}}
+        )
+
+      assert values(event, "ARO") == :dropped
+      assert values(event, "ARO/U1400") == %{1 => 1500, 2 => 2000}
     end
 
     test "the expected score is symmetric, and full-scale beyond 400" do

@@ -67,10 +67,6 @@ matching.ex and log.ex are original work.
 Not included in this repository
 --------------------------------------------------------------------------
 
-JaVaFo (https://www.rrweb.org/javafo/), Copyright Roberto Ricca, is NOT
-open source and is NOT bundled here. It is invoked only by opt-in,
-:javafo-tagged comparison tests, against a jar the user supplies.
-
 Gacrux / TieBreakServer (https://github.com/OttoMilvang/TieBreakServer) is
 likewise not vendored; it is located at runtime for comparison testing
 only.

@@ -320,10 +320,12 @@ ainalrami input.trf -p output.trf
 
 | invocation | mode |
 |---|---|
-| `ainalrami input.trf -p output.trf` | pair the next round |
+| `ainalrami input.trf -p output.trf` | pair the next round (a team file: team against team) |
 | `ainalrami input.trf -p` | same, printed to stdout |
-| `ainalrami -g output.trf` | Random Tournament Generator |
-| `ainalrami input.trf -c` | Pairings Checker: replay and diff every round (team Swiss: team against team) |
+| `ainalrami input.trf -x` | pair the next round and explain it |
+| `ainalrami -g output.trf` | Random Tournament Generator (`--team=swiss` or `--team=roundrobin` for a team event) |
+| `ainalrami input.trf -c` | Pairings Checker: replay and diff every round (team Swiss: team against team; team round robin: against the Berger tables) |
+| `ainalrami input.trf -s [output]` | the standings by the file's tie-break list (`202`/`212`) or `--tie-breaks=` |
 
 `-g` and `-c` mirror JaVaFo's own RTG/FPC modes, used for FIDE's FE1
 endorsement auto-test.
@@ -337,8 +339,9 @@ always reproduces itself:
 ainalrami -g out.trf --seed=42 --players=30 --rounds=9 --forfeit-pct=10 --bye-pct=5 --forbidden-pct=10 --acceleration=baku --initial-colour=b
 ```
 
-Without `--seed` a fresh seed is drawn for every run, so two runs with the
-same options give different tournaments; the seed it drew is printed and
+Without `--seed` a fresh seed is drawn for every run from the operating
+system's random source, so two runs with the same options give different
+tournaments; the seed it drew is printed and
 written into the file, and passing it back as `--seed` repeats the run
 exactly.
 
@@ -382,11 +385,13 @@ Tournament Type Code Table defines it (`Ainalrami.TypeCode`):
 | `FIDE_DUTCH_2017`, or `FIDE_DUTCH` for an event that started (`042`) before 1 July 2025 | replayed, with a warning: the engine pairs the current C.04.3, not the 2017 edition |
 | `FIDE_DUTCH*_BAKU` | replayed with the virtual points the file gives (`XXA`/`250`); exit 2 when it gives none - the engine does not derive C.04.7's groups itself |
 | `FIDE_TEAM*` without `_BAKU` | replayed team against team (*Team events* below) |
-| a round robin (`BERGER_ROUNDROBIN_Gn`, `FIDE_ROUNDROBIN`, `FIDE_DOUBLEROUNDROBIN`, the team ones, ...) | exit 2: predetermined by the Berger tables (Competition Rules Appendix 1), which Ainalrami does not have |
+| a team round robin (`BERGER_TEAM_ROUNDROBIN_Gn`, `FIDE_TEAM_ROUNDROBIN`, `FIDE_TEAM_DOUBLEROUNDROBIN`, ...) | compared with the Berger tables (C.05 Annex 1, `Ainalrami.Berger`), colours included, the table repeated `n` times with the colours reversed in every second cycle |
+| an individual round robin (`BERGER_ROUNDROBIN_Gn`, `BERGER_ROUNDROBIN`, `FIDE_ROUNDROBIN`, `BERGER_DOUBLEROUNDROBIN`, `FIDE_DOUBLEROUNDROBIN`) | compared with the Berger tables, colours included, players numbered by starting rank (`Ainalrami.RoundRobin`); `FIDE_DOUBLEROUNDROBIN` plays the first cycle's last two rounds in reverse order |
+| `CUSTOM_ROUNDROBIN`, `CUSTOM_TEAM_ROUNDROBIN` | exit 2: a round robin of the competition's own |
 | `FIDE_SCHILLER_TxP`, `FIDE_SCHEVENINGEN_Gn` and their shorthands | exit 2: predetermined, by rules FIDE has not yet defined |
 | `FIDE_DUBOV`, `FIDE_BURSTEIN`, `FIDE_DOUBLESWISS` (with or without `_BAKU`) | exit 2: Ainalrami pairs the Dutch system only |
 | `CUSTOM_*`, `FIDE_TEAM*_BAKU` | exit 2: a system of the competition's own; the team engine has no acceleration |
-| none, or one off the table (said so) | the `092` type (a round robin, Scheveningen, Schiller or knockout exits 2), else the games: team matches throughout make a team Swiss, anything else the Dutch system |
+| none, or one off the table (said so) | the `092` type (a round robin - a team one when its games are team matches throughout, else individual - played as many times as its rounds need; a Scheveningen, Schiller or knockout exits 2), else the games: team matches throughout make a team Swiss, anything else the Dutch system |
 
 When the file carries a tie-break list (`212`, or `202` after the score)
 and final ranks, `-c` also ranks the field with `Ainalrami.Tiebreaks` and
@@ -436,8 +441,13 @@ A file whose pairings this checker cannot replay is reported as such and
 nothing is compared:
 
 ```
-warning: rounds: not replayed - FIDE_TEAM_ROUNDROBIN is a round robin by the Berger tables (Competition Rules, Appendix 1): its pairings are predetermined, and Ainalrami has no Berger tables to replay them against. This checker replays the Dutch system (C.04.3) and C.04.6 team Swiss events, so no round was compared (exit code 2)
+warning: rounds: not replayed - FIDE_SCHEVENINGEN is a Scheveningen event, whose pairings are predetermined (by rules FIDE has not yet defined). This checker replays the Dutch system (C.04.3), C.04.6 team Swiss events and team round robins, so no round was compared (exit code 2)
 ```
+
+A team round robin is compared round by round with the Berger table for
+its number of teams (numbered in the order of their `310` numbers), board
+1's colour included. A scheduled match the file records nothing for - no
+games and no `330` - is reported but is not a difference.
 
 `-c` exit codes: **0** every round (and the standings, when checked)
 match; **1** something differs, or the file cannot be read; **2** a system
@@ -472,9 +482,210 @@ and each preference's outcome is reported (a preference that was not
 applied, and why, as a warning). A `--bye-want` for a player who already
 had the pairing-allocated bye (or a forfeit win or full-point bye, C2)
 refuses the round: exit 1, with an error naming the player and that round.
-They are refused with `-g` and `-c`,
-which pair by the FIDE rules alone, and no TRF line carries them: the
-engine reads non-FIDE options from flags and library options only.
+The flags are refused with `-g` and `-c`. `--bye-exclude=RANKS` is the
+library's plain `:bye_exclusions` - the same exclusion as `--bye-avoid`,
+reported as the organiser's rather than as a preference.
+
+A file can carry all five as `XXO` lines (see "TRF extension lines"), and
+then `-p`, `-x` and `-c` read them: `-c` replays each round with the
+settings that applied to it, and says on stderr that this is not a pure
+FIDE check.
+
+### Every other library option: flags for `-p`, `-x` and `-c`
+
+Whatever OpenPairings hands the engine through the library, the command
+line can now say too. [docs/cli-parity.md](docs/cli-parity.md) is the full
+table - library option, flag, record - and the tests hold the CLI's answer
+to the library's for each one. A flag is laid over what the file says:
+
+| flag | library | what |
+|---|---|---|
+| `--rounds=N` | `expected_rounds:` | the round count, in place of `142`/`XXR` |
+| `--initial-colour=white\|black` | `initial_colour:` | the drawing of lots, in place of `152`/`XXC` |
+| `--points=3,1,0` or `--points=win:3,draw:1,bye:1` | `point_system:` | the point system, over `BB*`/`162`; names `win draw loss bye forfeit-loss zero-bye half-bye full-bye forfeit-win`. A win's value moves the bye's with it unless `bye:` is given, as `BBW` does, and the players' totals are re-added under it |
+| `--forbidden=1,4/2,9,12@3-5` | `forbidden_pairs:` | forbidden groups, added to the file's `XXP`/`260`; `@ROUND` or `@FIRST-LAST` limits one to those rounds |
+| `--soft-pairs=2,9,12@3-5` | `soft_pairs:` | a soft group can be limited to rounds the same way |
+| `--acceleration=baku` | players' `:accelerations` | C.04.7's virtual points worked out here (`Ainalrami.Acceleration`): Group A the top `2 x ceil(n/4)`, `ceil(R/2)` accelerated rounds, the first half of them a point and the rest a half. For a file with no `XXA`/`250`; needs the round count |
+| `--baku-group-a=N` | | Group A's last starting rank, for a field that grew after round 1 (the group does not) |
+| `--virtual-points=1-10:1,1,0.5/11:0.5` | players' `:accelerations` | any other table: `RANKS:` one value per round. Not C.04.7, and stderr says so |
+| `--half-bye=3,7` `--zero-bye=12` `--full-bye=20` | a bye in the player's games | (`-p`, `-x`) byes asked for in the round being paired, as a `240` record says them; a zero-point one is an absence |
+| `--cascade-order` | `cascade_order: true` | (`-p`) boards in the order the brackets were paired instead of C.04.2 3.6's |
+| `--judge=1-5,2-6,3-0` | `Alternatives.judge/4` | (`-x`) a whole other round, 0 for the bye, judged against the one paired: illegal pairs, then the first criterion that separates them |
+| `--bye-alternatives` `--float-alternatives` | `Alternatives.bye_alternatives/3`, `float_alternatives/3` | (`-x`) had each other player of the bracket taken the bye, or floated, instead |
+| `--alternative-pairs` | each candidate's `alternative` | (`-x`, with either of the two above) under each alternative, its boards that differ from the played round, the played boards they replace, how many boards are the same, and - for a tie, when the brackets leave no doubt - whether it is another order of S2 or an exchange between S1 and S2. Without it the two listings print what they always printed |
+
+A flag in a mode that has no use for it is refused, not ignored
+(`--cascade-order is for -p, not -c`), and so is one for another kind of
+file. Without any of them, and without `XXO` lines, every run prints what
+it printed before: `tools/cli_golden.exs` compares two checkouts' output,
+and this one's 2,747 runs are byte for byte the release's.
+
+### Standings: `-s`
+
+```bash
+ainalrami event.trf -s --tie-breaks=BH,SB
+```
+
+`Ainalrami.Tiebreaks.rank/3` on the file - what `-c` checks the file's own
+ranks against - as a header line and one line per participant, CRLF:
+
+```
+RANK ID PTS BH SB
+1 6 4.5 13.0 11.75
+2 9 3.5 12.0 7.75
+```
+
+The list is the file's (`212`, or the score and then `202`) unless
+`--tie-breaks=` gives one; a list starting with `PTS`, `MPTS` or `GPTS` is
+the whole order. `--cap-rounds=played|announced` is C.07 16.4.2's round
+count for a dummy opponent (`played` by default). A team file (TRF26 `310`)
+is ranked with the team tie-breaks. `--tie-breaks=` and `--cap-rounds=`
+work on `-c` too. Per-round ratings for the rating tie-breaks (VCL4THP
+Q214) come from the file: `XXO round-ratings`, below.
+
+### Round robins: `-p`, `-x`, `-c` and `-g --roundrobin`
+
+On a round-robin file (the `192` codes above, or a `092` round robin) `-p`
+gives the next round of the Berger table - the table OpenPairings plays,
+board for board (`test/fixtures/round_robin/openpairings_berger.txt` holds
+its boards for 3-16 players, one and two cycles): players numbered by
+starting rank, the boards lowest number first, the free player of an odd
+field last as `PLAYER 0`, in JaVaFo's list format. `-x` says the table
+fixed the round; bye preferences, `--force` and `--absent` are refused.
+`-g --roundrobin` writes a random one (`--players --rounds --cycles
+--forfeit-pct --draw-rate --rating-range --tie-breaks --seed`) that `-c`
+passes. A match-format round robin (`XXM` or `--match-format`; OpenPairings
+writes it as `CUSTOM_ROUNDROBIN`) plays round `k` of one table as rounds
+`2k - 1` and `2k`, the second with the colours reversed, and a round robin
+by category (`XXG` or `--groups=`) plays one table per group, table after
+table - both as OpenPairings schedules them; `-g --roundrobin` takes
+`--match-format` and `--groups=N`.
+
+### Match format, pairing groups and soft pairs
+
+Three settings OpenPairings pairs with that no FIDE record carries. The
+first two are read from the file (`XXM`, `XXG` - see "TRF extension lines")
+or given as flags, which take their place; `-p`, `-x` and `-c` all pair by
+them, and `-g` writes them:
+
+| flag | record | what |
+|---|---|---|
+| `--match-format` | `XXM` | every match two games in a row, colours reversed in the second. A Swiss pairs the odd rounds by the Dutch system (from the whole history, both legs of every match) and copies each even round from the one before, boards turned round, a pairing-allocated bye given again; `-c` holds the second legs to exactly that, colours included. A round robin: round `k` of one Berger table as rounds `2k - 1` and `2k`. Files: `CUSTOM_SWISS` / `CUSTOM_ROUNDROBIN` / `CUSTOM_TEAM_ROUNDROBIN` with `XXM`. |
+| `--groups=1-8/9-12,15` | `XXG 1 2 ...` (one line per group) | pairing by category: each group paired on its own - a Swiss group by the Dutch system with everybody else sitting the round out, one player alone in the round given the pairing-allocated bye, a round robin group by its own Berger table. Groups in the order given, boards following one another; ranks in no group form a last group. |
+| `--soft-pairs=1,4/2,9,12`, `--soft-position=strong\|weak` | `XXO soft-pairs 1 4`, `XXO soft-position weak` | pairs to keep apart where the criteria allow it (the flags `-p`, `-x` only - an organiser's wish, see "Organiser deviations"). |
+
+```
+ainalrami event.trf -p --groups=1-12/13-20       # a Swiss paired by category
+ainalrami event.trf -c --match-format             # check an OpenPairings match-format Swiss
+ainalrami -g out.trf --roundrobin --match-format --groups=2
+```
+
+Match format and pairing groups together are refused, as OpenPairings
+refuses them. A second leg that cannot be copied - a player seated in the
+first leg with a result already recorded for the second, or one who sat
+the first out and is in the second - is refused with the player named.
+The library call is `Ainalrami.EventFormat.pair_next_round/2`
+(`Ainalrami.Pairing`'s options plus `:match_format` and `:groups`), and the
+CLI's answer is that call's, which the tests hold it to.
+
+### Team events: `-p`, `-x` and `-g`
+
+**`-p` on a team file** pairs the next round team against team. Which
+system is `-c`'s choice (above): a C.04.6 team Swiss is paired by
+`Ainalrami.TeamPairing` with the settings of its `192` code (colour
+preferences, primary score, secondary score for colours), the initial
+colour of `152` (else the one round 1 shows, else White), the round count
+of `142`, the history the file records (match and game points as the team
+standings read them - `362` with its `P` and `A`, `320`, `330` - opponents
+and board-1 colours of the matches played, byes, forfeit wins, last
+round's floaters) and the teams sitting the round out passed as absent; a
+team round robin gets the next round of the Berger table. A team sits the
+round out when every one of its players already has the round recorded -
+a zero-, half- or full-point bye in the column or a TRF26 `240` record -
+which is how an arbiter says so before the pairing. A fresh team event
+needs its `192` code: with no games yet, nothing else says it is one.
+
+The output is JaVaFo's pairing list one level up - a count line, then one
+line per match with the team that has White on board 1 first, the bye
+last as `TEAM 0` (a Swiss's pairing-allocated bye; a round robin's free
+round), CRLF throughout. Team numbers are the `310` numbers. Matches come
+in C.04.2 3.6's recommended order (Swiss) or by the lower team number
+(round robin):
+
+```
+4
+3 4
+2 1
+8 5
+7 0
+```
+
+With `--lineups` the boards follow as a second block: a count line, then
+`MATCH BOARD WHITE BLACK` per board - the match's line number above (from
+1), the board, and the players' starting ranks, 0 for a board nobody
+fills. A team seats the order of a `300` record for the round when the file
+has one, otherwise its free players in roster (`310`) order, and the team
+with White on board 1 has White on every odd board. The number of boards is
+the most any match of the file had, or `--boards=N` (needed before the
+first match is played).
+
+```bash
+ainalrami league.trf -p round6.txt --lineups
+```
+
+**`-x` on a team file** prints the engine's own account (C.04.6
+`explain: true`): the teams going in (match and game points, colours,
+colour preference, bye/forfeit/float flags), the pairing-allocated bye and
+why it went where it did (3.4), every bracket with the upfloater sets
+considered, the runner-up and the criterion that decided between them
+([C4]-[C7], 3.5.4), and the Article 4 rule behind each match's colours. On
+a round robin it says the table fixed the round. Bye preferences,
+`--force` and `--absent` are for individual events and are refused on a
+team file; `--lineups`/`--boards` on an individual one. A team system
+nothing here pairs (Scheveningen, Schiller, an accelerated or custom team
+Swiss) exits 2.
+
+**Settings over the file's** (`-p`, `-x`, `-c` on a team Swiss), each
+`Ainalrami.TeamPairing.pair_round/2`'s option of that meaning:
+
+| flag | what |
+|---|---|
+| `--team-type=a\|b\|none --score=mp\|gp --secondary=yes\|no` | colour preferences, primary score, whether the secondary score allocates colours - in place of the `192` code's |
+| `--initial-colour=white\|black`, `--rounds=N` | in place of `152` and `142` |
+| `--absent-teams=2,5` | (`-p`, `-x`) these teams sit the round out: every free player a zero-point bye, which is how the file says it |
+| `--max-upfloater-sets=N` | C.04.6 3.5's search budget (default 200,000) |
+| `--explain-limit=N` | (`-x`) entries kept per list of the account (default 10) |
+
+**`-g --team=swiss` / `--team=roundrobin`** generates a random team event
+(`Ainalrami.TeamGenerator`) as a TRF26 file: `310` teams with rosters,
+board-level games in `001`, `362` (`W`/`D`/`L`, `P`, `A`), `320`, `330`,
+`300`, `192`, `152`, `142` and, with a tie-break list, `212` and the team
+ranks. A Swiss is paired by `Ainalrami.TeamPairing` round by round from the
+generator's own record of the event, so `-c` on the file - and `-p` on any
+copy of it cut back to before a round - re-reads that record from the
+file. Options left out are drawn from the seed, which is printed and
+written into the tournament name:
+
+| option | meaning |
+|---|---|
+| `--seed --teams --rounds` | the event (a Swiss 4-16 teams and 3-9 rounds, never more than teams - 1; a round robin 3-10 teams and its whole table unless fewer rounds are asked for) |
+| `--boards --reserves --cycles` | boards per match (2-6), at most this many reserves per team (0-2), a round robin's cycles (1 or 2) |
+| `--team-type=a\|b\|none --score=mp\|gp --secondary=yes\|no` | C.04.6 colour preferences, primary score, and whether the secondary score allocates colours - written as the `192` code |
+| `--initial-colour=white\|black` | the drawing of lots (4.1), `152` |
+| `--match-points=2,1,0 --pab=draw\|win --forfeit-match-points=0` | match points; the pairing-allocated bye's (1.4: a draw's by default); a match lost by forfeit's |
+| `--forfeit-pct --match-forfeit-pct` | boards forfeited; matches a team did not turn up for (board by board, or as a `330` with no boards) |
+| `--absent-team-pct --absent-player-pct` | teams sitting a round out (every player a `Z`; in a round robin the match is forfeited, `330`); players announced absent (the players below move up, a reserve fills in) |
+| `--out-of-order-pct` | lineups out of roster order, with a `300` record |
+| `--draw-rate --tie-breaks=MPTS,GPTS,EDE` | draws; a team tie-break list (`212`) and the ranks it gives |
+
+```bash
+ainalrami -g league.trf --team=swiss --seed=7 --teams=12 --boards=4 --team-type=b --absent-team-pct=5
+ainalrami league.trf -c
+```
+
+`tools/team_cli_corpus.exs SWISS RR` is the large run: generated events
+through `-c`, and `-p --lineups` on every round of every one of them cut
+back to before that round, compared with the generator's direct answer.
 
 ### Verbose by default
 
@@ -495,6 +706,38 @@ extension codes:
 | `XXA` | per-player acceleration ("virtual points"), round by round |
 | `260` | forbidden pairs, limited to a range of rounds |
 | `250` | acceleration for a range of players over a range of rounds |
+| `XXM` | match format: every match two games in a row, colours reversed (Ainalrami's own) |
+| `XXG a b [c …]` | one pairing group - a category paired on its own (Ainalrami's own) |
+| `XXO keyword ...` | the organiser's options no TRF record carries (Ainalrami's own, below) |
+
+`XXM` and `XXG` are this engine's own, for the two OpenPairings settings
+neither TRF16 nor TRF26 can say; no other program reads them. `XXM` takes
+no value. A malformed `XXG`, a rank the file does not have and a rank in
+two groups are refused, as a malformed `XXP` is.
+
+`XXO` is the third of this engine's own: one code, and after it the
+command line's own name for the option.
+
+| line | flag | meaning |
+|---|---|---|
+| `XXO soft-pairs 2 9 12 [@3-5]` | `--soft-pairs=` | a soft group, for every round or `@ROUND` / `@FIRST-LAST` (**not FIDE**) |
+| `XXO soft-position strong\|weak` | `--soft-position=` | how hard to try (**not FIDE**) |
+| `XXO bye-want 5 12@3-4+7` | `--bye-want=` | must get the pairing-allocated bye; likewise `bye-want-soft`, `bye-avoid`, `bye-avoid-soft` (**not FIDE**) |
+| `XXO bye-exclude 3 7@4-6+9` | `--bye-exclude=` | the plain bye exclusion (**not FIDE**) |
+| `XXO round-ratings 12 2100 2150 - 2180` | none | the rating player 12 held in each round, `-` or `0` for none: the rating tie-breaks (ARO, TPR, PTP, APRO, APPO) then count each opponent at the rating of that round. C.07 Article 10 allows it when the event's regulations say so (VCL4THP Q214) |
+
+A round paired from the first four is not a pure FIDE pairing, and `-p`,
+`-x` and `-c` say so on stderr exactly as they do for the flags; flags and
+lines together add up. bbpPairings 6.0.0 and JaVaFo both skip the lines
+(ten mid-event files each, the same boards with and without them), so a
+file with `XXO` lines still pairs elsewhere - by the FIDE rules alone,
+which is the point of the warning. One code rather than one per option on
+purpose: `XXS` was the obvious name for soft pairs and is JaVaFo's point
+system. A malformed line, a keyword `XXO` does not have and a rank the
+file does not have are refused. `Trf.serialize/2` writes the lines from
+`tournament[:soft_pairs]`, `[:soft_position]`, `[:bye_preferences]`,
+`[:bye_exclusions]` and each player's `:round_ratings`, and writes nothing
+for a tournament with none of them.
 
 `XXR` and `142` are the same field: a file may carry both, but they must
 **agree**, and two different counts are refused rather than silently
@@ -559,21 +802,26 @@ all of the above unconditionally, to the same shape `XXR`/`BB*`/`XXA`/`XXP`
 parse to, so a round paired from either spelling of one tournament is the
 same round. Of TRF26's team records, `310` (teams with their numbers,
 scores and final ranks; it takes precedence over `013`), `362` (match
-points), `320` (the team pairing-allocated bye) and `330` (forfeited
-matches) are read and written; `300` (boards out of order), `801`, `802`
-and national-rating records are not read.
+points), `320` (the team pairing-allocated bye, its match and game
+points), `330` (forfeited matches) and `300` (a team's board order in one
+match: board 1's colour is read from it, and the team tie-breaks number
+the boards by it) are read and written; `801`, `802` and national-rating
+records are not read.
 
 ## Organiser deviations (not FIDE)
 
 Three options change the pairing in ways the Dutch system does not allow. A
 round paired with any of them is not a Dutch-system round in the homologation
-sense, and a FIDE checker replaying the file will not reproduce it - no TRF
-line records them. Without them the engine runs exactly the code it runs
+sense, and a FIDE checker replaying the file will not reproduce it - no
+FIDE record carries them, only this engine's own `XXO` lines, which no
+other program reads. Without them the engine runs exactly the code it runs
 without them, byte for byte.
 
 - **Soft pairs** - `soft_pairs:` / `soft_position:` on `pair_next_round/2`
   and `explain_round/3`: pairs to avoid if the alternative is not worse
-  (club protection, family). See the 0.20.0 changelog entry.
+  (club protection, family). See the 0.20.0 changelog entry. On the CLI,
+  `--soft-pairs=1,4/2,9,12 [--soft-position=weak]` with `-p` and `-x`
+  (refused with `-g` and `-c`, like the bye preferences).
 - **Bye exclusions** - `bye_exclusions: [rank, ...]` on
   `pair_next_round/2`, `pair_later_round/2` and `explain_round/3`: players
   who must not receive the pairing-allocated bye this round (someone who
@@ -774,6 +1022,7 @@ probe, is in
 | [docs/tiebreak-reference.md](docs/tiebreak-reference.md) | the independent tie-break reference and its results |
 | [docs/finding-tiebreakserver-2026-09.md](docs/finding-tiebreakserver-2026-09.md) | where TieBreakServer and C.07 part company (findings A-H) |
 | [docs/engineering-log.md](docs/engineering-log.md) | the dated build history, including what measured worse |
+| [docs/cli-parity.md](docs/cli-parity.md) | every library option against its flag and its record |
 | [TODO.md](TODO.md) | open work |
 
 ## Development
@@ -782,7 +1031,7 @@ probe, is in
 mix test
 ```
 
-About 740 tests. Comparison tests against JaVaFo and Gacrux are tagged and
+About 1,130 tests. Comparison tests against JaVaFo and Gacrux are tagged and
 excluded by default - neither is vendored, and both must be supplied
 locally. See [docs/validation.md](docs/validation.md) for how to point the
 harness at them and how to run the large fuzz axes.
@@ -816,8 +1065,6 @@ numbers are cited inline throughout, and matching their licence is the
 cleanest way to honour that rather than leaving it ambiguous.
 [NOTICE](NOTICE) spells out exactly which files are derived and what
 changed.
-
-JaVaFo is © Roberto Ricca, is not open source, and is not bundled here.
 
 ## Licence
 

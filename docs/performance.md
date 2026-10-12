@@ -1,7 +1,10 @@
 # Performance
 
-First the timing study, which measures all three engines on 3,000 random
-positions and is the figure to quote. Then six passes, newest first: the
+First where the certified shortcuts switch on, then the score variants
+(`Pairing.pair_variants/3`, the batch behind OpenPairings' next-round
+preview). Then the timing study, which measures
+all three engines on 3,000 random positions and is the figure to quote.
+Then six passes, newest first: the
 weighted matcher itself (the blossom fallback), the slow tail of the last
 round, the slow spots the direct bracket left, the
 direct bracket on odd fields, the direct bracket itself, which took the
@@ -9,6 +12,315 @@ pairing past Gacrux on every benchmark file, and the large-field pass
 before it. The passes measure single benchmark positions, one per row;
 read their tables as before-and-after on those positions, not as a
 comparison of engines.
+
+## The certified shortcuts' threshold (2026-10-08)
+
+`pair_next_round/2` took the certified shortcuts (the direct bracket on
+the field graph, certified installs, window brackets, the certified reads;
+see "certified shortcuts" in the source) from 100 active players up. That
+line came in with the shortcuts themselves (e46ef5c) with a reason - "a
+small round's searches are cheap and its reads are the ones most often
+tied" - and no measurement. The profile under the score variants above
+then found forced shortcuts 3-7x faster on 80-player positions. This pass
+times the line.
+
+Correctness was never what the line was for. Every shortcut either holds
+a certificate that the reference search would read the same value, or
+throws, and the round is paired again from the start on the reference
+path; nothing in that depends on the field size. The forced mode
+(`AINALRAMI_CERT=force`) has been held to the reference on the small
+corpus (370,777 rounds of 4-40 players, "The direct bracket" below) and
+by `test/ainalrami/direct_bracket_test.exs` on every `mix test`.
+
+### Method
+
+`tools/cert_threshold.exs`: fuzz tournaments of exactly 10, 20, 30, 40,
+60, 80, 100 and 150 players, nine rounds, with requested byes (8%),
+forfeits (5%), forbidden pairs, withdrawals, late entrants, accelerations,
+point systems, initial colours and rating shapes all drawn per tournament,
+the arbiter's soft pairs on a third of tournaments and organiser bye
+exclusions on a third of rounds (as `tools/perf_diff.exs` draws them).
+Rounds 3-9 of each are paired under every mode in a shuffled order, the
+best of three calls per mode, one scheduler per worker, 16 workers on the
+80-core VM while it ran other work at full load - read the absolute
+figures as that box's and the ratios as the point; the ratios are per
+position, so both modes of a position share the box's mood. Every answer
+was checked equal across the modes (all were). Modes: `off` (the
+reference search), `on` (`AINALRAMI_CERT_MIN=0`: the shortcuts at every
+size, their own small-solve thresholds kept) and `force` (those lifted
+too).
+
+### Results
+
+Milliseconds, median / p95 / p99 over the positions (625-672 per size).
+The ratio is off / on per position: its median, and the ratio of the
+summed times ("in all"). "Slower" counts positions where `on` took over
+20% and 2 ms longer than `off`.
+
+| players | off | on | force | on: median ratio | in all | slower |
+|---|---|---|---|---|---|---|
+| 10 | 1.3 / 2.6 / 3.0 | 1.5 / 4.7 / 7.2 | 1.6 / 5.1 / 7.5 | 0.87 | 0.78 | 7% |
+| 20 | 4.4 / 8.2 / 9.8 | 3.1 / 12.7 / 20.6 | 3.3 / 15.6 / 23.6 | 1.15 | 1.06 | 15% |
+| 30 | 9.1 / 17.4 / 21.5 | 5.5 / 19.9 / 31.0 | 5.3 / 22.2 / 37.0 | 1.39 | 1.30 | 14% |
+| 40 | 16.4 / 31.3 / 37.0 | 6.2 / 31.3 / 73.4 | 6.5 / 35.1 / 76.7 | 2.32 | 1.51 | 12% |
+| 60 | 36.6 / 68.0 / 86.6 | 12.5 / 73.4 / 144.7 | 13.1 / 85.3 / 140.9 | 2.32 | 1.58 | 10% |
+| 80 | 61.7 / 110.2 / 126.4 | 24.1 / 118.0 / 201.3 | 25.2 / 133.8 / 216.5 | 1.85 | 1.47 | 10% |
+| 100 | 83.8 / 166.3 / 208.2 | 17.9 / 160.9 / 308.9 | 18.3 / 197.7 / 304.3 | 3.93 | 1.98 | 6% |
+| 150 | 144.7 / 374.0 / 489.5 | 24.3 / 346.5 / 505.3 | 24.1 / 384.9 / 563.3 | 3.80 | 2.02 | 4% |
+
+`force` is never better than `on`, so the shortcuts' own thresholds stay.
+What the field size does not explain is the slow positions - and the
+soft pairs do. Split by whether the tournament has them:
+
+| players | no soft pairs: median ratio / in all | slower | soft pairs: median ratio / in all | slower |
+|---|---|---|---|---|
+| 10 | 0.94 / 0.82 | 8% | 0.82 / 0.73 | 7% |
+| 20 | 2.18 / 1.48 | 10% | 0.84 / 0.72 | 25% |
+| 30 | 3.02 / 2.05 | 4% | 0.89 / 0.82 | 31% |
+| 40 | 3.42 / 2.42 | 4% | 0.93 / 0.81 | 32% |
+| 60 | 4.17 / 2.77 | 3% | 0.93 / 0.85 | 24% |
+| 80 | 4.61 / 3.02 | 3% | 0.94 / 0.89 | 21% |
+| 100 | 5.80 / 3.76 | 2% | 0.94 / 0.89 | 18% |
+| 150 | 6.89 / 5.62 | 1% | 0.98 / 0.93 | 11% |
+
+Soft pairs switch the direct bracket off (`direct_allowed?/2`), and with
+it the one shortcut that skips whole searches; what is left is mostly
+certifying reads the reference search would have made anyway. Without
+them the line sits lower than 100. A finer run without soft pairs
+(1,106-1,120 positions per size, seeds from 100,001):
+
+| players | off | on | median ratio | in all | slower |
+|---|---|---|---|---|---|
+| 12 | 1.8 / 3.9 / 4.6 | 1.5 / 7.5 / 10.5 | 1.04 | 0.89 | 12% |
+| 16 | 3.0 / 6.0 / 7.3 | 1.6 / 11.0 / 16.4 | 1.37 | 1.02 | 15% |
+| 20 | 4.4 / 8.5 / 10.7 | 1.5 / 11.1 / 19.0 | 2.08 | 1.44 | 9% |
+| 24 | 5.6 / 11.1 / 14.1 | 1.8 / 12.5 / 23.4 | 2.40 | 1.62 | 9% |
+| 30 | 8.7 / 16.7 / 21.8 | 2.3 / 13.8 / 26.1 | 3.09 | 2.04 | 5% |
+
+And with soft pairs on every tournament, from 100 players up (168
+positions per size; then 32 per round at 300 and 600, rounds 1-5 of a
+five-round event, two calls per mode):
+
+| players | rounds | off / on in all | median ratio |
+|---|---|---|---|
+| 100 | 3-9 | 0.88 | 0.94 |
+| 150 | 3-9 | 0.92 | 0.98 |
+| 200 | 3-9 | 0.94 | 0.98 |
+| 300 | 3-9 | 0.97 | 1.00 |
+| 300 | 1 / 2-5 | 1.19 / 0.95-0.99 | 1.08 / 0.97-0.99 |
+| 600 | 1 / 2-5 | 1.13 / 1.00-1.02 | 1.05 / 0.99-1.03 |
+
+### The rule
+
+* **No soft pairs: from 30 active players** (`@cert_min_field`). From 30
+  up the shortcuts win on the median (3.1x at 30), at p95 and in all; 20-24
+  win on the median and in all too, but not at p95, which was the bar. The
+  p99 is worse with the shortcuts at every size up to 100 - without soft
+  pairs by 20% at 30, the same 20% the old line already accepted at 100 -
+  and is the certification cost on the positions where nearly every read
+  needs it.
+* **Soft pairs: from 100, as before** (`@cert_min_field_soft`). The
+  shortcuts lose 5-15% at 100-200 players, but win 10-25% on the opening
+  round from 300 up, so these rounds keep the old line rather than gain a
+  new one. Below 100 they were already off.
+
+`AINALRAMI_CERT_MIN=<n>` puts both lines at n (100 is the old rule);
+`AINALRAMI_CERT=off|force` are unchanged.
+
+Against the old rule on the same positions (milliseconds, median / p95 /
+p99; the first table's run, a third of tournaments with soft pairs; old
+and new times are the measured `off` or `on` each rule takes for that
+position's active count):
+
+| players | old | new | median ratio | in all | slower |
+|---|---|---|---|---|---|
+| 10, 20 | - | same path | 1.0 | 1.0 | 0 |
+| 30 | 9.1 / 17.4 / 21.5 | 6.2 / 16.9 / 25.2 | 1.01 | 1.37 | 3% |
+| 40 | 16.4 / 31.3 / 37.0 | 6.2 / 27.7 / 41.4 | 2.32 | 1.70 | 3% |
+| 60 | 36.6 / 68.0 / 86.6 | 12.4 / 60.2 / 116.9 | 2.32 | 1.74 | 2% |
+| 80 | 61.7 / 110.2 / 126.4 | 23.1 / 104.4 / 177.6 | 1.85 | 1.60 | 2% |
+| 100 | 25.7 / 164.1 / 308.9 | 17.9 / 160.9 / 308.9 | 1.0 | 1.20 | 0 |
+| 150 | - | same path | 1.0 | 1.0 | 0 |
+
+(At 30 the median ratio is 1.0 because withdrawals and byes put many of
+those rounds under 30 active players, and a third of the tournaments have
+soft pairs; at 100 the reverse, a round with fewer than 100 active and no
+soft pairs now takes the shortcuts.) Without soft pairs the 30-80 figures
+are the second table's: 3.0-4.6x on the median, 2.0-3.0x in all.
+
+### How it was checked
+
+`tools/cert_threshold.exs` with `CT_MODES=plain,old`: every round from the
+second of nine is paired under the new rule and under the old one
+(`AINALRAMI_CERT_MIN=100`), and the two answers - pairs in order, colours,
+bye, or the refusal with its reason, excluded ranks and override - must
+be identical. Fuzz tournaments as above at 6-150 players (a sixth 6-29,
+two thirds 30-99, a sixth 100-150), seeds from 1,000,001, 16 workers:
+272,000 tournaments, **2,157,665 rounds, 0 differences** (344,417 rounds
+at 6-29 players, 1,450,624 at 30-99, 362,624 at 100-150). 971,637 of them
+were rounds in which the two rules take different paths (30-99 active
+players, no soft pairs); the rest take the same path on both sides and
+were compared anyway. The timing runs above
+compared every mode's answer as well (11,921 positions, 0 differences).
+
+### Reproducing
+
+    # timings (one scheduler per worker; CT_W = 0..15)
+    MIX_ENV=test CT_W=0 CT_N=16 CT_COUNT=48 CT_SIZES=10,20,30,40,60,80,100,150 \
+      CT_MODES=off,on,force CT_TIME=1 CT_REPS=3 CT_OUT=OUT \
+      elixir --erl "+S 1" -S mix run tools/cert_threshold.exs
+    CT_SUMMARY=OUT MIX_ENV=test mix run tools/cert_threshold.exs
+
+    # soft pairs everywhere / nowhere
+    CT_SOFT=all ...    CT_SOFT=none ...
+
+    # the equality run
+    MIX_ENV=test CT_W=0 CT_N=16 CT_COUNT=17000 CT_SEED_FROM=1000001 \
+      CT_SIZES=6-29,30-99,30-99,30-99,30-99,100-150 CT_MODES=plain,old \
+      CT_FROM_ROUND=2 CT_OUT=OUT elixir --erl "+S 1" -S mix run tools/cert_threshold.exs
+
+## Score variants (2026-10-07)
+
+`Pairing.pair_variants/3` pairs the next round once for each of several
+variants of one position that differ only in results of the round just
+played - OpenPairings' "which boards are already certain" preview, 3^k
+variants for k open games - and must give, for every variant, exactly what
+`pair_next_round/2` gives for it alone. This section is what was measured
+on the way, what was kept, and what was dropped and why; the equality is
+in [validation.md](validation.md#score-variants-2026-10-07).
+
+### Where one pairing spends its time
+
+`pair_next_round/2` on the fuzz generator's positions (5% requested byes,
+3% forfeits), eight positions per row, one scheduler on the 80-core VM,
+the median of three calls after a warm one. The shares are from a
+temporary build with a timer around each phase (not committed): the input
+check; the prelude (5.2.5 arrival numbering, float history, colour state
+and per-round facts, score groups, the bye bootstrap); the completability
+oracle; and the brackets, with the weighted matcher's share of the whole
+from `:tprof`.
+
+| players | round | median | input check | prelude | oracle | brackets | matcher |
+|---|---|---|---|---|---|---|---|
+| 30 | 3 / 5 / 7 / 9 | 8.5 / 12.5 / 12.5 / 10.8 ms | 0.2-0.3% | 5-8% | 2-3% | 89-93% | 49-58% |
+| 80 | 3 / 5 / 7 / 9 | 25 / 68 / 86 / 82 ms | 0.1-0.2% | 2-3% | 1-2% | 95-97% | 68-85% |
+| 150 | 3 / 5 / 7 / 9 | 6.5 / 10 / 17 / 20 ms | 0.5-1.1% | 13-29% | 5-30% | 41-81% | 0-11% |
+| 300 | 3 / 5 / 7 / 9 | 15 / 24 / 21 / 31 ms | 0.3-1.3% | 7-32% | 3-30% | 40-89% | 0-18% |
+
+Inside the prelude the float history was the largest part (4-16%), then
+the colour state and facts (2-6%); the arrival numbering stayed under 1%.
+Two things stand out. Below 100 players the pairing is mostly the matcher:
+the certified shortcuts, which `pair_next_round/2` then took from 100
+players up (`@cert_min_field`; 30 since the threshold pass above), are off, and an 80-player round costs three to
+four times a 300-player one. And the slowest positions of all have
+nothing to do with field size: every position above ~200 ms in the
+harness below carried the arbiter's soft pairs, which turn off the direct
+bracket (`direct_allowed?/2`) and put every bracket on the field graph -
+the same position without them paired 15-90 times faster (250-1,500 ms
+against 12-30 ms at 238-279 players).
+
+### What was kept
+
+* **The work that cannot differ between variants, done once.** The input
+  check; the arrival numbering and the inferred initial colour, which read
+  only the game structure; and per player the colour state, the per-round
+  facts and the float history, taken over for every player a variant
+  leaves alone. A player's float history reads the scores of the two last
+  opponents, so it is worked out again for anyone who met a changed player
+  in those rounds. On its own it measured 1.0x below 100 players, where
+  the prelude is a few percent; from 100 players up it is most of what the
+  table below shows on the light positions (1.1-1.4x).
+* **The certified shortcuts at any size - or not.** Below 100 players,
+  forcing them (`AINALRAMI_CERT=force`) made the profile's positions 3-7x
+  faster (80 players, round 7: 86 -> 14 ms). On the harness's positions it
+  was bimodal: up to 13x faster on some, 1.3-1.7x slower on others, where
+  most of the reads need certifying (no certified read aborted; the cost is
+  the certification itself). Both give the reference search's answer, so
+  the batch chooses on time: the first variant `:plain`, then each mode
+  once, then the faster one by a running average, with every 32nd variant
+  spent on the other so a change is noticed. A third mode, the reference
+  search at every size, was tried and dropped: from 100 players up its
+  occasional exploration alone made light 150-300-player previews 1.4-4.6x
+  slower than pairing each variant on its own.
+
+### What was dropped
+
+* **Gray-code order.** It exists for state carried from one variant to
+  the next, and none is: the shared work is taken from the first variant,
+  and the dirty set against it is the 2k players of the open games at
+  most. The order of the variants does not matter, and they are paired in
+  the order given.
+* **Warm starts of the matcher between variants.** In the slow positions
+  the matcher's time is the field graph's incremental re-solves - 70-80
+  of them per pairing at 230 players, three to five stages each, which the
+  eight refinement stages ask for one after another. Building the field
+  graph's matcher (`new/3`) was 5-8% of it (24% on one position, where a
+  window and a whole-field matcher were built besides), and that is all a
+  warm start could replace: the re-solves already start from the previous
+  optimum. It would also need the previous variant's state relabelled (the
+  vertex ids are positions in the score-ordered field, which shift when a
+  score changes) and every changed weight set, and it changes which
+  optimum the search returns where several tie, and the duals the next
+  call inherits - the reason the blossom pass (below) did not attempt one
+  either. Not worth 5-8% at that risk.
+* **Bracket and prefix reuse.** A bracket on the field graph has every
+  unfinalised player of the round as a vertex (`@peek_budget :unbounded`),
+  so every changed player is in every bracket's graph whatever their
+  score; its weights read round-wide values (the bye score, the score
+  places of the whole field, C9's unplayed games); and it runs against the
+  round's oracle and matcher, both built over the whole field. No bracket's
+  input is the same in two variants, and showing that its answer is would
+  mean re-reading every stage's decision under the new weights - the solve
+  itself. The local and direct brackets, whose input is the bracket alone,
+  are the cheap ones (none of the slow positions' time).
+
+### Results
+
+The timing run of the harness below: positions of nominally 30, 80, 150
+and 300 players (a few off once withdrawals and late entrants are drawn),
+the general axis's knobs, one scheduler per worker on the shared VM. Per
+variant is the preview's time divided by its variants; a preview is all
+3^k of them. Median / p95 over the positions, milliseconds; the speedup is
+the median of each position's own ratio, and the ratio of the summed times
+("in all").
+
+| players | k | positions | per variant, batch | per variant, alone | preview, batch | preview, alone | speedup median | in all |
+|---|---|---|---|---|---|---|---|---|
+| 30 | 4 | 18 | 5.5 / 13.9 | 10.8 / 14.4 | 447 / 1,124 | 877 / 1,164 | 1.95 | 1.61 |
+| 30 | 5 | 14 | 7.5 / 11.7 | 10.6 / 12.2 | 1,830 / 2,830 | 2,582 / 2,958 | 1.61 | 1.45 |
+| 30 | 6 | 16 | 9.1 / 14.6 | 11.9 / 14.8 | 6,647 / 10,614 | 8,651 / 10,812 | 1.91 | 1.50 |
+| 80 | 4 | 14 | 16.7 / 89.4 | 84.2 / 118.3 | 1,356 / 7,242 | 6,822 / 9,583 | 3.50 | 2.41 |
+| 80 | 5 | 14 | 13.6 / 54.0 | 58.6 / 83.6 | 3,312 / 13,110 | 14,245 / 20,314 | 4.59 | 2.35 |
+| 80 | 6 | 15 | 28.0 / 86.3 | 57.8 / 106.9 | 20,439 / 62,911 | 42,141 / 77,925 | 1.90 | 1.59 |
+| 150 | 4 | 17 | 24.5 / 365 | 25.2 / 370 | 1,983 / 29,589 | 2,044 / 29,932 | 1.10 | 1.01 |
+| 150 | 5 | 25 | 22.6 / 345 | 27.2 / 342 | 5,486 / 83,838 | 6,616 / 83,016 | 1.16 | 1.04 |
+| 150 | 6 | 16 | 73.1 / 247 | 75.5 / 221 | 53,309 / 180,287 | 55,019 / 161,421 | 1.03 | 0.96 |
+| 300 | 4 | 14 | 17.2 / 1,404 | 22.4 / 1,322 | 1,393 / 113,692 | 1,810 / 107,116 | 1.29 | 0.98 |
+| 300 | 5 | 13 | 42.0 / 859 | 49.1 / 915 | 10,216 / 208,755 | 11,935 / 222,315 | 1.17 | 1.07 |
+| 300 | 6 | 17 | 17.2 / 446 | 22.6 / 440 | 12,557 / 325,267 | 16,493 / 320,895 | 1.24 | 1.04 |
+
+k = 7 and 8 (timed, 60 variants of each preview compared): 30 players
+2.5x / 2.9x median, 80 players 5.7x / 3.5x, 150 players 1.2x / 1.4x, 300
+players 1.3x / 1.4x.
+
+So: below 100 players a preview is 1.45-2.4x faster in all, and several
+times faster on the positions where the shortcuts suit it. From 100
+players up the typical preview is 1.0-1.3x faster and the slow ones -
+soft pairs, the field graph on every bracket - are not faster at all;
+their p95 is within the run-to-run noise of pairing alone, and they are
+what the "in all" column is made of. Making those faster is a change to
+the pairing itself (the direct bracket under soft pairs), not to the
+batch, and is not attempted here.
+
+### Reproducing
+
+    # the differential harness and its timings (one scheduler per worker)
+    MIX_ENV=test VAR_W=0 VAR_N=4 VAR_SIZES=30,80,150,300 VAR_K=4,4,5,5,6,6,7,8 VAR_OUT=OUT \
+      elixir --erl "+S 1" -S mix run tools/variants_check.exs
+    VAR_BANDS=nominal VAR_SUMMARY=OUT MIX_ENV=test mix run tools/variants_check.exs
+
+    # the mode experiments: pin one
+    AINALRAMI_VARIANT_MODE=plain|force|off ...
 
 ## The timing study (2026-09-30)
 

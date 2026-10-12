@@ -192,6 +192,7 @@ defmodule Ainalrami.Pairing do
   @env_nofast_key :ainalrami_env_nofast
   @env_cert_key :ainalrami_env_cert
   @env_cert_stats_key :ainalrami_env_cert_stats
+  @env_cert_min_key :ainalrami_env_cert_min
   @env_direct_key :ainalrami_env_direct
   @env_direct_plain_key :ainalrami_env_direct_plain
   @direct_budget_key :ainalrami_direct_budget
@@ -238,6 +239,14 @@ defmodule Ainalrami.Pairing do
   # answer. The answers are identical by construction: the same expression,
   # evaluated once instead of many times, under the same stamped state.
   @facts_key :ainalrami_round_facts
+
+  # `pair_variants/3`'s shared work - see "The batch's shared work" above
+  # `with_round_facts/1`. `@batch_on_key` is set only while one of its
+  # variants is being paired, so nothing else ever reads the state, and
+  # neither key is round-scoped: both outlive the rounds of one batch and
+  # are deleted by `pair_variants/3` itself.
+  @batch_state_key :ainalrami_batch_state
+  @batch_on_key :ainalrami_batch_on
 
   @doc """
   Pairs the next round, dispatching to `pair_round_one/1` when no game
@@ -307,6 +316,232 @@ defmodule Ainalrami.Pairing do
   or to fail far from the option that caused it.
   """
   def pair_next_round(players, opts \\ []), do: pair_entry(players, opts, :auto)
+
+  @doc """
+  Pairs the next round once for each of several SCORE VARIANTS of one
+  position - the same players, histories and options, with some results of
+  the round just played (and the totals that go with them) different from
+  one variant to the next. The case it is built for is "which boards of the
+  next round are already certain while k games are still being played":
+  `3^k` variants of one round, each paired as if it were the real one.
+
+  `players` is the position as `pair_next_round/2` takes it, `opts` its
+  options, and each variant a map `%{rank => player}` of the players that
+  differ from `players` in that variant (`%{}` is `players` itself). The
+  answer is one entry per variant, in the order given:
+
+    * `{:ok, pairs}` - exactly what `pair_next_round(variant, opts)` returns,
+      pairs, colours and order;
+    * `{:error, %NoValidPairingError{}}` - exactly what it raises when no
+      legal round exists (the same reason, exclusions and override).
+
+  Any other error is raised, as `pair_next_round/2` would raise it.
+
+  ## Equal to pairing each variant on its own
+
+  That is the contract. What the batch saves is only work whose answer
+  cannot differ between variants:
+
+    * the input is checked once, and per variant only the players it
+      replaces;
+    * the 5.2.5 arrival numbering, the inferred initial colour, and every
+      player's colour state, float history and per-round facts are worked
+      out once and taken over for every player a variant leaves alone - a
+      player's float history is worked out again when they or an opponent
+      of the last two rounds changed, everything else when they changed;
+    * the certified shortcuts (see "certified shortcuts" in the source),
+      which `pair_next_round/2` takes from 100 players up, may be taken at
+      any size, or not, variant by variant - whichever has been the faster
+      on the variants paired so far. They do not change an answer: each
+      read they make is proved to be the reference search's, and a read
+      that cannot be proved pairs the round again without them.
+
+  Nothing else is carried from one variant to the next, so the order of
+  `variants` does not matter.
+
+  The shared work holds while a variant keeps, for every player it
+  replaces, the base's game structure: the same number of games, and in
+  each the same opponent, the same colour and the same answer to
+  `Ainalrami.Trf.participated_in_pairing?/1`. Points, results (a forfeit
+  against the same opponent included) and any other key may differ. A
+  variant that changes the structure (a bye turned into a game, a colour
+  corrected), and every variant when `:bye_preferences` are in play, is
+  paired by `pair_next_round/2` itself.
+
+  How much faster than pairing each variant on its own, and how the
+  equality was tested, is in `docs/performance.md` and
+  `docs/validation.md` ("Score variants").
+  """
+  def pair_variants(players, variants, opts \\ []) do
+    validate_input!(players, opts)
+
+    if not is_list(variants) do
+      raise ArgumentError, "variants must be a list of maps, got #{inspect(variants, limit: 8)}"
+    end
+
+    by_rank = Map.new(players, &{&1.rank, &1})
+    Enum.each(variants, &validate_variant!(&1, by_rank))
+
+    if Ainalrami.ByePreference.active?(opts) do
+      Enum.map(variants, &pair_variant_alone(merge_variant(players, &1), opts))
+    else
+      Process.put(@batch_state_key, %{current: nil, source: nil})
+
+      try do
+        variants
+        |> Enum.map_reduce(new_mode_policy(), fn variant, policy ->
+          merged = merge_variant(players, variant)
+
+          if same_structure?(variant, by_rank) do
+            mode = choose_mode(policy)
+            started = System.monotonic_time(:microsecond)
+            result = pair_variant_batched(merged, variant, opts, mode)
+            {result, record_mode(policy, mode, System.monotonic_time(:microsecond) - started)}
+          else
+            {pair_variant_alone(merged, opts), policy}
+          end
+        end)
+        |> elem(0)
+      after
+        Process.delete(@batch_state_key)
+        Process.delete(@batch_on_key)
+      end
+    end
+  end
+
+  defp validate_variant!(variant, by_rank) when is_map(variant) do
+    Enum.each(variant, fn {rank, player} ->
+      if not is_map_key(by_rank, rank) do
+        raise ArgumentError, "a variant replaces rank #{inspect(rank)}, which is not a player"
+      end
+
+      validate_players!([player])
+
+      if player.rank != rank do
+        raise ArgumentError,
+              "a variant's player under rank #{rank} carries rank #{inspect(player.rank)}"
+      end
+    end)
+  end
+
+  defp validate_variant!(other, _by_rank) do
+    raise ArgumentError,
+          "a variant is a map of rank => player, got #{inspect(other, limit: 8)}"
+  end
+
+  defp merge_variant(players, variant) when map_size(variant) == 0, do: players
+
+  defp merge_variant(players, variant),
+    do: Enum.map(players, &Map.get(variant, &1.rank, &1))
+
+  # Whether every replaced player keeps the base's game structure - what
+  # the shared work (`@batch_state_key`) is taken from.
+  defp same_structure?(variant, by_rank) do
+    Enum.all?(variant, fn {rank, player} ->
+      base = Map.fetch!(by_rank, rank)
+
+      length(player.games) == length(base.games) and
+        Enum.zip(player.games, base.games)
+        |> Enum.all?(fn {g, b} ->
+          g.opponent_rank == b.opponent_rank and Map.get(g, :colour) == Map.get(b, :colour) and
+            participated_in_pairing?(g) == participated_in_pairing?(b)
+        end)
+    end)
+  end
+
+  defp pair_variant_alone(players, opts) do
+    {:ok, pair_next_round(players, opts)}
+  rescue
+    e in Ainalrami.Pairing.NoValidPairingError -> {:error, e}
+  end
+
+  # `pair_without_preferences/3` with the batch's shared work switched on
+  # for the pairing itself, and off for `diagnose_exclusions/4`'s second
+  # pairing, which runs under other options.
+  defp pair_variant_batched(players, variant, opts, mode) do
+    Process.put(@batch_state_key, %{Process.get(@batch_state_key) | current: variant})
+    Process.put(@batch_on_key, mode)
+
+    try do
+      {:ok, do_pair_next_round(players, opts, :auto)}
+    rescue
+      e in Ainalrami.Pairing.NoValidPairingError ->
+        Process.delete(@batch_on_key)
+        {:error, diagnose_exclusions(e, players, opts, :auto)}
+    after
+      Process.delete(@batch_on_key)
+    end
+  end
+
+  # Which search each variant is paired with. The certified shortcuts
+  # ("certified shortcuts" in the source) and the reference search give the
+  # same answer, so the choice is free, and it is made on time alone: the
+  # shortcuts are several times faster on some positions and slower on
+  # others (where most of their reads need certifying), and neighbouring
+  # variants of one position cost much the same. Two modes:
+  #
+  #   * `:plain` - what `pair_next_round/2` does: the shortcuts from
+  #     `@cert_min_field` players up (`@cert_min_field_soft` in a round
+  #     with soft pairs), the reference search below;
+  #   * `:force` - the shortcuts at every size, with their own small-solve
+  #     thresholds lifted (as `AINALRAMI_CERT=force`).
+  #
+  # The first variant is paired `:plain` (it also does the batch's shared
+  # work, so its time says nothing about the mode); then each mode once;
+  # then the one with the lower running time, with every
+  # `@mode_explore_every`-th variant spent on the other one, so a mode that
+  # has become the faster is noticed. A third mode, `:off` (the reference
+  # search at every size), is never chosen: from 100 players up it was
+  # measured at up to fifty times the others, and where `:plain` takes no
+  # shortcut it is `:plain`. `AINALRAMI_VARIANT_MODE=off|plain|force` pins one, for the
+  # harness and the tests.
+  @variant_modes [:plain, :force]
+  @mode_explore_every 32
+
+  defp new_mode_policy do
+    pinned =
+      case System.get_env("AINALRAMI_VARIANT_MODE") do
+        "off" -> :off
+        "plain" -> :plain
+        "force" -> :force
+        _ -> nil
+      end
+
+    %{pinned: pinned, count: 0, time: %{}, last: %{}}
+  end
+
+  defp choose_mode(%{pinned: mode}) when not is_nil(mode), do: mode
+  defp choose_mode(%{count: 0}), do: :plain
+
+  defp choose_mode(policy) do
+    untried = Enum.reject(@variant_modes, &is_map_key(policy.time, &1))
+
+    cond do
+      untried != [] ->
+        hd(untried)
+
+      rem(policy.count, @mode_explore_every) == 0 ->
+        Enum.min_by(@variant_modes, &Map.fetch!(policy.last, &1))
+
+      true ->
+        Enum.min_by(@variant_modes, &Map.fetch!(policy.time, &1))
+    end
+  end
+
+  # The running time is an exponential average, so it follows the variants
+  # as they change.
+  defp record_mode(%{count: 0} = policy, _mode, _us), do: %{policy | count: 1}
+
+  defp record_mode(policy, mode, us) do
+    time = Map.update(policy.time, mode, us, &div(&1 + us, 2))
+
+    %{
+      policy
+      | count: policy.count + 1,
+        time: time,
+        last: Map.put(policy.last, mode, policy.count)
+    }
+  end
 
   # The one entry every public pairing call goes through: the input checked
   # once, before any path is chosen (`validate_input!/2`), then the bye
@@ -425,7 +660,8 @@ defmodule Ainalrami.Pairing do
 
       Process.put(
         @initial_colour_key,
-        opts[:initial_colour] || infer_initial_colour(players) || "w"
+        opts[:initial_colour] ||
+          batch_shared(:initial_colour, fn -> infer_initial_colour(players) end) || "w"
       )
 
       Process.put(@point_system_key, opts[:point_system] || Ainalrami.Trf.default_point_system())
@@ -455,20 +691,61 @@ defmodule Ainalrami.Pairing do
       #
       # `pair_later_round/2` asks for the cascade whatever the round, and
       # gets it.
-      if path == :auto and Enum.all?(active, &(&1.games == [])) and
-           is_nil(Process.get(@forbidden_key)) and
-           is_nil(Process.get(@soft_key)) and is_nil(Process.get(@bye_excluded_key)) and
-           not Enum.any?(active, &(acceleration_at(&1, played) != 0.0)) do
-        round_one(active)
-      else
-        # The FULL roster, not just the active players - float direction
-        # has to look up opponents' scores, and an opponent may be one of
-        # the players sitting this round out.
-        do_pair_later_round(players)
-      end
+      pairs =
+        if path == :auto and Enum.all?(active, &(&1.games == [])) and
+             is_nil(Process.get(@forbidden_key)) and
+             is_nil(Process.get(@soft_key)) and is_nil(Process.get(@bye_excluded_key)) and
+             not Enum.any?(active, &(acceleration_at(&1, played) != 0.0)) do
+          round_one(active)
+        else
+          # The FULL roster, not just the active players - float direction
+          # has to look up opponents' scores, and an opponent may be one of
+          # the players sitting this round out.
+          do_pair_later_round(players)
+        end
+
+      # `:cascade_order` - the pairs as the cascade found them, unsorted -
+      # exists for `Ainalrami.Generator` alone: it draws each board's result
+      # in board order, so sorting would change every recorded seed's file,
+      # the corpora and the reproductions keyed on them included. Nothing
+      # that publishes a board passes it.
+      if opts[:cascade_order], do: pairs, else: board_order(pairs, players, played)
     after
       clear_round_state()
     end
+  end
+
+  # The pairs in board order, C.04.2 Art. 3.6: the higher score of the
+  # pair's higher-ranked player first, then the higher sum of the two
+  # scores, then the smaller TPN (starting rank) of the higher-ranked
+  # player; the pairing-allocated bye last. "Higher-ranked" is C.04.3 1.2's
+  # order - score, then TPN.
+  #
+  # "Score" is the PAIRING score: an accelerated round's virtual points
+  # (`acceleration_at/2`, Baku's C.04.7) count, as they count for every
+  # other decision this round. That is VCL4THP Q188's answer, which
+  # OpenPairings holds the boards to, and where this parts company with
+  # bbpPairings' `sortResults` (`common.cpp:172`), which otherwise sorts on
+  # the same three keys but takes `scoreWithoutAcceleration`.
+  #
+  # The cascade hands its pairs back in the order it found them - bracket
+  # by bracket, a downfloater's board inside the bracket that took it in -
+  # which is not 3.6's order whenever a heterogeneous bracket or a float is
+  # involved: about one round in thirteen of a random 10-30 player event.
+  # Ordering is applied once here, at the one exit every pairing path
+  # shares, so no caller has to know it was ever otherwise.
+  defp board_order(pairs, players, played) do
+    points = Map.new(players, &{&1.rank, &1.points + acceleration_at(&1, played)})
+
+    Enum.sort_by(pairs, fn
+      {white, nil} ->
+        {1, 0, 0, white}
+
+      {white, black} ->
+        [higher, lower] = Enum.sort_by([white, black], &{-Map.fetch!(points, &1), &1})
+        high = Map.fetch!(points, higher)
+        {0, -high, -(high + Map.fetch!(points, lower)), higher}
+    end)
   end
 
   # Every process-dictionary key the pairing and explanation paths stamp,
@@ -1371,7 +1648,7 @@ defmodule Ainalrami.Pairing do
                 "has #{length(p.games)} game(s) - use pair_next_round/2"
     end
 
-    round_one(players)
+    players |> round_one() |> board_order(players, 0)
   end
 
   defp round_one(players) do
@@ -1662,7 +1939,10 @@ defmodule Ainalrami.Pairing do
     # player who played round 1 and sits round 2 out has arrived but is not
     # active, and a player who has never been paired but is in this round's
     # pool has arrived and is.
-    Process.put(@parity_number_key, arrival_numbers(players, played + 1))
+    Process.put(
+      @parity_number_key,
+      batch_shared(:arrival, fn -> arrival_numbers(players, played + 1) end)
+    )
 
     field =
       players
@@ -1673,13 +1953,13 @@ defmodule Ainalrami.Pairing do
       # historic score by subtracting later results from the current one,
       # so it needs the REAL score to subtract from, and adds that round's
       # own acceleration itself.
-      |> with_float_history(played)
+      |> batch_float_history(played)
       |> with_acceleration(played)
 
     active =
       field
       |> Enum.filter(&active_this_round?(&1, played))
-      |> with_round_facts()
+      |> batch_round_facts()
 
     brackets =
       active
@@ -1741,15 +2021,26 @@ defmodule Ainalrami.Pairing do
   # round-scoped key the cascade uses is (re)initialised at its entry, and
   # nothing before this call depends on the attempt.
   #
-  # Only on a large field unless forced: a small round's searches are cheap
-  # and its reads are the ones most often tied, so the shortcuts would
-  # mostly buy certification work and retries.
-  @cert_min_field 100
+  # Unless forced: from `@cert_min_field` players up, and from
+  # `@cert_min_field_soft` in a round with the arbiter's soft pairs. Both
+  # measured (docs/performance.md, "The certified shortcuts' threshold").
+  # Below ~30 players the searches are cheap and the reads the most often
+  # tied, so the shortcuts mostly buy certification work. Soft pairs switch
+  # the direct bracket off (`direct_allowed?/2`), which leaves the shortcuts
+  # little to skip and nearly every read to certify: 5-15% slower at 100-200
+  # players, 10-25% faster in the opening round from 300 up - so those
+  # rounds keep the old line rather than gain a new one. It used to be 100
+  # everywhere, a figure nobody had timed.
+  @cert_min_field 30
+  @cert_min_field_soft 100
 
   defp certified_cascade(brackets, allowed_byes) do
     size = brackets |> Enum.map(&length/1) |> Enum.sum()
 
-    if cert_enabled?() and (size >= @cert_min_field or cert_force?()) do
+    # `pair_variants/3` may ask for them at every size, or not at all: see
+    # `choose_mode/1`.
+    if cert_enabled?() and Process.get(@batch_on_key) != :off and
+         (cert_worth?(size) or cert_force?()) do
       Process.put(@cert_key, true)
 
       try do
@@ -1772,7 +2063,21 @@ defmodule Ainalrami.Pairing do
   # corpus, which is mostly small fields).
   defp cert_enabled?, do: env_flag(@env_cert_key, "AINALRAMI_CERT") != "off"
 
-  defp cert_force?, do: env_flag(@env_cert_key, "AINALRAMI_CERT") == "force"
+  # AINALRAMI_CERT_MIN=<n> puts both thresholds at n: the threshold study's
+  # knob, and with n = 100 the behaviour before it.
+  defp cert_worth?(size) do
+    min =
+      case env_flag(@env_cert_min_key, "AINALRAMI_CERT_MIN") do
+        nil -> if is_nil(Process.get(@soft_key)), do: @cert_min_field, else: @cert_min_field_soft
+        value -> String.to_integer(value)
+      end
+
+    size >= min
+  end
+
+  defp cert_force?,
+    do:
+      env_flag(@env_cert_key, "AINALRAMI_CERT") == "force" or Process.get(@batch_on_key) == :force
 
   @doc false
   # The certified-mode counters accumulated in the calling process since the
@@ -2034,6 +2339,149 @@ defmodule Ainalrami.Pairing do
     end
   end
 
+  # ---------------------------------------------------------------------
+  # The batch's shared work (`pair_variants/3`)
+  # ---------------------------------------------------------------------
+  #
+  # The variants of one batch differ only in the points and results of the
+  # players they replace; their game structure - opponents, colours,
+  # whether each round took part in the pairing, how many rounds - is the
+  # base's (`same_structure?/2` sends any other variant down the plain
+  # path). So what is worked out from that structure alone is the same in
+  # every variant, and what is worked out per player from that player's map
+  # is the same for every player whose map is.
+  #
+  # The state holds the variant being paired (`current`) and the one the
+  # shared values were taken from (`source`, nil until the first variant
+  # reaches `do_pair_later_round/1`). A rank is DIRTY when its player in
+  # `current` differs from its player in `source`; a dirty player's values
+  # are worked out again, every other player's are taken over.
+  #
+  # Each value below is the same expression `do_pair_later_round/1` would
+  # evaluate, under the same stamped state: the options are the batch's,
+  # the bye exclusions depend only on who is active (the same in every
+  # variant), and so does everything else these read.
+
+  defp batch_state do
+    if Process.get(@batch_on_key) != nil, do: Process.get(@batch_state_key)
+  end
+
+  # A value that depends on the game structure alone - the arrival numbering
+  # (lengths and `participated_in_pairing?/1`) and the inferred initial
+  # colour (colours and the same) - worked out once per batch.
+  defp batch_shared(key, fun) do
+    case batch_state() do
+      nil ->
+        fun.()
+
+      %{^key => value} ->
+        value
+
+      state ->
+        value = fun.()
+        Process.put(@batch_state_key, Map.put(state, key, value))
+        value
+    end
+  end
+
+  # The dirty ranks of the variant being paired: where its players and the
+  # source's differ.
+  defp batch_dirty(%{source: source, current: current}) do
+    (Map.keys(current) ++ Map.keys(source))
+    |> Enum.reject(fn rank -> Map.get(current, rank) == Map.get(source, rank) end)
+    |> MapSet.new()
+  end
+
+  # `with_float_history/2`. A player's float history reads their own map and
+  # their opponents' of the last two rounds (`float_direction/4`), so it is
+  # worked out again - the player is STALE - for a dirty player and for
+  # every player who met one in those two rounds, and taken over for the
+  # rest.
+  defp batch_float_history(players, played) do
+    case batch_state() do
+      nil ->
+        with_float_history(players, played)
+
+      %{source: nil} = state ->
+        store_float_history(players, played, state)
+
+      %{floats: floats} = state ->
+        dirty = batch_dirty(state)
+
+        stale =
+          Enum.reduce(dirty, dirty, fn rank, acc ->
+            state.float_dependents |> Map.get(rank, []) |> Enum.into(acc)
+          end)
+
+        Process.put(@batch_state_key, Map.put(state, :stale, stale))
+        by_rank = Map.new(players, &{&1.rank, &1})
+
+        Enum.map(players, fn player ->
+          if MapSet.member?(stale, player.rank),
+            do: with_floats(player, by_rank, played),
+            else: Map.put(player, :floats, Map.fetch!(floats, player.rank))
+        end)
+    end
+  end
+
+  # The first variant's: worked out in full, and kept with the variant as
+  # the source. `float_dependents` maps a rank to the players whose float
+  # history reads it - those who met it `played - 1` or `played - 2` rounds
+  # ago, the indices `float_direction/4` reads.
+  defp store_float_history(players, played, state) do
+    field = with_float_history(players, played)
+
+    dependents =
+      Enum.reduce(players, %{}, fn player, acc ->
+        [played - 1, played - 2]
+        |> Enum.filter(&(&1 >= 0 and &1 < length(player.games)))
+        |> Enum.map(&Enum.at(player.games, &1).opponent_rank)
+        |> Enum.reject(&is_nil/1)
+        |> Enum.reduce(acc, fn opponent, acc ->
+          Map.update(acc, opponent, [player.rank], &[player.rank | &1])
+        end)
+      end)
+
+    Process.put(
+      @batch_state_key,
+      Map.merge(state, %{
+        source: state.current,
+        floats: Map.new(field, &{&1.rank, &1.floats}),
+        float_dependents: dependents,
+        stale: nil,
+        facts: nil
+      })
+    )
+
+    field
+  end
+
+  # `with_round_facts/1`: the colour state and the per-round facts, taken
+  # over for every player who is not stale - whose whole map, floats
+  # included, is then the source's.
+  defp batch_round_facts(players) do
+    case batch_state() do
+      nil ->
+        with_round_facts(players)
+
+      %{stale: nil} = state ->
+        field = with_round_facts(players)
+        facts = Map.new(field, &{&1.rank, {&1.colour_stats, Map.fetch!(&1, @facts_key)}})
+        Process.put(@batch_state_key, Map.put(state, :facts, facts))
+        field
+
+      %{stale: stale, facts: facts} ->
+        Enum.map(players, fn p ->
+          if MapSet.member?(stale, p.rank) do
+            with_player_facts(p)
+          else
+            {stats, facts} = Map.fetch!(facts, p.rank)
+            p |> Map.put(:colour_stats, stats) |> Map.put(@facts_key, facts)
+          end
+        end)
+    end
+  end
+
   # The colour state and the three per-round facts (see `@facts_key`), once
   # per active player. Must run after the point system and the bye
   # exclusions are stamped - every caller builds its field after both.
@@ -2041,12 +2489,12 @@ defmodule Ainalrami.Pairing do
   # `colour_stats/1` used to be computed here twice over, by
   # `bye_assignee_score/2` and again by `global_cascade/2`, each over its own
   # copy of the field; both now keep the one stamped here.
-  defp with_round_facts(players) do
-    Enum.map(players, fn p ->
-      p
-      |> Map.put(:colour_stats, colour_stats(p))
-      |> Map.put(@facts_key, {met_ranks(p), eligible_for_bye?(p), played_games(p)})
-    end)
+  defp with_round_facts(players), do: Enum.map(players, &with_player_facts/1)
+
+  defp with_player_facts(p) do
+    p
+    |> Map.put(:colour_stats, colour_stats(p))
+    |> Map.put(@facts_key, {met_ranks(p), eligible_for_bye?(p), played_games(p)})
   end
 
   defp met_ranks(player) do
@@ -2075,13 +2523,14 @@ defmodule Ainalrami.Pairing do
   # `pair_weight/4` doesn't have and shouldn't need.
   defp with_float_history(players, played) do
     by_rank = Map.new(players, &{&1.rank, &1})
+    Enum.map(players, &with_floats(&1, by_rank, played))
+  end
 
-    Enum.map(players, fn player ->
-      Map.put(player, :floats, %{
-        1 => float_direction(player, 1, by_rank, played),
-        2 => float_direction(player, 2, by_rank, played)
-      })
-    end)
+  defp with_floats(player, by_rank, played) do
+    Map.put(player, :floats, %{
+      1 => float_direction(player, 1, by_rank, played),
+      2 => float_direction(player, 2, by_rank, played)
+    })
   end
 
   # Which way a player was floated `rounds_back` rounds ago - a port of
@@ -2274,6 +2723,7 @@ defmodule Ainalrami.Pairing do
     Process.put(@env_nofast_key, read_env_flag("AINALRAMI_NOFAST"))
     Process.put(@env_cert_key, read_env_flag("AINALRAMI_CERT"))
     Process.put(@env_cert_stats_key, read_env_flag("AINALRAMI_CERT_STATS"))
+    Process.put(@env_cert_min_key, read_env_flag("AINALRAMI_CERT_MIN"))
     Process.put(@env_direct_key, read_env_flag("AINALRAMI_DIRECT"))
     Process.put(@env_direct_plain_key, read_env_flag("AINALRAMI_DIRECT_PLAIN"))
   end
@@ -2284,6 +2734,7 @@ defmodule Ainalrami.Pairing do
     Process.delete(@env_nofast_key)
     Process.delete(@env_cert_key)
     Process.delete(@env_cert_stats_key)
+    Process.delete(@env_cert_min_key)
     Process.delete(@env_direct_key)
     Process.delete(@env_direct_plain_key)
   end

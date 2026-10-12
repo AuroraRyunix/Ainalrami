@@ -19,7 +19,7 @@ every known difference.
 | Individual pairings, Gacrux alone (030bd28) | Gacrux | 373,500 tournaments, 3,219,728 rounds, 119,064,367 boards | 0 disagreements | [Against Gacrux alone](#against-gacrux-alone-32-million-rounds-2026-09-30) |
 | Individual pairings, 0.36.0 release check (be3ae86), partial | Gacrux; bbpPairings | 1,014,700 rounds; 10,614,756 rounds | Gacrux: 258 disagreements judged by rule, this engine legal in every well-formed one, Gacrux illegal in 257 (1 ambiguous input); bbpPairings: 1, a bbpPairings C2 defect | [Release check for 0.36.0](#release-check-for-0360-2026-10-02) |
 | Individual pairings, bbpPairings' generator (Q33 direction 2) | bbpPairings' own `-g` tournaments, checked here | 50,045 tournaments, 499,816 rounds, 28,964,816 pairings | 0 composition, 0 colour disagreements | [Pairings (Q33)](#pairings-vcl4thp-q33-both-directions) |
-| Team Swiss whole rounds (C.04.6), 4-10 teams | brute-force reference written from the regulation | seeds 1-250,000,000, 1,032,949,115 rounds | 0 failures, 0 errors | [Team Swiss pairings](#team-swiss-pairings-c046) |
+| Team Swiss whole rounds (C.04.6), 4-10 teams | brute-force reference written from the regulation | seeds 1-860,000,000, 3,553,445,286 rounds (two runs) | 0 failures, 0 errors | [Team Swiss pairings](#team-swiss-pairings-c046) |
 | Team Swiss whole rounds, 11-80 teams | exact engine-independent reference | 2,000 seeds, 11,980 rounds | agrees; one 3.6 candidate-budget disagreement found and fixed (0.30.0) | [team-proof-large-fields.md](team-proof-large-fields.md) |
 | Team Swiss, no colour preferences (1.7) | brute-force reference | 30,000 seeds, 123,593 rounds | 0 disagreements | [conformance-c0406-teams.md](conformance-c0406-teams.md#no-colour-preferences-17-2026-09-27) |
 | Individual tie-breaks (C.07) | FIDE's TieBreakServer, both directions | 50,060 tournaments (~29 million values) and 50,000 (49,987,100 values); random lists 10,000 each way | 0 unexplained | [Tie-breaks](#tie-breaks-c07-effective-1-march-2026-against-tiebreakserver) |
@@ -935,6 +935,53 @@ was held to: 447,152 rounds (early 1,980, large 5,497, flags 68,898, small
 370,777), 0 differing, 0 missing - pairs, explanations, perturbed-pairing
 judgements and alternatives alike.
 
+## Score variants (2026-10-07)
+
+`Pairing.pair_variants/3` promises, for every variant, exactly what
+`pair_next_round/2` returns for that variant alone. Nothing references it
+but the engine itself, so that is what it is held to:
+`tools/variants_check.exs` pairs every variant in the batch, then again on
+its own with `pair_next_round/2` in a separate process, and compares the
+two: the same pairs in the same order with the same colours and the same
+bye, or the same refusal (exception, reason, excluded ranks, override,
+message).
+
+A position is the fuzz generator's tournament played forward by the
+engine to a random round T, round T paired and its results drawn, and k of
+its boards left open; the position is round T+1 with that round's
+withdrawals, late entrants and requested byes applied, and the variants
+are the 3^k ways the open games can end, in OpenPairings' order. On a
+third of tournaments the arbiter's soft pairs, on a third of positions
+organiser bye exclusions (a refusal they cause is answered as OpenPairings
+answers it, with the override, while the tournament is played forward).
+k is 1-6, uniform per position.
+
+| axis | knobs | positions | variants compared | refused (both) |
+|---|---|---|---|---|
+| general | 6-300 players (bands 6-40 / 41-100 / 101-200 / 201-300 weighted 45 / 27 / 18 / 10), 5-11 rounds, 5% requested byes, 3% forfeits, 2% withdrawals, 5% late entrants, 2% `XXP`, acceleration, initial colour, rating shape and point system mixed | 6,771 | 1,119,147 | 2,058 |
+| small and hard | 6-20 players, 7-11 rounds, 15% byes, 8% forfeits, 3% withdrawals, 5% late entrants, 5% `XXP`, the rest mixed | 38,469 | 3,830,061 | 50,725 |
+| timing | 30 / 80 / 150 / 300 players, k = 4-8 (k = 7 and 8 compare 60 variants of each) | 247 | 71,037 | 0 |
+
+**5,020,245 variants compared, 0 mismatches**; 52,783 of them refused by
+both (the same `NoValidPairingError`, to the message). By field size (the
+active roster, 3-300 once withdrawals have thinned the smallest): 6-40
+players 4,310,091, 41-100 339,492, 101-200 240,777, 201-300 129,885. By k:
+1: 23,139, 2: 85,914, 3: 278,154, 4: 696,600, 5: 1,413,045, 6: 2,520,153,
+7 and 8: 3,240.
+
+Every search mode the batch can choose was exercised: each batch of three
+or more structured variants pairs at least one variant in each, and the
+choice between them is made on time, so which variants got which differs
+from run to run. `test/ainalrami/pair_variants_test.exs` pins each mode
+in turn (`AINALRAMI_VARIANT_MODE`) on a fixed position, and covers the
+plain fallback (a recoloured game), a forfeit kept on the fast path, the
+refusal, the input checks and the process dictionary being left clean.
+
+The run: one scheduler per worker on the shared 80-core VM, 2026-10-07,
+24 then 16 workers (the first workers were stopped part-way to free cores
+and the rest continued on fresh seeds; every line written is a whole
+position). Usage and the summary are in the script's header.
+
 ## Not covered
 
 Stated so the claim's boundary is explicit:
@@ -1614,6 +1661,7 @@ reading.
 | run | reference | seeds | rounds | result |
 |---|---|---|---|---|
 | whole rounds, 4-10 teams, Type A (2026-09-26) | brute-force whole-round reference | 1-250,000,000 | 1,032,949,115 | 0 failures, 0 errors |
+| whole rounds, 4-10 teams, Type A, 0.37.0 (2026-10-05) | the same reference | 250,000,001-860,000,000 | 2,520,496,171 | 0 failures, 0 errors |
 | whole rounds, 4-10 teams, no colour preferences (2026-09-27) | the same reference, `type: :none` | 1-30,000 | 123,593 | 0 disagreements |
 | whole rounds, 11-80 teams (2026-09-25) | exact reference (min-cost matchings) | 1-2,000 | 11,980 | every round agrees, reasons included |
 
@@ -1628,7 +1676,10 @@ and the colours. `mix test` runs 90 seeds; `tools/team_validation_run.py`
 runs the same test many times at once on separate seed ranges and is
 resumable. The long run covered seeds 1-250,000,000 - 1,032,949,115 team
 rounds - with no failure and no error, finishing 2026-09-26 on Ainalrami
-commit `d0f16e8`.
+commit `d0f16e8`. A second run on 0.37.0 (2026-10-05, an 80-vCPU VM, 72
+workers, 10.8 hours) took the next 610,000,000 seeds, 250,000,001-860,000,000:
+2,520,496,171 team rounds, again with no failure and no error. Together:
+seeds 1-860,000,000, 3,553,445,286 team rounds.
 
 ### Large fields, 11-80 teams
 

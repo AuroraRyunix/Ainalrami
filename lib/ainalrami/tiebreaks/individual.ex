@@ -264,11 +264,14 @@ defmodule Ainalrami.Tiebreaks.Individual do
   defp dropped?(_code, _ctx), do: false
 
   # {opponent rating, score in games} for each game played over the board -
-  # forfeits stay unplayed here even under 15.2.
+  # forfeits stay unplayed here even under 15.2. The opponent's rating is
+  # the one they held in that round when the host supplied one per round
+  # (`Event.rating_in/2`); otherwise the one rating everybody has had all
+  # along.
   defp rated_games(p, code, ctx) do
-    for {_r, %{kind: :played} = round} <- p.rounds do
+    for {r, %{kind: :played} = round} <- p.rounds do
       opponent = ctx.event.participants[round.opponent]
-      {opponent.rating || code.unrated, game_score(round.outcome)}
+      {Event.rating_in(opponent, r) || code.unrated, game_score(round.outcome)}
     end
   end
 
@@ -511,7 +514,7 @@ defmodule Ainalrami.Tiebreaks.Individual do
       each(ctx, fn p ->
         games =
           for {r, %{kind: :played} = round} <- Enum.sort(p.rounds) do
-            rating = ctx.event.participants[round.opponent].rating || code.unrated
+            rating = Event.rating_in(ctx.event.participants[round.opponent], r) || code.unrated
             %{round: r, opponent: round.opponent, value: rating * 1.0, kind: :played, vur?: false}
           end
 

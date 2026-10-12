@@ -66,6 +66,310 @@ with the reference on every one of them.
 
 - [Feature] **Command-line build instructions in the README, and a release file.** The README has a "Running it from the command line" section (build with `mix escript.build`, run with `escript ainalrami`, Erlang only to run). A pushed `v*` tag now builds the escript and attaches `ainalrami` and `SHA256SUMS` to its GitHub release (`.github/workflows/release.yml`); the workflow is untested until the next tag is pushed.
 
+## [0.43.0] - 2026-10-11
+
+- [Feature] **An alternative now comes with its boards.** "Why did he
+  float and not me" was answered with a verdict and ONE board - the
+  candidate's new opponent - though the forced search behind it had paired
+  the whole round and then dropped it. Every candidate
+  `Alternatives.float_alternatives/3`, `float_alternative/5` and
+  `bye_alternatives/3` searched and found a round for now carries
+  `alternative`: `pairs` (its boards the played round lacks, colours
+  included, its own board order), `played` (the played boards it lacks),
+  `unchanged` (how many boards are the same), `brackets` (each bracket it
+  pairs or empties differently, complete: `group`, `pairs`, `floats`),
+  `bye` (who has the bye in it) and `step`. `step` is for a tie, and only
+  when the brackets leave no doubt: `:transposition` when the alternative
+  still pairs S1 against S2 in the first bracket where the rounds differ,
+  `:exchange` when it pairs two of the same half or sends an S1 player
+  down, `:floater` in a heterogeneous bracket when somebody else leaves it;
+  `nil` means not known, not "none". An alternative that differs in more
+  than 40 boards is not written out (`%{skipped: :too_many_boards,
+  count: n}`; `max_alternative_boards: n | :all` moves the cap) - nobody
+  reads forty boards to find out why they floated. `:impossible` and
+  `:ineligible` candidates have no round and no key. Every other key of a
+  candidate is what it was, and no pairing code was touched: the suite's
+  golden and corpus tests pass unchanged. Cost: two list differences per
+  candidate on a round the search already had. A 200-player field after
+  five rounds, both questions, default caps: 29 ms before, 29 ms after;
+  with every candidate searched (152 forced pairings) 1.25 s before, 1.17 s
+  after, which is noise in both directions. The stored answer grows from
+  25 kB to 98 kB in that uncapped case.
+- [Feature] **`-x --alternative-pairs`.** With `--float-alternatives` or
+  `--bye-alternatives`: under each candidate, the alternative's differing
+  boards, the played ones they replace, how many boards are unchanged and
+  the step when known. Opt-in - without it the two listings are byte for
+  byte what 0.42.0 printed, and a test takes the added lines out again to
+  prove it.
+
+- [Feature] **The standalone CLI takes every pairing option the library
+  does.** OpenPairings reaches the engine through the library; a TRF and a
+  command line could say about half of what it says. Now, laid over the
+  file by `-p`, `-x` and `-c`: `--rounds=N`, `--initial-colour=`,
+  `--points=3,1,0` (or by name; totals re-added under it),
+  `--forbidden=1,4/2,9,12@3-5`, round-limited `--soft-pairs=2,9@3-5`,
+  `--bye-exclude=` (the plain `:bye_exclusions`), `--acceleration=baku`
+  with `--baku-group-a=N` (C.04.7 worked out here, in the new
+  `Ainalrami.Acceleration`, for a file without `XXA`),
+  `--virtual-points=1-10:1,1,0.5`, `--half-bye=` / `--zero-bye=` /
+  `--full-bye=` for the round being paired, `--cascade-order`; on `-x`,
+  `--judge=1-5,2-6,3-0`, `--bye-alternatives` and `--float-alternatives`
+  (the rest of `Ainalrami.Alternatives`); on a team Swiss, `--team-type=`,
+  `--score=`, `--secondary=`, `--initial-colour=`, `--rounds=`,
+  `--absent-teams=`, `--max-upfloater-sets=` and `--explain-limit=`. A
+  flag in a mode or on a kind of file that has no use for it is refused,
+  which several of these used to be spared: `-p --rounds=5` was accepted
+  and ignored. `docs/cli-parity.md` is the table, with the library
+  entries that stay library-only and why.
+- [Feature] **The organiser's options can live in the file: `XXO`.**
+  `XXO soft-pairs`, `soft-position`, `bye-want`, `bye-want-soft`,
+  `bye-avoid`, `bye-avoid-soft` and `bye-exclude`, each with the command
+  line's own spelling, rounds included; `Trf.parse/1` surfaces them on the
+  tournament and `Trf.serialize/2` writes them, in either dialect.
+  `Ainalrami.PairingInput` turns them into engine options. `-p` and `-x`
+  pair with them and print the same "not a pure FIDE pairing" warning the
+  flags get; `-c` replays each round with the settings that applied to it
+  and says that this is not a pure FIDE check. The README used to say no
+  TRF line carries a non-FIDE option. It was true and it meant a round
+  paired with one could not be replayed by anything, including us. One
+  code with keywords rather than a code per option, because `XXS` - the
+  obvious name for soft pairs - is JaVaFo's point system. bbpPairings
+  6.0.0 and JaVaFo both skip `XXO` lines: ten mid-event files each, the
+  same boards with and without them.
+- [Feature] **Standings from the command line: `-s`.** `ainalrami
+  event.trf -s --tie-breaks=BH,SB` prints `Tiebreaks.rank/3`'s answer,
+  rank, id and every value; a team file gets the team tie-breaks.
+  `--tie-breaks=` and `--cap-rounds=played|announced` also work on `-c`.
+  `XXO round-ratings 12 2100 2150 -` gives a player's rating round by
+  round, which is how the per-round rating tie-breaks of 0.42.0 reach a
+  file: that entry ended "TRF has one rating per player, so the CLI never
+  fills it", and now it does.
+- [Verified] **The CLI's answer is the library's, option by option.** 200
+  generated tournaments of 5-60 players, each cut back to before one of
+  its rounds; every option paired through the library and through
+  `ainalrami -p`, boards compared in order; all 131 compatible pairs of
+  options on a slice each; the `XXO` lines written, read back and paired in
+  both dialects; whole events played under them and replayed by `-c`
+  (which then fails the same file with the lines removed, as it should);
+  teams against `TeamPairing.pair_round/2`, standings against
+  `Tiebreaks.rank/3`, Baku against the generator's own `XXA` lines. The
+  library side builds its options by hand rather than with the helpers the
+  CLI uses, so one mistake cannot agree with itself. 0 differences.
+  `AINALRAMI_CLI_PARITY_SEEDS` sizes it.
+- [Verified] **Absent, the options change nothing.** `tools/cli_golden.exs`
+  records everything the CLI prints - stdout, stderr, exit code, output
+  file - for `-p`, `-x`, `-c` and `-g` on generated Swiss, team and
+  round-robin events with only the flags the last release had: 2,747 runs,
+  5.8 MB, byte for byte the same on this branch and on 0.42.0. The first
+  comparison was not: `-x --force=` on a player who is not in the round
+  used to print the explanation and then fail, and for a while printed
+  nothing and then failed. Nobody would have asked for the old behaviour,
+  but nobody asked for it to change either.
+
+## [0.42.0] - 2026-10-09
+
+- [Feature] **Rating tie-breaks can use the rating each opponent had in
+  that round (VCL4THP Q214).** `Tiebreaks.Event.Participant` takes an
+  optional `round_ratings` (`%{round => rating}`); ARO with its cuts and
+  working, TPR, PTP, and through them APRO and APPO, then count each
+  opponent at the rating they held in the round the game was played.
+  C.07 Article 10's note makes the first rating the default "unless the
+  specific regulations of the tournament state otherwise"; this is the
+  otherwise. RTNG still sorts by `rating`, and being unrated is still
+  decided by it. Leave the field empty and every value and working is
+  what it was - tested, since "should be identical" is what everyone says
+  right before it isn't. TRF has one rating per player, so the CLI never
+  fills it.
+
+## [0.41.0] - 2026-10-08
+
+- [Fix] **Boards come back in C.04.2 Art. 3.6's order.** `pair_next_round/2`,
+  `pair_later_round/2`, `pair_round_one/1` and `pair_variants/3` return the
+  pairs sorted by the higher score of the pair's higher-ranked player, then
+  the higher sum of the two scores, then the smaller TPN of the
+  higher-ranked player, the pairing-allocated bye last. Scores are pairing
+  scores: Baku's virtual points count (VCL4THP Q188), the one place this
+  differs from bbpPairings' `sortResults`. They used to come back
+  in the order the cascade found them, bracket by bracket, which is not
+  3.6's order whenever a float or a heterogeneous bracket is involved:
+  about one round in thirteen of a random 10-30 player event put a board
+  above one it belongs below. Same pairs, same colours, same bye; only the
+  board numbers move. `Ainalrami.Generator` keeps the old order
+  (`cascade_order: true`), so every recorded seed still writes the same file.
+
+## [0.40.0] - 2026-10-08
+
+- [Performance] **The certified shortcuts start at 30 players, not 100.**
+  The old line came with the shortcuts and was never timed; timed now, on
+  fuzz positions of 10-600 players. Without the arbiter's soft pairs the
+  shortcuts win from about 20 players on the median and from 30 at p95 as
+  well, so rounds of 30-99 active players take them: 3.0-4.6x faster on
+  the median and 2.0-3.0x in all without soft pairs, 1.4-1.7x in all on
+  the mixed corpus (where a third of tournaments have soft pairs). Soft
+  pairs switch the direct bracket off and leave the shortcuts mostly
+  certifying reads the reference would make anyway - slower at 10-200
+  players - so a round with soft pairs keeps the old line of 100. Below 30
+  nothing changes; neither does anything from 100 up. Every shortcut still
+  falls back to the reference search on any read it cannot certify, so
+  the answers cannot move, and didn't: 2,157,665 rounds of 6-150 players
+  paired under both rules, 971,637 of them on different paths, 0
+  differences. `AINALRAMI_CERT_MIN=<n>` moves both
+  lines (100 is the old rule); `tools/cert_threshold.exs` is the timing
+  and equality harness. The p99 is still worse with the shortcuts from 30
+  to 100 players - the certification cost on positions where nearly every
+  read needs it - by the same 20% the old line already put up with at 100.
+  Numbers in docs/performance.md.
+
+## [0.39.0] - 2026-10-07
+
+- [Feature] **Score variants in one call: `Ainalrami.Pairing.pair_variants/3`.**
+  Pairs the next round once for each variant of one position that differs
+  only in results of the round just played and the totals that follow -
+  OpenPairings' "which boards are already certain" preview, `3^k` variants
+  for `k` open games. Each answer is exactly what `pair_next_round/2`
+  returns for that variant alone, or the `NoValidPairingError` it raises.
+  A variant is `%{rank => player}`, the players it replaces. Done once
+  instead of `3^k` times: the input check, the 5.2.5 arrival numbering, the
+  inferred initial colour, and every untouched player's colour state,
+  float history and per-round facts. Each variant takes the certified
+  shortcuts at any field size or not at all, whichever has been faster on
+  the variants before it; both give the reference search's answer. A
+  variant that changes more than results and points (a colour, an
+  opponent, a bye turned into a game), and every variant under
+  `:bye_preferences`, is paired by `pair_next_round/2`. Measured per
+  preview: 1.45-2.4x faster in all below 100 players (median position
+  1.6-4.6x), 1.0-1.3x for the median position from 100 up, and 1.0x for
+  the slow ones, which are slow because of soft pairs and stay that way -
+  the batch removes repeated work, and those positions repeat almost none.
+  Matcher warm starts and bracket reuse between variants were measured and
+  dropped (`docs/performance.md`, "Score variants").
+- [Verified] **`pair_variants/3` against `pair_next_round/2`, variant by
+  variant.** `tools/variants_check.exs` pairs every variant again on its
+  own in another process and compares pairs, colours, order, bye and
+  refusal: 5,020,245 variants of 45,487 positions (6-300 players, k = 1-6,
+  plus 3,240 at k = 7-8), 52,783 of them refused by both, **0 mismatches**.
+  The equality was not in doubt; the harness exists so that nobody has to
+  take that sentence on faith. See `docs/validation.md`, "Score variants".
+
+## [0.38.0] - 2026-10-07
+
+- [Feature] **The match format on the standalone CLI.** OpenPairings'
+  Swiss and round robin match formats - every match two games in a row,
+  colours reversed in the second - are read from a new `XXM` line or given
+  as `--match-format`, for `-p`, `-x` and `-c`. A Swiss pairs its odd
+  rounds by the Dutch system and copies each even round from the one
+  before, boards turned round and in the first leg's order, a
+  pairing-allocated bye given again (`Ainalrami.EventFormat`); `-c` holds
+  the second legs to exactly that, colours included. A round robin plays
+  round `k` of one Berger table as rounds `2k - 1` and `2k`
+  (`Ainalrami.Berger`'s `:match_format?`), individual and team alike.
+  `CUSTOM_SWISS`, `CUSTOM_ROUNDROBIN` and `CUSTOM_TEAM_ROUNDROBIN` files -
+  what OpenPairings writes for them - are paired and checked when `XXM` or
+  the flag says so (they exited 2, or paired as a plain Dutch Swiss); a
+  double round robin in match format is refused (exit 2). A second leg
+  that cannot be copied (a seated player already has a result for it, or
+  one who sat the first leg out is in it) is refused with the player named.
+- [Feature] **Pairing by category on the standalone CLI.** A new `XXG`
+  line per group, or `--groups=1-8/9-12,15`, pairs each group on its own as
+  OpenPairings' `pair_by_category` does: a Swiss group by the Dutch system
+  with everybody else sitting the round out (checked against a TRF that
+  marks them `0000 - Z`, OpenPairings' own construction), a lone player
+  given the pairing-allocated bye, a round robin group by its own Berger
+  table; boards group after group, players in no group a last group.
+  `-x` explains each group as its own round. Groups together with the
+  match format are refused, as OpenPairings refuses them, and so is `XXG`
+  on a team file.
+- [Feature] **Soft pairs on the standalone CLI.** `--soft-pairs=1,4/2,9,12`
+  and `--soft-position=strong|weak` give `-p` and `-x` the library's
+  `:soft_pairs`/`:soft_position` (OpenPairings' soft forbidden pairings and
+  club protection), announced on stderr as an organiser's wish; refused
+  with `-g`, `-c`, round robins and team events.
+- [Feature] **`-g` writes them.** `--match-format` (Swiss, `--roundrobin`,
+  `--team=roundrobin`) and `--groups=N` (N random groups) or
+  `--groups=RANKS/RANKS` (Swiss, `--roundrobin`); the files carry `XXM`/`XXG`
+  and `-c` passes them. Nothing new is drawn without them, so every seed
+  recorded before generates the same bytes.
+- [Change] `Ainalrami.RoundRobin.schedule/3` and `next_round/2` give the
+  free players as a list (one per odd table), and `format/2` takes it;
+  `Ainalrami.Berger.total_rounds/3` takes the match format.
+- [Change] **A seed the generators draw for themselves now comes from the
+  operating system's random source.** Without `--seed`, `-g` (individual
+  Swiss, team events and round robins) took its seed from `:rand`'s own
+  default seeding, the clock, node and process: fresh in practice, but only
+  as fresh as the clock. It now comes from `:crypto.strong_rand_bytes/1`,
+  which neither a fresh VM nor a fast loop can repeat, still 32 bits and
+  still printed and written into the file, so `--seed` repeats a run exactly
+  as before. A seed given explicitly produces the same bytes it always did.
+
+## [0.37.0] - 2026-10-03
+
+- [Feature] **Team events on the standalone CLI.** `ainalrami file.trf -p`
+  on a TRF26 team file (`310`/`001`, `362`, `320`, `330`, `300`) pairs the
+  next round team against team: a C.04.6 team Swiss with
+  `Ainalrami.TeamPairing` and the settings of its `192` code (`152`, `142`,
+  match points and the bye's from `362` `P`/`A` and `320`, teams with every
+  player on a pre-recorded bye sitting the round out as absent), a team
+  round robin by the Berger tables. The output is the JaVaFo pairing list
+  one level up (`COUNT`, `WHITE BLACK` per match, the bye as `TEAM 0`),
+  with `--lineups [--boards=N]` adding the boards (`MATCH BOARD WHITE
+  BLACK`, players by starting rank). `-x` prints the engine's account: the
+  bye (3.4), the upfloater sets and the deciding criterion per bracket, the
+  Article 4 rule behind each colour. Bye preferences, `--force` and
+  `--absent` are refused on a team file; a team system nothing here pairs
+  exits 2. Until now `-p`/`-x` paired a team file player by player.
+- [Feature] **Team round robins are replayed by `-c`.** `Ainalrami.Berger`
+  holds the Berger tables (C.05 Annex 1; for four, six and eight teams
+  checked against the printed tables), repeated `n` times with the colours
+  reversed in every second cycle as OpenPairings plays them;
+  `BERGER_TEAM_ROUNDROBIN_Gn` and its aliases - and a `092` round robin whose
+  games are team matches - are compared round by round, board-1 colours
+  included, instead of exiting 2.
+- [Feature] **Individual round robins on the CLI.** `-p` on a
+  `BERGER_ROUNDROBIN_Gn` / `FIDE_ROUNDROBIN` / `*DOUBLEROUNDROBIN` file (or a
+  `092` round robin) gives the next round of the Berger table with
+  OpenPairings' boards and order - checked against its own schedule for
+  3-16 players, one and two cycles - `-c` compares every round with the
+  table (they exited 2), `-x` says the table fixed the round, and
+  `-g --roundrobin` (`Ainalrami.RoundRobinGenerator`) writes one.
+  `FIDE_DOUBLEROUNDROBIN` plays the first cycle's last two rounds in
+  reverse order, as FIDE's type table defines it.
+- [Feature] **`-g --team=swiss|roundrobin`**: a random team event
+  (`Ainalrami.TeamGenerator`) as TRF26 - rosters with reserves, board-level
+  games and results, the pairing-allocated bye, board forfeits, teams not
+  turning up (board by board or `330`), teams sitting rounds out, players
+  announced absent, lineups out of order (`300`), match points and the
+  bye's and a forfeit's, the C.04.6 settings as the `192` code, the initial
+  colour, cycles, and a team tie-break list with the ranks it gives;
+  deterministic by seed, every option left out drawn from it. A Swiss is
+  paired by `TeamPairing` from the generator's own record, so `-c` and `-p`
+  test the reading of the file against the engine's direct answer.
+  `tools/team_cli_corpus.exs` runs that comparison over a corpus.
+- [Feature] TRF26 `300` records (a team's board order in one match) are
+  read into `tournament[:board_orders]` and written back. The team replay
+  reads board 1's colour through them (gap B6: a team that played its
+  boards out of roster order no longer shows colour differences that are
+  not there), and the team tie-breaks number the boards by them.
+- [Fix] A board one team could not fill - written for the other team's
+  player as a win with no opponent (`0000 - F`, or `+`) - is now one of
+  that team's boards, a forfeit win worth its point. The team reading
+  (`Tiebreaks.Team.from_trf/2`, and through it `-c`'s team replay and
+  standings check) counted only games against somebody, so the point was
+  lost and a won match could read as drawn or lost.
+- [Fix] A team given the pairing-allocated bye in the `320` record alone,
+  its players' columns blank, is scored as the bye (the `320` record's
+  match and game points); it was read as a zero-point bye.
+- [Fix] A round whose matches were all forfeited as a whole (`330`, no
+  board written) counts as a round: the team reading no longer drops it
+  when no game names it, and a bye recorded for the next round (a TRF26
+  `240` record) is written and read back in its own round - it was kept
+  aside as a bye for a round "further ahead than the game list", so the
+  player looked free.
+- [Fix] A team pairing-allocated bye's game points are the `320` record's
+  when it gives them (TieBreakServer's reading); they were always a win on
+  every board, which disagreed with the `320` OpenPairings writes (a draw
+  on every board, C.04.6 1.4) and, in a game-points-primary Swiss, with the
+  scores the round was paired on.
+
 ## [0.36.0] - 2026-10-02
 
 - [Verified] **A release check on be3ae86 against Gacrux and bbpPairings,
