@@ -66,7 +66,7 @@ with the reference on every one of them.
 
 ## [Unreleased]
 
-- [Verified] Interim: the matching oracle now covers seeds 1-39,500 of the 11-20 axis, 25,342 refusals proved (17,412 on 13+ active players), 543,166 controls, 0 disagreements; the probe's 57.6% is below the 60.1% floor the generator implies. See [validation](docs/validation.md#refusals-above-12-players-by-matching-2026-10-12).
+- [Verified] The matching oracle now covers the full 11-20 axis (seeds 1-80,000: 51,306 refusals proved, 35,335 on 13+ active players) and the harsh 13-40 axis (seeds 4,701-29,100: 8,230 refusals proved), 1,548,175 controls passed, 0 disagreements; 59,536 refusals in all, 41,755 on 13+ active. See [validation](docs/validation.md#refusals-above-12-players-by-matching-2026-10-12).
 
 - [Verified] **bbpPairings' "no legal pairing" answers are now proved above 12
   players too, by matching rather than enumeration.** A legal complete
@@ -3990,4 +3990,3 @@ re-measurement.
   against 99.75% when retried after the colour, bye-float and floater fixes
   had all landed. It stays scoped to moved-down players' pairs, where it is
   confirmed. Both measurements are on record, not only the successful one.
-- [Verified] The matching oracle now covers the full 11-20 axis (seeds 1-80,000: 51,306 refusals proved, 35,335 on 13+ active players) and the harsh 13-40 axis (seeds 4,701-29,100: 8,230 refusals proved), 1,548,175 controls passed, 0 disagreements; 59,536 refusals in all, 41,755 on 13+ active. See [validation](docs/validation.md#refusals-above-12-players-by-matching-2026-10-12).
