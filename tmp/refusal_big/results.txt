@@ -499,3 +499,29 @@ matching oracle: seeds 79001..80000, 16 rounds, 11-20 players, chunk 1000, gen 8
 
   No disagreement. Every refusal is proved by two independent solvers.
 ##### axis a seeds 79001-80000 end 2026-10-14T19:37:56
+##### NOTE: patch run of seed 45597 alone (harness error from the full disk in chunk 39501-46000)
+##### axis a seeds 45597-45597 start 2026-10-14T19:38:19
+matching oracle: seeds 45597..45597, 16 rounds, 11-20 players, chunk 1000, gen 8, solver procs 8
+  seeds 45597..45597: 16 positions, 0 refusals, flagged 0, gen 0s solve 3s
+
+=== 1 tournaments ===
+  refusals (bbpPairings: no legal pairing): 0
+    proved impossible (no perfect matching):  0
+    a legal pairing EXISTS:                   0
+  positive controls (rounds bbpPairings paired): 16
+    solver found a legal pairing:             16
+    solver said none (oracle too strict):     0
+  empty active fields:                        0
+  networkx vs Tutte-rank compared on:         16 positions
+  matching vs enumeration compared on:        0 positions (n <= 12)
+  flagged positions:                          0
+  harness errors:                             0
+  time: generation 0s, solving 3s
+
+  refusals by active-field size:
+    
+  positions by active-field size (refusal+control):
+    20:16
+
+  No disagreement. Every refusal is proved by two independent solvers.
+##### axis a seeds 45597-45597 end 2026-10-14T19:38:24
