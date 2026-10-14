@@ -1,0 +1,16 @@
+#!/bin/bash
+# usage: run_chunk.sh AXIS FROM TO     (AXIS = a | h)
+cd "C:/Users/jorian/Desktop/02cloud/VPS projects/ain-refusal-big" || exit 1
+export ELIXIR_ERL_OPTIONS="+S 8:8" MIX_ENV=test MATCH_GEN=8 MATCH_PY=8 MATCH_CHUNK=1000
+export BBPPAIRINGS_EXE="C:/Users/jorian/Desktop/02cloud/VPS projects/openpairings/priv/bbppairings/bbpPairings-windows.exe"
+axis=$1; from=$2; to=$3
+res=tmp/refusal_big/results.txt
+if [ "$axis" = "a" ]; then
+  args="$from $to 16 11 20 tmp/refusal_big/dumps_a"
+else
+  export PAIRING_FUZZ_BYE_PCT=12 PAIRING_FUZZ_FORFEIT_PCT=12 PAIRING_FUZZ_FORBIDDEN_PCT=25 PAIRING_FUZZ_ACCEL=mixed PAIRING_FUZZ_POINT_SYSTEM=mixed
+  args="$from $to 20 13 40 tmp/refusal_big/dumps_h"
+fi
+echo "##### axis $axis seeds $from-$to start $(date +%FT%T)" >> $res
+mix run tools/exhaustion_matching.exs $args 2>&1 | tee -a $res
+echo "##### axis $axis seeds $from-$to end $(date +%FT%T)" >> $res

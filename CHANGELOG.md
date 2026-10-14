@@ -66,6 +66,8 @@ with the reference on every one of them.
 
 ## [Unreleased]
 
+- [Verified] Interim: the matching oracle now covers seeds 1-39,500 of the 11-20 axis, 25,342 refusals proved (17,412 on 13+ active players), 543,166 controls, 0 disagreements; the probe's 57.6% is below the 60.1% floor the generator implies. See [validation](docs/validation.md#refusals-above-12-players-by-matching-2026-10-12).
+
 - [Verified] **bbpPairings' "no legal pairing" answers are now proved above 12
   players too, by matching rather than enumeration.** A legal complete
   pairing exists iff the graph of allowed pairs (plus a dummy vertex for the

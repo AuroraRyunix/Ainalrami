@@ -554,6 +554,31 @@ between the graph and the original tool.
   commit. Run time was dominated by launching `bbpPairings` (about 60-80
   positions per second on 13 threads); the solving took 1-6% of it.
 
+
+#### Interim update (2026-10-14): the 11-20 axis, seeds 1-39,500 of 80,000
+
+Stopped early at the owner's request; resume at seed 39,501. Same tools,
+`MATCH_GEN=8`, 16 rounds, 11-20 players, default generator settings. Raw
+per-chunk output, with per-size histograms, is `tmp/refusal_big/results.txt`.
+
+| tournaments | refusals | no perfect matching | legal pairing exists | controls passed | of which refusals on 13+ active |
+|---|---|---|---|---|---|
+| 39,500 | 25,342 (64.2%) | 25,342 | 0 | 543,166 (0 failed) | 17,412 |
+
+Disagreements: none (networkx and Tutte rank agreed everywhere, no flagged
+positions, no harness errors). The 20,000 refusals on 13+ was not yet reached.
+The harsh 13-40 axis was not run in this pass.
+
+The rate (64.2%) again differs from the probe's 57.6%. Findings so far: the
+generator draws are bit-identical between the probe's commit (30d2b36) and
+now (seeds 1-20,000 default env, 1-3,000 with every knob on). Rating mode or
+initial colour do not move it (65-66% on 300 seeds each). And the probe's
+figure is below an arithmetic floor: with no byes or forfeits, a field of 16
+or fewer cannot play 16 rounds, so every such tournament must be refused, and
+48,100 of seeds 1-80,000 draw such a field (60.1%); 46,052 is under that. So
+the probe's tournaments were not the described ones, or some refusals went
+uncounted (a harness-error class the probe excludes). Not resolved further.
+
 ### What this run added over its predecessors
 
 It is the first corpus measured on the local-graph engine (see

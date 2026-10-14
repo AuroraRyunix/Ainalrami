@@ -1,0 +1,28 @@
+### variant PAIRING_FUZZ_RATING_MODE=mixed seeds 1-300
+matching oracle: seeds 1..300, 16 rounds, 11-20 players, chunk 300, gen 8, solver procs 8
+  seeds 1..300: 4326 positions, 199 refusals, flagged 0, gen 111s solve 5s
+  refusals (bbpPairings: no legal pairing): 199
+    11:29  12:30  13:30  14:30  15:39  16:31  17:6  18:4
+  positions by active-field size (refusal+control):
+    11:340  12:344  13:395  14:396  15:601  16:476  17:336  18:590  19:384  20:464
+### variant PAIRING_FUZZ_RATING_MODE=equal seeds 1-300
+matching oracle: seeds 1..300, 16 rounds, 11-20 players, chunk 300, gen 8, solver procs 8
+  seeds 1..300: 4294 positions, 196 refusals, flagged 0, gen 121s solve 8s
+  refusals (bbpPairings: no legal pairing): 196
+    11:32  12:36  13:32  14:29  15:26  16:28  17:9  18:4
+  positions by active-field size (refusal+control):
+    11:373  12:409  13:435  14:387  15:395  16:424  17:464  18:399  19:432  20:576
+### variant PAIRING_FUZZ_RATING_MODE=all_unrated seeds 1-300
+matching oracle: seeds 1..300, 16 rounds, 11-20 players, chunk 300, gen 8, solver procs 8
+  seeds 1..300: 4294 positions, 196 refusals, flagged 0, gen 92s solve 5s
+  refusals (bbpPairings: no legal pairing): 196
+    11:32  12:36  13:32  14:29  15:26  16:28  17:9  18:4
+  positions by active-field size (refusal+control):
+    11:373  12:409  13:435  14:387  15:395  16:424  17:464  18:399  19:432  20:576
+### variant PAIRING_FUZZ_INITIAL_COLOUR=B seeds 1-300
+matching oracle: seeds 1..300, 16 rounds, 11-20 players, chunk 300, gen 8, solver procs 8
+  seeds 1..300: 4285 positions, 197 refusals, flagged 0, gen 86s solve 6s
+  refusals (bbpPairings: no legal pairing): 197
+    11:32  12:36  13:32  14:29  15:26  16:28  17:6  18:8
+  positions by active-field size (refusal+control):
+    11:373  12:408  13:418  14:386  15:401  16:428  17:464  18:399  19:432  20:576
