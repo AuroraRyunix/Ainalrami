@@ -3,7 +3,10 @@
 cd "C:/Users/jorian/Desktop/02cloud/VPS projects/ain-refusal-big" || exit 1
 export ELIXIR_ERL_OPTIONS="+S 8:8" MIX_ENV=test MATCH_GEN=8 MATCH_PY=8 MATCH_CHUNK=1000
 export BBPPAIRINGS_EXE="C:/Users/jorian/Desktop/02cloud/VPS projects/openpairings/priv/bbppairings/bbpPairings-windows.exe"
+export TMP="$PWD/tmp/refusal_big/tmpdir" TEMP="$PWD/tmp/refusal_big/tmpdir"
 axis=$1; from=$2; to=$3
+free_kb=$(df -k /c | tail -1 | awk '{print $4}')
+if [ "$free_kb" -lt 3145728 ]; then echo "REFUSING: only $free_kb KB free on C: (need 3 GB)" | tee -a tmp/refusal_big/results.txt; exit 3; fi
 res=tmp/refusal_big/results.txt
 if [ "$axis" = "a" ]; then
   args="$from $to 16 11 20 tmp/refusal_big/dumps_a"

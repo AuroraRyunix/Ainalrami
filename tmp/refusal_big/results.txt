@@ -232,3 +232,95 @@ matching oracle: seeds 33001..39500, 16 rounds, 11-20 players, chunk 1000, gen 8
 
   No disagreement. Every refusal is proved by two independent solvers.
 ##### axis a seeds 33001-39500 end 2026-10-14T14:05:47
+##### axis a seeds 39501-46000 start 2026-10-14T15:31:53
+matching oracle: seeds 39501..46000, 16 rounds, 11-20 players, chunk 1000, gen 8, solver procs 8
+** (File.Error) could not write to file "C:\\Users\\jorian\\AppData\\Local\\Temp/exh-matching-1122/chunk.tsv": no such file or directory
+    (elixir 1.20.3) lib/file.ex:1494: File.write!/3
+    tools/exhaustion_matching.exs:361: anonymous fn/10 in :elixir_compiler_2.__FILE__/1
+    (elixir 1.20.3) lib/enum.ex:2622: Enum."-reduce/3-lists^foldl/2-0-"/3
+    tools/exhaustion_matching.exs:346: (file)
+##### axis a seeds 39501-46000 end 2026-10-14T15:36:10
+##### axis a seeds 39501-46000 start 2026-10-14T15:36:27
+matching oracle: seeds 39501..46000, 16 rounds, 11-20 players, chunk 1000, gen 8, solver procs 8
+  seeds 39501..40500: 14316 positions, 636 refusals, flagged 0, gen 259s solve 8s
+  seeds 40501..41500: 14432 positions, 635 refusals, flagged 0, gen 258s solve 7s
+  seeds 41501..42500: 14328 positions, 664 refusals, flagged 0, gen 261s solve 7s
+  seeds 42501..43500: 14373 positions, 632 refusals, flagged 0, gen 264s solve 7s
+  seeds 43501..44500: 14403 positions, 625 refusals, flagged 0, gen 284s solve 6s
+  seeds 44501..45500: 14430 positions, 657 refusals, flagged 0, gen 289s solve 6s
+  seeds 45501..46000: 7182 positions, 312 refusals, flagged 0, gen 173s solve 5s
+
+=== 6500 tournaments ===
+  refusals (bbpPairings: no legal pairing): 4161
+    proved impossible (no perfect matching):  4161
+    a legal pairing EXISTS:                   0
+  positive controls (rounds bbpPairings paired): 89303
+    solver found a legal pairing:             89303
+    solver said none (oracle too strict):     0
+  empty active fields:                        0
+  networkx vs Tutte-rank compared on:         93464 positions
+  matching vs enumeration compared on:        14724 positions (n <= 12)
+  flagged positions:                          0
+  harness errors:                             1
+  time: generation 1791s, solving 48s
+
+  refusals by active-field size:
+    11:655  12:637  13:691  14:638  15:652  16:639  17:138  18:111
+  positions by active-field size (refusal+control):
+    11:7500  12:7224  13:9234  14:8432  15:9982  16:9721  17:10201  18:10722  19:10224  20:10224
+  ERROR 45597: could not write to file "C:\\Users\\jorian\\Desktop\\02cloud\\VPS projects\\ain-refusal-big\\tmp\\refusal_big\\tmpdir/ainalrami-bbp-640099/input.trf": no space 
+
+  No disagreement. Every refusal is proved by two independent solvers.
+##### axis a seeds 39501-46000 end 2026-10-14T16:07:09
+##### axis a seeds 46001-51500 start 2026-10-14T16:07:19
+matching oracle: seeds 46001..51500, 16 rounds, 11-20 players, chunk 1000, gen 8, solver procs 8
+** (File.Error) could not write to file "C:\\Users\\jorian\\Desktop\\02cloud\\VPS projects\\ain-refusal-big\\tmp\\refusal_big\\tmpdir/exh-matching-5222/chunk.tsv": no space left on device
+    (elixir 1.20.3) lib/file.ex:1494: File.write!/3
+    tools/exhaustion_matching.exs:361: anonymous fn/10 in :elixir_compiler_2.__FILE__/1
+    (elixir 1.20.3) lib/enum.ex:2622: Enum."-reduce/3-lists^foldl/2-0-"/3
+    tools/exhaustion_matching.exs:346: (file)
+##### axis a seeds 46001-51500 end 2026-10-14T16:10:19
+##### NOTE: previous 46001-51500 attempt aborted at 16:10 by a full C: drive (other process); rerun below
+##### axis a seeds 46001-51500 start 2026-10-14T16:14:17
+matching oracle: seeds 46001..51500, 16 rounds, 11-20 players, chunk 1000, gen 8, solver procs 8
+  seeds 46001..47000: 14326 positions, 651 refusals, flagged 0, gen 294s solve 6s
+  seeds 47001..48000: 14354 positions, 624 refusals, flagged 0, gen 273s solve 6s
+  seeds 48001..49000: 14469 positions, 633 refusals, flagged 0, gen 296s solve 7s
+  seeds 49001..50000: 14453 positions, 622 refusals, flagged 0, gen 289s solve 7s
+  seeds 50001..51000: 14371 positions, 656 refusals, flagged 0, gen 287s solve 6s
+##### NOTE: 46001-51500 rerun in full after session stop (51001-51500 was missing); earlier 46001-51000 lines superseded
+##### axis a seeds 46001-51500 start 2026-10-14T17:28:28
+matching oracle: seeds 46001..51500, 16 rounds, 11-20 players, chunk 1000, gen 8, solver procs 8
+##### NOTE: above start aborted deliberately (script edit); restarting
+##### axis a seeds 46001-51500 start 2026-10-14T17:28:51
+matching oracle: seeds 46001..51500, 16 rounds, 11-20 players, chunk 1000, gen 8, solver procs 8
+##### axis a seeds 46001-51500 end 2026-10-14T17:29:36
+##### NOTE: the 'end 17:29:36' line above is the killed aborted run, not the one that started 17:28:51
+  seeds 46001..47000: 14326 positions, 651 refusals, flagged 0, gen 303s solve 7s
+  seeds 47001..48000: 14354 positions, 624 refusals, flagged 0, gen 241s solve 6s
+  seeds 48001..49000: 14469 positions, 633 refusals, flagged 0, gen 239s solve 9s
+  seeds 49001..50000: 14453 positions, 622 refusals, flagged 0, gen 235s solve 6s
+  seeds 50001..51000: 14371 positions, 656 refusals, flagged 0, gen 222s solve 6s
+  seeds 51001..51500: 7225 positions, 311 refusals, flagged 0, gen 113s solve 4s
+
+=== 5500 tournaments ===
+  refusals (bbpPairings: no legal pairing): 3497
+    proved impossible (no perfect matching):  3497
+    a legal pairing EXISTS:                   0
+  positive controls (rounds bbpPairings paired): 75701
+    solver found a legal pairing:             75701
+    solver said none (oracle too strict):     0
+  empty active fields:                        0
+  networkx vs Tutte-rank compared on:         79198 positions
+  matching vs enumeration compared on:        12424 positions (n <= 12)
+  flagged positions:                          0
+  harness errors:                             0
+  time: generation 1356s, solving 40s
+
+  refusals by active-field size:
+    11:549  12:543  13:572  14:518  15:555  16:560  17:99  18:101
+  positions by active-field size (refusal+control):
+    11:6276  12:6148  13:7658  14:6880  15:8503  16:8506  17:8800  18:8539  19:8800  20:9088
+
+  No disagreement. Every refusal is proved by two independent solvers.
+##### axis a seeds 46001-51500 end 2026-10-14T17:52:11
