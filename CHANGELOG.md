@@ -66,6 +66,8 @@ with the reference on every one of them.
 
 ## [Unreleased]
 
+## [0.43.1] - 2026-10-14
+
 - [Fix] **`-c` no longer says a file's places "do not follow" its
   tie-breaks because a player announced an absence ahead of time.** A bye
   granted for a round nobody has paired yet - a TRF26 `240` record, or the
