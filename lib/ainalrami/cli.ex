@@ -1377,9 +1377,7 @@ defmodule Ainalrami.CLI do
               |> Ainalrami.Tiebreaks.Team.rank(list, with_dropped: true)
             else
               parsed
-              |> Ainalrami.Tiebreaks.Event.from_trf(
-                cap_rounds: parsed.tournament[:tiebreak_cap_rounds] || :played
-              )
+              |> standings_event()
               |> Ainalrami.Tiebreaks.rank(list, with_dropped: true)
             end
 
@@ -1411,6 +1409,22 @@ defmodule Ainalrami.CLI do
     else
       {:error, :halt} -> 1
     end
+  end
+
+  # The individual standings as they stand: the rounds that were PAIRED
+  # (`completed_rounds/1`), not every column in the file. A bye granted for
+  # a round nobody has paired yet - a TRF26 `240` record, or the engines'
+  # `H`/`Z`/`F` written in the pending round's column - is a column too,
+  # and `Event.from_trf/2` counts to the longest one. So the bye was in the
+  # score `-c` ranked by and `-s` printed, a round before anybody had
+  # played it, while the file's places are the standings after its last
+  # paired round. Every file that stopped with an announced absence ahead
+  # was told its ranks "do not follow" its tie-breaks.
+  defp standings_event(parsed) do
+    Ainalrami.Tiebreaks.Event.from_trf(parsed,
+      rounds: completed_rounds(parsed.players),
+      cap_rounds: parsed.tournament[:tiebreak_cap_rounds] || :played
+    )
   end
 
   defp standings_list(parsed) do
@@ -2904,10 +2918,7 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
         :skipped
 
       true ->
-        event =
-          Ainalrami.Tiebreaks.Event.from_trf(parsed,
-            cap_rounds: parsed.tournament[:tiebreak_cap_rounds] || :played
-          )
+        event = standings_event(parsed)
 
         case Ainalrami.Tiebreaks.rank(event, list, with_dropped: true) do
           {:ok, standings, dropped} ->

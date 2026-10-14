@@ -66,6 +66,20 @@ with the reference on every one of them.
 
 ## [Unreleased]
 
+- [Fix] **`-c` no longer says a file's places "do not follow" its
+  tie-breaks because a player announced an absence ahead of time.** A bye
+  granted for a round nobody has paired yet - a TRF26 `240` record, or the
+  engines' `H`/`Z`/`F` in the pending round's column - was counted in the
+  score the checker ranked by, a round early, while the file's places are
+  the standings after its last paired round. A player with a full-point bye
+  coming up was ranked a point higher than the file, and the check exited 1
+  on a correct file. `-s` printed the same early standings. Both now rank
+  the rounds that were paired (the count `-c` already replayed); the
+  rounds themselves were never affected - each is replayed from the games
+  before it. Seen on every OpenPairings export that stopped with an
+  announced absence still ahead (its audit's observation O1). Fixture and
+  tests: `test/fixtures/future_bye/`, `check_future_bye_test.exs`.
+
 - [Verified] **bbpPairings' "no legal pairing" answers are now proved above 12
   players too, by matching rather than enumeration.** A legal complete
   pairing exists iff the graph of allowed pairs (plus a dummy vertex for the
