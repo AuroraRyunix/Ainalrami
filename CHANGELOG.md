@@ -3990,3 +3990,4 @@ re-measurement.
   against 99.75% when retried after the colour, bye-float and floater fixes
   had all landed. It stays scoped to moved-down players' pairs, where it is
   confirmed. Both measurements are on record, not only the successful one.
+- [Verified] The matching oracle now covers the full 11-20 axis (seeds 1-80,000: 51,306 refusals proved, 35,335 on 13+ active players) and the harsh 13-40 axis (seeds 4,701-29,100: 8,230 refusals proved), 1,548,175 controls passed, 0 disagreements; 59,536 refusals in all, 41,755 on 13+ active. See [validation](docs/validation.md#refusals-above-12-players-by-matching-2026-10-12).

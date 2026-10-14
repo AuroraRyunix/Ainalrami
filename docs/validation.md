@@ -2035,3 +2035,45 @@ tie-breaks and compared the result with SWAR's own standings. No Ainalrami
 bug was found; every difference was attributed to SWAR - its use of the
 2024 C.07 text, SWAR defects, or Belgian conventions. All 43 are
 individual events.
+
+
+#### Final result (2026-10-14): the full 11-20 axis and the harsh axis
+
+Supersedes the interim above. Raw output is `tmp/refusal_big/results.txt`;
+per-chunk totals are tabulated in `tmp/refusal_big/blocks.txt`.
+
+| axis | tournaments | refusals | no perfect matching | legal pairing exists | controls passed | refusals on 13+ active |
+|---|---|---|---|---|---|---|
+| 11-20 players, 16 rounds, seeds 1-80,000 | 80,000 | 51,306 (64.1%) | 51,306 | 0 | 1,100,330 | 35,335 |
+| 13-40 players, 20 rounds, 12% byes, 12% forfeits, 25% forbidden, mixed acceleration and point systems, seeds 4,701-29,100 | 24,400 | 8,230 (33.7%) | 8,230 | 0 | 447,845 | 6,420 |
+| **total** | **104,400** | **59,536** | **59,536** | **0** | **1,548,175** | **41,755** |
+
+**Disagreements: none.** Zero flagged positions, zero "oracle too strict"
+controls, zero harness errors in the final tally. The 20,000-refusals-on-13+
+target was passed with the 11-20 axis alone (at about seed 46,000), so the
+harsh axis was run for about two hours rather than five (seeds 4,701-29,100;
+seeds 1-4,700 are the 2026-10-12 row above). The 13+ figures here are counted
+from the per-size histograms and are for the new runs only, not added to the
+2026-10-12 ones.
+
+**Faults in the run, and how they were handled.**
+
+* Chunk 39,501-46,000 hit a full C: drive from another process: one
+  tournament, seed 45,597, ended in a harness error ("no space left"). It was
+  re-run alone afterwards: 16 positions, 0 refusals, 0 flagged, 0 errors. The
+  chunk's own block still reads one harness error; the tally above counts the
+  tournament once. A second chunk, 46,001-51,500, was aborted by the same
+  full disk, and re-run in full (not stitched).
+* `tmp/refusal_big/run_chunk.sh` now refuses to start a chunk with less than
+  3 GB free on C:.
+* Raw `results.txt` also holds the aborted attempts and notes saying so; the
+  per-chunk table in `blocks.txt` uses only completed summaries.
+
+**The rate.** The 11-20 axis refuses 64.1% over the full 80,000 seeds, against
+the probe's 57.6% (46,052 refusals) and above the 60.1% floor computed in the
+interim. The difference to the probe stays unexplained; this run says the
+reference's refusals are correct, not why the probe counted fewer.
+
+The scope limits listed under the 2026-10-12 run still apply: this proves the
+reference's refusals correct, not the engine's, and the edge reading is the
+brute-force tool's.
