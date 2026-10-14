@@ -712,3 +712,30 @@ matching oracle: seeds 20101..23100, 20 rounds, 13-40 players, chunk 1000, gen 8
 
   No disagreement. Every refusal is proved by two independent solvers.
 ##### axis h seeds 20101-23100 end 2026-10-14T21:08:55
+##### axis h seeds 23101-26100 start 2026-10-14T21:09:00
+matching oracle: seeds 23101..26100, 20 rounds, 13-40 players, chunk 1000, gen 8, solver procs 8
+  seeds 23101..24100: 18772 positions, 323 refusals, flagged 0, gen 306s solve 11s
+  seeds 24101..25100: 18656 positions, 341 refusals, flagged 0, gen 293s solve 10s
+  seeds 25101..26100: 18615 positions, 351 refusals, flagged 0, gen 338s solve 9s
+
+=== 3000 tournaments ===
+  refusals (bbpPairings: no legal pairing): 1015
+    proved impossible (no perfect matching):  1015
+    a legal pairing EXISTS:                   0
+  positive controls (rounds bbpPairings paired): 55028
+    solver found a legal pairing:             55028
+    solver said none (oracle too strict):     0
+  empty active fields:                        0
+  networkx vs Tutte-rank compared on:         29315 positions
+  matching vs enumeration compared on:        2522 positions (n <= 12)
+  flagged positions:                          0
+  harness errors:                             0
+  time: generation 939s, solving 31s
+
+  refusals by active-field size:
+    7:2  8:8  9:12  10:35  11:57  12:129  13:101  14:131  15:105  16:90  17:85  18:55  19:45  20:9  21:33  23:31  25:16  27:17  29:19  31:15  33:8  35:7  37:4  39:1
+  positions by active-field size (refusal+control):
+    6:1  7:6  8:31  9:103  10:323  11:731  12:1327  13:1708  14:1851  15:1989  16:2114  17:2240  18:2331  19:2440  20:2490  21:2428  22:2335  23:2413  24:2367  25:2362  26:2260  27:2321  28:2304  29:2401  30:2506  31:2459  32:2333  33:2243  34:1934  35:1583  36:1061  37:648  38:290  39:95  40:15
+
+  No disagreement. Every refusal is proved by two independent solvers.
+##### axis h seeds 23101-26100 end 2026-10-14T21:25:13
