@@ -68,6 +68,22 @@ with the reference on every one of them.
 
 - [Verified] The matching oracle now covers the full 11-20 axis (seeds 1-80,000: 51,306 refusals proved, 35,335 on 13+ active players) and the harsh 13-40 axis (seeds 4,701-29,100: 8,230 refusals proved), 1,548,175 controls passed, 0 disagreements; 59,536 refusals in all, 41,755 on 13+ active. See [validation](docs/validation.md#refusals-above-12-players-by-matching-2026-10-12).
 
+## [0.43.1] - 2026-10-14
+
+- [Fix] **`-c` no longer says a file's places "do not follow" its
+  tie-breaks because a player announced an absence ahead of time.** A bye
+  granted for a round nobody has paired yet - a TRF26 `240` record, or the
+  engines' `H`/`Z`/`F` in the pending round's column - was counted in the
+  score the checker ranked by, a round early, while the file's places are
+  the standings after its last paired round. A player with a full-point bye
+  coming up was ranked a point higher than the file, and the check exited 1
+  on a correct file. `-s` printed the same early standings. Both now rank
+  the rounds that were paired (the count `-c` already replayed); the
+  rounds themselves were never affected - each is replayed from the games
+  before it. Seen on every OpenPairings export that stopped with an
+  announced absence still ahead (its audit's observation O1). Fixture and
+  tests: `test/fixtures/future_bye/`, `check_future_bye_test.exs`.
+
 - [Verified] **bbpPairings' "no legal pairing" answers are now proved above 12
   players too, by matching rather than enumeration.** A legal complete
   pairing exists iff the graph of allowed pairs (plus a dummy vertex for the

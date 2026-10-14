@@ -1,0 +1,14 @@
+012 Future bye check
+062 6
+082 0
+092 Individual: Swiss System
+142 5
+192 FIDE_DUTCH_2025
+202 BH,SB
+001    1      Player One                        2400                             2.0    1     4 w 1     2 b 1
+001    2      Player Two                        2300                             1.0    3     5 b 1     1 w 0
+001    3      Player Three                      2200                             1.5    2     6 w 1     4 b =
+001    4      Player Four                       2100                             0.5    5     1 b 0     3 w =
+001    5      Player Five                       2000                             1.0    4     2 w 0     6 b 1
+001    6      Player Six                        1900                             0.0    6     3 b 0     5 w 0
+240 F 003    6
