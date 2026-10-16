@@ -119,6 +119,56 @@ defmodule Ainalrami.Trf26Test do
       end
     end
 
+    test "a bye several rounds ahead leaves no empty columns behind it" do
+      blank = %{opponent_rank: nil, colour: nil, result: nil}
+
+      data =
+        update_in(tournament().players, fn players ->
+          List.replace_at(
+            players,
+            4,
+            player(5, 4.0, [game(2, "w", "0"), game(6, "b", "1"), blank, blank, blank, bye("H")])
+          )
+        end)
+
+      text = Trf.serialize(data, dialect: :trf26)
+
+      assert "240 H 006    5" in lines(text)
+      refute line_for(text, 5) =~ "0000 -"
+      assert line_for(text, 5) =~ ~r/6 b 1\s*$/
+
+      # Read back, it is the same bye in the same round.
+      assert Enum.any?(Trf.parse(text).tournament.byes, &(&1.round == 6 and 5 in &1.ranks))
+    end
+
+    test "blanks with no bye after them stay where they are" do
+      blank = %{opponent_rank: nil, colour: nil, result: nil}
+
+      data =
+        update_in(tournament().players, fn players ->
+          List.replace_at(
+            players,
+            4,
+            player(5, 3.0, [game(2, "w", "0"), game(6, "b", "1"), blank])
+          )
+        end)
+
+      text = Trf.serialize(data, dialect: :trf26)
+      refute Enum.any?(lines(text), &String.starts_with?(&1, "240 H"))
+    end
+
+    test "column_legend: :line writes the legend alone, as Swiss-Manager's rating files do" do
+      all = lines(Trf.serialize(tournament(), dialect: :trf26, column_legend: :line))
+
+      legend = Enum.filter(all, &String.starts_with?(&1, "DDD SSSS sTTT NNNN"))
+      assert [line] = legend
+      assert line =~ "IIIIIIIIIII BBBB/BB/BB PPPP RRRR  1111 1 1  2222 2 2"
+      refute Enum.any?(all, &String.starts_with?(&1, "1234567890"))
+
+      first_player = Enum.find_index(all, &String.starts_with?(&1, "001 "))
+      assert Enum.find_index(all, &(&1 == line)) == first_player - 1
+    end
+
     test "the engine dialect is untouched, and still the default" do
       plain = Trf.serialize(tournament())
       assert plain == Trf.serialize(tournament(), dialect: :engine)

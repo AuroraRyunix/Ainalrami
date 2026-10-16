@@ -68,6 +68,11 @@ with the reference on every one of them.
 
 - [Verified] The matching oracle now covers the full 11-20 axis (seeds 1-80,000: 51,306 refusals proved, 35,335 on 13+ active players) and the harsh 13-40 axis (seeds 4,701-29,100: 8,230 refusals proved), 1,548,175 controls passed, 0 disagreements; 59,536 refusals in all, 41,755 on 13+ active. See [validation](docs/validation.md#refusals-above-12-players-by-matching-2026-10-12).
 
+## [0.43.2] - 2026-10-16
+
+- [Fix] **A TRF26 bye several rounds ahead no longer leaves empty columns behind.** A half-point bye granted for round 6 after round 2 reached the writer as three blank columns and then the bye, the blanks there only to put it in column 6. The bye became its `240 H 006` record as it should, and the blanks stayed on the `001` line as three `0000 -` entries for rounds that have not happened. The blanks now go with the bye they were holding a place for. A run of blanks with no bye after it is left alone.
+- [Feature] `column_legend: :line` writes the `DDD SSSS sTTT NNN...` legend on its own, without the two rulers, as Swiss-Manager's rating files carry it. `true` still writes all three lines.
+
 ## [0.43.1] - 2026-10-14
 
 - [Fix] **`-c` no longer says a file's places "do not follow" its

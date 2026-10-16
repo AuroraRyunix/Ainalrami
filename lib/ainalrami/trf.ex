@@ -784,7 +784,9 @@ defmodule Ainalrami.Trf do
   legend plus two column-position rulers) right before the player rows -
   purely a human-readability courtesy, no header code of its own, and
   safely ignored by any TRF16 reader (including `parse/1`, since these
-  lines don't start with a recognized 3-digit code). Off by default.
+  lines don't start with a recognized 3-digit code). `:line` writes the
+  legend alone, without the two rulers, as Swiss-Manager's rating files
+  do. Off by default.
 
   `opts[:ascii]`: when true, folds every string in `data` to ASCII
   (é -> e, ß -> ss) before any of it is placed in a column, so that one
@@ -887,18 +889,28 @@ defmodule Ainalrami.Trf do
     Enum.map_reduce(players, [], fn player, records ->
       {kept, future} = Enum.split(player[:games] || [], played)
 
-      {byes_reversed, rest_reversed} =
-        future |> Enum.reverse() |> Enum.split_while(&future_bye?/1)
+      # The trailing run takes the empty columns along with the byes: a bye
+      # for round 6 entered after round 2 arrives as three blank columns
+      # and then the bye, the blanks there only to put it in column 6. Once
+      # the bye is a `240` naming round 6 itself, the blanks hold nothing
+      # up, and left behind they wrote `0000 -` three times on the `001`
+      # line for rounds that do not exist.
+      {run_reversed, rest_reversed} =
+        future |> Enum.reverse() |> Enum.split_while(&(future_bye?(&1) or blank_game?(&1)))
 
       rest = Enum.reverse(rest_reversed)
 
       new_records =
-        byes_reversed
+        run_reversed
         |> Enum.reverse()
         |> Enum.with_index(played + length(rest) + 1)
+        |> Enum.filter(fn {game, _round} -> future_bye?(game) end)
         |> Enum.map(fn {game, round} ->
           {String.upcase(String.trim(game[:result])), round, player[:rank]}
         end)
+
+      # A run of blanks with no bye after it is not ours to remove.
+      rest = if new_records == [], do: future, else: rest
 
       # The `001` total is the standings total, which a bye not yet reached
       # is not part of; the engines' convention credits it up front, so it
@@ -926,6 +938,10 @@ defmodule Ainalrami.Trf do
 
     byes = length(get_in(tournament, [:team_pab, :teams]) || [])
     Enum.max([byes | forfeits], fn -> 0 end)
+  end
+
+  defp blank_game?(game) do
+    is_nil(game[:opponent_rank]) and String.trim(to_string(game[:result] || "")) == ""
   end
 
   defp future_bye?(game) do
@@ -1455,6 +1471,10 @@ defmodule Ainalrami.Trf do
     width = String.length(legend)
     ["", ruler_line(width, :tens), ruler_line(width, :units), legend]
   end
+
+  # Swiss-Manager's own rating files carry the field legend alone, no
+  # rulers: the line a person reads the columns by.
+  defp legend_lines(:line, max_round) when max_round >= 0, do: [legend_line(max_round)]
 
   defp legend_lines(_, _), do: []
 
