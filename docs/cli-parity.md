@@ -25,6 +25,7 @@ unless said otherwise).
 | `expected_rounds:` | the tournament's round count, written as `XXR` and read back | `--rounds=N` **(new)** | `142`, `XXR` | yes |
 | `initial_colour:` | the drawing of lots, written as `XXC` | `--initial-colour=white\|black` **(new for -p/-x/-c; was -g only)** | `152`, `XXC` | yes |
 | `point_system:` | `Tournament.engine_point_system/1` | `--points=3,1,0` or `--points=win:3,draw:1,bye:1,...` **(new)** | `BBW` `BBD` `BBL` `BBZ` `BBF` `BBU`, `162`, `299` | yes |
+| `point_system:` `:unknown` (a `?` result) | - (the host writes a postponed game as `=` with its provisional total, never `?`) | `--points=unknown:0.5` **(new, third pass)** | `162` `X` | yes (TRF26) |
 | `forbidden_pairs:` (groups) | forbidden pairings and club/federation exclusion rules | `--forbidden=1,4/2,9,12` **(new)** | `XXP` | arbiter's, as before |
 | `forbidden_pairs:` `{ranks, first, last}` | round-limited rules | `--forbidden=2,9@3-5` **(new)** | `260` | arbiter's, as before |
 | `soft_pairs:` | soft forbidden pairings, club protection | `--soft-pairs=1,4/2,9,12` | `XXO soft-pairs 1 4` **(new)** | **no** - warned |
@@ -51,6 +52,8 @@ unless said otherwise).
 | `Alternatives.bye_alternatives/3` | "why not me" | `-x --bye-alternatives` **(new)** | - | |
 | `Alternatives.float_alternatives/3` | "why did I float" | `-x --float-alternatives` **(new)** | - | |
 | each candidate's `alternative` (0.43.0) | both versions of the round, side by side | `-x --alternative-pairs`, with either of the two above | - | opt-in: without it the listings are byte for byte what they were |
+| `Alternatives` `max_candidates:` | `:all` when the arbiter asks for the whole bracket (`open_alternative/4`'s `full: true`) | `-x --max-candidates=N\|all`, with either of the two above **(new, third pass)** | - (a search budget, not a fact about the event) | |
+| `Trf.serialize/2` `dialect:` | `:trf26` for the FIDE report | `-g --dialect=engine\|trf26` **(new, third pass)**; `-p`/`-x`/`-c`/`-s` read either | - (it is the file's spelling) | |
 
 ### Deliberately not on the command line
 
@@ -61,7 +64,6 @@ unless said otherwise).
 | `Pairing.pair_variants/3` | one position paired under many results at once, each answer exactly `pair_next_round/2`'s for that variant. A batching API for a preview, not an option: the CLI's equivalent is `-p` per file. |
 | `Pairing.bye_eligibility/2`, `bye_disqualifications/2` | answered inside `-x --bye-alternatives` (each candidate C2 rules out is named with the reason); no listing of its own. |
 | `Alternatives.float_alternative/5` | one entry of `--float-alternatives`. |
-| `Alternatives` `max_candidates:` | the cap on how many candidates are searched; the CLI keeps the default and prints "not worked out" past it. |
 | `Alternatives` `max_alternative_boards:` | the cap on how many boards of one alternative are written out (40); the CLI keeps the default and prints "not written out, N boards differ" past it. |
 
 ## Team Swiss (C.04.6) - `-p`, `-x`, `-c` on a team file
@@ -136,6 +138,32 @@ Before this work, reachable only through the library:
 After: every row above has a flag, a record, or both, except the rows
 under "Deliberately not on the command line" and "Left open", each with
 its reason.
+
+## The third pass
+
+A sweep of everything OpenPairings hands the engine (`ainalrami_opts/3`,
+`pair_with_preferences/3`, `run_variants/7`, the explanation pages, the team
+Swiss, the TRF writers) against the table above found three more:
+
+1. `max_candidates: :all`, which the host passes when the arbiter asks for
+   a whole bracket's alternatives - the CLI kept the default of 12;
+2. the value of a `?` result, which a file could declare (`162 X`) and the
+   command line could not;
+3. the TRF26 dialect, which the library writes and the Swiss generator did
+   not.
+
+`test/ainalrami/cli_parity_3_test.exs` holds each to the library: the
+alternatives under each cap against `Alternatives.bye_alternatives/3` and
+`float_alternatives/3`; `--points=unknown:V` against the same file carrying
+`162 X V`, through `-p` and `-s`, and against `pair_next_round/2`; a TRF26
+generator file against the engine-dialect one of the same seed, the same
+players and every round paired again from each, and `-c` passing it.
+
+Still library-only, for the reasons above: `Alternatives`
+`max_alternative_boards:` (the host does not set it either), `pair_variants/3`
+and `bye_passed_over:`. The serializer's cosmetic options (`column_legend:`,
+`ascii:`, `xxr:`/`xxc:`) are not pairing options; the generator writes `XXR`
+beside `142` regardless.
 
 ## What holds the two to the same answer
 

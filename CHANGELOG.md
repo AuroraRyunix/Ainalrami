@@ -66,6 +66,10 @@ with the reference on every one of them.
 
 ## [Unreleased]
 
+- [Feature] **`-x --max-candidates=N|all`.** OpenPairings asks for every candidate of a bracket when the arbiter is willing to wait; the command line stopped at twelve and printed "not worked out", which is accurate and not very helpful. The flag moves the library's `max_candidates:` for `--bye-alternatives` and `--float-alternatives`, and is refused without one of them, since a cap on no question caps nothing.
+- [Feature] **`--points=unknown:V`.** A `?` result's value, `162`'s `X`, from the command line. The file could always say it; now the flag can, and a `?` the file left unvalued keeps its total through the rescore, exactly as if the file had carried the `X`. Without a value a `?` still refuses to be scored. Nobody's scoresheet was recovered in the making of this flag.
+- [Feature] **`-g --dialect=trf26`** (and `Generator.generate/1`'s `:dialect`): the Swiss generator writes FIDE's 2026 spelling - `142`, `250`, `260`, a bye still to come as `240` - instead of `XXR`, `XXA` and `XXP`. One seed is one tournament in either spelling: the random draws never knew which one they were for. The default is the old spelling to the byte. Team and round-robin files were TRF26 all along, so the flag is refused there rather than offered as a choice with one answer.
+- [Verified] `test/ainalrami/cli_parity_3_test.exs`: each of the three against the library - the alternatives under each cap, `--points=unknown:` against the same file with `162 X` through `-p` and `-s`, and TRF26 generator files against the engine-spelled ones (same players, every round paired again from both, `-c` passing). `docs/cli-parity.md` has the rows and what is still library-only.
 - [Verified] The matching oracle now covers the full 11-20 axis (seeds 1-80,000: 51,306 refusals proved, 35,335 on 13+ active players) and the harsh 13-40 axis (seeds 4,701-29,100: 8,230 refusals proved), 1,548,175 controls passed, 0 disagreements; 59,536 refusals in all, 41,755 on 13+ active. See [validation](docs/validation.md#refusals-above-12-players-by-matching-2026-10-12).
 
 ## [0.43.2] - 2026-10-16

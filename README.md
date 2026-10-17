@@ -361,6 +361,11 @@ off, results uniform - which is what the library's
 `Ainalrami.Generator.generate/1` does by default, so the validated corpora
 reproduce from their seeds.
 
+`--dialect=trf26` writes the file in FIDE's 2026 spelling (`142`, `250`,
+`260`, a bye still to come as `240`) instead of the engines' (`XXR`,
+`XXA`, `XXP`); nothing random depends on it, so one seed is one
+tournament either way.
+
 `--initial-colour` is Article 5.1's drawing of lots, and it is written into
 the file as `152`. It defaults to White - which is what the generator
 always used, implicitly, before the option existed.
@@ -503,7 +508,7 @@ to the library's for each one. A flag is laid over what the file says:
 |---|---|---|
 | `--rounds=N` | `expected_rounds:` | the round count, in place of `142`/`XXR` |
 | `--initial-colour=white\|black` | `initial_colour:` | the drawing of lots, in place of `152`/`XXC` |
-| `--points=3,1,0` or `--points=win:3,draw:1,bye:1` | `point_system:` | the point system, over `BB*`/`162`; names `win draw loss bye forfeit-loss zero-bye half-bye full-bye forfeit-win`. A win's value moves the bye's with it unless `bye:` is given, as `BBW` does, and the players' totals are re-added under it |
+| `--points=3,1,0` or `--points=win:3,draw:1,bye:1` | `point_system:` | the point system, over `BB*`/`162`; names `win draw loss bye forfeit-loss zero-bye half-bye full-bye forfeit-win unknown` (`unknown` is what a `?` result is worth, `162`'s `X`; without it a `?` still refuses to be scored). A win's value moves the bye's with it unless `bye:` is given, as `BBW` does, and the players' totals are re-added under it |
 | `--forbidden=1,4/2,9,12@3-5` | `forbidden_pairs:` | forbidden groups, added to the file's `XXP`/`260`; `@ROUND` or `@FIRST-LAST` limits one to those rounds |
 | `--soft-pairs=2,9,12@3-5` | `soft_pairs:` | a soft group can be limited to rounds the same way |
 | `--acceleration=baku` | players' `:accelerations` | C.04.7's virtual points worked out here (`Ainalrami.Acceleration`): Group A the top `2 x ceil(n/4)`, `ceil(R/2)` accelerated rounds, the first half of them a point and the rest a half. For a file with no `XXA`/`250`; needs the round count |
@@ -514,6 +519,7 @@ to the library's for each one. A flag is laid over what the file says:
 | `--judge=1-5,2-6,3-0` | `Alternatives.judge/4` | (`-x`) a whole other round, 0 for the bye, judged against the one paired: illegal pairs, then the first criterion that separates them |
 | `--bye-alternatives` `--float-alternatives` | `Alternatives.bye_alternatives/3`, `float_alternatives/3` | (`-x`) had each other player of the bracket taken the bye, or floated, instead |
 | `--alternative-pairs` | each candidate's `alternative` | (`-x`, with either of the two above) under each alternative, its boards that differ from the played round, the played boards they replace, how many boards are the same, and - for a tie, when the brackets leave no doubt - whether it is another order of S2 or an exchange between S1 and S2. Without it the two listings print what they always printed |
+| `--max-candidates=N\|all` | `max_candidates:` | (`-x`, with either of the two above) how many candidates one question searches before it prints "not worked out" (12 by default); `all` is the whole bracket, one full pairing per candidate, which is what OpenPairings asks for when the arbiter wants it |
 
 A flag in a mode that has no use for it is refused, not ignored
 (`--cascade-order is for -p, not -c`), and so is one for another kind of
@@ -778,9 +784,11 @@ FIDE's Tournament Report File Format Version 2026 (approved by Council on
 spelling of the same file - not an extension of TRF16 but a distinct
 dialect, alongside the `:engine` dialect this document otherwise
 describes. `Trf.serialize/2` writes it when called with
-`dialect: :trf26`; `:engine` stays the default, is what the comparison
-corpus is measured on, and is the only spelling the CLI currently writes
-- there is no `--dialect` flag yet.
+`dialect: :trf26`; `:engine` stays the default and is what the comparison
+corpus is measured on. On the command line `-g --dialect=trf26` writes a
+generated Swiss in it (the same seed is the same tournament in either
+spelling; team and round-robin files are TRF26 already), and `-p`, `-x`,
+`-c` and `-s` read either.
 
 | line | meaning |
 |---|---|
