@@ -149,7 +149,7 @@ defmodule Ainalrami.CLI do
                    groups soft-pairs soft-position
                    forbidden bye-exclude virtual-points baku-group-a half-bye zero-bye
                    full-bye absent-teams judge points max-upfloater-sets explain-limit
-                   cap-rounds)
+                   cap-rounds max-candidates dialect)
 
   # `-g` options that only an individual tournament has, and the ones only
   # a team event has (`--team=...`); each refused for the other.
@@ -411,6 +411,10 @@ defmodule Ainalrami.CLI do
       complaint = misplaced_flag(flags, mode(flags)) ->
         usage_error(complaint)
 
+      text_option(flags, "max-candidates") &&
+          is_nil(given(flags, ~w(bye-alternatives float-alternatives))) ->
+        usage_error("--max-candidates caps --bye-alternatives or --float-alternatives; give one")
+
       "-g" in flags and text_option(flags, "team") != nil ->
         generate_team(positional, flags)
 
@@ -649,10 +653,12 @@ defmodule Ainalrami.CLI do
     "bye-alternatives" => [:explain],
     "float-alternatives" => [:explain],
     "alternative-pairs" => [:explain],
+    "max-candidates" => [:explain],
     "explain-limit" => [:explain],
     "force" => [:explain],
     "absent" => [:explain],
-    "cap-rounds" => [:check, :standings]
+    "cap-rounds" => [:check, :standings],
+    "dialect" => [:generate]
   }
 
   defp misplaced_flag(_flags, nil), do: nil
@@ -678,7 +684,8 @@ defmodule Ainalrami.CLI do
 
   # Flags a file of the wrong kind cannot use.
   @individual_only ~w(forbidden bye-exclude virtual-points baku-group-a acceleration judge
-                      bye-alternatives float-alternatives alternative-pairs cascade-order)
+                      bye-alternatives float-alternatives alternative-pairs max-candidates
+                      cascade-order)
   @team_swiss_only ~w(team-type score secondary max-upfloater-sets explain-limit)
   @bye_flags ~w(half-bye zero-bye full-bye absent-teams)
 
@@ -722,7 +729,10 @@ defmodule Ainalrami.CLI do
     "zero-bye" => :zero_point_bye,
     "half-bye" => :half_point_bye,
     "full-bye" => :full_point_bye,
-    "forfeit-win" => :forfeit_win
+    "forfeit-win" => :forfeit_win,
+    # TRF26's `?`, a result not on record: `162`'s `X`. Not a default -
+    # without it a `?` still refuses to be scored (`Trf.points_for/2`).
+    "unknown" => :unknown
   }
 
   # `--points=3,1,0` (win, draw, loss) or `--points=win:3,draw:1,bye:1`: the
@@ -774,6 +784,15 @@ defmodule Ainalrami.CLI do
 
         old = parsed.tournament[:point_system] || Trf.default_point_system()
         new = Map.merge(old, Map.new(given))
+
+        # A `?` the file left unvalued cannot be taken out of its total
+        # under the old system, so it is counted at the new value on both
+        # sides of the rescore: the total stays what the file says, exactly
+        # as it would had the file carried `162 X` itself.
+        old =
+          if Map.has_key?(new, :unknown),
+            do: Map.put_new(old, :unknown, new.unknown),
+            else: old
 
         new =
           if Keyword.has_key?(given, :win) and not Keyword.has_key?(given, :pairing_allocated_bye),
@@ -1246,7 +1265,7 @@ defmodule Ainalrami.CLI do
   # it instead (`Alternatives.bye_alternatives/3`).
   defp render_bye_alternatives(players, pairs, opts, flags) do
     if "--bye-alternatives" in flags do
-      case Ainalrami.Alternatives.bye_alternatives(players, pairs, opts) do
+      case Ainalrami.Alternatives.bye_alternatives(players, pairs, with_cap(opts, flags)) do
         nil ->
           "\nBye alternatives\n  the round has no pairing-allocated bye\n"
 
@@ -1263,7 +1282,7 @@ defmodule Ainalrami.CLI do
   # instead of the one who did (`Alternatives.float_alternatives/3`).
   defp render_float_alternatives(players, pairs, opts, flags) do
     if "--float-alternatives" in flags do
-      case Ainalrami.Alternatives.float_alternatives(players, pairs, opts) do
+      case Ainalrami.Alternatives.float_alternatives(players, pairs, with_cap(opts, flags)) do
         [] ->
           "\nFloat alternatives\n  nobody floated\n"
 
@@ -1276,6 +1295,30 @@ defmodule Ainalrami.CLI do
       end
     else
       ""
+    end
+  end
+
+  # `--max-candidates=N|all`: the library's `max_candidates:`, how many
+  # candidates one question searches before it says "not worked out"
+  # (`Alternatives.max_candidates/0` by default). `all` is OpenPairings'
+  # "work out the whole bracket" - one full pairing per candidate, so the
+  # wait is the caller's to choose.
+  defp with_cap(opts, flags) do
+    case text_option(flags, "max-candidates") do
+      nil ->
+        opts
+
+      "all" ->
+        Keyword.put(opts, :max_candidates, :all)
+
+      text ->
+        case Integer.parse(text) do
+          {n, ""} when n >= 0 ->
+            Keyword.put(opts, :max_candidates, n)
+
+          _ ->
+            refuse("--max-candidates takes a whole number or all, not \"#{text}\"")
+        end
     end
   end
 
@@ -1491,7 +1534,10 @@ defmodule Ainalrami.CLI do
         # OpenPairings' Swiss match format and pairing by category, written
         # as `XXM` (with CUSTOM_SWISS) and `XXG`.
         match_format: if("--match-format" in flags, do: true),
-        groups: generator_groups_option(flags)
+        groups: generator_groups_option(flags),
+        # The spelling of the file, not the tournament: `Trf.serialize/2`'s
+        # `dialect:` - `engine` (the default) or `trf26`.
+        dialect: dialect_option(flags)
       ]
       |> Enum.reject(fn {_key, value} -> is_nil(value) end)
 
@@ -1513,11 +1559,31 @@ defmodule Ainalrami.CLI do
     0
   end
 
+  # `-g --dialect=engine|trf26`: how the Swiss generator spells its file.
+  defp dialect_option(flags) do
+    case text_option(flags, "dialect") do
+      nil -> nil
+      "engine" -> :engine
+      "trf26" -> :trf26
+      other -> refuse("unknown --dialect \"#{other}\" - engine or trf26")
+    end
+  end
+
+  # The team and round-robin generators have only ever written TRF26 - 310
+  # rosters and 192 codes have no other spelling - so there is nothing to
+  # choose, and a choice offered would be a choice ignored.
+  defp no_dialect!(flags, what) do
+    if text_option(flags, "dialect"),
+      do: refuse("--dialect is for the Swiss generator; #{what} is always written as TRF26")
+  end
+
   # `-g --team=swiss|roundrobin`: a random team event
   # (`Ainalrami.TeamGenerator`). The individual generator's roster, bye,
   # acceleration and rating options do not apply and are refused; the
   # team's own are read here, and what is left out is drawn from the seed.
   defp generate_team(positional, flags) do
+    no_dialect!(flags, "a team event")
+
     case given(flags, @individual_generator_flags) do
       nil ->
         opts =
@@ -1778,7 +1844,8 @@ defmodule Ainalrami.CLI do
       kind ->
         case given(
                flags,
-               ~w(force absent judge bye-alternatives float-alternatives alternative-pairs)
+               ~w(force absent judge bye-alternatives float-alternatives alternative-pairs
+                  max-candidates)
              ) do
           nil -> explain_format(kind, pairs, opts, round)
           flag -> usage_error("--#{flag} is for a single pairing pool, not #{format_name(kind)}")
@@ -2113,6 +2180,8 @@ defmodule Ainalrami.CLI do
                                   rating-range tie-breaks match-format groups)
 
   defp generate_round_robin(positional, flags) do
+    no_dialect!(flags, "a round robin")
+
     case Enum.find(flags, fn f ->
            String.starts_with?(f, "--") and f != "--roundrobin" and
              name_of(f) not in (@round_robin_generator_flags ++ ~w(quiet debug))
@@ -3338,13 +3407,16 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
       --float-alternatives  With -x: had each other player floated instead
       --alternative-pairs   With either: under each alternative, its boards
                    that differ from the played round, and the played ones
+      --max-candidates=N|all   With either: how many candidates a question
+                   searches before it says "not worked out" (default 12)
 
     The tournament, over what the file says (-p, -x, -c):
       --rounds=N                the round count (142/XXR)
       --initial-colour=white|black   the drawing of lots (152/XXC)
       --points=3,1,0            the point system (BB*/162); or by name:
                                 win:3,draw:1,loss:0,bye:1,forfeit-loss:0,
-                                zero-bye:0,half-bye:1,full-bye:3,forfeit-win:3
+                                zero-bye:0,half-bye:1,full-bye:3,forfeit-win:3,
+                                unknown:1 (a ? result, 162's X)
                                 (also -s)
       --forbidden=1,4/2,9,12@3-5   forbidden groups, added to XXP/260;
                                 @ROUND or @FIRST-LAST limits one to rounds
@@ -3426,6 +3498,10 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
                                          unset results follow the rating table
       --unset=fixed                      leave unset options off and results
                                          uniform instead (the corpus default)
+      --dialect=engine|trf26             how the file is spelled: XXR/XXA/XXP
+                                         (default) or TRF26's 142/250/260/240;
+                                         same seed, same tournament. Team and
+                                         round-robin files are always TRF26
 
     Round robins: -p on a file whose 192 is BERGER_ROUNDROBIN_Gn (or
     FIDE_ROUNDROBIN, BERGER_/FIDE_DOUBLEROUNDROBIN, or a 092 round robin)
