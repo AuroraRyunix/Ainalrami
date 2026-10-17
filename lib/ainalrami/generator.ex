@@ -69,6 +69,11 @@ defmodule Ainalrami.Generator do
       lines (default: none)
     * `:names` - `:ascii` (default) for `Player17`, or `:unicode` to draw
       surnames with multibyte characters
+    * `:dialect` - `:engine` (default) or `:trf26`, as `Trf.serialize/2`
+      takes it: the same tournament spelled the way the engines read it
+      (`XXR`, `XXA`, `XXP`) or the way FIDE's 2026 format does (`142`,
+      `250`, `260`, a bye still to come as `240`). Nothing random depends
+      on it, so one seed is one tournament in either spelling
     * `:unset` - `:fixed` (default) leaves every checklist option the
       caller did not give off; `:random` draws them - see "Unset options"
     * `:unset_chance` - with `unset: :random`, the percentage chance that
@@ -181,46 +186,60 @@ defmodule Ainalrami.Generator do
 
     {final, tie_breaks} = with_final_ranks(final, rounds, tie_breaks)
 
+    dialect = dialect!(Keyword.get(opts, :dialect, :engine))
+
     text =
-      Trf.serialize(%{
-        tournament: %{
-          name: "Ainalrami RTG seed=#{seed}",
-          type: "swiss",
-          # Written as TRF16's own `142` field AND as JaVaFo's `XXR`
-          # extension below. Emitting only the latter meant a reader that
-          # knew just `142` got no round count at all, which silently
-          # changed the final-round pairing - see `Ainalrami.Trf`'s
-          # `parse_xxr/2`.
-          #
-          # `rounds`, the count every round was PAIRED under, not
-          # `played_rounds`, the count that actually completed. The two
-          # differ whenever the reduce above halts early on a deadlocked
-          # round, and this field means the tournament's intended length -
-          # `expected_rounds` - not its progress. Writing the truncated
-          # number handed a reader a file whose rounds were paired under
-          # one round count and which declares another. It feeds exactly
-          # one rule, `final_round_topscorers?/2`'s
-          # `played_rounds >= expected_rounds - 1` gate, which relaxes the
-          # colour constraints for the last two rounds: a nine-round
-          # generation that deadlocked at seven declared seven, so a reader
-          # re-pairing round 7 applied the final-round exception to a round
-          # this generator had paired as an ordinary one - and the
-          # disagreement looked like an engine defect rather than a
-          # mislabelled file.
-          number_of_rounds: rounds,
-          initial_colour: initial_colour,
-          forbidden_pairs: forbidden,
-          tie_breaks: tie_breaks,
-          # `XXM` and `XXG` (`Ainalrami.Trf`), only when asked for.
-          match_format: if(match_format, do: true),
-          pairing_groups: if(groups != [], do: groups),
-          type_code: if(match_format, do: "CUSTOM_SWISS")
+      Trf.serialize(
+        %{
+          tournament: %{
+            name: "Ainalrami RTG seed=#{seed}",
+            type: "swiss",
+            # Written as TRF16's own `142` field AND as JaVaFo's `XXR`
+            # extension below. Emitting only the latter meant a reader that
+            # knew just `142` got no round count at all, which silently
+            # changed the final-round pairing - see `Ainalrami.Trf`'s
+            # `parse_xxr/2`.
+            #
+            # `rounds`, the count every round was PAIRED under, not
+            # `played_rounds`, the count that actually completed. The two
+            # differ whenever the reduce above halts early on a deadlocked
+            # round, and this field means the tournament's intended length -
+            # `expected_rounds` - not its progress. Writing the truncated
+            # number handed a reader a file whose rounds were paired under
+            # one round count and which declares another. It feeds exactly
+            # one rule, `final_round_topscorers?/2`'s
+            # `played_rounds >= expected_rounds - 1` gate, which relaxes the
+            # colour constraints for the last two rounds: a nine-round
+            # generation that deadlocked at seven declared seven, so a reader
+            # re-pairing round 7 applied the final-round exception to a round
+            # this generator had paired as an ordinary one - and the
+            # disagreement looked like an engine defect rather than a
+            # mislabelled file.
+            number_of_rounds: rounds,
+            initial_colour: initial_colour,
+            forbidden_pairs: forbidden,
+            tie_breaks: tie_breaks,
+            # `XXM` and `XXG` (`Ainalrami.Trf`), only when asked for.
+            match_format: if(match_format, do: true),
+            pairing_groups: if(groups != [], do: groups),
+            type_code: if(match_format, do: "CUSTOM_SWISS")
+          },
+          players: final
         },
-        players: final
-      }) <> "XXR #{rounds}\r\n"
+        dialect: dialect
+      )
+
+    # JaVaFo's `XXR` beside TRF16's `142` (see above), in the engines'
+    # dialect only. TRF26 has `142` and no use for a second spelling of it.
+    text = if dialect == :engine, do: text <> "XXR #{rounds}\r\n", else: text
 
     {text, seed}
   end
+
+  defp dialect!(dialect) when dialect in [:engine, :trf26], do: dialect
+
+  defp dialect!(other),
+    do: raise(ArgumentError, ":dialect must be :engine or :trf26, not #{inspect(other)}")
 
   # `1..count//1` and `1..rounds//1` throughout, not `1..count`. Elixir's
   # two-argument range steps by -1 when its end is below its start, so
