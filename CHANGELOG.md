@@ -66,6 +66,8 @@ with the reference on every one of them.
 
 ## [Unreleased]
 
+## [0.44.0] - 2026-10-18
+
 - [Change] **New address.** The repository moved to github.com/teapot-chess; old links still redirect, out of politeness rather than obligation.
 - [Feature] **`-x --max-candidates=N|all`.** OpenPairings asks for every candidate of a bracket when the arbiter is willing to wait; the command line stopped at twelve and printed "not worked out", which is accurate and not very helpful. The flag moves the library's `max_candidates:` for `--bye-alternatives` and `--float-alternatives`, and is refused without one of them, since a cap on no question caps nothing.
 - [Feature] **`--points=unknown:V`.** A `?` result's value, `162`'s `X`, from the command line. The file could always say it; now the flag can, and a `?` the file left unvalued keeps its total through the rescore, exactly as if the file had carried the `X`. Without a value a `?` is worth a draw (see the next entry). Nobody's scoresheet was recovered in the making of this flag.
