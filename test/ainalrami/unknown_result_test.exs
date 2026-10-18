@@ -11,11 +11,11 @@ defmodule Ainalrami.UnknownResultTest do
   the two halves of that argument are both pinned here: `?` is read, and an
   invalid code is still invalid.
 
-  What the tests below are mostly about is the third thing, which the letter
-  did not have to say: an unknown result is not a forfeit, not a draw and not
-  a blank, so nothing downstream may quietly turn it into one. Every
-  calculation that would need a value refuses instead, and the refusals are
-  asserted rather than left to the moduledoc.
+  The third thing is what a `?` is once read. Until v0.44.0 every
+  calculation that needed a value refused; since then it is what TRF-2026
+  says: a played game - the record has the opponent and the colours - worth
+  the file's `162` `X`, a draw's points by default. It is still not a
+  forfeit and not a blank, and nothing turns it into either.
   """
 
   use ExUnit.Case, async: true
@@ -23,7 +23,7 @@ defmodule Ainalrami.UnknownResultTest do
   alias Ainalrami.Generator
   alias Ainalrami.Pairing
   alias Ainalrami.Trf
-  alias Ainalrami.Trf.{UnknownResultError, ValidationError}
+  alias Ainalrami.Trf.ValidationError
 
   # One round, two players, mutually referencing. `result` is dropped into
   # column 99 of each line, which is where round one's result belongs.
@@ -121,59 +121,62 @@ defmodule Ainalrami.UnknownResultTest do
   end
 
   describe "what ? means to everything that reads a result" do
-    test "it cannot be scored, under any point system" do
-      assert_raise UnknownResultError, fn -> Trf.points_for("?") end
+    # TRF-2026's `162` defines `X` as what an unknown result is worth, "like
+    # for instance in an adjourned game", a draw's points by default. Until
+    # v0.44.0 this engine refused both questions below; it now gives the
+    # format's answers, and these pin them.
+    test "it scores the file's X, and a draw when the file declares none" do
+      assert Trf.points_for("?") == 0.5
+      assert Trf.points_for("?", Trf.default_point_system()) == 0.5
 
-      assert_raise UnknownResultError, fn ->
-        Trf.points_for("?", %{Trf.default_point_system() | draw: 0.4})
-      end
+      # The draw of the point system in force, not a hard-coded half.
+      assert Trf.points_for("?", %{Trf.default_point_system() | draw: 1.0, win: 3.0}) == 1.0
     end
 
-    test "it cannot be scored as a game either, opponent or none" do
+    test "as a game too, opponent or none" do
       # `points_for_game/2` reads the opponent as well as the code, because
       # `0000 - +` and `0000 - -` mean different things from `+` and `-`.
-      # Neither reading helps here: knowing a game had two seats says
-      # nothing about what it was worth.
-      assert_raise UnknownResultError, fn ->
-        Trf.points_for_game(%{opponent_rank: 2, result: "?"})
-      end
-
-      assert_raise UnknownResultError, fn ->
-        Trf.points_for_game(%{opponent_rank: nil, result: "?"})
-      end
+      # Neither reading changes what an unknown result is worth.
+      assert Trf.points_for_game(%{opponent_rank: 2, result: "?"}) == 0.5
+      assert Trf.points_for_game(%{opponent_rank: nil, result: "?"}) == 0.5
     end
 
-    test "whether it was played is not known, so the predicate refuses rather than picking" do
+    test "it was played: the record carries the opponent and the colours" do
       # `false` would file it with the forfeits and the byes - FIDE Art. 16's
       # unplayed games, excluded from colour history and from C2's bye
-      # eligibility. That is a stronger claim than the file makes, and it is
-      # the claim that would quietly reach a pairing.
-      assert_raise UnknownResultError, fn -> Trf.game_was_played?("?") end
+      # eligibility - and give White twice running to a player who had it.
+      assert Trf.game_was_played?("?")
 
-      # The blank it must not be confused with still answers.
+      # The blank it must not be confused with is still not a game.
       refute Trf.game_was_played?(nil)
       refute Trf.game_was_played?("")
     end
 
-    test "but the player was in the pairing, and that much the file does say" do
+    test "and the player was in the pairing" do
       %{players: [alpha, _] = players} = Trf.parse(two_player_trf("?", "?"))
       [game] = alpha.games
 
       assert Trf.participated_in_pairing?(game)
-
-      # And so the tournament still knows how far it has been paired, which
-      # is what a reader loading a historical file needs first.
       assert Trf.rounds_played(players) == 1
+    end
+
+    test "the tie-breaks and the pairing agree that it was played" do
+      # `Ainalrami.Tiebreaks.Event` had counted `?` as a played game since it
+      # first read one; `game_was_played?/1` raising was the odd one out.
+      %{players: [%{games: [alpha]} | _]} = Trf.parse(two_player_trf("?", "?"))
+      event = Ainalrami.Tiebreaks.Event.from_trf(Trf.parse(two_player_trf("?", "?")))
+      first = event.participants[1]
+
+      assert Trf.game_was_played?(alpha.result)
+      assert first.rounds[1].kind == :played
+      assert first.rounds[1].points == 0.5
     end
   end
 
   describe "a declared X value" do
-    # FIDE TRF-2026 defines, in the `162` points-table line, the symbol `X`:
-    # the points an unknown (`?`) result is worth - "like for instance in an
-    # adjourned game", a draw's points by default. `Ainalrami.PointSystemTest`
-    # covers `162` itself (parsing X, and the writer carrying a declared one
-    # back out); this section covers what `?` is worth once the file has
-    # made that claim.
+    # `Ainalrami.PointSystemTest` covers `162` itself (parsing X, and the
+    # writer carrying a declared one back out); this section covers what `?`
+    # is worth once the file has made that claim.
     test "? scores the declared X value, not the default draw" do
       system = Map.put(Trf.default_point_system(), :unknown, 0.0)
       assert Trf.points_for("?", system) == 0.0
@@ -191,48 +194,11 @@ defmodule Ainalrami.UnknownResultTest do
       assert Trf.points_for_game(%{opponent_rank: nil, result: "?"}, system) == 0.25
     end
 
-    test "without a declared X, ? still raises exactly as before" do
-      # The spec's own "a draw's points by default" is deliberately not
-      # applied here: an undeclared X is this engine's existing refusal,
-      # unchanged.
-      assert_raise UnknownResultError, fn -> Trf.points_for("?") end
-      assert_raise UnknownResultError, fn -> Trf.points_for("?", Trf.default_point_system()) end
-
-      assert_raise UnknownResultError, fn ->
-        Trf.points_for_game(%{opponent_rank: 2, result: "?"})
-      end
-    end
-
-    test "whether the game was played still raises, whatever X says" do
-      # `game_was_played?/1` takes no point system at all - it cannot see a
-      # declared X, and would not act on one if it could: X is a score, not
-      # a statement about whether the game was played.
-      assert_raise UnknownResultError, fn -> Trf.game_was_played?("?") end
-    end
-
-    test "a declared X settles the score but not whether the game was played" do
-      # `points_for/2` no longer raises here - the file declared X - but
-      # colour history and float direction both ask `game_was_played?/1`
-      # too, and that predicate does not look at the point system at all
-      # (see above). A `?` in the most recent round still stops the round
-      # it would have stopped before pairing needed a score at all; a
-      # declared X settles what the game was WORTH, not whether it happened.
-      players = [
-        player(1, [%{opponent_rank: 2, colour: "w", result: "?"}]),
-        player(2, [%{opponent_rank: 1, colour: "b", result: "?"}]),
-        player(3, [%{opponent_rank: 4, colour: "w", result: "1"}]),
-        player(4, [%{opponent_rank: 3, colour: "b", result: "0"}])
-      ]
-
-      system = Map.put(Trf.default_point_system(), :unknown, 0.5)
-
-      assert_raise UnknownResultError, fn ->
-        Pairing.pair_next_round(players,
-          expected_rounds: 5,
-          initial_colour: "w",
-          point_system: system
-        )
-      end
+    test "an X of nought is a value, not an absent one" do
+      # `0.0` is truthy in Elixir, which is the whole reason this is safe to
+      # write as `||` - and the reason it is pinned.
+      system = Map.put(Trf.default_point_system(), :unknown, 0.0)
+      assert Trf.points_for_game(%{opponent_rank: 2, result: "?"}, system) == 0.0
     end
   end
 
@@ -255,37 +221,59 @@ defmodule Ainalrami.UnknownResultTest do
   end
 
   describe "pairing a tournament with an unknown result" do
-    test "refuses rather than guessing a score" do
-      # Round one: 1 v 2 is lost, 3 v 4 is on record. Nothing in the Dutch
-      # system can place player 1 without knowing what they scored, and the
-      # engine says so instead of seating them on a guess.
-      players = [
-        player(1, [%{opponent_rank: 2, colour: "w", result: "?"}]),
-        player(2, [%{opponent_rank: 1, colour: "b", result: "?"}]),
+    # Round one: 1 v 2 is lost, 3 v 4 is on record. Six players, so the
+    # round after has brackets, floats and a colour to settle for everyone.
+    defp lost_round_one(result) do
+      [
+        player(1, [%{opponent_rank: 2, colour: "w", result: result}]),
+        player(2, [%{opponent_rank: 1, colour: "b", result: result}]),
         player(3, [%{opponent_rank: 4, colour: "w", result: "1"}]),
-        player(4, [%{opponent_rank: 3, colour: "b", result: "0"}])
+        player(4, [%{opponent_rank: 3, colour: "b", result: "0"}]),
+        player(5, [%{opponent_rank: 6, colour: "w", result: "0"}]),
+        player(6, [%{opponent_rank: 5, colour: "b", result: "1"}])
       ]
-
-      assert_raise UnknownResultError, fn ->
-        Pairing.pair_next_round(players, expected_rounds: 5, initial_colour: "w")
-      end
     end
 
-    test "but a lost game that no longer feeds any decision does not block the round" do
-      # The other half of "the refusal comes from the calculation, not from a
-      # gate at the door", and the reason there is no gate. Two players met
-      # once, the result was lost, and they have taken a bye every round
-      # since - including this one. Nothing about the round being paired
-      # needs their score: they are not in a bracket, not in a colour
-      # history, and far enough back that no active player's float looks
-      # them up. So the twelve players who have nothing to do with the lost
-      # game get their round.
-      #
-      # A gate would refuse this, and refusing it is worse than pairing it:
-      # one missing scoresheet belonging to a withdrawn player would make
-      # the tournament unpairable for the rest of its life. What the engine
-      # will not do is VALUE the unknown, and the test above is where that
-      # is pinned.
+    defp pair(players, opts \\ []) do
+      Pairing.pair_next_round(players, [expected_rounds: 5, initial_colour: "w"] ++ opts)
+    end
+
+    test "pairs it as the played draw TRF-2026 values it at, colours and all" do
+      # The equivalence is the whole claim: with no `X`, `?` is a game that
+      # was played and is worth a draw, so the round is exactly the round of
+      # the same file with `=` in its place.
+      assert pair(lost_round_one("?")) == pair(lost_round_one("="))
+      assert pair(lost_round_one("?")) != []
+    end
+
+    test "a declared X moves the score, and only the score" do
+      # X = 0: both lost, as far as the brackets go - the round of the same
+      # file with a played double loss (`0`/`0`).
+      system = Map.put(Trf.default_point_system(), :unknown, 0.0)
+
+      assert pair(lost_round_one("?"), point_system: system) ==
+               pair(lost_round_one("0"))
+    end
+
+    test "rules on bye eligibility as for the played game" do
+      # C2: a player who had a game is eligible; a `?` is a game.
+      players = [
+        player(1, [%{opponent_rank: 2, colour: "w", result: "?"}]),
+        player(2, [%{opponent_rank: 1, colour: "b", result: "?"}])
+      ]
+
+      drawn = [
+        player(1, [%{opponent_rank: 2, colour: "w", result: "="}]),
+        player(2, [%{opponent_rank: 1, colour: "b", result: "="}])
+      ]
+
+      assert Pairing.bye_eligibility(players) == Pairing.bye_eligibility(drawn)
+    end
+
+    test "a lost game far in the past does not block the rest of the field" do
+      # Two players met once, the result was lost, and they have taken a bye
+      # every round since. The twelve who have nothing to do with the game
+      # get their round, and the two are left out as the byes say.
       {text, _seed} = Generator.generate(seed: 4242, players: 12, rounds: 4)
       %{players: played_out} = Trf.parse(text)
 
@@ -303,15 +291,6 @@ defmodule Ainalrami.UnknownResultTest do
 
       assert pairs != []
       assert Enum.all?(pairs, fn {w, b} -> w not in [13, 14] and b not in [13, 14] end)
-    end
-
-    test "and refuses to rule on bye eligibility for the same reason" do
-      players = [
-        player(1, [%{opponent_rank: 2, colour: "w", result: "?"}]),
-        player(2, [%{opponent_rank: 1, colour: "b", result: "?"}])
-      ]
-
-      assert_raise UnknownResultError, fn -> Pairing.bye_eligibility(players) end
     end
   end
 

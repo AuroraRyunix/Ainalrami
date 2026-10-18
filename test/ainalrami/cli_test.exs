@@ -226,17 +226,18 @@ defmodule Ainalrami.CLITest do
     assert out =~ "invalid TRF file"
   end
 
-  test "-p on a file with an unknown result exits 1, and does not call it unexpected" do
-    # The file is legal and this engine reads it (`Ainalrami.Trf`, "The `?`
-    # unknown result"); what it cannot do is invent the score the pairing
-    # needs. The distinction that matters to whoever reads the message is
-    # between a corrupt file and an honest one with a lost scoresheet.
+  test "-p on a file with an unknown result pairs it as the played draw it is worth" do
+    # The file is legal and, since v0.44.0, a `?` is a played game worth a
+    # draw unless the file's `162` says otherwise (`Ainalrami.Trf`, "The `?`
+    # unknown result"). Two players who have met have no second round to
+    # pair, and that - not the lost scoresheet - is what the command says.
     path = write_trf!(unknown_result_trf())
 
     {out, code} = run_capturing(fn -> CLI.run([path, "-p"]) end)
 
     assert code == 1
-    assert out =~ "records a result as not known"
+    assert out =~ "no legal pairing exists"
+    refute out =~ "not known"
     refute out =~ "unexpected error"
     refute out =~ "invalid TRF file"
   end

@@ -249,13 +249,17 @@ defmodule Ainalrami.CLIParity3Test do
       plain_path = write(plain, "plain.trf")
       declared_path = write(declared, "declared.trf")
 
-      # Without a value there is no score to rank by, and -s says so.
-      {_, 1, err} = cli([plain_path, "-s", "-q", "--tie-breaks=BH"])
-      assert err =~ "not known"
-
       {flag_out, 0, _} = cli([plain_path, "-s", "-q", "--tie-breaks=BH", "--points=unknown:0.5"])
       {file_out, 0, _} = cli([declared_path, "-s", "-q", "--tie-breaks=BH"])
       assert flag_out == file_out
+
+      # Without a value anywhere, TRF-2026's default: a draw, so the same
+      # table. A value of nought is a different one.
+      {default_out, 0, _} = cli([plain_path, "-s", "-q", "--tie-breaks=BH"])
+      assert default_out == file_out
+
+      {nought_out, 0, _} = cli([plain_path, "-s", "-q", "--tie-breaks=BH", "--points=unknown:0"])
+      refute nought_out == file_out
     end
   end
 

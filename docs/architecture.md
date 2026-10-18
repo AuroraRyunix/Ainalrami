@@ -62,11 +62,12 @@ Two things here are load-bearing beyond ordinary parsing:
   file that disagrees with itself has no correct pairing.
 - **`?` is read and never written** (since v0.25.0). FIDE's TRF-26 symbol
   for a game whose result is not on record. `parse/1` accepts it,
-  `serialize/1` refuses it, and `points_for/1` and `game_was_played?/1`
-  raise rather than supply a value nobody has - so a tournament with a lost
-  result can be read, and a round that would have to value it cannot be
-  paired. An unrecognized code is still unrecognized, which is the
-  distinction the whole symbol exists for.
+  `serialize/1` refuses it. Since v0.44.0 it is a played game worth the
+  file's `162` `X` - a draw's points when the file declares none, the
+  format's own default - so `points_for/2` and `game_was_played?/1` answer
+  for it and a tournament with a lost result pairs on (both raised before).
+  An unrecognized code is still unrecognized, which is the distinction the
+  whole symbol exists for.
 
 ### `Ainalrami.Pairing`
 

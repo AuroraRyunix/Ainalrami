@@ -86,21 +86,6 @@ defmodule Ainalrami.CLI do
         true -> dispatch(positional, flags)
       end
     rescue
-      # An unknown result is not an unexpected error. `?` is a code this
-      # engine reads on purpose (`Ainalrami.Trf`, "The `?` unknown result"),
-      # so a file carrying one is a file whose scores are not known, and
-      # there is nothing surprising about being unable to pair it. Left to
-      # the backstop below it was announced as "unexpected", which reads as
-      # a defect in this program rather than a fact about the file - and
-      # that is the one thing the backstop's own note says it is not for.
-      e in Trf.UnknownResultError ->
-        Log.error(
-          "this file records a result as not known (\"?\"): #{Exception.message(e)}. " <>
-            "Nothing can be paired or scored from it until the result is recovered."
-        )
-
-        1
-
       # The backstop. Everything below here that CAN be predicted is already
       # reported as a message and an exit code - an unreadable file, an
       # invalid TRF, an option this program does not have. What was left was
@@ -730,8 +715,8 @@ defmodule Ainalrami.CLI do
     "half-bye" => :half_point_bye,
     "full-bye" => :full_point_bye,
     "forfeit-win" => :forfeit_win,
-    # TRF26's `?`, a result not on record: `162`'s `X`. Not a default -
-    # without it a `?` still refuses to be scored (`Trf.points_for/2`).
+    # TRF26's `?`, a result not on record: `162`'s `X`. Without it a `?`
+    # is worth a draw, the format's own default (`Trf.points_for/2`).
     "unknown" => :unknown
   }
 
@@ -785,9 +770,9 @@ defmodule Ainalrami.CLI do
         old = parsed.tournament[:point_system] || Trf.default_point_system()
         new = Map.merge(old, Map.new(given))
 
-        # A `?` the file left unvalued cannot be taken out of its total
-        # under the old system, so it is counted at the new value on both
-        # sides of the rescore: the total stays what the file says, exactly
+        # A `?` the file left unvalued is counted at the flag's value on both
+        # sides of the rescore - the flag is the `X` the file did not write -
+        # so the total stays what the file says, exactly
         # as it would had the file carried `162 X` itself.
         old =
           if Map.has_key?(new, :unknown),
