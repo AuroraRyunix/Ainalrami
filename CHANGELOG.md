@@ -66,6 +66,7 @@ with the reference on every one of them.
 
 ## [Unreleased]
 
+- [Change] **New address.** The repository moved to github.com/teapot-chess; old links still redirect, out of politeness rather than obligation.
 - [Feature] **`-x --max-candidates=N|all`.** OpenPairings asks for every candidate of a bracket when the arbiter is willing to wait; the command line stopped at twelve and printed "not worked out", which is accurate and not very helpful. The flag moves the library's `max_candidates:` for `--bye-alternatives` and `--float-alternatives`, and is refused without one of them, since a cap on no question caps nothing.
 - [Feature] **`--points=unknown:V`.** A `?` result's value, `162`'s `X`, from the command line. The file could always say it; now the flag can, and a `?` the file left unvalued keeps its total through the rescore, exactly as if the file had carried the `X`. Without a value a `?` still refuses to be scored. Nobody's scoresheet was recovered in the making of this flag.
 - [Feature] **`-g --dialect=trf26`** (and `Generator.generate/1`'s `:dialect`): the Swiss generator writes FIDE's 2026 spelling - `142`, `250`, `260`, a bye still to come as `240` - instead of `XXR`, `XXA` and `XXP`. One seed is one tournament in either spelling: the random draws never knew which one they were for. The default is the old spelling to the byte. Team and round-robin files were TRF26 all along, so the flag is refused there rather than offered as a choice with one answer.

@@ -2,7 +2,7 @@ defmodule Ainalrami.MixProject do
   use Mix.Project
 
   @version "0.43.2"
-  @source_url "https://github.com/AuroraRyunix/Ainalrami"
+  @source_url "https://github.com/teapot-chess/Ainalrami"
 
   def project do
     [

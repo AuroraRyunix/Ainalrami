@@ -42,7 +42,7 @@ defmodule Ainalrami.Trf do
   sides are present in the given player set and mutually reference each
   other for that round - a lone/dangling reference is not itself an error.
 
-  Ported from the sibling project (`AuroraRyunix/openpairings`)'s own
+  Ported from the sibling project (`teapot-chess/openpairings`)'s own
   `PairingsEngine.Trf`, which fixed two real bugs against FIDE's actual
   archived TRF06 specs (Annexure-B/2006, Annexure-C/2016) - the
   `allow_dangling_playing_code` tolerance and the `parse_games/1` blank-round
@@ -635,7 +635,7 @@ defmodule Ainalrami.Trf do
 
   Published because this list is the one thing a caller must agree with this
   module about, and every private copy of it so far has drifted. The sibling
-  app (`AuroraRyunix/openpairings`) grew two - a standings presence rule and
+  app (`teapot-chess/openpairings`) grew two - a standings presence rule and
   a compile-time `@playing_codes` in its TRF importer - both spelled
   `~w(1 = 0 + -)` back when that was the whole list, and both then quietly
   stopped treating an unrated game as a game: the importer left those rounds

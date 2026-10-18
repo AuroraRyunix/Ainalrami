@@ -2,7 +2,7 @@ defmodule Ainalrami.TrfCodeListsTest do
   @moduledoc """
   `Trf.playing_codes/0` and `Trf.bye_codes/0` - the two published code lists.
 
-  They exist for the sibling app (`AuroraRyunix/openpairings`), which reads
+  They exist for the sibling app (`teapot-chess/openpairings`), which reads
   them instead of keeping its own copies, so nothing inside this repo calls
   them and nothing inside this repo would notice them thinning, being renamed
   or falling out of step with the validation they claim to describe. Same
