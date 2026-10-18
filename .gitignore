@@ -58,3 +58,6 @@ tools/bbp_reverse_dumps/
 /failures/
 /STOP
 /RUN.md
+
+# Dialyzer PLTs (mix dialyzer), rebuilt on demand.
+/priv/plts/

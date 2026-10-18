@@ -15,6 +15,13 @@ defmodule Ainalrami.MixProject do
       # the tests, never loaded as a test file.
       test_ignore_filters: [&String.starts_with?(&1, "test/fixtures/")],
       deps: deps(),
+      test_coverage: [summary: [threshold: 0]],
+      dialyzer: [
+        plt_add_apps: [:mix, :ex_unit],
+        plt_local_path: "priv/plts",
+        plt_core_path: "priv/plts",
+        flags: [:error_handling, :unknown, :extra_return, :missing_return]
+      ],
       escript: escript(),
       name: "Ainalrami",
       description: "A FIDE Dutch-system Swiss pairing engine, written in Elixir.",
@@ -44,7 +51,11 @@ defmodule Ainalrami.MixProject do
   end
 
   defp deps do
-    []
+    [
+      # Dialyzer, for the by-hand deep-checks workflow only; never part of the
+      # escript. Everything else here stays dependency-free on purpose.
+      {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false}
+    ]
   end
 
   # `mix escript.build` produces a single executable `ainalrami` file -
