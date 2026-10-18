@@ -226,14 +226,14 @@ defmodule Ainalrami.LetterResultCodesTest do
       assert length(Enum.uniq(values)) == length(values)
 
       # And every one must be a code `points_for/1` has an answer for, where
-      # refusing to score `?` is an answer. What this rules out is a code
+      # `?` is a draw unless the file says otherwise. What this rules out is a code
       # published with no scoring rule at all, which would fall through to
       # the zero-point-bye default and be worth nought by accident.
       for {name, code} <- Map.delete(codes, :unknown) do
         assert Trf.points_for(code) in [0.0, 0.5, 1.0], "#{name} (#{code}) is unscored"
       end
 
-      assert_raise Trf.UnknownResultError, fn -> Trf.points_for(codes[:unknown]) end
+      assert Trf.points_for(codes[:unknown]) == 0.5
     end
   end
 

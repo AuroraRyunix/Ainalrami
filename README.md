@@ -508,7 +508,7 @@ to the library's for each one. A flag is laid over what the file says:
 |---|---|---|
 | `--rounds=N` | `expected_rounds:` | the round count, in place of `142`/`XXR` |
 | `--initial-colour=white\|black` | `initial_colour:` | the drawing of lots, in place of `152`/`XXC` |
-| `--points=3,1,0` or `--points=win:3,draw:1,bye:1` | `point_system:` | the point system, over `BB*`/`162`; names `win draw loss bye forfeit-loss zero-bye half-bye full-bye forfeit-win unknown` (`unknown` is what a `?` result is worth, `162`'s `X`; without it a `?` still refuses to be scored). A win's value moves the bye's with it unless `bye:` is given, as `BBW` does, and the players' totals are re-added under it |
+| `--points=3,1,0` or `--points=win:3,draw:1,bye:1` | `point_system:` | the point system, over `BB*`/`162`; names `win draw loss bye forfeit-loss zero-bye half-bye full-bye forfeit-win unknown` (`unknown` is what a `?` result is worth, `162`'s `X`; without it, and without an `X` in the file, a `?` is worth a draw). A win's value moves the bye's with it unless `bye:` is given, as `BBW` does, and the players' totals are re-added under it |
 | `--forbidden=1,4/2,9,12@3-5` | `forbidden_pairs:` | forbidden groups, added to the file's `XXP`/`260`; `@ROUND` or `@FIRST-LAST` limits one to those rounds |
 | `--soft-pairs=2,9,12@3-5` | `soft_pairs:` | a soft group can be limited to rounds the same way |
 | `--acceleration=baku` | players' `:accelerations` | C.04.7's virtual points worked out here (`Ainalrami.Acceleration`): Group A the top `2 x ceil(n/4)`, `ceil(R/2)` accelerated rounds, the first half of them a point and the rest a half. For a file with no `XXA`/`250`; needs the round count |
