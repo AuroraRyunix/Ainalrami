@@ -66,6 +66,8 @@ with the reference on every one of them.
 
 ## [Unreleased]
 
+- [Change] **README: Install leads with the release download, and no longer calls JaVaFo the default.** Ainalrami is the default Swiss engine in OpenPairings and JaVaFo the optional alternative; the README said the reverse. Building from source moved under its own heading, and the two licence sections became one.
+
 ## [0.44.0] - 2026-10-18
 
 - [Change] **New address.** The repository moved to github.com/teapot-chess; old links still redirect, out of politeness rather than obligation.

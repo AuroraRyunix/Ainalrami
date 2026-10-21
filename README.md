@@ -29,7 +29,8 @@ the engine now conforms. Both are documented rather than hidden - see
 
 ## Running it from the command line
 
-To build the tool you need Erlang/OTP and Elixir. The project requires
+If you downloaded `ainalrami` from a release (see [Install](#install)),
+skip to the first command below. To build the tool yourself you need Erlang/OTP and Elixir. The project requires
 Elixir `~> 1.17` (`mix.exs`); CI builds and tests on Elixir 1.20 with
 OTP 29.0 (`.github/workflows/elixir.yml`). To run the built file you need
 only Erlang/OTP; Elixir is not needed.
@@ -296,6 +297,18 @@ how the engine got here from 90 s and 498 s:
 [docs/engineering-log.md](docs/engineering-log.md).
 
 ## Install
+
+Download the ready-built command-line file from the
+[latest release](https://github.com/teapot-chess/Ainalrami/releases/latest).
+Each release attaches `ainalrami`, an escript built by CI from the tagged
+source, and `SHA256SUMS` to check it against. It needs only Erlang/OTP to
+run; Elixir is not needed. On Windows run it as `escript ainalrami input.trf -p`,
+on Linux and macOS as `./ainalrami input.trf -p`. The examples further
+down use exactly that file.
+
+### Building from source
+
+For development, or to run a commit that has no release yet:
 
 ```bash
 git clone https://github.com/teapot-chess/Ainalrami
@@ -1049,15 +1062,15 @@ harness at them and how to run the large fuzz axes.
 
 Ainalrami is the sibling project to
 [OpenPairings](https://github.com/teapot-chess/openpairings), an
-Elixir/Phoenix tournament manager, where it is available as an **optional
-second pairing engine**. JaVaFo stays the default there, particularly for
-FIDE-rated tournaments, whose endorsement story rests on the same "uses
-JaVaFo, thru JaVaFo" pattern Vega, Swiss Manager and TournamentService
-already use.
+Elixir/Phoenix tournament manager, where it is the **default Swiss pairing
+engine**, running in-process with nothing to install beside the app.
+JaVaFo remains available there as an optional alternative, for organisers
+who want the engine their federation or software vendor already
+endorses, or who want a second opinion on a round.
 
-Ainalrami is for everything else: tournaments that need no such precedent,
-experimentation with pairing variants JaVaFo doesn't expose, and an
-independent data point for cross-checking pairing correctness.
+Ainalrami is also meant to stand alone: experimentation with pairing
+variants JaVaFo doesn't expose, and an independent data point for
+cross-checking pairing correctness against any other engine.
 
 ## License
 
@@ -1075,14 +1088,10 @@ cleanest way to honour that rather than leaving it ambiguous.
 [NOTICE](NOTICE) spells out exactly which files are derived and what
 changed.
 
-## Licence
-
-Apache-2.0 (see [LICENSE](LICENSE)), © 2026 Jorian Burssens.
-
 Deliberately permissive: a pairing engine is only worth anything if other
 people can check it, run it against their own tournaments and disagree with
 it in public. Use it, fork it, ship it in something commercial - the terms
-ask only that you keep the notices.
+ask only that you keep the notices. Copyright 2026 Jorian Burssens.
 
 The vendored bbpPairings binaries and JaVaFo are covered separately; see
 [NOTICE](NOTICE).
