@@ -732,7 +732,7 @@ answerable by reading the run's own output.
 
 ## TRF extension lines
 
-Beyond TRF16 proper, Ainalrami reads and writes three of JaVaFo's `XX`
+Beyond TRF16 proper, Ainalrami reads and writes four of JaVaFo's `XX`
 extension codes:
 
 | line | meaning |
@@ -740,6 +740,7 @@ extension codes:
 | `XXR n` | number of rounds - JaVaFo's spelling of TRF16's `142` |
 | `XXP a b [c …]` | a mutually-forbidden **group**: no two of these players may ever meet |
 | `XXA` | per-player acceleration ("virtual points"), round by round |
+| `XXZ a b [c …]` | players absent from the round about to be paired - what Swar writes |
 | `260` | forbidden pairs, limited to a range of rounds |
 | `250` | acceleration for a range of players over a range of rounds |
 | `XXM` | match format: every match two games in a row, colours reversed (Ainalrami's own) |
@@ -774,6 +775,19 @@ file does not have are refused. `Trf.serialize/2` writes the lines from
 `tournament[:soft_pairs]`, `[:soft_position]`, `[:bye_preferences]`,
 `[:bye_exclusions]` and each player's `:round_ratings`, and writes nothing
 for a tournament with none of them.
+
+`XXZ` reads as a `0000 - Z` in the named players' column for the round
+about to be paired: left out, no bye, no points beyond a zero-point bye's.
+It is how Swar tells JaVaFo who is not there; until 0.44.1 this engine
+ignored the line and paired them. A rank the file does not have, or one
+whose column for that round already holds a bye, is refused; a `0000 - Z`
+already there is the same thing said twice and is fine. `Trf.serialize/2`
+writes the column by default (bbpPairings does not read `XXZ`) and the
+`XXZ` line instead with `xxz: true`; TRF26 says it as `240 Z`. On the
+command line `--zero-bye=` says the same.
+
+Any other `XX` line is accepted and ignored, with a warning on stderr
+naming it - an unread rule should at least be an announced one.
 
 `XXR` and `142` are the same field: a file may carry both, but they must
 **agree**, and two different counts are refused rather than silently

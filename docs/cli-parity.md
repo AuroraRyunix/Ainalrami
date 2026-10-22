@@ -41,7 +41,7 @@ unless said otherwise).
 | players' `:accelerations` - Baku (C.04.7) | `accelerations/3`: Group A `2 * ceil(n/4)`, frozen at round 1 | `--acceleration=baku`, `--baku-group-a=N` **(new for -p/-x/-c)** | `XXA`, `250` | yes |
 | players' `:accelerations` - anything else | acceleration-mode extra points, as `XXA` | `--virtual-points=1-10:1,1,0.5/11:0.5` **(new)** | `XXA`, `250` | **no** - the flag warns |
 | a requested bye (half, zero, full) | a letter in the player's column | `--half-bye=` `--zero-bye=` `--full-bye=` **(new)** | `H` / `Z` / `F` in the column, `240` | yes |
-| an absent or withdrawn player | a `Z` in the column | `--zero-bye=` **(new)** | `Z`, a blank column, `240 Z` | yes |
+| an absent or withdrawn player | a `Z` in the column | `--zero-bye=` **(new)** | `Z`, a blank column, `240 Z`, `XXZ` **(0.44.1)** | yes |
 | a late entrant | blank rounds before the first game; arrival order from the games (5.2.5) | - (the file says it) | short or blank `001` rounds | yes |
 | `EventFormat` `match_format:` | `swiss_match_format` | `--match-format` | `XXM` | no FIDE record; refused with groups |
 | `EventFormat` `groups:` | `pair_by_category` | `--groups=1-8/9-12` | `XXG` | no FIDE record |

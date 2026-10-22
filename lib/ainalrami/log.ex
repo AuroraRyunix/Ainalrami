@@ -99,12 +99,12 @@ defmodule Ainalrami.Log do
 
   @doc "A major phase of the run. `==> message`."
   def step(message) do
-    if at_least?(:normal), do: IO.puts("==> #{message}")
+    if at_least?(:normal), do: IO.puts(printable("==> #{message}"))
   end
 
   @doc "A line of reasoning within the current step, indented under it."
   def detail(message) do
-    if at_least?(:normal), do: IO.puts("    #{message}")
+    if at_least?(:normal), do: IO.puts(printable("    #{message}"))
   end
 
   @doc """
@@ -117,16 +117,23 @@ defmodule Ainalrami.Log do
   makes it safe to call from inside the pairing loop.
   """
   def debug(message) when is_function(message, 0) do
-    if at_least?(:debug), do: IO.puts("    [dbg] #{message.()}")
+    if at_least?(:debug), do: IO.puts(printable("    [dbg] #{message.()}"))
   end
 
   def debug(message) do
-    if at_least?(:debug), do: IO.puts("    [dbg] #{message}")
+    if at_least?(:debug), do: IO.puts(printable("    [dbg] #{message}"))
   end
 
   @doc "Always shown, whatever the level - printed to stderr so -p's output on stdout stays clean."
-  def warn(message), do: IO.puts(:stderr, "warning: #{message}")
+  def warn(message), do: IO.puts(:stderr, printable("warning: #{message}"))
 
   @doc "Always shown, whatever the level - printed to stderr, same reasoning as warn/1."
-  def error(message), do: IO.puts(:stderr, "error: #{message}")
+  def error(message), do: IO.puts(:stderr, printable("error: #{message}"))
+
+  # A name in a file Swar wrote is Windows-1252, not UTF-8, and the
+  # standard output device takes one look at a stray `é` byte and raises
+  # `argument error` - which the CLI then reported as an "unexpected error"
+  # in place of the pairing it had in hand. The file is the file's
+  # business; the screen gets a replacement character.
+  defp printable(text), do: String.replace_invalid(text)
 end
