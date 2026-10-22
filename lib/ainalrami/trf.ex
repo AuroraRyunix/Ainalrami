@@ -134,11 +134,11 @@ defmodule Ainalrami.Trf do
 
   ## The `XX*` extension lines
 
-  Four of JaVaFo's own `XX` extension codes are read; two of them are
-  written by default. The two that are not - `XXR` and `XXC` - each have a
-  TRF16 spelling that `serialize/1` emits in their place, and each is
-  written on request (`serialize/2`'s `:xxr` and `:xxc`) for a file JaVaFo
-  will read:
+  Five of JaVaFo's own `XX` extension codes are read; two of them are
+  written by default. The three that are not - `XXR`, `XXC` and `XXZ` -
+  each have another spelling that `serialize/1` emits in their place, and
+  each is written on request (`serialize/2`'s `:xxr`, `:xxc` and `:xxz`)
+  for a file JaVaFo will read:
 
     * `XXR n` - the round count (see `parse_xxr/2`), which is the same field
       as TRF16's `142`. A file may carry both spellings, but they must
@@ -158,6 +158,12 @@ defmodule Ainalrami.Trf do
       same reason `XXR` is: the value round-trips, the spelling does not.
       `XXC rank` is a third setting on the same line and RAISES, because
       this engine cannot honour it.
+    * `XXZ r1 r2 ...` - the players absent from the round about to be
+      paired (see `parse_xxz/2`), which is what Swar writes. Read as a
+      `0000 - Z` in that round's column, so every pairing path sees the
+      same thing it sees for the column; a rank the file does not have, or
+      one whose column already holds a game or a bye, raises. TRF26 says
+      it with `240 Z`.
 
   Two more are this engine's own, for what OpenPairings pairs and neither
   TRF16 nor TRF26 can say. Both are read and written in either dialect:
@@ -216,8 +222,10 @@ defmodule Ainalrami.Trf do
   keys are absent, not empty.
 
   Anything else beginning `XX` still falls through `parse_header_line/3`'s
-  `nil -> acc` clause and is ignored. That silent-discard behaviour is
-  correct for a genuinely unknown code and was WRONG for these two: an
+  `nil -> acc` clause and is ignored - with a warning on stderr naming the
+  line, since 0.44.1. Ignoring is right for a genuinely unknown code; doing
+  it in silence is how `XXZ` went unread for as long as it did. It was
+  WRONG outright for these two: an
   arbiter's `XXP` "these two must never meet" was dropped on the floor and
   the engine then returned a complete, perfectly legal-looking pairing that
   seated them together, with nothing downstream able to detect it. That is
@@ -793,6 +801,15 @@ defmodule Ainalrami.Trf do
   or no line at all - was paired with the top seed on White in some runs and
   on Black in others, because JaVaFo draws the colour itself when it is not
   told, while `XXC black1` gave Black on every run. bbpPairings reads both.
+
+  `opts[:xxz]`: write the players absent from the round about to be paired
+  - a lone `0000 - Z` as the last column, for that round - as JaVaFo's
+  `XXZ r1 r2 ...` line INSTEAD of the column, the way Swar writes them.
+  Engine dialect only (TRF26 says the same thing as `240 Z`, which it
+  already writes). Off by default and only-one, like `:xxr`: bbpPairings
+  does not read `XXZ`, and a file it is handed with the column lifted out
+  would pair the absentees, which is the bug `XXZ` was read to fix. Either
+  spelling parses back to the same players.
   """
   def serialize(data, opts \\ [])
 
@@ -809,6 +826,8 @@ defmodule Ainalrami.Trf do
     # the players before their lines are written, and go out at the end.
     system = t[:point_system] || default_point_system()
     {written, future_byes} = split_future_byes(players, dialect, system, team_rounds(t))
+    xxz? = dialect == :engine and opts[:xxz] == true
+    {written, absentees} = split_absences(written, xxz?, system, team_rounds(t))
     max_round = Enum.reduce(written, 0, &max(&2, length(&1[:games] || [])))
     xxr? = dialect == :engine and opts[:xxr] == true
     xxc? = dialect == :engine and opts[:xxc] == true
@@ -823,6 +842,7 @@ defmodule Ainalrami.Trf do
     |> Kernel.++(team_record_lines(t))
     |> Kernel.++(xxr_line(t[:number_of_rounds], xxr?))
     |> Kernel.++(xxc_line(t[:initial_colour], xxc?))
+    |> Kernel.++(xxz_line(absentees))
     |> Kernel.++(extension_lines(t, players, max_round, numeric?, dialect))
     |> Kernel.++(bye_lines(future_byes))
     |> Enum.map_join("", &(&1 <> "\r\n"))
@@ -883,7 +903,7 @@ defmodule Ainalrami.Trf do
 
       # The `001` total is the standings total, which a bye not yet reached
       # is not part of; the engines' convention credits it up front, so it
-      # comes off here and `attach_byes/1` puts it back on the way in.
+      # comes off here and `attach_byes/2` puts it back on the way in.
       moved =
         Enum.reduce(new_records, 0.0, fn {type, _round, _rank}, sum ->
           sum + points_for(type, system)
@@ -944,6 +964,43 @@ defmodule Ainalrami.Trf do
       |> render()
     end)
   end
+
+  # `xxz: true` - see `serialize/2`. A `0000 - Z` standing alone in the
+  # column of the round about to be paired, as the player's last column,
+  # comes off the `001` line and goes out as one `XXZ` line, which is
+  # where Swar puts it and `parse/1` reads it back from. A Z with anything
+  # after it stays a column: lifting it would shift the rest.
+  defp split_absences(players, false, _system, _team_rounds), do: {players, []}
+
+  defp split_absences(players, true, system, team_rounds) do
+    played = max(rounds_played(players), team_rounds)
+
+    {players, ranks} =
+      Enum.map_reduce(players, [], fn player, ranks ->
+        games = player[:games] || []
+
+        if length(games) == played + 1 and lone_absence?(List.last(games)) do
+          player =
+            player
+            |> Map.put(:games, Enum.take(games, played))
+            |> Map.update(:points, 0.0, &((&1 || 0.0) - points_for("Z", system)))
+
+          {player, [player[:rank] | ranks]}
+        else
+          {player, ranks}
+        end
+      end)
+
+    {players, Enum.sort(ranks)}
+  end
+
+  defp lone_absence?(%{opponent_rank: nil, result: result} = game) when is_binary(result),
+    do: is_nil(game[:colour]) and String.upcase(String.trim(result)) == "Z"
+
+  defp lone_absence?(_game), do: false
+
+  defp xxz_line([]), do: []
+  defp xxz_line(ranks), do: ["XXZ " <> Enum.map_join(ranks, " ", &Integer.to_string/1)]
 
   # Emitted after the player rows rather than up with the headers, next to
   # the `XXA`/`XXP` lines it keeps company with in every file JaVaFo is
@@ -2319,6 +2376,9 @@ defmodule Ainalrami.Trf do
           "XXO" ->
             parse_xxo(acc, line)
 
+          "XXZ" ->
+            parse_xxz(acc, line)
+
           "250" ->
             parse_250(acc, line)
 
@@ -2360,12 +2420,19 @@ defmodule Ainalrami.Trf do
       allow_unknown_result: true
     )
 
+    # The round about to be paired, counted once for both of the records
+    # that place something in it, so neither can move the goalposts for
+    # the other. A round paired with nothing but whole-match forfeits
+    # (`330`) counts, as `split_future_byes/4` counts it when writing.
+    played = max(rounds_played(result.players), team_rounds(result.tournament))
+
     result
     |> check_pairing_groups!()
     |> check_organiser_records!()
     |> attach_round_ratings()
     |> attach_accelerations()
-    |> attach_byes()
+    |> attach_absences(played)
+    |> attach_byes(played)
   end
 
   # bbpPairings' point-system directives (`trf.cpp:1203-1232`) plus TRF16's
@@ -3058,7 +3125,7 @@ defmodule Ainalrami.Trf do
   # `240` - TRF26's bye record: a bye granted before a round is paired. For
   # a round already in the `001` lines it duplicates the column and has to
   # agree with it. For the round about to be paired it is the ONLY place
-  # the bye can be, and `attach_byes/1` turns it into the `0000 - H` column
+  # the bye can be, and `attach_byes/2` turns it into the `0000 - H` column
   # the engine reads (`Ainalrami.Pairing`'s `active_this_round?/2`). For a
   # round further ahead it stays in `tournament[:byes]`, because the game
   # list cannot hold a gap. Type at column 5, round in 7-9, starting ranks
@@ -3163,13 +3230,110 @@ defmodule Ainalrami.Trf do
     end)
   end
 
-  # `240` records, applied once every player is read - see `parse_240/2`.
-  defp attach_byes(%{byes: []} = result), do: Map.delete(result, :byes)
+  # `XXZ r1 r2 ...` - JaVaFo's extension, and what Swar writes: the players
+  # absent for the round about to be paired. Not paired, no bye, nothing -
+  # exactly a `0000 - Z` in that round's column, which is what
+  # `attach_absences/2` turns it into once every `001` line is read. Until
+  # 0.44.1 it fell through `parse_header_line/3` as an unknown code and the
+  # absentees were paired anyway, with a straight face. Several lines add
+  # up; a rank named twice is still one absence. A token that is not a
+  # starting rank raises for `parse_xxp/2`'s reason: a list read wrong
+  # pairs someone who is not there.
+  defp parse_xxz(acc, line) do
+    ranks =
+      line
+      |> String.slice(3..-1//1)
+      |> String.split([" ", "	"], trim: true)
+      |> Enum.map(fn token ->
+        case strict_int(token) do
+          rank when is_integer(rank) and rank > 0 ->
+            rank
 
-  defp attach_byes(%{byes: byes, players: players} = result) do
-    # A round paired with nothing but whole-match forfeits (`330`) counts,
-    # as `split_future_byes/4` counts it when writing.
-    played = max(rounds_played(players), team_rounds(result.tournament))
+          _ ->
+            raise ValidationError,
+              message: "XXZ line names #{inspect(token)}, which is not a starting rank: #{line}"
+        end
+      end)
+
+    Map.update(acc, :xxz, ranks, &(&1 ++ ranks))
+  end
+
+  # `XXZ`, applied once every player is read - see `parse_xxz/2`. The
+  # round is the one about to be paired, `played + 1`. A player whose line
+  # stops short of it (a late entrant) is padded with the blank rounds the
+  # file left off, as `apply_bye/5` pads for a `240`. A `0000 - Z` already
+  # in that column says the same thing twice and is let through; anything
+  # else there - a game, a bye with points - is a contradiction, and which
+  # half of the file to believe is not this function's call.
+  defp attach_absences(result, played) do
+    case Map.pop(result, :xxz) do
+      {nil, result} ->
+        result
+
+      {ranks, result} ->
+        absent = ranks |> Enum.uniq() |> MapSet.new()
+        known = MapSet.new(result.players, & &1[:rank])
+
+        case Enum.find(ranks, &(not MapSet.member?(known, &1))) do
+          nil ->
+            :ok
+
+          rank ->
+            raise ValidationError,
+              message: "XXZ names starting rank #{rank}, which no 001 line has"
+        end
+
+        system = result.tournament[:point_system] || default_point_system()
+
+        players =
+          Enum.map(result.players, fn player ->
+            if MapSet.member?(absent, player[:rank]),
+              do: mark_absent(player, played, system),
+              else: player
+          end)
+
+        %{result | players: players}
+    end
+  end
+
+  defp mark_absent(player, played, system) do
+    games = player[:games] || []
+
+    case Enum.at(games, played) do
+      nil ->
+        blank = %{opponent_rank: nil, colour: nil, result: nil}
+        padding = List.duplicate(blank, played - length(games))
+        absence = %{opponent_rank: nil, colour: nil, result: "Z"}
+
+        # Credited as the column would have been: nothing, under any point
+        # system that leaves a zero-point bye at zero.
+        player
+        |> Map.put(:games, games ++ padding ++ [absence])
+        |> Map.update(:points, 0.0, &((&1 || 0.0) + points_for("Z", system)))
+
+      %{opponent_rank: nil, result: result} when is_binary(result) ->
+        if String.upcase(String.trim(result)) == "Z" do
+          player
+        else
+          xxz_conflict!(player, played, result)
+        end
+
+      game ->
+        xxz_conflict!(player, played, game[:result])
+    end
+  end
+
+  defp xxz_conflict!(player, played, result) do
+    raise ValidationError,
+      message:
+        "XXZ says starting rank #{player[:rank]} is absent from round #{played + 1}, " <>
+          "but its 001 line already has #{inspect(result)} in that round"
+  end
+
+  # `240` records, applied once every player is read - see `parse_240/2`.
+  defp attach_byes(%{byes: []} = result, _played), do: Map.delete(result, :byes)
+
+  defp attach_byes(%{byes: byes, players: players} = result, played) do
     system = result.tournament[:point_system] || default_point_system()
 
     by_rank =
@@ -3387,7 +3551,16 @@ defmodule Ainalrami.Trf do
     value = line |> String.slice(4..-1//1) |> String.trim()
 
     case field do
+      # An `XX` code nobody here reads is still accepted - JaVaFo and Swar
+      # have more of them than this engine has opinions - but no longer in
+      # silence: `XXZ` spent a year in this clause, pairing absentees, and
+      # nobody could tell. Whatever the next one means, the arbiter gets to
+      # see that it meant nothing here.
       nil ->
+        if String.starts_with?(code, "XX") do
+          Ainalrami.Log.warn("ignored a TRF extension line this engine does not read: #{line}")
+        end
+
         acc
 
       :round_dates ->
