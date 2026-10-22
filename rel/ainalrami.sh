@@ -15,7 +15,8 @@ while [ -h "$self" ]; do
 done
 root=$(cd "$(dirname "$self")" && pwd -P)
 
-read -r erts_vsn rel_vsn < "$root/releases/start_erl.data"
+# No trailing newline in that file, so read reports failure on a good line.
+read -r erts_vsn rel_vsn < "$root/releases/start_erl.data" || [ -n "$rel_vsn" ]
 
 ROOTDIR=$root
 BINDIR=$root/erts-$erts_vsn/bin
