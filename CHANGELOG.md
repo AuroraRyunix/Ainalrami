@@ -66,6 +66,9 @@ with the reference on every one of them.
 
 ## [Unreleased]
 
+- [Feature] **Releases attach a program that needs no Erlang.** `ainalrami-windows-x86_64.zip` is a folder with `ainalrami.exe` at the top (a small C console launcher around a `mix release` that carries its own runtime), and there are matching archives for Linux x86_64 and macOS arm64. The escript stays, for the people who already have Erlang and the habit. No installer and no self-extracting executable, on purpose: antivirus products delete the second kind on sight, and nobody has ever tried to delete a zip.
+- [Verified] **The release workflow is now tested as a workflow.** A pull request that touches the packaging builds the same archives and runs `rel/smoke.sh`: unpack elsewhere, start with no Erlang on the `PATH`, then run nine command lines through the packaged program and the escript and demand identical stdout, stderr, output files and exit codes. Startup time is printed, because someone will ask. A manual run with a tag attaches the archives to an existing release without a version bump, and refuses unless `lib/` is identical to the tag's.
+
 - [Change] **README: Install leads with the release download, and no longer calls JaVaFo the default.** Ainalrami is the default Swiss engine in OpenPairings and JaVaFo the optional alternative; the README said the reverse. Building from source moved under its own heading, and the two licence sections became one.
 
 ## [0.44.0] - 2026-10-18

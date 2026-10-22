@@ -23,6 +23,7 @@ defmodule Ainalrami.MixProject do
         flags: [:error_handling, :unknown, :extra_return, :missing_return]
       ],
       escript: escript(),
+      releases: releases(),
       name: "Ainalrami",
       description: "A FIDE Dutch-system Swiss pairing engine, written in Elixir.",
       source_url: @source_url,
@@ -55,6 +56,20 @@ defmodule Ainalrami.MixProject do
       # Dialyzer, for the by-hand deep-checks workflow only; never part of the
       # escript. Everything else here stays dependency-free on purpose.
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false}
+    ]
+  end
+
+  # The portable release (`MIX_ENV=prod mix release`) is what the Windows zip
+  # and the Linux/macOS archives are made of: ERTS included, so nothing needs
+  # installing. It is started by rel/windows/launcher.c (ainalrami.exe) or
+  # rel/ainalrami.sh, never by bin/ainalrami, which has no idea what a TRF is.
+  defp releases do
+    [
+      ainalrami: [
+        include_executables_for: [:windows, :unix],
+        include_erts: true,
+        strip_beams: true
+      ]
     ]
   end
 
