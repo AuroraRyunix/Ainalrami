@@ -66,6 +66,8 @@ with the reference on every one of them.
 
 ## [Unreleased]
 
+## [0.44.1] - 2026-10-22
+
 - [Fix] **`XXZ` is read: the players a file says are absent stay absent.** Swar tells its pairing engine who is missing from the next round with JaVaFo's `XXZ r1 r2 ...` line, and this engine filed it with the other `XX` codes it did not know and paired everyone, absentees included, in complete confidence. It now reads as a `0000 - Z` in that round's column - not paired, no bye - so the command line and every `pair_*` entry point see what they already saw for the column. A rank the file does not have, or one whose column already holds a bye for that round, is refused rather than resolved by guesswork. TRF26 says the same with `240 Z`, which the writer already produced; the engine dialect writes `XXZ` back with `xxz: true` (off by default, because bbpPairings does not read it and would pair the absentees all over again). On the six Swar files to hand, JaVaFo 2.2's boards and this engine's are now identical; before, every one of the five carrying `XXZ` seated somebody who was not there.
 - [Change] **Other unknown `XX` lines are still ignored, but out loud.** A warning on stderr names the line. `XXZ` spent its whole life in the silent pile; the next code that means something should at least be seen being ignored.
 - [Fix] **A Windows-1252 name no longer turns a finished pairing into "unexpected error: argument error".** Swar writes its files in the Windows code page, and the progress output tried to print an `é` byte to a UTF-8 terminal, which declined. The pairing was already done. Invalid bytes now print as a replacement character; the file and the output TRF are untouched.
