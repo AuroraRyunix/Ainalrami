@@ -298,13 +298,29 @@ how the engine got here from 90 s and 498 s:
 
 ## Install
 
-Download the ready-built command-line file from the
+Download from the
 [latest release](https://github.com/teapot-chess/Ainalrami/releases/latest).
-Each release attaches `ainalrami`, an escript built by CI from the tagged
-source, and `SHA256SUMS` to check it against. It needs only Erlang/OTP to
-run; Elixir is not needed. On Windows run it as `escript ainalrami input.trf -p`,
-on Linux and macOS as `./ainalrami input.trf -p`. The examples further
-down use exactly that file.
+Every file there was built by CI from the tagged source, and `SHA256SUMS`
+lists their checksums.
+
+- **Windows: `ainalrami-windows-x86_64.zip`.** Unzip it anywhere and run
+  `ainalrami.exe input.trf -p` from a terminal. Erlang is inside the folder;
+  nothing is installed and nothing is written outside it. It is a plain
+  console program, so redirects and pipes work, and its exit code is the
+  command's. Keep the folder together: the exe starts the runtime beside it.
+- **Linux: `ainalrami-linux-x86_64.tar.gz`** and **macOS (Apple Silicon):
+  `ainalrami-macos-arm64.zip`.** The same folder with a shell script,
+  `./ainalrami input.trf -p`. Also nothing to install, but the Linux one is
+  built on Ubuntu 24.04 and the Mac one on macOS 15, so a much older system
+  may not run it.
+- **Any system with Erlang/OTP: `ainalrami`**, the escript. Run it as
+  `escript ainalrami input.trf -p` on Windows, `./ainalrami input.trf -p`
+  elsewhere. Elixir is not needed.
+
+CI unpacks each archive, runs it with no Erlang on the `PATH`, and checks that
+it prints the same bytes, writes the same files and exits with the same code
+as the escript on the same inputs. The examples further down are written for
+the escript; the packaged program takes the same arguments.
 
 ### Building from source
 

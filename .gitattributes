@@ -8,6 +8,8 @@
 *.md text eol=lf
 *.yml text eol=lf
 *.yaml text eol=lf
+*.sh text eol=lf
+*.c text eol=lf
 
 # EXCEPT the interop fixtures, whose exact bytes are the point. The
 # bbpPairings-generated TRF there uses a BARE carriage return as its line

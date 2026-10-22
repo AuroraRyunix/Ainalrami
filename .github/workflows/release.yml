@@ -1,8 +1,30 @@
-# Release file: on a pushed tag v*, build the escript and attach it, with
-# SHA256SUMS, to the GitHub release for that tag (created if missing).
-# Uses the same setup-beam pin and versions as elixir.yml; runs-on is pinned
-# to ubuntu-24.04 for the reason given there, not ubuntu-latest.
-# Untested as a workflow: it has only been checked for valid YAML.
+# Release file. Three things come out of it, all attached with SHA256SUMS to
+# the GitHub release for a tag:
+#
+#   ainalrami                           the escript (needs Erlang installed)
+#   ainalrami-windows-x86_64.zip        a folder with ainalrami.exe at the top
+#   ainalrami-linux-x86_64.tar.gz       and the same release for Linux
+#   ainalrami-macos-arm64.zip           and for Apple Silicon
+#
+# The archives are a `mix release` with the Erlang runtime inside, started by
+# rel/windows/launcher.c (compiled with `zig cc`, a plain console program) or
+# rel/ainalrami.sh. No installer, no self-extracting executable: those are the
+# shape antivirus products delete; a folder in a zip is not.
+#
+# Triggers:
+#   push of a tag v*     builds everything and attaches it to that release.
+#   workflow_dispatch    the same for an EXISTING tag, without a version bump
+#                        (OpenPairings pins a version; a bump would turn its
+#                        pin-drift check red). lib/ must be identical to the
+#                        tag's, and mix.exs must carry the tag's version, or
+#                        the run refuses: a binary attached to v0.44.0 has to
+#                        be v0.44.0.
+#   pull_request         builds the same archives and runs the same smoke test
+#                        (rel/smoke.sh) and attaches nothing, so the release
+#                        path is exercised before a tag exists.
+#
+# Uses the same setup-beam pin and versions as elixir.yml; runners are pinned
+# to a version for the reason given there, not `-latest`.
 
 name: Release
 
@@ -10,19 +32,41 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag to build and attach to, e.g. v0.44.0"
+        required: true
+        type: string
+  pull_request:
+    branches: [ "main" ]
+    paths:
+      - "rel/**"
+      - "mix.exs"
+      - "mix.lock"
+      - ".github/workflows/release.yml"
 
 permissions:
   contents: read
 
+env:
+  TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+
 jobs:
   escript:
     name: Build and attach the escript
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
     permissions:
       contents: write
 
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        fetch-depth: 0
+
+    - name: Check the source is the tag's
+      run: bash rel/check_tag.sh "$TAG"
 
     - name: Set up Elixir
       uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1.24.1
@@ -34,12 +78,160 @@ jobs:
       run: |
         mix deps.get
         MIX_ENV=prod mix escript.build
-        sha256sum ainalrami > SHA256SUMS
 
     - name: Attach to the release
       env:
         GH_TOKEN: ${{ github.token }}
-        TAG: ${{ github.ref_name }}
       run: |
         gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "$TAG" --generate-notes
-        gh release upload "$TAG" ainalrami SHA256SUMS --clobber
+        gh release upload "$TAG" ainalrami --clobber
+
+  package:
+    name: Package, smoke-test and attach (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: windows-x86_64, runner: windows-2025, archive: ainalrami-windows-x86_64.zip }
+          - { target: linux-x86_64, runner: ubuntu-24.04, archive: ainalrami-linux-x86_64.tar.gz }
+          - { target: macos-arm64, runner: macos-15, archive: ainalrami-macos-arm64.zip }
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        fetch-depth: 0
+
+    - name: Check the source is the tag's
+      if: github.event_name != 'pull_request'
+      run: bash rel/check_tag.sh "$TAG"
+
+    - name: Set up Elixir
+      uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1.24.1
+      with:
+        elixir-version: '1.20'
+        otp-version: '29.0'
+
+    # The launcher is compiled with `zig cc`, which brings its own C library
+    # and Windows headers: no Visual Studio, and the same compiler Arkab uses.
+    - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+      if: runner.os == 'Windows'
+      with:
+        version: 0.15.2
+
+    - name: Build the release and the escript it is compared with
+      env:
+        MIX_ENV: prod
+      run: |
+        mix deps.get
+        mix escript.build
+        mix release --overwrite
+
+    - name: Add the launcher (Windows)
+      if: runner.os == 'Windows'
+      run: |
+        zig cc -O2 -s -municode -target x86_64-windows-gnu \
+          rel/windows/launcher.c -o _build/prod/rel/ainalrami/ainalrami.exe
+
+    - name: Add the launcher (Linux, macOS)
+      if: runner.os != 'Windows'
+      run: |
+        cp rel/ainalrami.sh _build/prod/rel/ainalrami/ainalrami
+        chmod +x _build/prod/rel/ainalrami/ainalrami
+
+    - name: Check the executable is a console program (Windows)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        # Subsystem 3 is "console"; 2 would detach from the terminal and
+        # print the pairings into the void. One linker flag, invisible in the
+        # source, so it is checked here.
+        $exe = "_build\prod\rel\ainalrami\ainalrami.exe"
+        $bytes = [System.IO.File]::ReadAllBytes((Resolve-Path $exe))
+        $pe = [BitConverter]::ToInt32($bytes, 0x3C)
+        $subsystem = [BitConverter]::ToUInt16($bytes, $pe + 92)
+        if ($subsystem -ne 3) { throw "ainalrami.exe has subsystem $subsystem, not 3." }
+        Write-Host "ainalrami.exe: console subsystem, $($bytes.Length) bytes"
+
+    - name: Pack
+      shell: pwsh
+      run: |
+        $rel = "_build/prod/rel/ainalrami"
+        Copy-Item LICENSE, NOTICE $rel
+        New-Item -ItemType Directory -Force dist | Out-Null
+        if ($env:RUNNER_OS -eq 'Windows') {
+          Compress-Archive -Path $rel -DestinationPath "dist/${{ matrix.archive }}"
+        } elseif ($env:RUNNER_OS -eq 'macOS') {
+          Push-Location _build/prod/rel
+          zip -qry "$env:GITHUB_WORKSPACE/dist/${{ matrix.archive }}" ainalrami
+          Pop-Location
+        } else {
+          tar -C _build/prod/rel -czf "dist/${{ matrix.archive }}" ainalrami
+        }
+        Get-Item "dist/${{ matrix.archive }}" | ForEach-Object { Write-Host "$($_.Name): $($_.Length) bytes" }
+
+    # The archive is unpacked somewhere that is not the build tree, so the
+    # test cannot pass by leaning on a file the archive does not carry, and
+    # the program is run by the name a user would run it by.
+    - name: Unpack the archive elsewhere
+      shell: pwsh
+      run: |
+        $dest = Join-Path $env:RUNNER_TEMP "unpacked"
+        New-Item -ItemType Directory -Force $dest | Out-Null
+        if ($env:RUNNER_OS -eq 'Linux') { tar -C $dest -xzf "dist/${{ matrix.archive }}" }
+        elseif ($env:RUNNER_OS -eq 'macOS') { unzip -q "dist/${{ matrix.archive }}" -d $dest }
+        else { Expand-Archive "dist/${{ matrix.archive }}" -DestinationPath $dest }
+        Get-ChildItem $dest/ainalrami | Select-Object -First 20 | ForEach-Object { Write-Host $_.Name }
+
+    # Erlang is on this runner's PATH (setup-beam), so the first start is
+    # made with a PATH that has none. The comparison below then runs with the
+    # ordinary PATH, because it needs the escript's Erlang to compare with.
+    - name: Smoke test, byte for byte against the escript
+      run: |
+        set -eu
+        exe="$RUNNER_TEMP/unpacked/ainalrami/ainalrami"
+        [ "$RUNNER_OS" = Windows ] && exe="$exe.exe"
+        # A PATH with no Erlang in it: the packaged program brings its own.
+        if PATH=/usr/bin:/bin command -v erl >/dev/null; then
+          echo "::error::erl is still on the minimal PATH, the test would prove nothing"
+          exit 1
+        fi
+        echo "First start, cold, with no Erlang on the PATH:"
+        PATH=/usr/bin:/bin "$exe" --version
+        bash rel/smoke.sh "$exe" ainalrami
+
+    - name: Attach to the release
+      if: github.event_name != 'pull_request'
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "$TAG" --generate-notes
+        gh release upload "$TAG" "dist/${{ matrix.archive }}" --clobber
+
+  checksums:
+    name: Write SHA256SUMS
+    if: github.event_name != 'pull_request'
+    needs: [escript, package]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+
+    steps:
+    # One list for everything on the release, written from what is really
+    # there rather than from what this run thinks it uploaded.
+    - name: Hash every asset and replace SHA256SUMS
+      env:
+        GH_TOKEN: ${{ github.token }}
+        GH_REPO: ${{ github.repository }}
+      run: |
+        set -eu
+        mkdir assets
+        cd assets
+        gh release download "$TAG" --pattern 'ainalrami' --pattern 'ainalrami-*.zip' --pattern 'ainalrami-*.tar.gz'
+        sha256sum * | tee SHA256SUMS
+        gh release upload "$TAG" SHA256SUMS --clobber
