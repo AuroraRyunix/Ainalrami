@@ -60,6 +60,8 @@ are TieBreakServer defects against the text and stay on the text.
 | Q2 | 16.2.5's "last round" part-way | ambiguous; TieBreakServer (`lna`: the last round counted) | unchanged |
 | Q3 | unplayed team matches in Article 12 | the text names only the pairing-allocated bye; TieBreakServer gives every unplayed match its result on every board (`gamescore[res]` per board) | **changed**: a full-point bye now scores a win on every board and a half-point bye a draw (a forfeit win already did) |
 | Q4 | which outcomes 6.3 enumerates | as reading 6; TieBreakServer counts a missing game as a win at best, a loss at worst | unchanged |
+| M1 | `/P` outside DE (Mandatory Tie-Breaks table) | the table defines it ("forfeited games ... are considered as played games against the scheduled opponent") but cites 16.5, which is the Cut-1 exception; TieBreakServer's `/P` (its `predetermined` flag) | **new**: forfeits are games against the scheduled opponent's adjusted score, and not VURs |
+| M2 | SSSC's `/Kx` | the table: "redefine the normalizing factor in SSSC"; 13.4.2 b's "or by a different value"; TieBreakServer (`K` sets the divisor) | **new**: `K<n>`, n a whole number from 1 |
 
 The sections below record each reading as first written; where a reading
 says "TieBreakServer differs", the table above is the decision.
@@ -71,8 +73,13 @@ says "TieBreakServer differs", the table above is the decision.
   (the score itself, as the first element of a TRF26 `212` list).
 - **Modifiers (Article 14):** Cut-1, Cut-2, Median-1, Median-2, the Koya
   limit; plus the switches the checklist and TRF26 spell as modifiers: `R`
-  (reverse order, 7.8 and 10.6), `P` (DE including forfeits, 6.1.1), `F`
-  (AOB over Fore Buchholz, 8.2).
+  (reverse order, 7.8 and 10.6), `P` (forfeits as games: DE by 6.1.1,
+  the Buchholz and Sonneborn-Berger family by the Mandatory Tie-Breaks
+  table), `F` (AOB and SSSC over Fore Buchholz, 8.2 and 13.4.2 a), `K`
+  (SSSC's normalising factor, 13.4.2 b).
+- **FIDE's Mandatory Tie-Breaks table (TRF26 attachment):** all 151 codes
+  it prints parse, compute and format back as printed;
+  `test/ainalrami/tiebreak_mandatory_codes_test.exs` carries the list.
 - **Unplayed rounds (Articles 15-16).**
 - **Team tie-breaks (Articles 11-13):** MP/GP scores, MPvGP, ESB (EMMSB,
   EMGSB, EGMSB, EGGSB), EDE and its knockout follow-ups, BC, TBR, BBE,
@@ -93,7 +100,9 @@ says "TieBreakServer differs", the table above is the decision.
 | `L1`, `L2`, `L-1`, `L-2` | Koya limit moved by +½, +1, -½, -1 point | 14.5 |
 | `R` | reverse order (TPN, RTNG) | 7.8, 10.6 |
 | `P` | DE counts forfeits as games | 6.1.1 |
-| `F` | AOB over the opponents' Fore Buchholz | 8.2 |
+| `P` | BH, FB, SB, EMMSB, EMGSB, EGMSB, EGGSB, SSSC: forfeits are games against the scheduled opponent (reading M1) | Mandatory Tie-Breaks table, 16.5 |
+| `F` | AOB over the opponents' Fore Buchholz; SSSC over Fore Buchholz | 8.2, 13.4.2 a |
+| `K<n>` | SSSC's normalising factor is n (reading M2) | 13.4.2 b |
 | `U<rating>` | rating used for unrated players in Article 10 tie-breaks | 10 |
 
 **Reading 1 - the Koya limit.** The checklist (Q104) spells "limit 50% + ½"
@@ -102,6 +111,54 @@ TieBreakServer reads a bare `L50` as a percentage and needs a sign
 (`L+1`) for a point offset. We follow the checklist's spelling and
 translate when calling TieBreakServer. `L+1` and `L-1` are accepted on
 input as the same thing.
+
+**Modifier order.** The parser takes modifiers in any order; `format/1`
+writes them as the Mandatory Tie-Breaks table does - cut or median, Koya
+limit, `R`, `F`, `P`, `K`, `U` - so `BH:MP/C1/P` and `SSSC/F/P/K4` come
+back as printed. The order does not change the value: `/P` decides what
+the elements are, and the cut then works on those elements, whichever way
+round the code was written.
+
+**Reading M1 - `/P` outside direct encounter.** FIDE's Mandatory Tie-Breaks
+table (the attachment TRF26's `202`/`212` point to) adds `/P` to BH, FB,
+SB, the four extended Sonneborn-Bergers and SSSC: "forfeited games, either
+wins or losses, are considered as played games against the scheduled
+opponent (see Article C.07.16.5)". C.07 itself has no such option, and
+16.5 is the Cut-1 exception, not a definition. The table's own sentence is
+clear enough to implement; the citation is read as pointing at the article
+the option changes the most. So, in a Swiss event:
+
+- a forfeit round contributes the scheduled opponent's adjusted score
+  (16.3), where 16.4.1 would have given a dummy capped at it - for the
+  forfeit loser the difference is the cap; for a forfeit winner who
+  finished below the loser, it is the opponent's whole score;
+- Sonneborn-Berger weights that by the points the forfeit was worth;
+- the round is no longer a voluntary unplayed round, so 16.5's exception
+  stops reaching for it when a cut is due;
+- the opponents' own adjusted scores do not move: 16.3.1 already counts
+  their forfeits as awarded;
+- byes have no scheduled opponent and stay Article 16 dummies.
+
+With pairings fixed in advance 15.2 already counts forfeits as games, and
+`/P` changes nothing. TieBreakServer implements `/P` on every tie-break as
+its `predetermined` flag, which does exactly the above for the Buchholz
+family; on 300 generated Swiss events (seeds 7,000,001-7,000,300, 93,926
+values of BH, BH/P, BH/C1/P, BH/C2/P, BH/M1/P, BH/M2/P, SB/P, SB/C1/P,
+SB/C2/P, FB/P, FB/C1/P, FB/C2/P, FB/M1/P, FB/M2/P) the two agree on every
+value, and on 200 generated team events (seeds 7,100,001-7,100,200, 193
+forfeited matches, 28,306 values of BH:MP/P, BH:GP/P, BH:MP/C1/P,
+BH:GP/M1/P, FB:MP/P, FB:GP/C2/P, EMMSB/P, EMGSB/C1/P, EGMSB/C2/P, EGGSB/P,
+SSSC/P, SSSC/F/P, SSSC/K4, SSSC/F/K5, SSSC/P/K4, SSSC/F/P/K5) likewise,
+apart from the known finding C rank ties.
+
+**Reading M2 - SSSC's `Kx`.** "Used for SSSC, to redefine the normalizing
+factor in SSSC, (/K4, /K5, ...)", with "x means that any reasonable value
+must be implemented". 13.4.2 b allows "a different value if stated by the
+rules of the competition", so `K<n>` replaces the computed factor with n,
+a whole number from 1: the examples are whole, the computed factor is
+"rounded to the nearest integer towards zero", and a factor of zero is the
+division Q1 already declines. It also settles Q1 for any competition that
+states its factor. TieBreakServer reads `K` the same way.
 
 **Reading 2 - the TRF26 `202` validator.** Ainalrami's `Trf.validate!/1`
 accepted only `[A-Z][A-Z0-9]*`, so every modified code (`BH/C1`) was
@@ -472,6 +529,7 @@ with it as this reading.
 - **BBE (12.3):** game points on all boards but the bottom; for teams still
   level, all but the bottom two, and so on.
 - **SSSC (13.4):** the secondary score plus the Buchholz of the primary
-  score (Fore Buchholz with `/F`) divided by the highest primary score
-  achievable in the event over the highest secondary score achievable in
-  one match, rounded towards zero.
+  score (Fore Buchholz with `/F`, forfeits as games with `/P`) divided by
+  the highest primary score achievable in the event over the highest
+  secondary score achievable in one match, rounded towards zero - or by
+  n with `/K<n>` (reading M2).

@@ -129,10 +129,11 @@ defmodule Ainalrami.Tiebreaks.Individual do
 
   # ---- Buchholz family (Articles 8, 16) ---------------------------------
 
-  defp compute("BH", code, ctx), do: ctx |> buchholz_contributions() |> cut(code, :by_value, ctx)
+  defp compute("BH", code, ctx),
+    do: ctx |> buchholz_contributions(code) |> cut(code, :by_value, ctx)
 
   defp compute("FB", code, ctx) do
-    ctx.event |> fore() |> context() |> buchholz_contributions() |> cut(code, :by_value, ctx)
+    ctx.event |> fore() |> context() |> buchholz_contributions(code) |> cut(code, :by_value, ctx)
   end
 
   # 8.2: over opponents met over the board - a dummy has no Buchholz.
@@ -149,7 +150,7 @@ defmodule Ainalrami.Tiebreaks.Individual do
   end
 
   defp compute("SB", code, ctx),
-    do: ctx |> sonneborn_contributions() |> cut(code, :by_opponent_score, ctx)
+    do: ctx |> sonneborn_contributions(code) |> cut(code, :by_opponent_score, ctx)
 
   # 9.2: points against participants on at least half of the maximum
   # possible score, the limit moved by half a point per step of `Ln` (14.5).
@@ -285,18 +286,31 @@ defmodule Ainalrami.Tiebreaks.Individual do
   # dummy) it came from, whether the round was a VUR - and, for
   # `working/3`, which round, which opponent, and whether it counted as a
   # game or as Article 16's dummy.
-  defp buchholz_contributions(ctx) do
+  #
+  # `code.forfeits?` is the `/P` option of FIDE's Mandatory Tie-Breaks
+  # table: forfeits, won or lost, "are considered as played games against
+  # the scheduled opponent". In a Swiss event such a round contributes that
+  # opponent's adjusted score (16.3) instead of meeting 16.4.1's dummy, and
+  # stops being a VUR, so 16.5's Cut-1 exception no longer reaches for it.
+  # The opponents' own adjusted scores do not move - 16.3.1 already counts
+  # their forfeits as awarded. TieBreakServer's `predetermined` flag, which
+  # its `/P` sets, reads it the same way.
+  defp buchholz_contributions(ctx, code) do
     each(ctx, fn p ->
       for r <- counted_rounds(p, ctx) do
-        score = opponent_score(p, r, ctx)
-        element(p, r, ctx, score, score, p.rounds[r])
+        score = opponent_score(p, r, ctx, code)
+        element(p, r, ctx, code, score, score, p.rounds[r])
       end
     end)
   end
 
-  defp element(p, r, ctx, value, opponent_score, scored_round) do
+  defp element(p, r, ctx, code, value, opponent_score, scored_round) do
     round = p.rounds[r]
-    game? = round.kind == :played or (ctx.event.predetermined? and round.opponent != nil)
+    forfeit_game? = forfeit_as_game?(round, code)
+
+    game? =
+      forfeit_game? or round.kind == :played or
+        (ctx.event.predetermined? and round.opponent != nil)
 
     %{
       round: r,
@@ -304,23 +318,30 @@ defmodule Ainalrami.Tiebreaks.Individual do
       kind: if(game?, do: :played, else: :virtual),
       value: value,
       opponent_score: opponent_score,
-      vur?: Unplayed.vur?(scored_round)
+      vur?: not forfeit_game? and Unplayed.vur?(scored_round)
     }
   end
+
+  # `/P`: a forfeit against a scheduled opponent is a game.
+  defp forfeit_as_game?(%{kind: kind, opponent: opponent}, %Code{forfeits?: true})
+       when kind in [:forfeit_win, :forfeit_loss] and opponent != nil,
+       do: true
+
+  defp forfeit_as_game?(_round, _code), do: false
 
   # `scored` is the event the points scored against each opponent come
   # from - the same one as the opponents' scores, except for the teams'
   # extended Sonneborn-Berger (C.07 13.2), where EMGSB takes the opponent's
   # MATCH points and the GAME points scored against them. The two events
   # hold the same rounds, so a round is the same round in both.
-  defp sonneborn_contributions(ctx, scored \\ nil) do
+  defp sonneborn_contributions(ctx, code, scored \\ nil) do
     scored = scored || ctx.event
 
     each(ctx, fn p ->
       for r <- counted_rounds(p, ctx) do
-        score = opponent_score(p, r, ctx)
+        score = opponent_score(p, r, ctx, code)
         round = scored.participants[p.id].rounds[r]
-        element(p, r, ctx, score * round.points, score, round)
+        element(p, r, ctx, code, score * round.points, score, round)
       end
     end)
   end
@@ -333,12 +354,12 @@ defmodule Ainalrami.Tiebreaks.Individual do
   by the opponents' scores in `ctx`'s event (14.1's team paragraph).
   """
   def extended_sonneborn(%Code{} = code, ctx, %Event{} = scored) do
-    ctx |> sonneborn_contributions(scored) |> cut(code, :by_opponent_score, ctx)
+    ctx |> sonneborn_contributions(code, scored) |> cut(code, :by_opponent_score, ctx)
   end
 
   @doc "`extended_sonneborn/3`'s per-round parts, in `working/3`'s shape."
   def extended_sonneborn_working(%Code{} = code, ctx, %Event{} = scored) do
-    ctx |> sonneborn_contributions(scored) |> with_cuts(code, :by_opponent_score, ctx)
+    ctx |> sonneborn_contributions(code, scored) |> with_cuts(code, :by_opponent_score, ctx)
   end
 
   # The rounds that are elements of a Buchholz or Sonneborn-Berger sum: all
@@ -354,12 +375,17 @@ defmodule Ainalrami.Tiebreaks.Individual do
   # What round `r` contributes as "the opponent's score": the opponent's
   # adjusted score for a game; the dummy's score for an unplayed round in a
   # Swiss event (16.4). With pairings fixed in advance a forfeit is a game
-  # (15.2) and a round without an opponent contributes nothing.
-  defp opponent_score(p, r, ctx) do
+  # (15.2) and a round without an opponent contributes nothing. Under `/P`
+  # a forfeit in a Swiss event is a game too, against the opponent's
+  # adjusted score.
+  defp opponent_score(p, r, ctx, code) do
     round = p.rounds[r]
 
     cond do
       round.kind == :played ->
+        ctx.adjusted[round.opponent]
+
+      forfeit_as_game?(round, code) ->
         ctx.adjusted[round.opponent]
 
       ctx.event.predetermined? ->
@@ -461,12 +487,12 @@ defmodule Ainalrami.Tiebreaks.Individual do
     source = if name == "FB", do: ctx.event |> fore() |> context(), else: ctx
 
     source
-    |> buchholz_contributions()
+    |> buchholz_contributions(code)
     |> with_cuts(code, :by_value, ctx)
   end
 
   defp parts("SB", code, ctx),
-    do: ctx |> sonneborn_contributions() |> with_cuts(code, :by_opponent_score, ctx)
+    do: ctx |> sonneborn_contributions(code) |> with_cuts(code, :by_opponent_score, ctx)
 
   defp parts("KS", code, ctx) do
     threshold = max_possible(ctx) / 2 + code.limit * 0.5
