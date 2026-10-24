@@ -439,4 +439,118 @@ defmodule Ainalrami.TeamCLITest do
       assert out =~ "\r\n1 1 "
     end
   end
+
+  describe "keeping teams apart (XXO team-forbidden / team-soft-pairs)" do
+    defp with_line(text, line), do: String.trim_trailing(text, "\r\n") <> "\r\n" <> line <> "\r\n"
+
+    defp round_one(extra \\ []) do
+      g = TeamGenerator.run(seed: 21, teams: 16, rounds: 5, boards: 2, absent_team_pct: 0)
+      text = cut(g.text, 1)
+      Enum.reduce(extra, text, &with_line(&2, &1))
+    end
+
+    defp pair_file(text, flags) do
+      out = tmp("out.txt")
+      {err, code} = cli([write(text), "-p", out] ++ flags)
+      {if(code == 0, do: pairs_of(File.read!(out)), else: err), code, err}
+    end
+
+    defp met?(pairs, a, b), do: {a, b} in pairs or {b, a} in pairs
+
+    test "round one: the record and the flag both keep 3 and 11 apart" do
+      {plain, 0, _} = pair_file(round_one(), [])
+      assert met?(plain, 3, 11)
+
+      {by_record, 0, err} = pair_file(round_one(["XXO team-forbidden 3 11 16"]), [])
+      refute met?(by_record, 3, 11)
+      assert err =~ "never paired (the organiser's rule, not C.04.6): [3 11 16]"
+
+      {by_flag, 0, _} = pair_file(round_one(), ["--team-forbidden=3,11,16"])
+      assert by_flag == by_record
+
+      {soft, 0, err} = pair_file(round_one(), ["--team-soft-pairs=3,11,16"])
+      assert soft == by_record
+      assert err =~ "kept apart where no FIDE criterion minds"
+
+      # Out of its rounds, the group says nothing.
+      {later, 0, _} = pair_file(round_one(["XXO team-forbidden 3 11 @2-5"]), [])
+      assert later == plain
+    end
+
+    test "-x shows the soft count per bracket" do
+      {out, 0} = cli([write(round_one(["XXO team-soft-pairs 3 11 16"])), "-x", "-q"])
+      assert out =~ "soft pairs it could not avoid: 0"
+    end
+
+    test "groups that make the round unpairable are refused, by name" do
+      text = round_one(["XXO team-forbidden 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15"])
+      {err, 1, _} = pair_file(text, [])
+      assert err =~ "leave no legal pairing, and without them the round pairs"
+      assert err =~ "lifting any one of [1 2 3 4 5 6 7 8 9 10 11 12 13 14 15] would"
+    end
+
+    test "a team number the file does not have is refused" do
+      {err, 1, _} = pair_file(round_one(["XXO team-soft-pairs 3 99"]), [])
+      assert err =~ "team-soft-pairs names team 99, which the file does not have"
+
+      {err, 1, _} = pair_file(round_one(), ["--team-forbidden=3,42"])
+      assert err =~ "team-forbidden names team 42"
+    end
+
+    test "-c replays with the records, and says it is not a pure FIDE check" do
+      g = TeamGenerator.run(seed: 22, teams: 10, rounds: 4, absent_team_pct: 0)
+      {out, 0} = cli([write(g.text), "-c"])
+      refute out =~ "keeps teams apart"
+
+      # Forbid a pair the file has playing in round 1: that round now differs.
+      [{a, b} | _] = g.pairings[1].matches
+      {out, 1} = cli([write(with_line(g.text, "XXO team-forbidden #{a} #{b}")), "-c"])
+      assert out =~ "keeps teams apart"
+      assert out =~ "round 1: DIFFERS"
+
+      # --team-soft-pairs is -p and -x only, as --soft-pairs is.
+      {out, 1} = cli([write(g.text), "-c", "--team-soft-pairs=1,2"])
+      assert out =~ "--team-soft-pairs is for -p, -x"
+    end
+
+    test "the records round-trip through parse and serialize" do
+      text = with_line(round_one(), "XXO team-forbidden 3 11 16")
+      text = with_line(text, "XXO team-soft-pairs 1 8 @1-2")
+      parsed = Trf.parse(text)
+      assert parsed.tournament.team_forbidden_pairs == [[3, 11, 16]]
+      assert parsed.tournament.team_soft_pairs == [{[1, 8], 1, 2}]
+
+      again = Trf.serialize(parsed, dialect: :trf26)
+      assert again =~ "\r\nXXO team-forbidden 3 11 16\r\n"
+      assert again =~ ~r/\r\nXXO team-soft-pairs 1 8 @1-2\r\n/
+      assert Trf.parse(again).tournament.team_soft_pairs == [{[1, 8], 1, 2}]
+    end
+
+    test "a malformed record is refused" do
+      assert_raise Trf.ValidationError, ~r/team-forbidden takes two or more team numbers/, fn ->
+        Trf.parse(with_line(round_one(), "XXO team-forbidden 3"))
+      end
+    end
+
+    test "XXP names players, so a team Swiss refuses it rather than ignoring it" do
+      {err, 1, _} = pair_file(round_one(["XXP 1 2"]), [])
+      assert err =~ "XXP/260 forbidden pairs name players"
+    end
+
+    test "the team records and flags are refused where nothing pairs by them" do
+      {text, _seed} = Ainalrami.Generator.generate(seed: 3, players: 10, rounds: 2)
+      {out, 1} = cli([write(text), "-p", "--team-forbidden=1,2"])
+      assert out =~ "--team-forbidden is for a team event"
+
+      {out, 1} = cli([write(with_line(text, "XXO team-soft-pairs 1 2")), "-p"])
+      assert out =~ "are for a team Swiss, not an individual tournament"
+
+      rr = TeamGenerator.run(seed: 23, system: :round_robin)
+      {out, 1} = cli([write(rr.text), "-p", "--team-forbidden=1,2"])
+      assert out =~ "--team-forbidden is for a team Swiss, not a team round robin"
+
+      {out, 1} = cli([write(with_line(rr.text, "XXO team-forbidden 1 2")), "-c"])
+      assert out =~ "are for a team Swiss"
+    end
+  end
 end

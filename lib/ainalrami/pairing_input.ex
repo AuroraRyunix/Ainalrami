@@ -205,6 +205,18 @@ defmodule Ainalrami.PairingInput do
   end
 
   @doc """
+  Whether a parsed tournament keeps teams apart (`XXO team-forbidden`,
+  `XXO team-soft-pairs`) - a team Swiss's records, which nothing else
+  pairs by. Not part of `organiser?/1`, which a team Swiss refuses.
+  """
+  def team_apart?(tournament) do
+    Enum.any?(
+      [:team_forbidden_pairs, :team_soft_pairs],
+      &(Map.get(tournament, &1) not in [nil, []])
+    )
+  end
+
+  @doc """
   The organiser's options of a parsed tournament - what its `XXO` lines
   parse to - as `Ainalrami.Pairing.pair_next_round/2` takes them for
   `round`: `:soft_pairs` with `:soft_position`, `:bye_exclusions` (the

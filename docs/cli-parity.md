@@ -81,6 +81,8 @@ unless said otherwise).
 | `explain: true` | always | `-x` | - |
 | `explain_limit:` | default | `--explain-limit=N` **(new)** | - |
 | `max_candidates:`, `max_steps:` | - | - (accepted and ignored by the library since 2026-09-25) | - |
+| `forbidden_pairs:` (team numbers, optionally `{tpns, first, last}`) | not yet passed (the option is new) | `--team-forbidden=3,11,16/1,8@1-2` **(new, -p/-x/-c)** | `XXO team-forbidden 3 11 16 [@1-2]` **(new)** |
+| `soft_pairs:` (same shape) | not yet passed | `--team-soft-pairs=3,11,16` **(new, -p/-x)** | `XXO team-soft-pairs 3 11 16 [@1-2]` **(new)** |
 | match points, the bye's and a forfeit's value | the standings | - (`-g` only) | `362`, `320`, `330` |
 
 ## Round robins - `-p`, `-x`, `-c`

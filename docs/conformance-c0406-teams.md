@@ -655,3 +655,45 @@ look-aheads) per bracket.
   and 3.4.3, ignoring the walk's own runner-up, skipping a worse-profile
   runner-up, not ending the look on a `{0, 0}`, and ranking runner-ups
   without 3.5.4's order each fail at least one test.
+
+## Keeping teams apart (not FIDE), 2026-10-24
+
+`Ainalrami.TeamPairing.pair_round/2` takes `:forbidden_pairs` and
+`:soft_pairs`, the individual engine's options of the same names and
+shapes: groups of team numbers, each optionally `{tpns, first, last}`.
+C.04.6 has neither, so a round they change is not a C.04.6 round; the
+readings below are this engine's, chosen so that FIDE's own answer moves as
+little as the wish allows.
+
+**Forbidden pairs are pairs that have met.** The only place [C1] is read
+is the teams' opponents, in `Field` and in `Bracket` alike, so the
+forbidden partners are added there for the pairing (and only the pairing:
+Article 4 sees the teams as given). That one change reaches every question
+[C1] answers - 3.4.1's "leaves a legal pairing", [C3], the [C6]
+look-ahead, every bracket - and no criterion is reordered. When the
+groups leave a round unpairable that pairs without them, the answer is
+`{:error, {:forbidden_pairs, %{reason:, groups:, lifting:}}}` rather than
+3.3.3's bare verdict, with `lifting` the groups that, lifted on their own,
+let it pair.
+
+**Soft pairs are a fourth digit in 3.6.** The bracket's answer is the
+least `{C8, C9, C10}` and then the first identifier; with soft pairs it is
+the least `{C8, C9, C10, soft}` and then the first identifier. Both of
+`Bracket`'s paths carry it - the fast path stops early only on
+`{0, 0, 0, 0}`, and the matching packs the count as a digit of base
+`h + 1` below the three - and without soft pairs the digit does not exist,
+so every packed cost is the integer it was. Soft pairs never reach 3.4 or
+3.5: the bye and the upfloaters are chosen exactly as FIDE chooses them.
+The individual engine's `:strong` placement (above C6) has no team
+counterpart on purpose - above 3.5 it would buy a wish with a FIDE
+criterion.
+
+**Evidence.** `test/ainalrami/team_keep_apart_test.exs`: 300 played events
+of 4-10 teams (1,185 rounds) with random hard and soft groups against
+`NaiveReference`, which reads both options from the description above, 0
+disagreements; no forbidden pair seated; every soft round with FIDE's
+bye, brackets, floaters and criteria, no more soft pairs than FIDE's
+answer, and FIDE's answer itself whenever that seats none. Plus the case
+it was built for: sixteen teams from six clubs over five rounds, round one
+pairing 3-12 and 4-11 instead of 3-11 and 4-12. The whole-round validation
+without groups runs unchanged.

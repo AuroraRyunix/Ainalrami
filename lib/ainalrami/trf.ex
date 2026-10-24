@@ -203,6 +203,17 @@ defmodule Ainalrami.Trf do
       - the four bye preferences (`tournament[:bye_preferences]`, as
       `Ainalrami.ByePreference` takes them). `ROUNDS` is `3`, `3-5` or
       several joined by `+`.
+    * `XXO team-forbidden a b [c ...] [@ROUND | @FIRST-LAST]` - a team
+      event's `XXP`: TEAM numbers (the `310` numbers, file order for `013`
+      teams) that must not meet, for every round or the rounds named.
+      `XXP` names players, so it cannot say this. Surfaced as
+      `tournament[:team_forbidden_pairs]`, in the shape
+      `Ainalrami.TeamPairing`'s `:forbidden_pairs` takes.
+    * `XXO team-soft-pairs a b [c ...] [@ROUND | @FIRST-LAST]` - teams to
+      keep apart where no C.04.6 criterion minds
+      (`tournament[:team_soft_pairs]`, `Ainalrami.TeamPairing`'s
+      `:soft_pairs`). Both team records are checked against the file's
+      teams when a team round is paired or replayed, not here.
     * `XXO bye-exclude rank[@ROUNDS] ...` - the plain bye exclusion
       (`tournament[:bye_exclusions]`: a rank, or `{rank, rounds}`).
     * `XXO round-ratings rank rating rating ...` - the rating the player
@@ -1291,7 +1302,16 @@ defmodule Ainalrami.Trf do
           Enum.map_join(1..last, " ", &(Map.get(by_round, &1) || "-"))
       end
 
-    soft ++ position ++ excluded ++ preferences ++ ratings
+    teams =
+      for {key, keyword} <- [
+            team_forbidden_pairs: "team-forbidden",
+            team_soft_pairs: "team-soft-pairs"
+          ],
+          group <- t[key] || [] do
+        "XXO #{keyword} " <> Ainalrami.PairingInput.format_group(group)
+      end
+
+    soft ++ position ++ excluded ++ preferences ++ ratings ++ teams
   end
 
   # `XXM` and `XXG`, this engine's own (see the moduledoc). Written in both
@@ -2848,6 +2868,21 @@ defmodule Ainalrami.Trf do
     rest = line |> String.slice(3..-1//1) |> String.trim()
 
     case String.split(rest, [" ", "\t"], parts: 2, trim: true) do
+      [keyword, text] when keyword in ["team-forbidden", "team-soft-pairs"] ->
+        case Ainalrami.PairingInput.parse_group(text) do
+          {:ok, group} ->
+            key =
+              if keyword == "team-forbidden", do: :team_forbidden_pairs, else: :team_soft_pairs
+
+            update_in(acc.tournament[key], &((&1 || []) ++ [group]))
+
+          :error ->
+            raise ValidationError,
+              message:
+                "XXO #{keyword} takes two or more team numbers, optionally @ROUND or " <>
+                  "@FIRST-LAST: #{line}"
+        end
+
       ["soft-pairs", text] ->
         case Ainalrami.PairingInput.parse_group(text) do
           {:ok, group} ->
@@ -2922,7 +2957,8 @@ defmodule Ainalrami.Trf do
         raise ValidationError,
           message:
             "XXO does not have #{inspect(keyword)} (soft-pairs, soft-position, bye-want, " <>
-              "bye-want-soft, bye-avoid, bye-avoid-soft, bye-exclude, round-ratings), or " <>
+              "bye-want-soft, bye-avoid, bye-avoid-soft, bye-exclude, round-ratings, " <>
+              "team-forbidden, team-soft-pairs), or " <>
               "it has nothing after it: #{line}"
 
       [] ->

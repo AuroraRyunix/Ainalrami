@@ -12,6 +12,12 @@ defmodule Ainalrami.TeamProof.NaiveReference do
   It plays Type A, or no colour preferences at all when the engine options
   it is handed say `type: :none` (1.7's third option: `ref_preference/2`
   is nil for everyone). Type B is not played here.
+
+  It also reads the engine options' `:forbidden_pairs` and `:soft_pairs`
+  (`Ainalrami.TeamPairing`, "Keeping teams apart"), written from that
+  description rather than from the code: a forbidden pair is a pair that
+  has met, for every question [C1] answers; a soft pair is counted per
+  bracket pairing, after [C10] and before the identifier.
   """
 
   def ref_round(field, opts) do
@@ -22,15 +28,17 @@ defmodule Ainalrami.TeamProof.NaiveReference do
     expected = engine_opts[:expected_rounds]
     last_two? = round >= expected - 1
     type = ref_type(engine_opts[:type])
+    soft = ref_pairs(engine_opts[:soft_pairs], round)
 
     numbers = ref_numbers(field, absent)
     by_tpn = Map.new(field, &{&1.tpn, &1})
+    field = ref_forbid(field, ref_pairs(engine_opts[:forbidden_pairs], round))
 
     with {bye, rest, bye_reasons} <- ref_bye(field),
          true <- ref_pairable?(rest) do
       {bracket_pairs, bracket_reasons} =
         rest
-        |> ref_brackets({last_two?, type}, [])
+        |> ref_brackets({last_two?, type, soft}, [])
         |> Enum.unzip()
 
       allocated =
@@ -53,6 +61,38 @@ defmodule Ainalrami.TeamProof.NaiveReference do
     else
       _ -> :impossible
     end
+  end
+
+  # Every pair `{low, high}` inside the groups that apply in `round`.
+  defp ref_pairs(nil, _round), do: MapSet.new()
+
+  defp ref_pairs(groups, round) do
+    for group <- groups,
+        tpns =
+          (case group do
+             {tpns, first, last} -> if round >= first and round <= last, do: tpns, else: []
+             tpns -> tpns
+           end),
+        a <- tpns,
+        b <- tpns,
+        a < b,
+        into: MapSet.new(),
+        do: {a, b}
+  end
+
+  # A forbidden pair has, for pairing purposes, already met.
+  # Without any the field is returned untouched.
+  defp ref_forbid(field, forbidden) do
+    Enum.map(field, fn t ->
+      extra =
+        for {a, b} <- forbidden,
+            t.tpn in [a, b],
+            other = if(a == t.tpn, do: b, else: a),
+            other not in t.opponents,
+            do: other
+
+      %{t | opponents: t.opponents ++ extra}
+    end)
   end
 
   # 4.3.1's numbering: everyone arrived, in TPN order, from 1.
@@ -109,7 +149,7 @@ defmodule Ainalrami.TeamProof.NaiveReference do
 
   defp ref_brackets([], _settings, acc), do: Enum.reverse(acc)
 
-  defp ref_brackets(remaining, {last_two?, type} = settings, acc) do
+  defp ref_brackets(remaining, {last_two?, type, soft} = settings, acc) do
     top = remaining |> Enum.map(& &1.match_points) |> Enum.max()
     {residents, lower} = Enum.split_with(remaining, &(&1.match_points == top))
 
@@ -160,7 +200,7 @@ defmodule Ainalrami.TeamProof.NaiveReference do
       end
 
     ups = MapSet.new(set, & &1.tpn)
-    pairs = ref_bracket_pairing(residents ++ set, ups, last_two?, type)
+    pairs = ref_bracket_pairing(residents ++ set, ups, last_two?, type, soft)
     reasons = %{upfloaters: tpns, decided_by: decided_by}
     ref_brackets(lower -- set, settings, [{pairs, reasons} | acc])
   end
@@ -193,9 +233,9 @@ defmodule Ainalrami.TeamProof.NaiveReference do
 
   defp sort_353(set), do: Enum.sort_by(set, &{0 - &1.match_points, &1.tpn})
 
-  # 3.6: every pairing, legal under [C1]; least {C8, C10}; smallest
-  # identifier.
-  defp ref_bracket_pairing(bracket, ups, last_two?, type) do
+  # 3.6: every pairing, legal under [C1]; least {C8, C10}; then (only ever
+  # non-zero with soft pairs) the fewest soft pairs; smallest identifier.
+  defp ref_bracket_pairing(bracket, ups, last_two?, type, soft) do
     bracket
     |> Enum.sort_by(& &1.tpn)
     |> all_pairings()
@@ -204,7 +244,13 @@ defmodule Ainalrami.TeamProof.NaiveReference do
       tops = Enum.map(pairs, fn {a, b} -> min(a.tpn, b.tpn) end)
       order = Enum.sort_by(pairs, fn {a, b} -> min(a.tpn, b.tpn) end)
       bottoms = Enum.map(order, fn {a, b} -> max(a.tpn, b.tpn) end)
-      {c8(pairs, type), c10(pairs, ups, last_two?), Enum.sort(tops) ++ bottoms}
+
+      soft_count =
+        Enum.count(pairs, fn {a, b} ->
+          MapSet.member?(soft, {min(a.tpn, b.tpn), max(a.tpn, b.tpn)})
+        end)
+
+      {c8(pairs, type), c10(pairs, ups, last_two?), soft_count, Enum.sort(tops) ++ bottoms}
     end)
     |> Enum.map(fn {a, b} -> {a.tpn, b.tpn} end)
   end
