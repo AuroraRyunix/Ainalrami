@@ -66,6 +66,8 @@ with the reference on every one of them.
 
 ## [Unreleased]
 
+## [0.45.0] - 2026-10-24
+
 - [Feature] **Every code in FIDE's Mandatory Tie-Breaks table is accepted.** The table TRF26's `202`/`212` records point to prints 151 codes; 51 of them were refused, which for a list of what a program *must* implement is a poor ratio. `/P` - forfeits, won or lost, count as games against the scheduled opponent - now works on BH, FB and SB with every cut and median, on the four extended Sonneborn-Bergers and on SSSC, where before it was direct encounter's alone. A forfeit round contributes the opponent's adjusted score instead of Article 16's capped dummy, and stops being a voluntary unplayed round, so the Cut-1 exception no longer cuts it first. Events with pairings fixed in advance already counted forfeits as games and do not notice. `docs/conformance-c07-tiebreaks.md`, reading M1, has the details and the one citation in the table that points at the wrong article.
 - [Feature] **`SSSC/K<n>`** sets SSSC's normalising factor to n, the "different value if stated by the rules of the competition" of 13.4.2 b. Combines with `/F` and `/P` (`SSSC/F/P/K4`). A competition that states its factor also no longer has to wonder what happens when the computed one rounds to zero.
 - [Verified] TieBreakServer agrees on every value of the new variants: 93,926 values over 300 generated Swiss events and 28,306 over 200 generated team events (193 of them forfeited matches), no mismatches. `test/ainalrami/tiebreak_mandatory_codes_test.exs` carries the whole table, hand-worked values for each new variant, and the command line taking them through `--tie-breaks=`.
