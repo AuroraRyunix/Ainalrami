@@ -631,10 +631,19 @@ defmodule Ainalrami.Tiebreaks.Team do
   end
 
   # 13.4: secondary score + Buchholz of the primary / the normalising factor.
+  # `/F` makes the Buchholz a Fore Buchholz (13.4.2 a), `/P` counts forfeits
+  # as games in it, and `/K<n>` is "a different value if stated by the rules
+  # of the competition" for the factor (13.4.2 b).
   defp value(%Code{name: "SSSC"} = code, t, views) do
     primary = t.primary
     bh_name = if code.fore?, do: "FB", else: "BH"
-    bh = Individual.values(%Code{name: bh_name}, views[primary], views.ctx[primary])
+
+    bh =
+      Individual.values(
+        %Code{name: bh_name, forfeits?: code.forfeits?},
+        views[primary],
+        views.ctx[primary]
+      )
 
     highest_primary = t.rounds * views[primary].points.win
 
@@ -644,7 +653,7 @@ defmodule Ainalrami.Tiebreaks.Team do
         :mp -> t.match_points.win
       end
 
-    divisor = max(trunc(highest_primary / highest_secondary_match), 1)
+    divisor = code.normaliser || max(trunc(highest_primary / highest_secondary_match), 1)
     secondary_scores = views.ctx[secondary(t)].scores
 
     Map.new(bh, fn {id, v} -> {id, secondary_scores[id] + v / divisor} end)

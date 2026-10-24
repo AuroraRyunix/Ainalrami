@@ -2,7 +2,7 @@ defmodule Ainalrami.Tiebreaks.Code do
   @moduledoc """
   One tie-break as a TRF26 `202`/`212` list writes it: a name, an optional
   score for team events, and modifiers - `BH/C1`, `ARO/M2`, `KS/L-1`,
-  `RTNG/R`, `DE/P`, `AOB/F`, `SB:GP/C1`.
+  `RTNG/R`, `DE/P`, `BH/C1/P`, `AOB/F`, `SSSC/F/P/K4`, `SB:GP/C1`.
 
   The syntax is the one FIDE's checklist (VCL4THP v13, Q104 and Q199) spells
   its codes in, which is also what TieBreakServer reads. The modifiers and
@@ -27,6 +27,7 @@ defmodule Ainalrami.Tiebreaks.Code do
             reverse?: false,
             forfeits?: false,
             fore?: false,
+            normaliser: nil,
             unrated: nil
 
   @type t :: %__MODULE__{
@@ -38,6 +39,7 @@ defmodule Ainalrami.Tiebreaks.Code do
           reverse?: boolean(),
           forfeits?: boolean(),
           fore?: boolean(),
+          normaliser: nil | pos_integer(),
           unrated: nil | non_neg_integer()
         }
 
@@ -52,6 +54,11 @@ defmodule Ainalrami.Tiebreaks.Code do
   # name is.
   @cuts ~w(PS BH FB SB ARO ESB EMMSB EMGSB EGMSB EGGSB)
   @medians ~w(BH FB ARO)
+
+  # `P`, forfeits as games: direct encounter (6.1.1), and - FIDE's Mandatory
+  # Tie-Breaks table, citing 16.5 - everything built on opponents' scores
+  # that Article 16 would otherwise hand a dummy.
+  @forfeits ~w(DE EDE EDEBT EDEBB EDET EDEB BH FB SB ESB EMMSB EMGSB EGMSB EGGSB SSSC)
 
   @doc "Every name `parse/1` accepts."
   def names, do: @individual ++ @team
@@ -121,8 +128,9 @@ defmodule Ainalrami.Tiebreaks.Code do
         cut_modifier(code),
         limit_modifier(code.limit),
         code.reverse? && "R",
-        code.forfeits? && "P",
         code.fore? && "F",
+        code.forfeits? && "P",
+        code.normaliser && "K#{code.normaliser}",
         code.unrated && "U#{code.unrated}"
       ]
       |> Enum.filter(&is_binary/1)
@@ -186,8 +194,16 @@ defmodule Ainalrami.Tiebreaks.Code do
 
   defp modifier(code, "R") when code.name in ~w(TPN RTNG), do: {:ok, %{code | reverse?: true}}
 
-  defp modifier(code, "P") when code.name in ~w(DE EDE EDEBT EDEBB EDET EDEB),
-    do: {:ok, %{code | forfeits?: true}}
+  defp modifier(code, "P") when code.name in @forfeits, do: {:ok, %{code | forfeits?: true}}
+
+  # SSSC's normalising factor stated by the rules of the competition
+  # (13.4.2 b's "or by a different value"): `K4` divides the Buchholz by 4.
+  defp modifier(%{name: "SSSC"} = code, "K" <> n) do
+    case Integer.parse(n) do
+      {k, ""} when k >= 1 -> {:ok, %{code | normaliser: k}}
+      _ -> :error
+    end
+  end
 
   # Fore Buchholz underneath: AOB (8.2), and SSSC when "the tie-break value
   # must be known before playing" (13.4.2 a).
