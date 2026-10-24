@@ -93,6 +93,12 @@ defmodule Ainalrami.TeamPairing.Bracket do
       two rounds". When true, [C10] contributes nothing.
     * `:max_candidates`, `:max_steps` - accepted for compatibility and
       ignored (see the module doc).
+    * `:soft_pairs` - `%{tpn => MapSet.t(tpn)}`, the pairs to seat as few
+      of as possible among the pairings that tie on `{c8, c9, c10}`: one
+      more digit after [C10] and before the identifier, so it never
+      outranks anything 3.6 counts. Given (and not empty), the result also
+      has `soft:`, how many such pairs the answer could not avoid. Absent,
+      the result is the map it always was.
   """
   def pair(teams, opts \\ [])
 
@@ -113,8 +119,10 @@ defmodule Ainalrami.TeamPairing.Bracket do
     case search(ctx) do
       # The first legal pairing in identifier order, and nothing can score
       # below {0, 0, 0}: it is 3.6's answer, and the walk's answer always was.
-      {:ok, %{scores: {0, 0, 0}}} = found ->
-        found
+      # With soft pairs the fourth digit has to be nothing too, or a later
+      # pairing equal on the FIDE three might seat fewer of them.
+      {:ok, %{costs: {0, 0, 0, 0}}} = found ->
+        finish(found, ctx)
 
       # The walk completed without finding a single legal pairing (it cannot
       # have stopped at the candidate budget, which needs a candidate): that
@@ -125,16 +133,31 @@ defmodule Ainalrami.TeamPairing.Bracket do
       # A better-scoring pairing may lie further on, or the walk ran out of
       # steps before its first candidate: decide exactly.
       _ ->
-        exact(ctx)
+        ctx |> exact() |> finish(ctx)
     end
   end
+
+  # The internal four-digit cost as the result reports it: `scores` is the
+  # FIDE three, exactly as before soft pairs existed, and `soft` - the soft
+  # pairs the bracket could not avoid - is there only when some were asked
+  # for, so a round paired without them returns the map it always did.
+  defp finish({:ok, %{costs: {c8, c9, c10, soft}} = result}, ctx) do
+    result = result |> Map.delete(:costs) |> Map.put(:scores, {c8, c9, c10})
+    {:ok, if(ctx.soft, do: Map.put(result, :soft, soft), else: result)}
+  end
+
+  defp finish(other, _ctx), do: other
 
   @doc false
   # The matching path alone, skipping the fast path, so tests can hold it to
   # the pre-change walk on every shape rather than only where the first
   # candidate costs something.
   def __exact_for_test__([], _opts), do: {:ok, %{pairs: [], scores: {0, 0, 0}}}
-  def __exact_for_test__(teams, opts), do: exact(context(teams, opts))
+
+  def __exact_for_test__(teams, opts) do
+    ctx = context(teams, opts)
+    ctx |> exact() |> finish(ctx)
+  end
 
   defp context(teams, opts) do
     sorted = Enum.sort_by(teams, & &1.tpn)
@@ -145,6 +168,12 @@ defmodule Ainalrami.TeamPairing.Bracket do
     upfloaters = MapSet.new(Keyword.get(opts, :upfloater_tpns, []))
     last_two_rounds? = Keyword.get(opts, :last_two_rounds?, false)
 
+    # `%{tpn => MapSet.t(tpn)}`: the pairs to avoid where it costs nothing
+    # FIDE counts (`Ainalrami.TeamPairing`, "Keeping teams apart"), or nil.
+    # nil - and an empty map - leave this module exactly as it was.
+    soft = Keyword.get(opts, :soft_pairs)
+    soft = if soft in [nil, %{}], do: nil, else: soft
+
     ctx = %{
       tpns: List.to_tuple(tpns),
       by_tpn: by_tpn,
@@ -153,6 +182,7 @@ defmodule Ainalrami.TeamPairing.Bracket do
       last_round?: last_round?,
       upfloaters: upfloaters,
       last_two_rounds?: last_two_rounds?,
+      soft: soft,
       # The fast path's walk: it only has to reach the first legal pairing.
       max_candidates: 1,
       max_steps: @fast_path_steps
@@ -199,10 +229,19 @@ defmodule Ainalrami.TeamPairing.Bracket do
       for i <- 0..(n - 2)//1,
           j <- (i + 1)..(n - 1)//1,
           (elem(ctx.allowed, i) >>> j &&& 1) == 1,
-          do: {i, j, add_costs({0, 0, 0}, i, j, ctx)}
+          do: {i, j, add_costs({0, 0, 0, 0}, i, j, ctx)}
 
     # c8 and c9 count at most one per pair, c10 at most two.
-    pack_criteria = fn {c8, c9, c10} -> (c8 * (h + 1) + c9) * (2 * h + 1) + c10 end
+    pack_fide = fn {c8, c9, c10, _soft} -> (c8 * (h + 1) + c9) * (2 * h + 1) + c10 end
+
+    # The soft count is one more digit BELOW the FIDE three (at most one per
+    # pair, so base h + 1) and above the identifier: it only ever chooses
+    # among pairings FIDE already ranks equal. Without soft pairs the digit
+    # is not there at all, so every packed cost is the integer it always was.
+    pack_criteria =
+      if ctx.soft,
+        do: fn {_, _, _, soft} = costs -> pack_fide.(costs) * (h + 1) + soft end,
+        else: pack_fide
 
     top_base = h * (1 <<< n) + 1
 
@@ -235,19 +274,19 @@ defmodule Ainalrami.TeamPairing.Bracket do
       {:ok, second} = min_cost_perfect(n, bottoms_edges)
 
       costs_of = fn pairs ->
-        Enum.reduce(pairs, {0, 0, 0}, fn {t, b}, acc -> add_costs(acc, t, b, ctx) end)
+        Enum.reduce(pairs, {0, 0, 0, 0}, fn {t, b}, acc -> add_costs(acc, t, b, ctx) end)
       end
 
-      scores = costs_of.(second)
+      costs = costs_of.(second)
 
-      if scores != costs_of.(first) or Enum.map(second, &elem(&1, 0)) != tops do
+      if costs != costs_of.(first) or Enum.map(second, &elem(&1, 0)) != tops do
         raise "3.6 matching: the bottom step did not keep the top step's optimum " <>
-                "(#{inspect(costs_of.(first))} -> #{inspect(scores)})"
+                "(#{inspect(costs_of.(first))} -> #{inspect(costs)})"
       end
 
       pairs = Enum.map(second, fn {t, b} -> {elem(ctx.tpns, t), elem(ctx.tpns, b)} end)
 
-      {:ok, %{pairs: pairs, scores: scores, candidates: 0, steps: 0, exhaustive?: true}}
+      {:ok, %{pairs: pairs, costs: costs, candidates: 0, steps: 0, exhaustive?: true}}
     end
   end
 
@@ -327,8 +366,23 @@ defmodule Ainalrami.TeamPairing.Bracket do
       end)
       |> List.to_tuple()
 
+    # The soft pairs the way `allowed` is built - per index, a mask of the
+    # positions it would rather not meet - or nil when there are none.
+    soft_masks =
+      ctx.soft &&
+        tpns
+        |> Enum.map(fn tpn ->
+          ctx.soft
+          |> Map.get(tpn, MapSet.new())
+          |> Enum.reduce(0, fn other, acc ->
+            positions |> Map.get(other, []) |> Enum.reduce(acc, &(&2 ||| 1 <<< &1))
+          end)
+        end)
+        |> List.to_tuple()
+
     %{
       allowed: allowed,
+      soft_masks: soft_masks,
       info: info,
       c10?: not (ctx.last_two_rounds? or MapSet.size(ctx.upfloaters) == 0)
     }
@@ -363,7 +417,7 @@ defmodule Ainalrami.TeamPairing.Bracket do
         {:ok,
          %{
            pairs: pairs,
-           scores: state.best_scores,
+           costs: state.best_scores,
            candidates: state.candidates,
            steps: state.steps,
            exhaustive?: not state.exhausted
@@ -394,7 +448,7 @@ defmodule Ainalrami.TeamPairing.Bracket do
     top_mask = Enum.reduce(tops, 0, &(&2 ||| 1 <<< &1))
     bottoms = for i <- 0..(ctx.n - 1)//1, (top_mask >>> i &&& 1) == 0, do: i
     bottom_mask = (1 <<< ctx.n) - 1 &&& bnot(top_mask)
-    walk_bottoms(tops, length(tops), bottoms, bottom_mask, [], {0, 0, 0}, ctx, state)
+    walk_bottoms(tops, length(tops), bottoms, bottom_mask, [], {0, 0, 0, 0}, ctx, state)
   end
 
   defp walk_top_sets(need, chosen, from, ctx, state) do
@@ -419,7 +473,7 @@ defmodule Ainalrami.TeamPairing.Bracket do
   # ascending order so the bottom sequence comes out lexicographically.
   #
   # `k` is `length(tops)`, and `length(bottoms)` is always the same. `costs`
-  # is `{c8, c9, c10}` of the pairs in `acc`, summed as they are added, so a
+  # is `{c8, c9, c10, soft}` of the pairs in `acc`, summed as they are added, so a
   # complete candidate's criteria cost nothing more to know.
   defp walk_bottoms([], _k, [], _bottom_mask, acc, costs, ctx, state) do
     state = step(state, ctx)
@@ -512,9 +566,11 @@ defmodule Ainalrami.TeamPairing.Bracket do
     end)
   end
 
-  # {c8, c9, c10} of one pair, added to the running sums. The same three
-  # counts `criteria/2` makes per pair, from the tables.
-  defp add_costs({c8, c9, c10} = costs, t, b, ctx) do
+  # {c8, c9, c10, soft} of one pair, added to the running sums: the same
+  # three counts `criteria/2` makes per pair, from the tables, and whether
+  # the pair is one the arbiter would rather not see (always 0 without soft
+  # pairs, so the comparisons below order exactly as the three did).
+  defp add_costs({c8, c9, c10, soft} = costs, t, b, ctx) do
     {colour_t, strong_t, up_t, floated_t} = elem(ctx.info, t)
     {colour_b, strong_b, up_b, floated_b} = elem(ctx.info, b)
 
@@ -525,19 +581,24 @@ defmodule Ainalrami.TeamPairing.Bracket do
         0
       end
 
+    soft_add = soft_bit(ctx.soft_masks, t, b)
+
     cond do
       # `clash?/2`: both want a colour, and the same one.
       colour_t != nil and colour_t == colour_b ->
         c9_add = if ctx.type == :b and strong_t and strong_b, do: 1, else: 0
-        {c8 + 1, c9 + c9_add, c10 + c10_add}
+        {c8 + 1, c9 + c9_add, c10 + c10_add, soft + soft_add}
 
-      c10_add == 0 ->
+      c10_add == 0 and soft_add == 0 ->
         costs
 
       true ->
-        {c8, c9, c10 + c10_add}
+        {c8, c9, c10 + c10_add, soft + soft_add}
     end
   end
+
+  defp soft_bit(nil, _t, _b), do: 0
+  defp soft_bit(masks, t, b), do: elem(masks, t) >>> b &&& 1
 
   # 3.6.4's three minimisation criteria for a complete candidate - already
   # summed along the walk (`add_costs/4`), so equal to `criteria/2` of its
@@ -632,7 +693,7 @@ defmodule Ainalrami.TeamPairing.Bracket do
   defp bool_to_int(false), do: 0
 
   defp done?(%{out_of_steps: true}), do: true
-  defp done?(%{best_scores: {0, 0, 0}}), do: true
+  defp done?(%{best_scores: {0, 0, 0, 0}}), do: true
   defp done?(%{exhausted: true}), do: true
   defp done?(_), do: false
 end

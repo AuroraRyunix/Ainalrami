@@ -60,6 +60,45 @@ defmodule Ainalrami.TeamPairing do
   definition: generate every pairing, sort by identifier, filter by the
   criteria, assert the engine returns the head. That is a proof rather than a
   correlation, and `test/ainalrami/team_pairing_test.exs` does it.
+
+  ## Keeping teams apart (not FIDE)
+
+  Two of the individual engine's options, with the same names and the same
+  shapes (`Ainalrami.Pairing`'s `:forbidden_pairs` and `:soft_pairs`): a
+  list of GROUPS, each a list of TPNs (every pair inside a group is meant)
+  or `{tpns, first_round, last_round}` for a group that only applies to
+  those rounds. The case they exist for is the regional event that enters
+  three teams from one club and would rather not watch them play each other
+  in round one.
+
+    * `:forbidden_pairs` - these teams must not meet. To the procedure a
+      forbidden pair is a pair that has already met: [C1] refuses it, so
+      3.4.1, [C3], [C6]'s look-ahead and every bracket all see it, and no
+      other criterion moves. When the groups leave the round unpairable
+      where it would otherwise pair, the answer is
+      `{:error, {:forbidden_pairs, %{reason:, groups:, lifting:}}}` -
+      `reason` what the engine would have said (`:no_legal_bye` or
+      `:no_legal_pairing`), `groups` the groups in force among this round's
+      teams, `lifting` those of them that, lifted on their own, let the round
+      be paired. A round impossible without them says what it always said.
+    * `:soft_pairs` - rather not meet. One more criterion BELOW [C10] and
+      above 3.6's identifier, inside the bracket: of the pairings 3.6 ranks
+      equal on [C8], [C9] and [C10], the one seating the fewest soft pairs,
+      and among those the first identifier. It never decides the bye, who
+      floats, or anything Article 4 does, and it never makes a round
+      unpairable - a soft pair that cannot be avoided is seated. So a round
+      whose FIDE pairing seats no soft pair is that pairing, byte for byte,
+      and a round paired without the option runs exactly the code it always
+      ran. The individual engine also offers a `:strong` placement, above
+      most of the Dutch criteria; there is no team equivalent, because 3.5
+      chooses the upfloaters before any bracket is paired and a soft rung
+      above that choice would trade a FIDE criterion for a wish. Given the
+      option, each bracket in `brackets` also carries `soft:` - the soft
+      pairs it could not avoid.
+
+  A round that a group changed is not a C.04.6 round in the homologation
+  sense: a checker replaying the file without the groups will not reproduce
+  it, which is why the standalone checker replays with them.
   """
 
   alias Ainalrami.TeamPairing.{Bracket, Colour, Explanation, Field, Matching, Team}
@@ -129,6 +168,13 @@ defmodule Ainalrami.TeamPairing do
     * `:explain_limit` - how many entries each recorded list keeps (default
       10); the rest are
       counted, not kept.
+    * `:forbidden_pairs` / `:soft_pairs` - teams to keep apart, absolutely
+      or where it costs nothing FIDE counts: lists of groups, each a list of
+      TPNs or `{tpns, first_round, last_round}` (see "Keeping teams apart"
+      in the moduledoc). A round-limited group needs `:round`, or the answer
+      is `{:error, {:invalid_option, :round, nil}}`; any other shape is
+      `{:error, {:invalid_option, key, value}}`. Absent or `[]`, nothing
+      changes.
 
   ## Why it returns brackets too
 
@@ -151,8 +197,125 @@ defmodule Ainalrami.TeamPairing do
     with {:ok, mode} <- validate_score_mode(Keyword.get(opts, :score_mode, :match_points)),
          :ok <- validate_type(Keyword.get(opts, :type, :a)),
          {:ok, absent} <- validate_absent(Keyword.get(opts, :absent, []), teams),
-         {:ok, explain} <- validate_explain(opts) do
-      do_pair_round(teams, opts, mode, absent, explain)
+         {:ok, explain} <- validate_explain(opts),
+         {:ok, forbidden} <- groups_in_force(opts, :forbidden_pairs),
+         {:ok, soft} <- groups_in_force(opts, :soft_pairs) do
+      case do_pair_round(teams, opts, mode, absent, explain, forbidden, soft) do
+        {:error, reason} when reason in [:no_legal_bye, :no_legal_pairing] and forbidden != [] ->
+          blame_forbidden(reason, teams, opts, mode, absent, forbidden)
+
+        result ->
+          result
+      end
+    end
+  end
+
+  # ---------------------------------------------------------------------
+  # Keeping teams apart (see the moduledoc)
+  # ---------------------------------------------------------------------
+
+  # The groups of `key` that apply to the round being paired, as plain TPN
+  # lists. A `{tpns, first, last}` group outside its rounds is dropped here,
+  # once, so nothing downstream ever asks which round it is.
+  defp groups_in_force(opts, key) do
+    case Keyword.get(opts, key) do
+      nil ->
+        {:ok, []}
+
+      groups when is_list(groups) ->
+        if Enum.all?(groups, &tpn_group?/1) do
+          round = Keyword.get(opts, :round)
+
+          Enum.reduce_while(groups, {:ok, []}, fn
+            {_tpns, _first, _last}, _acc when not is_integer(round) ->
+              {:halt, {:error, {:invalid_option, :round, round}}}
+
+            {tpns, first, last}, {:ok, acc} ->
+              {:cont, {:ok, if(round >= first and round <= last, do: [tpns | acc], else: acc)}}
+
+            tpns, {:ok, acc} ->
+              {:cont, {:ok, [tpns | acc]}}
+          end)
+          |> case do
+            {:ok, acc} -> {:ok, Enum.reverse(acc)}
+            error -> error
+          end
+        else
+          {:error, {:invalid_option, key, groups}}
+        end
+
+      other ->
+        {:error, {:invalid_option, key, other}}
+    end
+  end
+
+  defp tpn_group?(tpns) when is_list(tpns), do: Enum.all?(tpns, &is_integer/1)
+
+  defp tpn_group?({tpns, first, last}) when is_integer(first) and is_integer(last),
+    do: tpn_group?(tpns)
+
+  defp tpn_group?(_), do: false
+
+  # `%{tpn => MapSet.t(tpn)}`: every pair inside every group, from both
+  # sides, nobody listed against themselves. `%{}` for no groups.
+  defp pair_map(groups) do
+    Enum.reduce(groups, %{}, fn tpns, acc ->
+      members = MapSet.new(tpns)
+
+      Enum.reduce(tpns, acc, fn tpn, acc ->
+        others = MapSet.delete(members, tpn)
+        Map.update(acc, tpn, others, &MapSet.union(&1, others))
+      end)
+    end)
+    |> Map.reject(fn {_tpn, others} -> MapSet.size(others) == 0 end)
+  end
+
+  # A forbidden pair is, to the procedure, a pair that has already met: the
+  # opponents list is the one place [C1] reads, in `Field` and in
+  # `Bracket` alike, so adding the forbidden partners there reaches 3.4.1,
+  # [C3], the [C6] look-ahead and every bracket at once. Groups are
+  # symmetric, so `Field`'s symmetry check still holds. Only the PAIRING
+  # sees these teams; colours are allocated from the teams as given.
+  defp forbid(teams, forbidden) do
+    case pair_map(forbidden) do
+      map when map == %{} ->
+        teams
+
+      map ->
+        Enum.map(teams, fn team ->
+          case Map.get(map, team.tpn) do
+            nil ->
+              team
+
+            others ->
+              extra = others |> Enum.reject(&(&1 in team.opponents)) |> Enum.sort()
+              %{team | opponents: team.opponents ++ extra}
+          end
+        end)
+    end
+  end
+
+  # The round would not pair with the forbidden groups. If it pairs without
+  # them, they are the reason, and the caller is told so - and which groups,
+  # lifted on their own, would let it through - instead of being handed
+  # 3.3.3's verdict on a round that is only impossible because of them.
+  defp blame_forbidden(reason, teams, opts, mode, absent, forbidden) do
+    playing = MapSet.new(teams, & &1.tpn)
+
+    groups =
+      Enum.filter(forbidden, fn tpns ->
+        tpns |> Enum.uniq() |> Enum.count(&MapSet.member?(playing, &1)) >= 2
+      end)
+
+    pairs? = fn groups ->
+      match?({:ok, _}, do_pair_round(teams, opts, mode, absent, nil, groups, []))
+    end
+
+    if pairs?.([]) do
+      lifting = Enum.filter(groups, fn group -> pairs?.(List.delete(groups, group)) end)
+      {:error, {:forbidden_pairs, %{reason: reason, groups: groups, lifting: lifting}}}
+    else
+      {:error, reason}
     end
   end
 
@@ -198,15 +361,19 @@ defmodule Ainalrami.TeamPairing do
   defp validate_type(type) when type in [:a, :b, :none], do: :ok
   defp validate_type(type), do: {:error, {:invalid_option, :type, type}}
 
-  defp do_pair_round(teams, opts, mode, absent, explain) do
+  defp do_pair_round(teams, opts, mode, absent, explain, forbidden, soft) do
     round = Keyword.get(opts, :round)
     expected = Keyword.get(opts, :expected_rounds)
 
     last_round? = not is_nil(round) and not is_nil(expected) and round >= expected
     last_two? = not is_nil(round) and not is_nil(expected) and round >= expected - 1
 
+    # The teams as the pairing sees them: forbidden partners count as met.
+    # Without forbidden groups this is `teams` itself.
+    pairing_teams = forbid(teams, forbidden)
+
     # Who may still meet whom, once for the round - see `Field`.
-    field = Field.new(teams)
+    field = Field.new(pairing_teams)
 
     base = [
       field: field,
@@ -225,7 +392,15 @@ defmodule Ainalrami.TeamPairing do
         :error -> base
       end
 
-    with {:ok, bye, rest, bye_account} <- choose_bye(teams, mode, explain, field),
+    # Likewise only when there is something to avoid, so a round without
+    # soft pairs hands every bracket the options it always did.
+    base =
+      case pair_map(soft) do
+        map when map == %{} -> base
+        map -> Keyword.put(base, :soft_pairs, map)
+      end
+
+    with {:ok, bye, rest, bye_account} <- choose_bye(pairing_teams, mode, explain, field),
          {:ok, brackets, bracket_accounts} <- pair_brackets(rest, mode, base, explain) do
       # Article 4.3.1's numbering, built ONCE for the round over the whole
       # roster. Per pair it would be rebuilt for every board, which is the
@@ -415,6 +590,13 @@ defmodule Ainalrami.TeamPairing do
               candidates: result.candidates,
               exhaustive?: result.exhaustive?
             }
+
+            # Only when soft pairs were asked for (`Bracket.pair/2`).
+            entry =
+              case result do
+                %{soft: soft} -> Map.put(entry, :soft, soft)
+                _ -> entry
+              end
 
             still_left =
               Enum.reject(lower, fn t -> t.tpn in up_tpns end)

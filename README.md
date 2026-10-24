@@ -691,6 +691,31 @@ Swiss) exits 2.
 | `--absent-teams=2,5` | (`-p`, `-x`) these teams sit the round out: every free player a zero-point bye, which is how the file says it |
 | `--max-upfloater-sets=N` | C.04.6 3.5's search budget (default 200,000) |
 | `--explain-limit=N` | (`-x`) entries kept per list of the account (default 10) |
+| `--team-forbidden=3,11,16/1,8@1-2` | (`-p`, `-x`, `-c`) teams that must not meet, by team number; added to the file's `XXO team-forbidden` records (**not FIDE**, see below) |
+| `--team-soft-pairs=3,11,16` | (`-p`, `-x`) teams to keep apart where no C.04.6 criterion minds; added to `XXO team-soft-pairs` (**not FIDE**) |
+
+**Keeping teams apart** (`Ainalrami.TeamPairing`'s `:forbidden_pairs` and
+`:soft_pairs`, the individual engine's options of the same names and
+shapes, by team number). The regional event that enters three teams from
+one club would rather they did not meet in round one; with
+`XXO team-forbidden 3 11 16` (or the flag) round one of a sixteen-team field
+pairs 3-12 and 4-11 instead of 3-11 and 4-12. A forbidden pair is, to
+C.04.6, a pair that has already met - [C1] refuses it everywhere, the bye's
+3.4.1 included - and a round the groups alone make unpairable is refused
+with the groups named and the ones that, lifted on their own, would let it
+pair (`{:error, {:forbidden_pairs, %{reason:, groups:, lifting:}}}`). A
+soft pair is one more criterion below [C10] and above 3.6's identifier,
+inside the bracket: it only chooses among pairings C.04.6 ranks equal,
+never moves the bye or a floater, and never fails a round. There is no
+`--soft-position`: 3.5 picks the upfloaters before any bracket is paired,
+and a soft rung above that choice would trade a FIDE criterion for a wish.
+`XXP`/`260` name players, so a team Swiss refuses them instead of ignoring
+them. `-c` replays with the records and says it is not a pure FIDE check.
+
+```bash
+ainalrami koppel.trf -p --team-forbidden=3,11,16/1,8,14/2,7,13
+ainalrami koppel.trf -x --team-soft-pairs=3,11,16@1-2
+```
 
 **`-g --team=swiss` / `--team=roundrobin`** generates a random team event
 (`Ainalrami.TeamGenerator`) as a TRF26 file: `310` teams with rosters,
@@ -761,9 +786,11 @@ command line's own name for the option.
 | `XXO soft-position strong\|weak` | `--soft-position=` | how hard to try (**not FIDE**) |
 | `XXO bye-want 5 12@3-4+7` | `--bye-want=` | must get the pairing-allocated bye; likewise `bye-want-soft`, `bye-avoid`, `bye-avoid-soft` (**not FIDE**) |
 | `XXO bye-exclude 3 7@4-6+9` | `--bye-exclude=` | the plain bye exclusion (**not FIDE**) |
+| `XXO team-forbidden 3 11 16 [@1-2]` | `--team-forbidden=` | a team Swiss's `XXP`: these TEAMS (team numbers) never meet, for every round or the rounds named (**not FIDE**) |
+| `XXO team-soft-pairs 3 11 16 [@1-2]` | `--team-soft-pairs=` | a team Swiss: these teams kept apart where no C.04.6 criterion minds (**not FIDE**) |
 | `XXO round-ratings 12 2100 2150 - 2180` | none | the rating player 12 held in each round, `-` or `0` for none: the rating tie-breaks (ARO, TPR, PTP, APRO, APPO) then count each opponent at the rating of that round. C.07 Article 10 allows it when the event's regulations say so (VCL4THP Q214) |
 
-A round paired from the first four is not a pure FIDE pairing, and `-p`,
+A round paired from any of these but the last is not a pure FIDE pairing, and `-p`,
 `-x` and `-c` say so on stderr exactly as they do for the flags; flags and
 lines together add up. bbpPairings 6.0.0 and JaVaFo both skip the lines
 (ten mid-event files each, the same boards with and without them), so a
@@ -773,8 +800,11 @@ purpose: `XXS` was the obvious name for soft pairs and is JaVaFo's point
 system. A malformed line, a keyword `XXO` does not have and a rank the
 file does not have are refused. `Trf.serialize/2` writes the lines from
 `tournament[:soft_pairs]`, `[:soft_position]`, `[:bye_preferences]`,
-`[:bye_exclusions]` and each player's `:round_ratings`, and writes nothing
-for a tournament with none of them.
+`[:bye_exclusions]`, `[:team_forbidden_pairs]`, `[:team_soft_pairs]` and
+each player's `:round_ratings`, and writes nothing for a tournament with
+none of them. The two team records are a team Swiss's: an individual file
+or a round robin carrying them is refused, and their team numbers are
+checked against the file's teams when a round is paired or replayed.
 
 `XXZ` reads as a `0000 - Z` in the named players' column for the round
 about to be paired: left out, no bye, no points beyond a zero-point bye's.
@@ -862,8 +892,9 @@ records are not read.
 
 ## Organiser deviations (not FIDE)
 
-Three options change the pairing in ways the Dutch system does not allow. A
-round paired with any of them is not a Dutch-system round in the homologation
+The options below change the pairing in ways the Dutch system (and, for
+the team ones, C.04.6) does not allow. A
+round paired with any of them is not a FIDE round in the homologation
 sense, and a FIDE checker replaying the file will not reproduce it - no
 FIDE record carries them, only this engine's own `XXO` lines, which no
 other program reads. Without them the engine runs exactly the code it runs
@@ -874,6 +905,11 @@ without them, byte for byte.
   (club protection, family). See the 0.20.0 changelog entry. On the CLI,
   `--soft-pairs=1,4/2,9,12 [--soft-position=weak]` with `-p` and `-x`
   (refused with `-g` and `-c`, like the bye preferences).
+- **Teams kept apart** - `forbidden_pairs:` / `soft_pairs:` on
+  `Ainalrami.TeamPairing.pair_round/2`, by team number, the same shapes:
+  a forbidden pair is a pair that has met, a soft pair a criterion below
+  [C10] that only breaks ties. See "Keeping teams apart" under the team
+  events above.
 - **Bye exclusions** - `bye_exclusions: [rank, ...]` on
   `pair_next_round/2`, `pair_later_round/2` and `explain_round/3`: players
   who must not receive the pairing-allocated bye this round (someone who

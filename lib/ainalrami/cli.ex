@@ -131,7 +131,7 @@ defmodule Ainalrami.CLI do
                    team teams boards reserves cycles team-type score secondary
                    match-points pab forfeit-match-points match-forfeit-pct
                    absent-team-pct absent-player-pct out-of-order-pct
-                   groups soft-pairs soft-position
+                   groups soft-pairs soft-position team-forbidden team-soft-pairs
                    forbidden bye-exclude virtual-points baku-group-a half-bye zero-bye
                    full-bye absent-teams judge points max-upfloater-sets explain-limit
                    cap-rounds max-candidates dialect)
@@ -629,6 +629,8 @@ defmodule Ainalrami.CLI do
     "bye-avoid-soft" => [:pair, :explain],
     "soft-pairs" => [:pair, :explain],
     "soft-position" => [:pair, :explain],
+    "team-forbidden" => [:pair, :explain, :check],
+    "team-soft-pairs" => [:pair, :explain],
     "half-bye" => [:pair, :explain],
     "zero-bye" => [:pair, :explain],
     "full-bye" => [:pair, :explain],
@@ -671,7 +673,8 @@ defmodule Ainalrami.CLI do
   @individual_only ~w(forbidden bye-exclude virtual-points baku-group-a acceleration judge
                       bye-alternatives float-alternatives alternative-pairs max-candidates
                       cascade-order)
-  @team_swiss_only ~w(team-type score secondary max-upfloater-sets explain-limit)
+  @team_swiss_only ~w(team-type score secondary max-upfloater-sets explain-limit
+                      team-forbidden team-soft-pairs)
   @bye_flags ~w(half-bye zero-bye full-bye absent-teams)
 
   defp with_input_flags(parsed, flags) do
@@ -681,6 +684,7 @@ defmodule Ainalrami.CLI do
     |> with_colour_flag(flags)
     |> with_points_flag(flags)
     |> with_forbidden_flag(flags)
+    |> with_team_apart_flags(flags)
     |> with_acceleration_flags(flags)
     |> with_tie_break_flag(flags)
     |> with_bye_flags(flags)
@@ -806,6 +810,21 @@ defmodule Ainalrami.CLI do
     end
   end
 
+  # `--team-forbidden=1,4/3,11@1-2` and `--team-soft-pairs=...`: the team
+  # Swiss's own keep-apart groups, by TEAM number, added to the file's
+  # `XXO team-forbidden` / `XXO team-soft-pairs` records. The numbers are
+  # checked against the file's teams when the round is paired
+  # (`TeamCLI.unknown_team/2`), where the teams are known.
+  defp with_team_apart_flags(parsed, flags) do
+    [{"team-forbidden", :team_forbidden_pairs}, {"team-soft-pairs", :team_soft_pairs}]
+    |> Enum.reduce(parsed, fn {flag, key}, parsed ->
+      case groups_of(flags, flag) do
+        [] -> parsed
+        groups -> update_in(parsed.tournament[key], &((&1 || []) ++ groups))
+      end
+    end)
+  end
+
   defp group_ranks({ranks, _first, _last}), do: ranks
   defp group_ranks(ranks), do: ranks
 
@@ -821,9 +840,14 @@ defmodule Ainalrami.CLI do
           group
 
         :error ->
+          {what, short} =
+            if String.starts_with?(name, "team-"),
+              do: {"team numbers", "numbers"},
+              else: {"starting ranks", "ranks"}
+
           refuse(
-            "--#{name} takes groups of two or more starting ranks separated by /, " <>
-              "the ranks by commas, a group optionally with @ROUND or @FIRST-LAST " <>
+            "--#{name} takes groups of two or more #{what} separated by /, " <>
+              "the #{short} by commas, a group optionally with @ROUND or @FIRST-LAST " <>
               "(e.g. 1,4/2,9,12@3-5), not \"#{text}\""
           )
       end
@@ -1921,6 +1945,14 @@ defmodule Ainalrami.CLI do
 
             {:exit, 1}
 
+          (parsed.tournament[:forbidden_pairs] || []) != [] ->
+            Log.error(player_pairs_misplaced())
+            {:exit, 1}
+
+          kind == :team_round_robin and PairingInput.team_apart?(parsed.tournament) ->
+            Log.error(team_records_misplaced("a round robin, whose table fixes every match"))
+            {:exit, 1}
+
           true ->
             {:team, parsed, system}
         end
@@ -1945,6 +1977,10 @@ defmodule Ainalrami.CLI do
             Log.error("XXO soft-pair and bye records are for a Swiss, not a round robin")
             {:exit, 1}
 
+          PairingInput.team_apart?(parsed.tournament) ->
+            Log.error(team_records_misplaced("a round robin"))
+            {:exit, 1}
+
           true ->
             {:round_robin, parsed, settings}
         end
@@ -1964,20 +2000,42 @@ defmodule Ainalrami.CLI do
 
           {:exit, @not_replayed}
         else
-          individual_only(flags)
+          individual_only(parsed, flags)
         end
 
       :individual ->
-        individual_only(flags)
+        individual_only(parsed, flags)
     end
   end
 
-  defp individual_only(flags) do
-    case given(flags, ~w(lineups boards absent-teams) ++ @team_swiss_only) do
-      nil -> :individual
-      flag -> {:exit, usage_error("--#{flag} is for a team event, and this file is not one")}
+  defp individual_only(parsed, flags) do
+    cond do
+      flag = given(flags, ~w(lineups boards absent-teams) ++ @team_swiss_only) ->
+        {:exit, usage_error("--#{flag} is for a team event, and this file is not one")}
+
+      PairingInput.team_apart?(parsed.tournament) ->
+        Log.error(team_records_misplaced("an individual tournament"))
+        {:exit, 1}
+
+      true ->
+        :individual
     end
   end
+
+  defp team_records_misplaced(what),
+    do:
+      "XXO team-forbidden and team-soft-pairs records are for a team Swiss, not #{what} - " <>
+        "players are kept apart with XXP and XXO soft-pairs"
+
+  # `XXP`/`260` name PLAYERS. The team engine has never read them, and
+  # pairing a team round as though a "never pair these" had been honoured
+  # is how the individual side once seated two forbidden players together
+  # without a word (`Ainalrami.Trf`'s moduledoc) - so it is refused, and
+  # the record that does say it for teams is named.
+  defp player_pairs_misplaced,
+    do:
+      "XXP/260 forbidden pairs name players, and a team Swiss pairs teams - " <>
+        "keep teams apart with XXO team-forbidden (team numbers)"
 
   defp team_code?(parsed) do
     case TypeCode.parse(parsed.tournament[:type_code] || "") do
@@ -2679,6 +2737,8 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
          {:ok, parsed} <- parse_input(text, flags) do
       groups? = (parsed.tournament[:pairing_groups] || []) != []
       organiser? = PairingInput.organiser?(parsed.tournament)
+      team_apart? = PairingInput.team_apart?(parsed.tournament)
+      player_pairs? = (parsed.tournament[:forbidden_pairs] || []) != []
       system = team_system(parsed, flags)
       refusal = check_flag_refusal(system, flags)
 
@@ -2696,6 +2756,18 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
             "XXO soft-pair and bye records are for an individual Swiss, not this file's system"
           )
 
+          1
+
+        {:team, _settings} when player_pairs? ->
+          Log.error(player_pairs_misplaced())
+          1
+
+        {kind, _settings} when kind != :team and team_apart? ->
+          Log.error(team_records_misplaced("this file's system"))
+          1
+
+        kind when kind == :individual and team_apart? ->
+          Log.error(team_records_misplaced("an individual tournament"))
           1
 
         {:unreplayable, "XXM" <> _ = reason} ->
@@ -2789,9 +2861,27 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
           )
       )
 
-      opts = Keyword.put(opts, :initial_colour, colour) ++ team_engine_flags(flags)
-      results = Enum.map(1..rounds, &check_team_round(history, &1, settings, opts))
-      finish_check(parsed, results, rounds)
+      opts =
+        Keyword.put(opts, :initial_colour, colour) ++
+          team_engine_flags(flags) ++ TeamCLI.keep_apart_opts(parsed.tournament)
+
+      if opts[:forbidden_pairs] || opts[:soft_pairs] do
+        Log.warn(
+          "the file keeps teams apart (XXO team-forbidden / team-soft-pairs), the " <>
+            "organiser's rule and not C.04.6 - every round is replayed WITH it, so this is " <>
+            "not a pure FIDE check, and a FIDE checker will not reproduce a round it changed"
+        )
+      end
+
+      case TeamCLI.unknown_team(parsed, parsed.tournament) do
+        nil ->
+          results = Enum.map(1..rounds, &check_team_round(history, &1, settings, opts))
+          finish_check(parsed, results, rounds)
+
+        message ->
+          Log.error(message)
+          1
+      end
     end
   end
 
@@ -3515,6 +3605,17 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
       --rounds=N --initial-colour=white|black   as for an individual file
       --max-upfloater-sets=N   C.04.6 3.5's search budget (default 200000)
       --explain-limit=N    (-x) entries kept per list of the account (10)
+      Keeping teams apart (a team Swiss; the organiser's rule, NOT C.04.6,
+      announced on stderr), by TEAM number:
+      --team-forbidden=3,11,16/1,8@1-2   (-p, -x, -c) groups that must not
+                           meet; @ROUND or @FIRST-LAST limits one to rounds.
+                           A round they leave unpairable is refused, naming
+                           the groups that, lifted, would let it pair
+      --team-soft-pairs=3,11,16          (-p, -x) rather not meet: avoided
+                           only between pairings C.04.6 ranks equal (after
+                           C10, inside a bracket), never a reason to fail
+      In the file: XXO team-forbidden 3 11 16 / XXO team-soft-pairs 1 8 @1-2
+      (-c replays with them; XXP/260 name players and are refused here)
 
     Standings (-s; -c checks the file's ranks the same way):
       --tie-breaks=BH,SB        the list, in place of the file's 202/212; one

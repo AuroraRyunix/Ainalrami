@@ -9,8 +9,12 @@ defmodule Ainalrami.TeamCLI do
       team event) is paired by `Ainalrami.TeamPairing` with the settings
       the `192` code names - colour preferences, primary score, whether the
       secondary score allocates colours - the initial colour of `152` (or
-      the one round 1 shows), the round count of `142`/`XXR`, and the
-      teams sitting the round out passed as absent;
+      the one round 1 shows), the round count of `142`/`XXR`, the teams
+      sitting the round out passed as absent, and the teams the file keeps
+      apart (`XXO team-forbidden` / `XXO team-soft-pairs`, plus the
+      command line's `--team-forbidden` / `--team-soft-pairs`) as
+      `:forbidden_pairs` / `:soft_pairs` - the organiser's rule, not
+      C.04.6, and announced as such;
     * a team round robin (`192 BERGER_TEAM_ROUNDROBIN_Gn` and its aliases,
       or a `092` round robin whose games show teams) is given the next
       round of the Berger table (`Ainalrami.Berger`).
@@ -84,9 +88,15 @@ defmodule Ainalrami.TeamCLI do
 
     # `Ainalrami.TeamPairing`'s own budget and explanation bound, when the
     # caller gives them; otherwise the list above is the whole of it.
-    engine_opts = engine_opts ++ Keyword.take(opts, [:max_upfloater_sets, :explain_limit])
+    engine_opts =
+      engine_opts ++
+        Keyword.take(opts, [:max_upfloater_sets, :explain_limit]) ++
+        keep_apart_opts(parsed.tournament)
 
     cond do
+      unknown = unknown_team(parsed, parsed.tournament) ->
+        {:error, unknown}
+
       length(next.field) < 2 ->
         {:error,
          "round #{next.round}: fewer than two teams have a player free to play " <>
@@ -113,6 +123,7 @@ defmodule Ainalrami.TeamCLI do
                  |> order(by_tpn, settings.score_mode)
                  |> Enum.map(&{&1.white, &1.black}),
                bye: result.bye,
+               keep_apart: keep_apart_opts(parsed.tournament),
                result: result
              }}
 
@@ -169,7 +180,65 @@ defmodule Ainalrami.TeamCLI do
   defp describe_refusal(:budget_exhausted),
     do: "the upfloater search ran past its budget (:max_upfloater_sets)"
 
+  defp describe_refusal({:forbidden_pairs, %{groups: groups, lifting: lifting}}) do
+    lifted =
+      case lifting do
+        [] -> "no single group lifted on its own would do"
+        list -> "lifting any one of " <> Enum.map_join(list, ", ", &group/1) <> " would"
+      end
+
+    "the teams kept apart (team-forbidden: " <>
+      Enum.map_join(groups, ", ", &group/1) <>
+      ") leave no legal pairing, and without them the round pairs - #{lifted}"
+  end
+
   defp describe_refusal(other), do: inspect(other)
+
+  defp group(tpns), do: "[#{Enum.join(tpns, " ")}]"
+
+  defp group_text({tpns, first, last}), do: "#{group(tpns)} rounds #{first}-#{last}"
+  defp group_text(tpns), do: group(tpns)
+
+  @doc """
+  The teams a file (and the command line, which adds to the same keys)
+  keeps apart, as `Ainalrami.TeamPairing.pair_round/2`'s options:
+  `tournament[:team_forbidden_pairs]` as `:forbidden_pairs` and
+  `tournament[:team_soft_pairs]` as `:soft_pairs`, each only when there is
+  something in it - so a file without them is paired with exactly the
+  options it always was.
+  """
+  def keep_apart_opts(tournament) do
+    [forbidden_pairs: :team_forbidden_pairs, soft_pairs: :team_soft_pairs]
+    |> Enum.flat_map(fn {option, key} ->
+      case Map.get(tournament, key) do
+        [_ | _] = groups -> [{option, groups}]
+        _ -> []
+      end
+    end)
+  end
+
+  @doc """
+  The first team number a `team-forbidden`/`team-soft-pairs` group names
+  that the file has no team for, as a message, or nil.
+  """
+  def unknown_team(parsed, tournament) do
+    known = parsed |> TeamReplay.team_numbers() |> MapSet.new()
+
+    Enum.find_value([team_forbidden_pairs: "forbidden", team_soft_pairs: "soft-pairs"], fn
+      {key, word} ->
+        tournament
+        |> Map.get(key, [])
+        |> Enum.flat_map(fn
+          {tpns, _first, _last} -> tpns
+          tpns -> tpns
+        end)
+        |> Enum.find(&(not MapSet.member?(known, &1)))
+        |> case do
+          nil -> nil
+          tpn -> "team-#{word} names team #{tpn}, which the file does not have"
+        end
+    end)
+  end
 
   @doc "The team pairing list - see the moduledoc's \"The output\"."
   def format_pairs(round) do
@@ -231,6 +300,18 @@ defmodule Ainalrami.TeamCLI do
     end
 
     Log.detail("pairing team round #{round.round}")
+
+    for {option, groups} <- Map.get(round, :keep_apart, []) do
+      what =
+        if option == :forbidden_pairs,
+          do: "never paired",
+          else: "kept apart where no FIDE criterion minds"
+
+      Log.detail(
+        "#{what} (the organiser's rule, not C.04.6): " <>
+          Enum.map_join(groups, ", ", &group_text/1)
+      )
+    end
 
     unless round.out == [] do
       Log.detail(
@@ -384,8 +465,13 @@ defmodule Ainalrami.TeamCLI do
         do: "",
         else: " · upfloaters #{Enum.join(account.upfloaters, ", ")}"
       ) <>
-      "\n" <> chosen <> runner_up <> decided <> rejected <> "  pairs: #{pairs}\n"
+      "\n" <>
+      chosen <> runner_up <> decided <> rejected <> "  pairs: #{pairs}\n" <> soft_line(bracket)
   end
+
+  # Only a round paired with soft pairs has the count.
+  defp soft_line(%{soft: soft}), do: "  soft pairs it could not avoid: #{soft}\n"
+  defp soft_line(_bracket), do: ""
 
   defp render_colours(pairs) do
     "\nColours (Article 4)\n" <>
